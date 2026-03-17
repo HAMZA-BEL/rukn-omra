@@ -5,6 +5,29 @@
  */
 import { supabase } from "./supabase";
 
+const normalizeForeignKey = (value) => (
+  typeof value === "string" && value.trim() ? value : null
+);
+
+const cleanString = (value) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const composeClientName = (row) => {
+  const first = typeof row.first_name === "string" ? row.first_name.trim() : "";
+  const last  = typeof row.last_name === "string" ? row.last_name.trim() : "";
+  const arabic = [first, last].filter(Boolean).join(" ").trim();
+  if (arabic) return arabic;
+  if (typeof row.name === "string" && row.name.trim()) return row.name.trim();
+  const latin = [row.nom, row.prenom]
+    .map(v => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean)
+    .join(" / ");
+  return latin || "";
+};
+
 // ─── Mappers: app (camelCase) ↔ Supabase (snake_case) ────────────────────────
 
 const toProgram = (p, agencyId) => ({
@@ -48,24 +71,24 @@ const fromProgram = (row) => ({
 const toClient = (c, agencyId) => ({
   id:                c.id,
   agency_id:         agencyId,
-  program_id:        c.programId        ?? null,
-  name:              c.name             ?? null,
-  first_name:        c.firstName        ?? null,
-  last_name:         c.lastName         ?? null,
-  nom:               c.nom              ?? null,
-  prenom:            c.prenom           ?? null,
-  phone:             c.phone            ?? null,
-  city:              c.city             ?? null,
-  hotel_level:       c.hotelLevel       ?? null,
-  hotel_mecca:       c.hotelMecca       ?? null,
-  hotel_madina:      c.hotelMadina      ?? null,
-  room_type:         c.roomType         ?? null,
+  program_id:        normalizeForeignKey(c.programId),
+  name:              cleanString(c.name),
+  first_name:        cleanString(c.firstName),
+  last_name:         cleanString(c.lastName),
+  nom:               cleanString(c.nom),
+  prenom:            cleanString(c.prenom),
+  phone:             cleanString(c.phone),
+  city:              cleanString(c.city),
+  hotel_level:       cleanString(c.hotelLevel),
+  hotel_mecca:       cleanString(c.hotelMecca),
+  hotel_madina:      cleanString(c.hotelMadina),
+  room_type:         cleanString(c.roomType),
   official_price:    c.officialPrice    ?? 0,
   sale_price:        c.salePrice        ?? c.price ?? 0,
-  ticket_no:         c.ticketNo         ?? null,
+  ticket_no:         cleanString(c.ticketNo),
   passport:          c.passport         ?? {},
   docs:              c.docs             ?? {},
-  notes:             c.notes            ?? null,
+  notes:             cleanString(c.notes),
   registration_date: c.registrationDate ?? null,
   last_modified:     c.lastModified     ?? null,
   archived:          c.archived         ?? false,
@@ -75,7 +98,7 @@ const toClient = (c, agencyId) => ({
 const fromClient = (row) => ({
   id:               row.id,
   programId:        row.program_id,
-  name:             row.name,
+  name:             composeClientName(row),
   firstName:        row.first_name,
   lastName:         row.last_name,
   nom:              row.nom,
@@ -101,7 +124,7 @@ const fromClient = (row) => ({
 const toPayment = (p, agencyId) => ({
   id:         p.id,
   agency_id:  agencyId,
-  client_id:  p.clientId,
+  client_id:  normalizeForeignKey(p.clientId),
   amount:     p.amount,
   date:       p.date      ?? null,
   method:     p.method    ?? null,
@@ -117,6 +140,30 @@ const fromPayment = (row) => ({
   method:    row.method,
   receiptNo: row.receipt_no,
   note:      row.note,
+});
+
+const toNotification = (n, agencyId) => ({
+  id:          n.id,
+  agency_id:   agencyId,
+  type:        n.type        ?? null,
+  title:       n.title       ?? null,
+  message:     n.message     ?? null,
+  program_id:  normalizeForeignKey(n.programId),
+  severity:    n.severity    ?? "info",
+  is_read:     n.isRead      ?? false,
+  is_archived: n.isArchived  ?? false,
+});
+
+const fromNotification = (row) => ({
+  id:          row.id,
+  type:        row.type,
+  title:       row.title,
+  message:     row.message,
+  programId:   row.program_id,
+  severity:    row.severity || "info",
+  isRead:      row.is_read ?? false,
+  isArchived:  row.is_archived ?? false,
+  createdAt:   row.created_at,
 });
 
 const toAgency = (a) => ({
@@ -182,8 +229,12 @@ export const db = {
       return { data: data?.map(fromClient) ?? null, error };
     },
     async upsert(client, agencyId) {
+      const payload = toClient(client, agencyId);
+      try {
+        console.debug("[Supabase] clients.upsert payload:", payload);
+      } catch (_) {}
       const { error } = await supabase
-        .from("clients").upsert(toClient(client, agencyId), { onConflict: "id" });
+        .from("clients").upsert(payload, { onConflict: "id" });
       return { error };
     },
     async delete(id, agencyId) {
@@ -213,6 +264,39 @@ export const db = {
     },
   },
 
+  notifications: {
+    mapRow: fromNotification,
+    async fetchAll(agencyId) {
+      const { data, error } = await supabase
+        .from("notifications").select("*")
+        .eq("agency_id", agencyId)
+        .order("created_at", { ascending: false });
+      return { data: data?.map(fromNotification) ?? null, error };
+    },
+    async upsert(notification, agencyId) {
+      const payload = toNotification(notification, agencyId);
+      const { error } = await supabase
+        .from("notifications").upsert(payload, { onConflict: "id" });
+      return { error };
+    },
+    async markRead(id, isRead = true) {
+      const { error } = await supabase
+        .from("notifications").update({ is_read: isRead }).eq("id", id);
+      return { error };
+    },
+    async markManyRead(ids) {
+      if (!ids || ids.length === 0) return { error: null };
+      const { error } = await supabase
+        .from("notifications").update({ is_read: true }).in("id", ids);
+      return { error };
+    },
+    async markArchived(id, archived = true) {
+      const { error } = await supabase
+        .from("notifications").update({ is_archived: archived }).eq("id", id);
+      return { error };
+    },
+  },
+
   agency: {
     async fetch(agencyId) {
       const { data, error } = await supabase
@@ -227,24 +311,65 @@ export const db = {
   },
 
   activityLog: {
-    async fetchRecent(agencyId, limit = 50) {
+    mapRow(row) {
+      if (!row) return null;
+      return {
+        id:          row.id,
+        type:        row.type,
+        description: row.description,
+        clientName:  row.client_name,
+        time:        row.created_at,
+        isArchived:  !!row.is_archived,
+      };
+    },
+    async fetchRecent(agencyId, limit = 5) {
+      if (!agencyId) return { data: [], error: null };
       const { data, error } = await supabase
-        .from("activity_log").select("*")
+        .from("activity_log")
+        .select("id,type,description,client_name,created_at")
         .eq("agency_id", agencyId)
         .order("created_at", { ascending: false })
         .limit(limit);
       return {
-        data: data?.map(r => ({
-          id:          r.id,
-          type:        r.type,
-          description: r.description,
-          clientName:  r.client_name,
-          time:        r.created_at,
-        })) ?? null,
+        data: data?.map((r) => db.activityLog.mapRow(r)) ?? [],
+        error,
+      };
+    },
+    async fetchPage(agencyId, {
+      limit = 20,
+      offset = 0,
+      types = null,
+      search = "",
+      from = null,
+    } = {}) {
+      if (!agencyId) return { data: [], count: 0, error: null };
+      let query = supabase
+        .from("activity_log_all")
+        .select("id,type,description,client_name,created_at,is_archived", { count: "exact" })
+        .eq("agency_id", agencyId);
+      if (types && types.length) {
+        query = query.in("type", types);
+      }
+      if (from) {
+        query = query.gte("created_at", from);
+      }
+      if (search && search.trim()) {
+        const term = `%${search.trim()}%`;
+        query = query.or(`description.ilike.${term},client_name.ilike.${term}`);
+      }
+      const start = offset;
+      const end   = offset + limit - 1;
+      const { data, error, count } = await query
+        .order("created_at", { ascending: false })
+        .range(start, end);
+      return {
+        data: data?.map((r) => db.activityLog.mapRow(r)) ?? [],
+        count: count ?? 0,
         error,
       };
     },
     async insert(agencyId, userId, entry) {
+      if (!agencyId) return { error: null };
       const { error } = await supabase
         .from("activity_log")
         .insert({
@@ -253,8 +378,15 @@ export const db = {
           type:        entry.type,
           description: entry.description,
           client_name: entry.clientName || null,
+          created_at:  entry.time || new Date().toISOString(),
         });
       return { error };
+    },
+    async archiveOld(agencyId, days = 180) {
+      if (!agencyId) return { data: null, error: null };
+      const { data, error } = await supabase
+        .rpc("archive_activity_log", { days_threshold: days });
+      return { data, error };
     },
   },
 
@@ -268,12 +400,13 @@ export const db = {
   },
 
   // Realtime subscriptions
-  subscribeAll({ onProgram, onClient, onPayment }) {
+  subscribeAll({ onProgram = () => {}, onClient = () => {}, onPayment = () => {}, onNotification = () => {} }) {
     return supabase
       .channel("db-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "programs" }, onProgram)
       .on("postgres_changes", { event: "*", schema: "public", table: "clients"  }, onClient)
       .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onPayment)
+      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, onNotification)
       .subscribe();
   },
 };

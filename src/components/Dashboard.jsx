@@ -6,20 +6,82 @@ import { formatCurrency } from "../utils/currency";
 
 const tc = theme.colors;
 
-export default function Dashboard({ store, onNavigate, onSelectClient }) {
+export default function Dashboard({ store, onNavigate, onSelectClient, headerActions, onBrandNavigate }) {
   const { t, tr, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { stats, clients, programs, activityLog,
           getClientStatus, getClientTotalPaid, getProgramClients, getProgramById,
-          getAlerts, getArchiveSuggestions, archiveProgram } = store;
+          fetchActivityLogPage } = store;
   const [search, setSearch] = React.useState("");
+  const [brandHover, setBrandHover] = React.useState(false);
+  const handleBrandClick = React.useCallback(() => {
+    if (typeof onBrandNavigate === "function") {
+      onBrandNavigate();
+    } else if (typeof onNavigate === "function") {
+      onNavigate("dashboard");
+    }
+  }, [onBrandNavigate, onNavigate]);
 
-  const alerts = getAlerts();
-  const archiveSuggestions = getArchiveSuggestions();
   const formatCurrencyForLang = React.useCallback(
     (value) => formatCurrency(value, lang),
     [lang]
   );
+  const ACTIVITY_PAGE_SIZE = 5;
+  const [activityPage, setActivityPage] = React.useState(0);
+  const [activityRows, setActivityRows] = React.useState(activityLog.slice(0, ACTIVITY_PAGE_SIZE));
+  const [activityTotal, setActivityTotal] = React.useState(activityLog.length);
+  const [activityLoading, setActivityLoading] = React.useState(false);
+  const [activityError, setActivityError] = React.useState(null);
+
+  const applyActivityFallback = React.useCallback((pageIndex) => {
+    const start = pageIndex * ACTIVITY_PAGE_SIZE;
+    const fallback = activityLog.slice(start, start + ACTIVITY_PAGE_SIZE);
+    if (fallback.length) {
+      setActivityRows(fallback);
+      setActivityTotal(activityLog.length);
+      setActivityPage(pageIndex);
+      setActivityError(null);
+    } else {
+      setActivityRows([]);
+      setActivityTotal(0);
+      setActivityError("تعذّر تحميل سجل النشاط");
+    }
+  }, [activityLog]);
+
+  const loadActivityPage = React.useCallback(async (pageIndex = 0) => {
+    if (!fetchActivityLogPage) {
+      applyActivityFallback(pageIndex);
+      return;
+    }
+    setActivityLoading(true);
+    setActivityError(null);
+    try {
+      const { data, count, error } = await fetchActivityLogPage({ page: pageIndex, limit: ACTIVITY_PAGE_SIZE });
+      if (error) {
+        applyActivityFallback(pageIndex);
+        return;
+      }
+      setActivityRows(data || []);
+      setActivityTotal(count ?? 0);
+      setActivityPage(pageIndex);
+    } catch (err) {
+      console.error("[Dashboard] activity log load failed", err);
+      applyActivityFallback(pageIndex);
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [applyActivityFallback, fetchActivityLogPage]);
+
+  React.useEffect(() => {
+    loadActivityPage(0);
+  }, [loadActivityPage]);
+
+  React.useEffect(() => {
+    if (activityPage === 0 && !activityLoading && activityLog.length) {
+      setActivityRows(activityLog.slice(0, ACTIVITY_PAGE_SIZE));
+      setActivityTotal((prev) => Math.max(prev, activityLog.length));
+    }
+  }, [activityLog, activityLoading, activityPage]);
 
   const results = React.useMemo(() => {
     if (!search.trim()) return [];
@@ -34,31 +96,76 @@ export default function Dashboard({ store, onNavigate, onSelectClient }) {
     return [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
   }, [search, clients, programs]);
 
+  const maxActivityPage = Math.max(0, Math.ceil(activityTotal / ACTIVITY_PAGE_SIZE) - 1);
+
+  const newerLabel = t.newerUpdates || (lang === "fr" ? "Plus récent" : lang === "en" ? "Newer" : "الأحدث");
+  const olderLabel = t.olderUpdates || (lang === "fr" ? "Plus ancien" : lang === "en" ? "Older" : "الأقدم");
+
   return (
     <div className="page-shell" style={{ paddingBottom:40 }}>
       {/* Hero */}
+      <div style={{
+        padding:"26px 32px 14px",
+        display:"flex",
+        flexDirection:isRTL?"row-reverse":"row",
+        justifyContent:"space-between",
+        alignItems:"center",
+        gap:18,
+        flexWrap:"wrap",
+      }}>
+        <button
+          type="button"
+          onClick={handleBrandClick}
+          onMouseEnter={() => setBrandHover(true)}
+          onMouseLeave={() => setBrandHover(false)}
+          onFocus={() => setBrandHover(true)}
+          onBlur={() => setBrandHover(false)}
+          style={{
+            display:"flex",
+            alignItems:"center",
+            gap:14,
+            minWidth:0,
+            flex:"1 1 220px",
+            textAlign:isRTL?"right":"left",
+            justifyContent:isRTL?"flex-end":"flex-start",
+            background:"none",
+            border:"none",
+            padding:0,
+            cursor:"pointer",
+            color:"inherit",
+            transition:"opacity .2s ease, transform .2s ease",
+            opacity:brandHover?0.92:1,
+            transform:brandHover?"translateY(-1px)":"none",
+          }}
+        >
+          <span style={{ fontSize:36, animation:"float 4s ease-in-out infinite" }}>🕋</span>
+          <div>
+            <h1 style={{ fontSize:24, fontWeight:900, fontFamily:"'Amiri',serif",
+              background:"linear-gradient(135deg,#f0d060,#d4af37)",
+              WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", lineHeight:1.2 }}>
+              {t.appName}
+            </h1>
+            <p style={{ fontSize:12, color:tc.grey }}>
+              {t.agencyName}{t.agencyNameAr ? ` | ${t.agencyNameAr}` : ""}
+            </p>
+          </div>
+        </button>
+        {headerActions && (
+          <div style={{ flex:"0 0 auto" }}>
+            {headerActions}
+          </div>
+        )}
+      </div>
+
       <div className="page-hero" style={{ position:"relative", overflow:"hidden",
         background:"linear-gradient(135deg,rgba(26,107,58,.35),rgba(6,13,26,.9))",
-        borderBottom:"1px solid rgba(212,175,55,.15)", padding:"32px 32px 26px" }}>
+        borderBottom:"1px solid rgba(212,175,55,.15)", padding:"24px 32px 26px" }}>
         {[100,180,280].map((s,i)=>(
           <div key={i} style={{ position:"absolute", top:-s/2, left:-s/3,
             width:s, height:s, borderRadius:"50%",
             border:"1px solid rgba(212,175,55,.06)", pointerEvents:"none" }} />
         ))}
         <div style={{ position:"relative", zIndex:1 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:6 }}>
-            <span style={{ fontSize:36, animation:"float 4s ease-in-out infinite" }}>🕋</span>
-            <div>
-              <h1 style={{ fontSize:24, fontWeight:900, fontFamily:"'Amiri',serif",
-                background:"linear-gradient(135deg,#f0d060,#d4af37)",
-                WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", lineHeight:1.2 }}>
-                {t.appName}
-              </h1>
-              <p style={{ fontSize:12, color:tc.grey }}>
-                {t.agencyName}{t.agencyNameAr ? ` | ${t.agencyNameAr}` : ""}
-              </p>
-            </div>
-          </div>
           <SearchBar value={search} onChange={e=>setSearch(e.target.value)}
             placeholder={`🔍  ${t.search}`}
             style={{ maxWidth:560, marginTop:16 }} />
@@ -66,34 +173,6 @@ export default function Dashboard({ store, onNavigate, onSelectClient }) {
       </div>
 
       <div className="page-body" style={{ padding:"24px 32px 0" }}>
-
-        {/* Alerts */}
-        {!search.trim() && alerts.length > 0 && (
-          <div style={{ marginBottom:20 }}>
-            {alerts.map((a,i) => (
-              <div key={i} style={{
-                display:"flex", alignItems:"center", gap:10,
-                padding:"10px 14px", borderRadius:10, marginBottom:6,
-                background: a.type==="danger"?"rgba(239,68,68,.1)":"rgba(245,158,11,.1)",
-                border:`1px solid ${a.type==="danger"?"rgba(239,68,68,.3)":"rgba(245,158,11,.3)"}`,
-              }}>
-                <span style={{ fontSize:18 }}>{a.icon}</span>
-                <span style={{ fontSize:13, fontWeight:600,
-                  color:a.type==="danger"?tc.danger:tc.warning }}>{a.msg}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Archive suggestions */}
-        {!search.trim() && archiveSuggestions.length > 0 && (
-          <div style={{ marginBottom:20 }}>
-            {archiveSuggestions.map((s) => (
-              <ArchiveSuggestionAlert key={s.program.id} suggestion={s}
-                t={t} tr={tr} onArchive={() => archiveProgram(s.program.id)} />
-            ))}
-          </div>
-        )}
 
         {/* Search results */}
         {search.trim() && (
@@ -161,17 +240,71 @@ export default function Dashboard({ store, onNavigate, onSelectClient }) {
             </div>
 
             {/* Activity log */}
-            <SectionHeader title={t.recentActivity} onMore={null} btnLabel={null} />
+            <SectionHeader title={t.recentActivity} onMore={()=>onNavigate("activity")} btnLabel={t.viewAll} />
             <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
-              {activityLog.slice(0,8).map((a,i)=>(
-                <ActivityRow key={a.id} activity={a} index={i} />
-              ))}
-              {activityLog.length === 0 && (
+              {activityError && (
+                <div style={{ padding:16, textAlign:"center", color:theme.colors.danger, fontSize:12 }}>
+                  {activityError}
+                </div>
+              )}
+              {activityLoading && (
+                <div style={{ padding:16, textAlign:"center", color:tc.grey, fontSize:12 }}>
+                  {t.loading || "جاري التحميل..."}
+                </div>
+              )}
+              {!activityError && !activityLoading && activityRows.length === 0 && (
                 <div style={{ padding:20, textAlign:"center", color:tc.grey, fontSize:13 }}>
                   {t.noActivities}
                 </div>
               )}
+              {activityRows.map((a,i)=>(
+                <ActivityRow key={a.id || i} activity={a} index={i + activityPage * ACTIVITY_PAGE_SIZE} />
+              ))}
             </div>
+            {activityTotal > ACTIVITY_PAGE_SIZE && (
+              <div style={{
+                display:"flex", justifyContent:"center", alignItems:"center",
+                gap:12, marginTop:12,
+              }}>
+                <button
+                  type="button"
+                  onClick={() => loadActivityPage(Math.max(0, activityPage - 1))}
+                  disabled={activityPage === 0 || activityLoading}
+                  style={{
+                    padding:"6px 14px",
+                    borderRadius:999,
+                    border:"1px solid rgba(255,255,255,.15)",
+                    background:activityPage===0?"rgba(255,255,255,.04)":"rgba(212,175,55,.15)",
+                    color:activityPage===0?tc.grey:tc.gold,
+                    fontSize:12, fontWeight:600,
+                    cursor:activityPage===0?"not-allowed":"pointer",
+                    transition:"all .2s",
+                  }}
+                >
+                  {newerLabel}
+                </button>
+                <span style={{ fontSize:11, color:tc.grey }}>
+                  {activityPage + 1}/{maxActivityPage + 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => loadActivityPage(Math.min(maxActivityPage, activityPage + 1))}
+                  disabled={activityPage === maxActivityPage || activityLoading}
+                  style={{
+                    padding:"6px 14px",
+                    borderRadius:999,
+                    border:"1px solid rgba(255,255,255,.15)",
+                    background:activityPage===maxActivityPage?"rgba(255,255,255,.04)":"rgba(212,175,55,.15)",
+                    color:activityPage===maxActivityPage?tc.grey:tc.gold,
+                    fontSize:12, fontWeight:600,
+                    cursor:activityPage===maxActivityPage?"not-allowed":"pointer",
+                    transition:"all .2s",
+                  }}
+                >
+                  {olderLabel}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -234,10 +367,46 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
 });
 
 const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
-  const icons = { client_add:"👤", client_edit:"✏️", client_del:"🗑️", payment_add:"💰", payment_del:"❌", program_add:"📋" };
-  const colors= { client_add:theme.colors.greenLight, client_edit:theme.colors.gold,
-    client_del:theme.colors.danger, payment_add:theme.colors.gold,
-    payment_del:theme.colors.danger, program_add:theme.colors.gold };
+  const { t } = useLang();
+  const icons = {
+    client_add:"👤",
+    client_update:"✏️",
+    client_delete:"🗑️",
+    client_transfer:"🔁",
+    client_archive:"📦",
+    client_restore:"♻️",
+    client_bulk_archive:"📦",
+    client_bulk_delete:"🧹",
+    payment_add:"💰",
+    payment_delete:"❌",
+    program_add:"📋",
+    program_update:"⚙️",
+    program_delete:"🧾",
+    program_archive:"🗂️",
+    program_restore:"♻️",
+    import_excel:"📥",
+  };
+  const colors= {
+    client_add:theme.colors.greenLight,
+    client_update:theme.colors.gold,
+    client_delete:theme.colors.danger,
+    client_transfer:theme.colors.gold,
+    client_archive:theme.colors.warning,
+    client_restore:theme.colors.greenLight,
+    client_bulk_archive:theme.colors.warning,
+    client_bulk_delete:theme.colors.danger,
+    payment_add:theme.colors.gold,
+    payment_delete:theme.colors.danger,
+    program_add:theme.colors.gold,
+    program_update:theme.colors.gold,
+    program_delete:theme.colors.danger,
+    program_archive:theme.colors.warning,
+    program_restore:theme.colors.greenLight,
+    import_excel:theme.colors.gold,
+  };
+  const type = activity.type || "default";
+  const icon = icons[type] || "📌";
+  const accent = colors[type] || theme.colors.gold;
   const time = new Date(activity.time);
   const timeStr = `${time.toLocaleDateString("ar-MA")} ${time.toLocaleTimeString("ar-MA",{hour:"2-digit",minute:"2-digit"})}`;
   return (
@@ -245,11 +414,16 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px",
         background:"rgba(255,255,255,.02)", border:"1px solid rgba(255,255,255,.05)",
         borderRadius:10 }}>
-        <span style={{ fontSize:16 }}>{icons[activity.type]||"📌"}</span>
+        <span style={{ fontSize:16 }}>{icon}</span>
         <div style={{ flex:1 }}>
           <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{activity.description}</span>
+          {activity.isArchived && (
+            <span style={{ fontSize:10, color:theme.colors.grey, marginInlineStart:6 }}>
+              {t.archivedBadge || "مؤرشف"}
+            </span>
+          )}
           {activity.clientName && (
-            <span style={{ fontSize:12, color:colors[activity.type]||theme.colors.gold,
+            <span style={{ fontSize:12, color:accent,
               marginRight:6 }}> — {activity.clientName}</span>
           )}
         </div>
@@ -301,54 +475,6 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
         <StatusBadge status={status} />
         <span style={{ color:theme.colors.grey, fontSize:18 }}>{isRTL?"→":"←"}</span>
       </div>
-    </div>
-  );
-});
-
-const DISMISS_KEY = "umrah_archive_dismiss_v1";
-function getDismissed() {
-  try { return JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}"); } catch { return {}; }
-}
-function saveDismissed(obj) {
-  try { localStorage.setItem(DISMISS_KEY, JSON.stringify(obj)); } catch {}
-}
-
-const ArchiveSuggestionAlert = React.memo(function ArchiveSuggestionAlert({ suggestion, t, tr, onArchive }) {
-  const { program, daysAgo, count } = suggestion;
-  const [dismissed, setDismissed] = React.useState(() => {
-    const d = getDismissed();
-    return d[program.id] && d[program.id] > Date.now();
-  });
-
-  if (dismissed) return null;
-
-  const handleRemindLater = () => {
-    const d = getDismissed();
-    d[program.id] = Date.now() + 7 * 24 * 60 * 60 * 1000;
-    saveDismissed(d);
-    setDismissed(true);
-  };
-
-  const msg = tr("archiveAlertMsg", { name: program.name, days: daysAgo, count });
-
-  return (
-    <div style={{
-      display:"flex", alignItems:"center", gap:10, flexWrap:"wrap",
-      padding:"10px 14px", borderRadius:10, marginBottom:6,
-      background:"rgba(245,158,11,.1)", border:"1px solid rgba(245,158,11,.3)",
-    }}>
-      <span style={{ fontSize:18 }}>📦</span>
-      <span style={{ fontSize:13, fontWeight:600, color:tc.warning, flex:1 }}>{msg}</span>
-      <button onClick={onArchive} style={{
-        padding:"4px 12px", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer",
-        background:"rgba(245,158,11,.2)", border:"1px solid rgba(245,158,11,.4)",
-        color:tc.warning, fontFamily:"'Cairo',sans-serif",
-      }}>{t.archiveNow}</button>
-      <button onClick={handleRemindLater} style={{
-        padding:"4px 12px", borderRadius:8, fontSize:12, fontWeight:600, cursor:"pointer",
-        background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.1)",
-        color:tc.grey, fontFamily:"'Cairo',sans-serif",
-      }}>{t.remindLater}</button>
     </div>
   );
 });

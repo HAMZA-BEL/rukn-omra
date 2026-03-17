@@ -337,7 +337,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
     const sClass = c.status === "cleared" ? "cleared" : c.status === "partial" ? "partial" : "unpaid";
     return `
       <tr>
-        <td style="font-family:monospace;font-size:9px;color:#555">${c.id}</td>
+        <td style="font-family:monospace;font-size:9px;color:#555">${(c.displayRef || c.id || "—").toString()}</td>
         <td style="font-weight:600">${c.name || "—"}</td>
         <td style="font-size:10px;color:#444">${c.prog?.name || "—"}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#0d4a1a">${fmt(c.salePrice)}</td>

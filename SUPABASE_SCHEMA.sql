@@ -112,6 +112,39 @@ create table if not exists public.activity_log (
   created_at   timestamptz default now()
 );
 
+create table if not exists public.activity_log_archive (
+  id           uuid primary key,
+  agency_id    uuid not null references public.agencies(id) on delete cascade,
+  user_id      uuid references auth.users(id) on delete set null,
+  type         text,
+  description  text,
+  client_name  text,
+  created_at   timestamptz default now(),
+  archived_at  timestamptz default now()
+);
+
+drop view if exists public.activity_log_all;
+create view public.activity_log_all as
+  select id, agency_id, user_id, type, description, client_name, created_at, false as is_archived
+  from public.activity_log
+  union all
+  select id, agency_id, user_id, type, description, client_name, created_at, true as is_archived
+  from public.activity_log_archive;
+
+-- Notifications
+create table if not exists public.notifications (
+  id           uuid primary key default gen_random_uuid(),
+  agency_id    uuid not null references public.agencies(id) on delete cascade,
+  type         text,
+  title        text,
+  message      text,
+  program_id   uuid references public.programs(id) on delete set null,
+  severity     text not null default 'info',
+  is_read      boolean not null default false,
+  is_archived  boolean not null default false,
+  created_at   timestamptz default now()
+);
+
 -- ── 2. Performance Indexes ────────────────────────────────────
 create index if not exists idx_users_agency       on public.users(agency_id);
 create index if not exists idx_programs_agency    on public.programs(agency_id);
@@ -120,7 +153,12 @@ create index if not exists idx_clients_program    on public.clients(program_id);
 create index if not exists idx_clients_archived   on public.clients(agency_id, archived);
 create index if not exists idx_payments_agency    on public.payments(agency_id);
 create index if not exists idx_payments_client    on public.payments(client_id);
-create index if not exists idx_activity_agency    on public.activity_log(agency_id);
+create index if not exists idx_activity_agency           on public.activity_log(agency_id);
+create index if not exists idx_activity_agency_created   on public.activity_log(agency_id, created_at desc);
+create index if not exists idx_activity_archive_agency   on public.activity_log_archive(agency_id);
+create index if not exists idx_activity_archive_created  on public.activity_log_archive(agency_id, created_at desc);
+create index if not exists idx_notifications_agency on public.notifications(agency_id);
+create index if not exists idx_notifications_state  on public.notifications(agency_id, is_archived, is_read);
 
 -- ── 3. RLS Helper Function ────────────────────────────────────
 -- Returns the agency_id for the currently authenticated user.
@@ -145,6 +183,8 @@ alter table public.programs     enable row level security;
 alter table public.clients      enable row level security;
 alter table public.payments     enable row level security;
 alter table public.activity_log enable row level security;
+alter table public.activity_log_archive enable row level security;
+alter table public.notifications enable row level security;
 
 -- ── 5. RLS Policies ───────────────────────────────────────────
 
@@ -206,6 +246,56 @@ create policy "payments_update" on public.payments
 create policy "payments_delete" on public.payments
   for delete using (agency_id = public.get_agency_id());
 
+-- Activity logging for payments
+drop function if exists public.log_payment_activity cascade;
+create or replace function public.log_payment_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  client_name text;
+  amount_text text;
+  desc_text   text;
+begin
+  if TG_OP = 'INSERT' then
+    select name into client_name from public.clients where id = NEW.client_id;
+    amount_text := trim(to_char(NEW.amount, 'FM999G999G990D00'));
+    desc_text   := 'دفعة ' || amount_text || ' د.م — ' || coalesce(NEW.receipt_no, '');
+    insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
+    values (gen_random_uuid(), NEW.agency_id, auth.uid(), 'payment_add', desc_text, client_name, now());
+    return NEW;
+  elsif TG_OP = 'DELETE' then
+    select name into client_name from public.clients where id = OLD.client_id;
+    desc_text := 'تم حذف دفعة ' || coalesce(OLD.receipt_no, '');
+    insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
+    values (gen_random_uuid(), OLD.agency_id, auth.uid(), 'payment_delete', desc_text, client_name, now());
+    return OLD;
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_payments_activity on public.payments;
+create trigger trg_payments_activity
+after insert or delete on public.payments
+for each row execute function public.log_payment_activity();
+
+-- notifications
+drop policy if exists "notifications_select" on public.notifications;
+drop policy if exists "notifications_insert" on public.notifications;
+drop policy if exists "notifications_update" on public.notifications;
+drop policy if exists "notifications_delete" on public.notifications;
+create policy "notifications_select" on public.notifications
+  for select using (agency_id = public.get_agency_id());
+create policy "notifications_insert" on public.notifications
+  for insert with check (agency_id = public.get_agency_id());
+create policy "notifications_update" on public.notifications
+  for update using (agency_id = public.get_agency_id());
+create policy "notifications_delete" on public.notifications
+  for delete using (agency_id = public.get_agency_id());
+
 -- activity_log
 drop policy if exists "activity_select" on public.activity_log;
 drop policy if exists "activity_insert" on public.activity_log;
@@ -213,6 +303,41 @@ create policy "activity_select" on public.activity_log
   for select using (agency_id = public.get_agency_id());
 create policy "activity_insert" on public.activity_log
   for insert with check (agency_id = public.get_agency_id());
+
+-- activity_log_archive
+drop policy if exists "activity_archive_select" on public.activity_log_archive;
+drop policy if exists "activity_archive_insert" on public.activity_log_archive;
+create policy "activity_archive_select" on public.activity_log_archive
+  for select using (agency_id = public.get_agency_id());
+create policy "activity_archive_insert" on public.activity_log_archive
+  for insert with check (agency_id = public.get_agency_id());
+
+-- Archive helper
+create or replace function public.archive_activity_log(days_threshold integer default 180)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  moved integer;
+begin
+  with expired as (
+    delete from public.activity_log
+    where agency_id = public.get_agency_id()
+      and created_at < now() - make_interval(days => days_threshold)
+    returning *
+  ),
+  inserted as (
+    insert into public.activity_log_archive (id, agency_id, user_id, type, description, client_name, created_at, archived_at)
+    select id, agency_id, user_id, type, description, client_name, created_at, now()
+    from expired
+    returning 1
+  )
+  select count(*) into moved from inserted;
+  return coalesce(moved, 0);
+end;
+$$;
 
 -- ── 6. Trigger: auto-create user profile on auth signup ───────
 create or replace function public.handle_new_auth_user()

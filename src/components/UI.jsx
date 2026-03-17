@@ -32,17 +32,20 @@ export function Card({ children, style, className = "", onClick, hover = false }
 }
 
 // ── GlassCard ─────────────────────────────────────────────────────────────────
-export function GlassCard({ children, style, gold = false }) {
+export function GlassCard({ children, style, gold = false, ...rest }) {
   return (
-    <div style={{
-      background: gold
-        ? "linear-gradient(135deg,rgba(212,175,55,.12),rgba(212,175,55,.04))"
-        : "rgba(255,255,255,0.03)",
-      border: `1px solid ${gold ? "rgba(212,175,55,.3)" : "rgba(255,255,255,.07)"}`,
-      borderRadius: 16,
-      backdropFilter: "blur(20px)",
-      ...style,
-    }}>
+    <div
+      {...rest}
+      style={{
+        background: gold
+          ? "linear-gradient(135deg,rgba(212,175,55,.12),rgba(212,175,55,.04))"
+          : "rgba(255,255,255,0.03)",
+        border: `1px solid ${gold ? "rgba(212,175,55,.3)" : "rgba(255,255,255,.07)"}`,
+        borderRadius: 16,
+        backdropFilter: "blur(20px)",
+        ...style,
+      }}
+    >
       {children}
     </div>
   );
@@ -310,6 +313,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
         {/* header */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: 12,
           padding: "20px 24px",
           borderBottom: "1px solid rgba(212,175,55,.15)",
           background: "rgba(212,175,55,.05)",
@@ -335,7 +339,12 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
           </button>
         </div>
         {/* body */}
-        <div style={{ overflowY: "auto", padding: "24px", flex: 1 }}>
+        <div style={{
+          overflowY: "auto",
+          padding: "24px",
+          paddingBottom: "calc(32px + env(safe-area-inset-bottom, 0px))",
+          flex: 1,
+        }}>
           {children}
         </div>
       </div>
@@ -344,7 +353,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
 }
 
 // ── Search Bar ────────────────────────────────────────────────────────────────
-export function SearchBar({ value, onChange, placeholder = "ابحث...", style }) {
+export function SearchBar({ value, onChange, placeholder = "ابحث...", style, disabled = false, ...rest }) {
   const { dir } = useLang();
   const isRTL = dir === "rtl";
   return (
@@ -352,12 +361,14 @@ export function SearchBar({ value, onChange, placeholder = "ابحث...", style 
       <span style={{
         position: "absolute", top: "50%", right: isRTL ? 14 : "auto", left: isRTL ? "auto" : 14,
         transform: "translateY(-50%)",
-        color: "rgba(212,175,55,.6)", fontSize: 18, pointerEvents: "none",
+        color: disabled ? "rgba(148,163,184,.4)" : "rgba(212,175,55,.6)",
+        fontSize: 18, pointerEvents: "none",
       }}>🔍</span>
       <input
         value={value}
         onChange={onChange}
         placeholder={placeholder}
+        disabled={disabled}
         style={{
           width: "100%",
           background: "rgba(255,255,255,.04)",
@@ -370,15 +381,20 @@ export function SearchBar({ value, onChange, placeholder = "ابحث...", style 
           direction: dir,
           outline: "none",
           transition: "border-color .2s, box-shadow .2s",
+          opacity: disabled ? 0.55 : 1,
+          cursor: disabled ? "not-allowed" : "text",
         }}
         onFocus={(e) => {
+          if (disabled) return;
           e.target.style.borderColor = "rgba(212,175,55,.6)";
           e.target.style.boxShadow = "0 0 0 3px rgba(212,175,55,.1)";
         }}
         onBlur={(e) => {
+          if (disabled) return;
           e.target.style.borderColor = "rgba(212,175,55,.2)";
           e.target.style.boxShadow = "none";
         }}
+        {...rest}
       />
     </div>
   );

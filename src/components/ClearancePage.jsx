@@ -3,15 +3,62 @@ import { StatusBadge, GlassCard, SearchBar, Button } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
+import { printInvoice } from "./PrintTemplates";
 
 const tc = theme.colors;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REF_KEYS = [
+  "fileRef", "file_ref",
+  "fileId", "file_id",
+  "fileNumber", "file_number",
+  "fileNo", "file_no",
+  "ref", "reference",
+  "dossier", "dossierNo", "dossier_no",
+  "caseNumber", "case_number",
+  "folderNumber", "folder_number",
+];
+const TEXT_CLAMP_STYLE = { overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" };
+
+const formatFileReference = (client = {}) => {
+  for (const key of REF_KEYS) {
+    const value = client?.[key];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  const ticket = typeof client?.ticketNo === "string"
+    ? client.ticketNo.trim()
+    : typeof client?.ticket_no === "string"
+      ? client.ticket_no.trim()
+      : "";
+  if (ticket) return ticket;
+  const fallback = typeof client?.id === "string" ? client.id.trim() : "";
+  if (!fallback) return "—";
+  if (UUID_REGEX.test(fallback)) {
+    const start = fallback.slice(0, 4).toUpperCase();
+    const end   = fallback.slice(-4).toUpperCase();
+    return `#${start}-${end}`;
+  }
+  return fallback;
+};
 
 export default function ClearancePage({ store }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
-  const { clients, programs, getClientStatus, getClientTotalPaid, getClientLastPayment, agency } = store;
+  const {
+    clients,
+    programs,
+    payments,
+    getClientStatus,
+    getClientTotalPaid,
+    getClientLastPayment,
+    agency,
+  } = store;
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const invoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة فاتورة");
+  const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
 
   const data = React.useMemo(() => clients.map(c => {
     const prog      = programs.find(p => p.id === c.programId);
@@ -22,13 +69,19 @@ export default function ClearancePage({ store }) {
     const discount  = Math.max(0, officialPrice - salePrice);
     const status    = getClientStatus(c);
     const lastPmt   = getClientLastPayment(c.id);
-    return { ...c, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt };
+    const displayRef = formatFileReference(c);
+    const clientPayments = payments.filter(p => p.clientId === c.id);
+    return { ...c, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt, displayRef, clientPayments };
   }).filter(c => {
     const ok1 = filter === "all" || c.status === filter;
     const q   = search.toLowerCase();
-    const ok2 = !q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q);
+    const refMatch = (c.displayRef || "").toString().toLowerCase();
+    const ok2 = !q
+      || (c.name || "").toLowerCase().includes(q)
+      || (c.id || "").toLowerCase().includes(q)
+      || refMatch.includes(q);
     return ok1 && ok2;
-  }), [clients, programs, filter, search, getClientStatus, getClientTotalPaid, getClientLastPayment]);
+  }), [clients, programs, payments, filter, search, getClientStatus, getClientTotalPaid, getClientLastPayment]);
 
   const totals = {
     rev:  data.reduce((s,c)=>s+c.salePrice,0),
@@ -44,9 +97,22 @@ export default function ClearancePage({ store }) {
     unpaid:  t.unpaidFilter  || (lang === "fr" ? "Non payé": "لم يدفعوا"),
   };
 
+  const handlePrintInvoice = React.useCallback((client) => {
+    if (!client) return;
+    const program = client.prog || programs.find(p => p.id === client.programId);
+    const clientPayments = client.clientPayments || payments.filter(p => p.clientId === client.id);
+    printInvoice({
+      client,
+      program,
+      payments: clientPayments,
+      agency,
+      lang,
+    });
+  }, [agency, lang, payments, programs]);
+
   return (
-    <div className="page-body clearance-page" style={{ padding:"24px 32px" }}>
-      <div className="page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+    <div className="page-body clearance-page" style={{ padding:"0 32px 32px" }}>
+      <div className="page-header clearance-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
         <div>
           <h1 style={{ fontSize:21, fontWeight:800, color:"#f8fafc" }}>{t.clearanceReport}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>{t.clearanceDesc}</p>
@@ -86,59 +152,125 @@ export default function ClearancePage({ store }) {
       </div>
 
       {/* Filters */}
-      <div className="page-filters" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:14 }}>
+      <div className="page-filters filters-chips">
         {[
           { key:"all",     label:t.all },
           { key:"cleared", label:t.clearedFilter },
           { key:"partial", label:t.partialFilter },
           { key:"unpaid",  label:t.unpaidFilter },
         ].map(f => (
-          <button key={f.key} onClick={() => setFilter(f.key)} style={{
-            padding:"6px 14px", borderRadius:20,
-            background:filter===f.key?"rgba(212,175,55,.15)":"rgba(255,255,255,.04)",
-            border:`1px solid ${filter===f.key?t.gold:"rgba(255,255,255,.08)"}`,
-            color:filter===f.key?t.gold:t.grey,
-            fontSize:12, cursor:"pointer", fontFamily:"'Cairo',sans-serif",
-            fontWeight:filter===f.key?700:400,
-          }}>{f.label}</button>
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => setFilter(f.key)}
+            className={`filter-chip${filter===f.key ? " is-active" : ""}`}
+          >
+            {f.label}
+          </button>
         ))}
-        <SearchBar value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder={t.searchGeneral} style={{ flex:1, maxWidth:260 }} />
       </div>
 
-      <div className="table-scroll">
+      <div className="clearance-search">
+        <SearchBar
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          placeholder={t.searchGeneral}
+          style={{ width:"100%", maxWidth:360 }}
+        />
+      </div>
+
+      <div className="table-scroll clearance-table">
         {/* Table header */}
-        <div className="table-grid table-grid-head" style={{ display:"grid",
-          gridTemplateColumns:"90px 1fr 130px 110px 110px 100px 105px 120px",
+        <div className="table-grid table-grid-head clearance-grid" style={{ display:"grid",
+          gridTemplateColumns:tableColumns,
           gap:6, padding:"8px 14px",
           background:"rgba(212,175,55,.07)", borderRadius:8, marginBottom:6,
-          fontSize:11, fontWeight:700, color:t.grey }}>
-          {[t.fileId, t.name, t.program, t.salePrice, t.paid, t.remaining, t.status, t.lastReceipt].map(h => (
-            <span key={h}>{h}</span>
+          fontSize:11, fontWeight:700, color:t.grey,
+          width:"100%",
+          boxSizing:"border-box" }}>
+          {[t.fileId, t.name, t.program, t.salePrice, t.paid, t.remaining, t.status, t.lastReceipt, invoiceLabel].map(h => (
+            <span key={h} style={TEXT_CLAMP_STYLE}>{h}</span>
           ))}
         </div>
 
-        <div className="table-grid-body" style={{ display:"flex", flexDirection:"column", gap:3 }}>
+        <div className="table-grid-body" style={{ display:"flex", flexDirection:"column", gap:3, width:"100%" }}>
           {data.map((c,i) => (
-            <ClearRow key={c.id} client={c} index={i} />
+            <ClearRow
+              key={c.id}
+              client={c}
+              index={i}
+              gridTemplate={tableColumns}
+              invoiceLabel={invoiceLabel}
+              onPrintInvoice={handlePrintInvoice}
+            />
           ))}
         </div>
 
         {/* Totals */}
         {data.length > 0 && (
-          <div className="table-grid table-grid-foot" style={{ display:"grid",
-            gridTemplateColumns:"90px 1fr 130px 110px 110px 100px 105px 120px",
+          <div className="table-grid table-grid-foot clearance-grid" style={{ display:"grid",
+            gridTemplateColumns:tableColumns,
             gap:6, padding:"10px 14px", marginTop:8,
             background:"rgba(212,175,55,.08)", border:"1px solid rgba(212,175,55,.2)",
-            borderRadius:10, fontSize:12, fontWeight:700 }}>
-            <span style={{ color:t.gold }}>{t.totalLabel}</span>
-            <span style={{ color:t.grey }}>{data.length} {t.clients}</span>
+            borderRadius:10, fontSize:12, fontWeight:700,
+            width:"100%",
+            boxSizing:"border-box" }}>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{t.totalLabel}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.grey }}>{data.length} {t.clients}</span>
             <span />
-            <span style={{ color:t.gold }}>{totals.rev.toLocaleString("ar-MA")} د.م</span>
-            <span style={{ color:t.greenLight }}>{totals.paid.toLocaleString("ar-MA")} د.م</span>
-            <span style={{ color:t.warning }}>{totals.rem.toLocaleString("ar-MA")} د.م</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{totals.rev.toLocaleString("ar-MA")} د.م</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.greenLight }}>{totals.paid.toLocaleString("ar-MA")} د.م</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.warning }}>{totals.rem.toLocaleString("ar-MA")} د.م</span>
             <span />
-            <span style={{ color:t.danger }}>{t.discount}: {totals.disc.toLocaleString("ar-MA")}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.danger }}>{t.discount}: {totals.disc.toLocaleString("ar-MA")}</span>
+            <span />
+          </div>
+        )}
+      </div>
+
+      <div className="clearance-card-list">
+        {data.map((client, index) => (
+          <ClearCard
+            key={`card-${client.id}`}
+            client={client}
+            index={index}
+            invoiceLabel={invoiceLabel}
+            onPrintInvoice={handlePrintInvoice}
+            t={t}
+            lang={lang}
+          />
+        ))}
+
+        {data.length === 0 && (
+          <div className="clearance-empty-card">
+            {t.noResults || (lang === "fr" ? "Aucun résultat" : lang === "en" ? "No records found" : "لا توجد سجلات")}
+          </div>
+        )}
+
+        {data.length > 0 && (
+          <div className="clearance-card-summary">
+            <div className="summary-row">
+              <span>{t.totalLabel}</span>
+              <strong>{data.length} {t.clients}</strong>
+            </div>
+            <div className="summary-grid">
+              <div>
+                <p>{t.salePrice}</p>
+                <strong>{totals.rev.toLocaleString("ar-MA")} د.م</strong>
+              </div>
+              <div>
+                <p>{t.paid}</p>
+                <strong className="is-success">{totals.paid.toLocaleString("ar-MA")} د.م</strong>
+              </div>
+              <div>
+                <p>{t.remaining}</p>
+                <strong className="is-warning">{totals.rem.toLocaleString("ar-MA")} د.م</strong>
+              </div>
+              <div>
+                <p>{t.discount}</p>
+                <strong className="is-danger">{totals.disc.toLocaleString("ar-MA")} د.م</strong>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -146,40 +278,158 @@ export default function ClearancePage({ store }) {
   );
 }
 
-function ClearRow({ client, index }) {
+function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel }) {
   const [hov, setHov] = React.useState(false);
+  const contactLine = [client.phone ? `📞 ${client.phone}` : "", client.city ? `• ${client.city}` : ""].filter(Boolean).join(" ");
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.018}s` }}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      <div className="table-grid-row" style={{
+      <div className="table-grid-row clearance-grid" style={{
         display:"grid",
-        gridTemplateColumns:"90px 1fr 130px 110px 110px 100px 105px 120px",
+        gridTemplateColumns:gridTemplate || "repeat(9,minmax(0,1fr))",
         gap:6, padding:"10px 14px",
         background:hov?"rgba(212,175,55,.04)":"rgba(255,255,255,.02)",
         border:`1px solid ${hov?"rgba(212,175,55,.18)":"rgba(255,255,255,.04)"}`,
         borderRadius:10, transition:"all .15s", alignItems:"center",
+        width:"100%",
+        boxSizing:"border-box",
       }}>
-        <span style={{ fontSize:12, fontWeight:700, color:theme.colors.gold }}>{client.id}</span>
-        <div>
-          <p style={{ fontSize:13, fontWeight:700, color:"#f8fafc" }}>{client.name}</p>
-          <p style={{ fontSize:11, color:theme.colors.grey }}>📞 {client.phone}</p>
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700, color:theme.colors.gold }}>
+          {client.displayRef || client.id || "—"}
+        </span>
+        <div style={{ minWidth:0, overflow:"hidden" }}>
+          <p style={{ ...TEXT_CLAMP_STYLE, fontWeight:700, fontSize:13, color:"#f8fafc" }}>{client.name}</p>
+          <p style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>{contactLine || "—"}</p>
         </div>
-        <span style={{ fontSize:11, color:theme.colors.grey }}>{client.prog?.name||"—"}</span>
-        <span style={{ fontSize:12, fontWeight:700, color:theme.colors.gold }}>
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>{client.prog?.name||"—"}</span>
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700, color:theme.colors.gold }}>
           {client.salePrice.toLocaleString("ar-MA")} د.م
         </span>
-        <span style={{ fontSize:12, fontWeight:700, color:theme.colors.greenLight }}>
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700, color:theme.colors.greenLight }}>
           {client.paid.toLocaleString("ar-MA")} د.م
         </span>
-        <span style={{ fontSize:12, fontWeight:700,
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700,
           color:client.remaining>0?theme.colors.warning:theme.colors.greenLight }}>
           {client.remaining.toLocaleString("ar-MA")} د.م
         </span>
         <StatusBadge status={client.status} />
-        <span style={{ fontSize:11, color:theme.colors.grey }}>
+        <span style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>
           {client.lastPmt?.receiptNo||"—"}
         </span>
+        <div style={{ display:"flex", justifyContent:"center", width:"100%", minWidth:0 }}>
+          <button
+            type="button"
+            className="invoice-btn"
+            onClick={() => onPrintInvoice?.(client)}
+          >
+            {invoiceLabel}
+          </button>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const menuRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointer = (e) => {
+      if (!menuRef.current || menuRef.current.contains(e.target)) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointer);
+    return () => document.removeEventListener("pointerdown", handlePointer);
+  }, [menuOpen]);
+  const reference = client.displayRef || formatFileReference(client);
+  const phoneLine = client.phone ? client.phone.trim() : "";
+  const cityLine = client.city ? client.city.trim() : "";
+  const remainingColor = client.remaining > 0 ? "warning" : "success";
+  const moreLabel = t.moreOptions
+    || (lang === "fr" ? "Plus d'options" : lang === "en" ? "More options" : "المزيد");
+
+  return (
+    <div className="clear-card animate-fadeInUp" style={{ animationDelay:`${index*.02}s` }}>
+      <div className="clear-card-header">
+        <div className="clear-card-title">
+          <p className="clear-card-name" title={client.name || "—"}>{client.name || "—"}</p>
+          {phoneLine && <p className="clear-card-phone">📞 {phoneLine}</p>}
+          {cityLine && <p className="clear-card-meta">📍 {cityLine}</p>}
+        </div>
+        <div className="clear-card-actions" ref={menuRef}>
+          <button
+            type="button"
+            className={`clear-card-kebab${menuOpen ? " is-open" : ""}`}
+            aria-label={moreLabel}
+            onClick={() => setMenuOpen(o => !o)}
+          >
+            ⋮
+          </button>
+          {menuOpen && (
+            <div className="clear-card-menu">
+              <button type="button" onClick={() => { onPrintInvoice?.(client); setMenuOpen(false); }}>
+                {invoiceLabel}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="clear-card-info-row">
+        <div className="clear-card-info-item">
+          <span>{t.fileId}</span>
+          <strong title={reference}>{reference}</strong>
+        </div>
+        <div className="clear-card-info-item">
+          <span>{t.program}</span>
+          <strong title={client.prog?.name || "—"}>{client.prog?.name || "—"}</strong>
+        </div>
+      </div>
+
+      <div className="clear-card-finance">
+        <ClearCardField label={t.paid} value={`${client.paid.toLocaleString("ar-MA")} د.م`} highlight="success" />
+        <ClearCardField label={t.remaining} value={`${client.remaining.toLocaleString("ar-MA")} د.م`} highlight={remainingColor} />
+        <div className="clear-card-status-block">
+          <p className="clear-card-field-label">{t.status}</p>
+          <div className="clear-card-status-badge">
+            <StatusBadge status={client.status} />
+          </div>
+        </div>
+      </div>
+
+      <div className="clear-card-info-row">
+        <div className="clear-card-info-item">
+          <span>{t.salePrice}</span>
+          <strong>{client.salePrice.toLocaleString("ar-MA")} د.م</strong>
+        </div>
+        <div className="clear-card-info-item">
+          <span>{t.lastReceipt}</span>
+          <strong>{client.lastPmt?.receiptNo || "—"}</strong>
+        </div>
+      </div>
+
+      <div className="clear-card-footer">
+        <button
+          type="button"
+          className="invoice-btn"
+          onClick={() => onPrintInvoice?.(client)}
+        >
+          {invoiceLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ClearCardField({ label, value, highlight }) {
+  const colorClass = highlight ? ` is-${highlight}` : "";
+  return (
+    <div className="clear-card-field">
+      <p className="clear-card-field-label">{label}</p>
+      <p className={`clear-card-field-value${colorClass}`}>
+        {value}
+      </p>
     </div>
   );
 }

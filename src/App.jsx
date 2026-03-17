@@ -4,21 +4,25 @@ import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
+import { Menu as MenuIcon, Home, Users, ClipboardList, Receipt, Settings as SettingsIcon, Bell, History } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
 import ProgramsPage from "./components/ProgramsPage";
 import ClearancePage from "./components/ClearancePage";
+import NotificationsPage from "./components/NotificationsPage";
 import SettingsPage from "./components/SettingsPage";
+import ActivityLogPage from "./components/ActivityLogPage";
 import LoginPage from "./components/LoginPage";
 import SetPasswordPage from "./components/SetPasswordPage";
 import { Modal, Toast } from "./components/UI";
+import { formatNotificationMessage } from "./utils/notifications";
 import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 function AppInner({ agencyId, onLogout }) {
-  const { t, lang, dir } = useLang();
+  const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
   const store = useStore(agencyId, showToast);
@@ -27,10 +31,10 @@ function AppInner({ agencyId, onLogout }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [editingClient,  setEditingClient]  = React.useState(null);
 
-  const navigate = (target) => {
+  const navigate = React.useCallback((target) => {
     setPageHistory(h => [...h, page]);
     setPage(target);
-  };
+  }, [page]);
   const goBack = () => {
     setPageHistory(h => {
       const prev = [...h];
@@ -39,8 +43,26 @@ function AppInner({ agencyId, onLogout }) {
       return prev;
     });
   };
+  const handleBrandNavigate = React.useCallback(() => {
+    if (page === "dashboard") {
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      return;
+    }
+    navigate("dashboard");
+  }, [page, navigate]);
 
   const isRTL = lang === "ar";
+  const navItems = React.useMemo(() => ([
+    { id: "dashboard",     icon: Home,          label: t.dashboard },
+    { id: "clients",       icon: Users,         label: t.clients },
+    { id: "programs",      icon: ClipboardList, label: t.programs },
+    { id: "activity",      icon: History,       label: t.activityLog || t.recentActivity },
+    { id: "notifications", icon: Bell,          label: t.notifications, badge: store.unreadNotificationsCount },
+    { id: "clearance",     icon: Receipt,       label: t.clearance },
+    { id: "settings",      icon: SettingsIcon,  label: t.settings },
+  ]), [t, store.unreadNotificationsCount]);
 
   return (
     <>
@@ -58,6 +80,7 @@ function AppInner({ agencyId, onLogout }) {
       <div className="app-shell" style={{ display:"flex", direction:dir, minHeight:"100vh" }}>
         <Sidebar active={page} onNavigate={navigate} stats={store.stats}
           syncStatus={store.syncStatus}
+          notificationsCount={store.unreadNotificationsCount}
           onExport={() => { store.exportData(); showToast(t.exportSuccess, "success"); }}
           onImport={async(f)=>{ try{ await store.importData(f); showToast(t.importSuccess, "success"); }catch{ showToast(t.importError, "error"); } }}
           onLogout={onLogout} />
@@ -86,16 +109,59 @@ function AppInner({ agencyId, onLogout }) {
               {lang === "fr" ? "Synchronisation..." : "جاري المزامنة..."}
             </div>
           )}
-          {page !== "dashboard" && <BackBar onBack={goBack} label={t.back} dir={dir}
-            pageName={{ clients:t.clients, programs:t.programs, clearance:t.clearance, settings:t.settings }[page]} />}
+          {page !== "dashboard" && (
+            <BackBar
+              onBack={goBack}
+              label={t.back}
+              dir={dir}
+              actions={
+                <HeaderActions
+                  lang={lang}
+                  dir={dir}
+                  setLang={setLang}
+                  store={store}
+                  t={t}
+                  tr={tr}
+                  onNavigate={navigate}
+                  page={page}
+                  variant="compact"
+                />
+              }
+              pageName={{ clients:t.clients, programs:t.programs, notifications:t.notifications, activity:t.activityLog, clearance:t.clearance, settings:t.settings }[page]}
+            />
+          )}
 
-          {page==="dashboard"  && <ErrorBoundary><Dashboard store={store} onNavigate={navigate} onSelectClient={setSelectedClient} /></ErrorBoundary>}
+          {page==="dashboard"  && (
+            <ErrorBoundary>
+              <Dashboard
+                store={store}
+                onNavigate={navigate}
+                onSelectClient={setSelectedClient}
+                headerActions={
+                  <HeaderActions
+                    lang={lang}
+                    dir={dir}
+                    setLang={setLang}
+                    store={store}
+                    t={t}
+                    tr={tr}
+                    onNavigate={navigate}
+                    page={page}
+                  />
+                }
+                onBrandNavigate={handleBrandNavigate}
+              />
+            </ErrorBoundary>
+          )}
           {page==="clients"    && <ErrorBoundary><ClientsPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} /></ErrorBoundary>}
+          {page==="notifications" && <ErrorBoundary><NotificationsPage store={store} /></ErrorBoundary>}
+          {page==="activity" && <ErrorBoundary><ActivityLogPage store={store} /></ErrorBoundary>}
           {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} /></ErrorBoundary>}
           {page==="settings"   && <ErrorBoundary><SettingsPage store={store} onToast={showToast} /></ErrorBoundary>}
         </main>
       </div>
+      <MobileNav navItems={navItems} dir={dir} active={page} onNavigate={navigate} />
 
       <Modal open={!!selectedClient} onClose={()=>setSelectedClient(null)} title={t.clientFile} width={680}>
         {selectedClient && <ClientDetail client={selectedClient} store={store}
@@ -115,23 +181,351 @@ function AppInner({ agencyId, onLogout }) {
   );
 }
 
-function BackBar({ onBack, label, pageName, dir }) {
+function LangSwitcher({ lang, dir, setLang, className = "" }) {
+  const options = [
+    { code: "ar", label: "AR" },
+    { code: "fr", label: "FR" },
+    { code: "en", label: "EN" },
+  ];
+  const switcherClass = [
+    "lang-switcher",
+    `lang-switcher--${dir === "rtl" ? "rtl" : "ltr"}`,
+    className,
+  ].filter(Boolean).join(" ");
+  return (
+    <div className={switcherClass}>
+      {options.map(opt => (
+        <button
+          key={opt.code}
+          type="button"
+          onClick={() => setLang(opt.code)}
+          aria-pressed={lang === opt.code}
+          className={`lang-switcher-btn${lang === opt.code ? " is-active" : ""}`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function HeaderActions({ lang, dir, setLang, store, t, tr, onNavigate, page, variant = "full" }) {
+  const directionClass = dir === "rtl" ? "header-actions--rtl" : "header-actions--ltr";
+  const classes = ["header-actions", `header-actions--${variant}`, directionClass].join(" ");
+  return (
+    <div className={classes}>
+      <LangSwitcher
+        lang={lang}
+        dir={dir}
+        setLang={setLang}
+        className="header-actions__lang"
+      />
+      <NotificationBell
+        store={store}
+        dir={dir}
+        lang={lang}
+        tr={tr}
+        t={t}
+        onNavigate={onNavigate}
+        page={page}
+        size={variant === "compact" ? "sm" : "md"}
+      />
+    </div>
+  );
+}
+
+function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "md" }) {
+  const [open, setOpen] = React.useState(false);
+  const buttonRef = React.useRef(null);
+  const dropdownRef = React.useRef(null);
+  const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
+  const unreadCount = store.unreadNotificationsCount || 0;
+  const buttonSize = size === "sm" ? 36 : 44;
+  const iconSize = size === "sm" ? 16 : 18;
+  const defaultAlign = React.useMemo(() => (dir === "rtl" ? "start" : "end"), [dir]);
+  const [dropdownAlign, setDropdownAlign] = React.useState(defaultAlign);
+
+  const latestNotifications = React.useMemo(() => {
+    const list = (store.notifications || []).filter((n) => !n.isArchived);
+    list.sort((a, b) => {
+      const aDate = new Date(a.createdAt || 0).getTime();
+      const bDate = new Date(b.createdAt || 0).getTime();
+      return bDate - aDate;
+    });
+    return list.slice(0, 5);
+  }, [store.notifications]);
+
+  const formatRelativeTime = React.useCallback((value) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    try {
+      const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+      const diffMs = date.getTime() - Date.now();
+      const diffMinutes = Math.round(diffMs / 60000);
+      if (Math.abs(diffMinutes) < 60) {
+        return rtf.format(diffMinutes, "minute");
+      }
+      const diffHours = Math.round(diffMs / 3600000);
+      if (Math.abs(diffHours) < 24) {
+        return rtf.format(diffHours, "hour");
+      }
+      const diffDays = Math.round(diffMs / 86400000);
+      return rtf.format(diffDays, "day");
+    } catch (err) {
+      const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+      if (diff < 60) return `${diff}m`;
+      const h = Math.floor(diff / 60);
+      if (h < 24) return `${h}h`;
+      const d = Math.floor(h / 24);
+      return `${d}d`;
+    }
+  }, [locale]);
+
+  React.useEffect(() => {
+    setDropdownAlign(defaultAlign);
+  }, [defaultAlign]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handlePointer = (event) => {
+      if (buttonRef.current?.contains(event.target) || dropdownRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKey = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  React.useEffect(() => {
+    setOpen(false);
+  }, [page]);
+
+  React.useEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const center = rect.left + rect.width / 2;
+    const nextAlign = center < viewportWidth / 2 ? "start" : "end";
+    setDropdownAlign(nextAlign);
+  }, [open]);
+
+  const messageFor = React.useCallback(
+    (notification) =>
+      formatNotificationMessage(notification, {
+        programs: store.programs,
+        activeClients: store.activeClients,
+        getClientStatus: store.getClientStatus,
+        tr,
+      }),
+    [store.programs, store.activeClients, store.getClientStatus, tr]
+  );
+
+  const handleToggle = () => setOpen((prev) => !prev);
+  const handleViewAll = () => {
+    onNavigate("notifications");
+    setOpen(false);
+  };
+  const handleMarkAll = () => {
+    if (store.markAllNotificationsRead) store.markAllNotificationsRead();
+  };
+
+  const badgeOffset = size === "sm" ? -4 : -5;
+  const badgePosition = dir === "rtl"
+    ? { left: badgeOffset, right: "auto" }
+    : { right: badgeOffset, left: "auto" };
+  const dropdownPositionStyle = dropdownAlign === "start"
+    ? { left: 0, right: "auto" }
+    : { right: 0, left: "auto" };
+
+  return (
+    <div className={`notification-bell notification-bell--${dir}`}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="notification-bell__button"
+        aria-label={t.notifications || "Notifications"}
+        aria-expanded={open}
+        onClick={handleToggle}
+        style={{ width: buttonSize, height: buttonSize }}
+      >
+        <Bell size={iconSize} color="#f8fafc" />
+        {unreadCount > 0 && (
+          <span className="notification-bell__badge" style={{ top: badgeOffset, ...badgePosition }}>
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          ref={dropdownRef}
+          className="notification-dropdown"
+          style={dropdownPositionStyle}
+        >
+          <div className="notification-dropdown__list">
+            {latestNotifications.length === 0 ? (
+              <p style={{ fontSize: 13, color: "rgba(248,250,252,.65)", margin: 0 }}>
+                {t.noNotifications || "لا توجد إشعارات"}
+              </p>
+            ) : (
+              latestNotifications.map((notification) => (
+                <div
+                  key={notification.id}
+                  className={`notification-dropdown__item${notification.isRead ? "" : " is-unread"}`}
+                >
+                  <div className="notification-dropdown__title-row">
+                    <p className="notification-dropdown__title">
+                      {notification.title || t.notificationsDefaultTitle || "تنبيه"}
+                    </p>
+                    {!notification.isRead && <span className="notification-dot" />}
+                  </div>
+                  <p className="notification-dropdown__message">
+                    {messageFor(notification)}
+                  </p>
+                  <span className="notification-dropdown__time">
+                    {formatRelativeTime(notification.createdAt)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="notification-dropdown__actions">
+            <button type="button" className="notification-dropdown__cta" onClick={handleViewAll}>
+              {t.viewNotifications || "عرض الإشعارات"}
+            </button>
+            <button
+              type="button"
+              className="notification-dropdown__cta notification-dropdown__cta--ghost"
+              onClick={handleMarkAll}
+              disabled={!unreadCount}
+            >
+              {t.markAllRead || "وضع الكل كمقروء"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MobileNav({ navItems, dir, active, onNavigate }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (!ref.current || ref.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [open]);
+  React.useEffect(() => { setOpen(false); }, [active]);
+
+  const baseOffsets = [
+    { x: 78,  y: -24 },
+    { x: 110, y: -72 },
+    { x: 98,  y: -130 },
+    { x: 66,  y: -178 },
+    { x: 28,  y: -220 },
+    { x: -10, y: -260 },
+  ];
+  const offsets = dir === "rtl"
+    ? baseOffsets.map(o => ({ x: -o.x, y: o.y }))
+    : baseOffsets;
+
+  return (
+    <div ref={ref} className={`mobile-nav mobile-nav--${dir === "rtl" ? "rtl" : "ltr"}`}>
+      <div className="mobile-nav-items">
+        {navItems.map((item, index) => {
+          const Icon = item.icon;
+          const offset = offsets[index] || { x: 0, y: 0 };
+          const openStyle = {
+            transform: open
+              ? `translate(${offset.x}px, ${offset.y}px) scale(1)`
+              : "translate(0, 0) scale(0.7)",
+            opacity: open ? 1 : 0,
+            pointerEvents: open ? "auto" : "none",
+            transitionDelay: open ? `${index * 45}ms` : "0ms",
+          };
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`mobile-nav-item${active === item.id ? " is-active" : ""}`}
+              style={openStyle}
+              onClick={() => { onNavigate(item.id); setOpen(false); }}
+            >
+              <span className="mobile-nav-bubble" style={{ position:"relative" }}>
+                <Icon size={18} color="#fff" strokeWidth={2} />
+                {item.badge > 0 && (
+                  <span style={{
+                    position:"absolute",
+                    top:-6,
+                    [dir === "rtl" ? "left" : "right"]:-6,
+                    minWidth:16,
+                    height:16,
+                    borderRadius:999,
+                    background:"#d4af37",
+                    color:"#060d1a",
+                    fontSize:10,
+                    fontWeight:800,
+                    display:"flex",
+                    alignItems:"center",
+                    justifyContent:"center",
+                  }}>
+                    {item.badge > 9 ? "9+" : item.badge}
+                  </span>
+                )}
+              </span>
+              <span className="mobile-nav-label">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className={`mobile-nav-toggle${open ? " is-open" : ""}`}
+        onClick={() => setOpen(v => !v)}
+        aria-label="Toggle navigation"
+        aria-expanded={open}
+      >
+        <MenuIcon size={20} color="#fff" strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
+function BackBar({ onBack, label, pageName, dir, actions }) {
   const separator = dir === "rtl" ? "‹" : "›";
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 28px",
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"10px 28px",
       background:"rgba(6,13,26,.85)", borderBottom:"1px solid rgba(212,175,55,.1)",
-      backdropFilter:"blur(10px)", position:"sticky", top:0, zIndex:50 }}>
-      <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6,
-        background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
-        borderRadius:10, padding:"6px 14px", color:"#d4af37",
-        fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif",
-        transition:"all .2s" }}
-        onMouseEnter={e=>e.currentTarget.style.background="rgba(212,175,55,.2)"}
-        onMouseLeave={e=>e.currentTarget.style.background="rgba(212,175,55,.1)"}>
-        {label}
-      </button>
-      <span style={{ fontSize:12, color:"rgba(148,163,184,.4)" }}>{separator}</span>
-      <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{pageName}</span>
+      backdropFilter:"blur(10px)", position:"sticky", top:0, zIndex:40 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+        <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6,
+          background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
+          borderRadius:10, padding:"6px 14px", color:"#d4af37",
+          fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif",
+          transition:"all .2s" }}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(212,175,55,.2)"}
+          onMouseLeave={e=>e.currentTarget.style.background="rgba(212,175,55,.1)"}>
+          {label}
+        </button>
+        <span style={{ fontSize:12, color:"rgba(148,163,184,.4)" }}>{separator}</span>
+        <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{pageName}</span>
+      </div>
+      {actions && (
+        <div style={{ flexShrink:0 }}>
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

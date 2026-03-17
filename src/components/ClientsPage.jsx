@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { SearchBar, Button, StatusBadge, EmptyState, Modal } from "./UI";
+import { SearchBar, Button, StatusBadge, EmptyState, Modal, GlassCard } from "./UI";
+import TransferSheet from "./TransferSheet";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
 import MRZReader from "./MRZReader";
@@ -12,13 +13,49 @@ import { useDropdownPosition } from "../hooks/useDropdownPosition";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REF_KEYS = [
+  "fileRef", "file_ref",
+  "fileId", "file_id",
+  "fileNumber", "file_number",
+  "fileNo", "file_no",
+  "ref", "reference",
+  "dossier", "dossierNo", "dossier_no",
+  "caseNumber", "case_number",
+  "folderNumber", "folder_number",
+];
+
+const formatClientReference = (client = {}) => {
+  for (const key of REF_KEYS) {
+    const value = client?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const ticket = typeof client?.ticketNo === "string" ? client.ticketNo.trim() : "";
+  if (ticket) return ticket;
+  const fallback = typeof client?.id === "string" ? client.id.trim() : "";
+  if (!fallback) return "—";
+  if (UUID_REGEX.test(fallback)) {
+    const start = fallback.slice(0, 4).toUpperCase();
+    const end = fallback.slice(-4).toUpperCase();
+    return `#${start}-${end}`;
+  }
+  return fallback;
+};
+
+const startsWithIcon = (text, icon) => {
+  if (typeof text !== "string" || typeof icon !== "string") return false;
+  const normalizedIcon = icon.trim();
+  if (!normalizedIcon) return false;
+  return text.trimStart().startsWith(normalizedIcon);
+};
 
 export default function ClientsPage({ store, onToast }) {
   const { t, tr, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { activeClients, archivedClients, programs,
           getClientStatus, getClientTotalPaid,
-          deleteClient, archiveClient, archiveClients, restoreClient } = store;
+          deleteClient, archiveClient, archiveClients, restoreClient,
+          updateClient, recordActivity } = store;
 
   const [tab,        setTab]        = React.useState("active");
   const [search,     setSearch]     = React.useState("");
@@ -32,6 +69,8 @@ export default function ClientsPage({ store, onToast }) {
   const [showMRZ,     setShowMRZ]     = React.useState(false);
   const [mrzPrefill,  setMrzPrefill]  = React.useState(null);
   const [showImport,  setShowImport]  = React.useState(false);
+  const [transferTargets, setTransferTargets] = React.useState([]);
+  const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
 
   // Reset tab-specific state when switching tabs
   const switchTab = (newTab) => {
@@ -39,6 +78,8 @@ export default function ClientsPage({ store, onToast }) {
     setSearch("");
     setFilter("all");
     setFilterProg("all");
+    setTransferTargets([]);
+    setTransferSheetOpen(false);
     exitSelectMode();
   };
 
@@ -65,18 +106,29 @@ export default function ClientsPage({ store, onToast }) {
   const toggleCheck = (id) => setCheckedIds(prev => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
-  const toggleAll   = () => setCheckedIds(
-    checkedIds.size === filtered.length ? new Set() : new Set(filtered.map(c => c.id))
-  );
-  const exitSelectMode = () => { setSelectMode(false); setCheckedIds(new Set()); };
+  const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
+  const selectAllFiltered = React.useCallback(() => {
+    if (!filtered.length) return;
+    setCheckedIds(new Set(filtered.map(c => c.id)));
+  }, [filtered, setCheckedIds]);
+  const exitSelectMode = React.useCallback(() => {
+    setSelectMode(false);
+    clearSelection();
+    setTransferTargets([]);
+    setTransferSheetOpen(false);
+  }, [clearSelection, setSelectMode, setTransferTargets, setTransferSheetOpen]);
 
-  const handleBulkDelete = () => {
-    if (!checkedIds.size) return;
-    if (!window.confirm(tr("confirmBulkDelete", { count: checkedIds.size }))) return;
-    checkedIds.forEach(id => deleteClient(id));
-    onToast(tr("bulkDeleteSuccess", { count: checkedIds.size }), "info");
+  const handleBulkDelete = React.useCallback(() => {
+    const ids = Array.from(checkedIds);
+    if (!ids.length) return;
+    if (!window.confirm(tr("confirmBulkDelete", { count: ids.length }))) return;
+    ids.forEach(id => deleteClient(id));
+    if (typeof recordActivity === "function") {
+      recordActivity("client_bulk_delete", tr("bulkDeleteSuccess", { count: ids.length }), "");
+    }
+    onToast(tr("bulkDeleteSuccess", { count: ids.length }), "info");
     exitSelectMode();
-  };
+  }, [checkedIds, deleteClient, exitSelectMode, onToast, tr, recordActivity]);
 
   const handleBulkArchive = () => {
     if (!checkedIds.size) return;
@@ -84,6 +136,14 @@ export default function ClientsPage({ store, onToast }) {
     archiveClients([...checkedIds]);
     onToast(tr("bulkArchiveSuccess", { count: checkedIds.size }), "success");
     exitSelectMode();
+  };
+
+  const handleTransferSelected = () => {
+    if (!checkedIds.size) {
+      onToast(t.noClientsSelected || "يرجى اختيار معتمر واحد على الأقل", "info");
+      return;
+    }
+    openTransferSheet([...checkedIds]);
   };
 
   const handleSingleDelete = (client) => {
@@ -107,6 +167,7 @@ export default function ClientsPage({ store, onToast }) {
   };
 
   const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
+  const hasSelection = checkedIds.size > 0;
 
   const handleMRZResult = (mrzData) => {
     setMrzPrefill({
@@ -124,6 +185,76 @@ export default function ClientsPage({ store, onToast }) {
     setShowAdd(true);
   };
 
+  const programOccupancy = React.useMemo(() => {
+    const counts = new Map();
+    activeClients.forEach(c => {
+      if (!c.programId) return;
+      counts.set(c.programId, (counts.get(c.programId) || 0) + 1);
+    });
+    return counts;
+  }, [activeClients]);
+
+  const [isMobileCardLayout, setIsMobileCardLayout] = React.useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 720;
+  });
+  React.useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => setIsMobileCardLayout(window.innerWidth <= 720);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const transferClients = React.useMemo(
+    () => transferTargets
+      .map(id => activeClients.find(c => c.id === id))
+      .filter(Boolean),
+    [transferTargets, activeClients]
+  );
+
+  const openTransferSheet = React.useCallback((ids) => {
+    if (!ids.length) return;
+    setTransferTargets(ids);
+    setTransferSheetOpen(true);
+  }, []);
+
+  const closeTransferSheet = React.useCallback(() => {
+    setTransferTargets([]);
+    setTransferSheetOpen(false);
+  }, []);
+
+  const handleTransferConfirm = React.useCallback((programId) => {
+    const destination = programs.find(p => p.id === programId);
+    const notFoundMsg = t.programNotFound || "البرنامج غير متاح";
+    const noSelectionMsg = t.noClientsSelected || "لم يتم اختيار أي معتمر";
+    const fullMsg = t.programFull || "البرنامج ممتلئ";
+    if (!destination) {
+      onToast(notFoundMsg, "error");
+      return;
+    }
+    const clientsToMove = transferTargets
+      .map(id => activeClients.find(c => c.id === id))
+      .filter(Boolean);
+    if (!clientsToMove.length) {
+      onToast(noSelectionMsg, "info");
+      closeTransferSheet();
+      return;
+    }
+    const capacity = destination.seats || Number.MAX_SAFE_INTEGER;
+    const currentCount = programOccupancy.get(programId) || 0;
+    if (currentCount + clientsToMove.length > capacity) {
+      onToast(fullMsg, "error");
+      return;
+    }
+    clientsToMove.forEach(client => {
+      if (!client) return;
+      updateClient(client.id, { ...client, programId });
+    });
+    onToast(tr("transferSuccess", { count: clientsToMove.length, program: destination.name }), "success");
+    closeTransferSheet();
+    exitSelectMode();
+  }, [programs, transferTargets, activeClients, programOccupancy, updateClient, onToast, tr, t, closeTransferSheet, exitSelectMode]);
+
   return (
     <div className="page-body clients-page" style={{ padding:"24px 32px" }}>
       {/* Header */}
@@ -135,41 +266,16 @@ export default function ClientsPage({ store, onToast }) {
           </p>
         </div>
         {tab === "active" && (
-          <div className="page-actions" style={{ display:"flex", gap:8 }}>
-            {!selectMode ? (
-              <>
-                <Button variant="ghost" icon="☑️" onClick={() => setSelectMode(true)}>
-                  {t.selectMultiple}
-                </Button>
-                <Button variant="primary" icon="🛂" onClick={() => setShowMRZ(true)}>
-                  + {t.mrzScan}
-                </Button>
-                <Button variant="ghost" icon="📊" onClick={() => setShowImport(true)}>
-                  {t.importExcel}
-                </Button>
-                <Button variant="primary" icon="➕" onClick={() => setShowAdd(true)}>
-                  {t.addClient}
-                </Button>
-              </>
-            ) : (
-              <>
-                <span style={{ fontSize:13, color:tc.gold, alignSelf:"center", fontWeight:700 }}>
-                  {tr("selectedCount", { count: checkedIds.size })}
-                </span>
-                <Button variant="secondary" onClick={toggleAll}>
-                  {allChecked ? t.deselectAll : t.selectAll}
-                </Button>
-                <Button variant="warning"
-                  disabled={!checkedIds.size} onClick={handleBulkArchive}>
-                  {t.archiveSelected}
-                </Button>
-                <Button variant="danger" icon="🗑️"
-                  disabled={!checkedIds.size} onClick={handleBulkDelete}>
-                  {t.deleteSelected}
-                </Button>
-                <Button variant="ghost" onClick={exitSelectMode}>{t.cancel}</Button>
-              </>
-            )}
+          <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Button variant="primary" icon="🛂" onClick={() => setShowMRZ(true)}>
+              + {t.mrzScan}
+            </Button>
+            <Button variant="ghost" icon="📊" onClick={() => setShowImport(true)}>
+              {t.importExcel}
+            </Button>
+            <Button variant="primary" icon="➕" onClick={() => setShowAdd(true)}>
+              {t.addClient}
+            </Button>
           </div>
         )}
       </div>
@@ -181,17 +287,22 @@ export default function ClientsPage({ store, onToast }) {
         {[
           { key:"active",   icon:"👥", label:`${t.activeTab} (${activeClients.length})` },
           { key:"archived", icon:"📦", label:`${t.archiveTab} (${archivedClients.length})` },
-        ].map(({ key, icon, label }) => (
-          <button key={key} onClick={() => switchTab(key)} style={{
-            padding:"7px 18px", borderRadius:9, fontSize:13, fontWeight:tab===key?700:400,
-            background:tab===key?"rgba(212,175,55,.15)":"transparent",
-            border:tab===key?"1px solid rgba(212,175,55,.35)":"1px solid transparent",
-            color:tab===key?tc.gold:tc.grey, cursor:"pointer",
-            fontFamily:"'Cairo',sans-serif", transition:"all .2s",
-          }}>
-            {icon} {label}
-          </button>
-        ))}
+        ].map(({ key, icon, label }) => {
+          const showIcon = icon && !startsWithIcon(label, icon);
+          return (
+            <button key={key} onClick={() => switchTab(key)} style={{
+              padding:"7px 18px", borderRadius:9, fontSize:13, fontWeight:tab===key?700:400,
+              background:tab===key?"rgba(212,175,55,.15)":"transparent",
+              border:tab===key?"1px solid rgba(212,175,55,.35)":"1px solid transparent",
+              color:tab===key?tc.gold:tc.grey, cursor:"pointer",
+              fontFamily:"'Cairo',sans-serif", transition:"all .2s",
+              display:"inline-flex", alignItems:"center", gap:6,
+            }}>
+              {showIcon && <span>{icon}</span>}
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Filters — active tab only */}
@@ -229,26 +340,99 @@ export default function ClientsPage({ store, onToast }) {
         </div>
       )}
 
-      <SearchBar value={search} onChange={e=>setSearch(e.target.value)}
-        placeholder={t.searchClients} style={{ marginBottom:18, maxWidth:460 }} />
+      <div style={{
+        display:"flex",
+        flexWrap:"wrap",
+        gap:12,
+        alignItems:"center",
+        marginBottom: tab === "active" ? (selectMode ? 8 : 18) : 18,
+      }}>
+        <SearchBar
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          placeholder={t.searchClients}
+          style={{ flex:"1 1 320px", minWidth:220, maxWidth:520 }}
+        />
+        {tab === "active" && filtered.length > 0 && (
+          <Button
+            variant={selectMode ? "warning" : "ghost"}
+            size="sm"
+            icon="☑️"
+            disabled={!filtered.length}
+            onClick={() => {
+              if (selectMode) {
+                exitSelectMode();
+              } else {
+                clearSelection();
+                setSelectMode(true);
+              }
+            }}
+          >
+            {selectMode ? (t.finishSelection || t.cancel) : t.selectMultiple}
+          </Button>
+        )}
+      </div>
 
-      {/* Select all bar — active tab */}
-      {tab === "active" && selectMode && filtered.length > 0 && (
-        <div style={{ display:"flex", alignItems:"center", gap:12,
-          padding:"10px 16px", marginBottom:10,
-          background:"rgba(212,175,55,.06)", border:"1px solid rgba(212,175,55,.2)",
-          borderRadius:10 }}>
-          <input type="checkbox" checked={allChecked} onChange={toggleAll}
-            style={{ width:16, height:16, accentColor:tc.gold, cursor:"pointer" }} />
-          <span style={{ fontSize:13, color:tc.gold, fontWeight:600 }}>
-            {tr("selectAllCount", { count: filtered.length })}
-          </span>
-          {checkedIds.size > 0 && (
-            <span style={{ fontSize:12, color:tc.grey }}>
-              — {tr("selectedCount", { count: checkedIds.size })}
+      {tab === "active" && selectMode && (
+        <GlassCard style={{
+          padding:"12px 16px",
+          marginBottom:14,
+        }}>
+          <div style={{
+            display:"flex",
+            flexWrap:"wrap",
+            gap:12,
+            alignItems:"center",
+            justifyContent:"space-between",
+          }}>
+            <span style={{ fontSize:13, color:tc.gold, fontWeight:700 }}>
+              {tr("selectedCount", { count: checkedIds.size })}
             </span>
-          )}
-        </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={selectAllFiltered}
+                disabled={allChecked || filtered.length === 0}
+              >
+                {t.selectAll}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearSelection}
+                disabled={!hasSelection}
+              >
+                {t.deselectAll}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleTransferSelected}
+                disabled={!hasSelection}
+              >
+                {t.transferSelected}
+              </Button>
+              {hasSelection && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  icon="🗑️"
+                  onClick={handleBulkDelete}
+                >
+                  {t.deleteSelected}
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={exitSelectMode}
+              >
+                {t.cancel}
+              </Button>
+            </div>
+          </div>
+        </GlassCard>
       )}
 
       {/* List */}
@@ -269,19 +453,22 @@ export default function ClientsPage({ store, onToast }) {
                 paid={paid} remaining={remaining}
                 status={status} index={i}
                 isRTL={isRTL} lang={lang}
+                isMobileCard={isMobileCardLayout}
                 editLabel={t.editLabel}
                 deleteLabel={t.deleteLabel}
                 archiveLabel={t.archiveClient}
                 restoreLabel={t.restoreClient}
                 isArchived={tab === "archived"}
                 selectMode={selectMode && tab === "active"}
+                showCheckbox={tab === "active" && selectMode}
                 isChecked={checkedIds.has(c.id)}
                 onCheck={() => toggleCheck(c.id)}
-                onClick={() => { if (selectMode && tab === "active") { toggleCheck(c.id); return; } setSelected(c); }}
+                onClick={() => setSelected(c)}
                 onEdit={() => setEditing(c)}
                 onDelete={() => tab === "archived" ? handleSingleDelete(c) : handleSingleDelete(c)}
                 onArchive={() => handleSingleArchive(c)}
                 onRestore={() => handleSingleRestore(c)}
+                onTransfer={tab === "active" ? () => openTransferSheet([c.id]) : undefined}
               />
             );
           })}
@@ -325,12 +512,21 @@ export default function ClientsPage({ store, onToast }) {
           />
         )}
       </Modal>
+      <TransferSheet
+        open={transferSheetOpen}
+        onClose={closeTransferSheet}
+        clients={transferClients}
+        programs={programs}
+        occupancy={programOccupancy}
+        onConfirm={handleTransferConfirm}
+      />
     </div>
   );
 }
 
 // ── FilterChip ────────────────────────────────────────────────────────────────
 const FilterChip = React.memo(function FilterChip({ icon, label, active, onClick }) {
+  const showIcon = icon && !startsWithIcon(label, icon);
   return (
     <button onClick={onClick} style={{
       display:"inline-flex", alignItems:"center", gap:6,
@@ -339,14 +535,17 @@ const FilterChip = React.memo(function FilterChip({ icon, label, active, onClick
       border:`1px solid ${active?"rgba(212,175,55,.4)":"rgba(255,255,255,.08)"}`,
       color:active?tc.gold:tc.grey, fontSize:12, fontWeight:active?700:400,
       cursor:"pointer", fontFamily:"'Cairo',sans-serif", transition:"all .2s",
-    }}>{icon} {label}</button>
+    }}>
+      {showIcon && <span>{icon}</span>}
+      <span>{label}</span>
+    </button>
   );
 });
 
 // ── ClientRow ─────────────────────────────────────────────────────────────────
 const ClientRow = React.memo(function ClientRow({ client, program, paid, remaining, status, onClick,
-  index, isRTL, lang, selectMode, isChecked, onCheck, onEdit, onDelete, onArchive, onRestore,
-  editLabel, deleteLabel, archiveLabel, restoreLabel, isArchived }) {
+  index, isRTL, lang, selectMode, showCheckbox, isChecked, onCheck, onEdit, onDelete, onArchive, onRestore,
+  onTransfer, editLabel, deleteLabel, archiveLabel, restoreLabel, isArchived, isMobileCard }) {
   const { t } = useLang();
   const [hov,      setHov]      = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -372,25 +571,174 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
     return () => document.removeEventListener("mousedown", handler);
   }, [menuOpen]);
 
+  const reference = formatClientReference(client);
+  const phoneLine = client.phone ? client.phone.trim() : "";
+  const cityLine  = client.city ? client.city.trim() : "";
+  const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
+  const handleRowClick = () => {
+    if (selectMode && showCheckbox) {
+      onCheck();
+      return;
+    }
+    onClick();
+  };
+
+  const menuNode = (!showCheckbox && menuOpen) ? createPortal(
+    <div
+      ref={menuRef}
+      style={{
+        position:"fixed",
+        top: menuPos.top,
+        left: menuPos.left,
+        visibility: menuPos.visibility,
+        zIndex:9999,
+        background:"rgba(20,30,50,0.96)",
+        border:"1px solid rgba(212,175,55,.3)",
+        borderRadius:12,
+        boxShadow:"0 10px 25px rgba(0,0,0,0.35)",
+        minWidth:160,
+        overflow:"hidden",
+      }}>
+      {!isArchived && (
+        <MenuBtn
+          icon="✏️" label={editLabel || t.editLabel}
+          onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit(); }}
+          color="#f8fafc" hoverBg="rgba(212,175,55,.1)"
+          isRTL={isRTL} border />
+      )}
+      {!isArchived && onTransfer && (
+        <MenuBtn
+          icon="🔁" label={t.transferClient || "نقل إلى برنامج"}
+          onClick={e => { e.stopPropagation(); setMenuOpen(false); onTransfer(); }}
+          color={tc.gold} hoverBg="rgba(212,175,55,.15)"
+          isRTL={isRTL} border />
+      )}
+      {!isArchived && (
+        <MenuBtn
+          icon="📦" label={archiveLabel || t.archiveClient}
+          onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive(); }}
+          color={tc.warning} hoverBg="rgba(245,158,11,.1)"
+          isRTL={isRTL} border />
+      )}
+      {isArchived && (
+        <MenuBtn
+          icon="♻️" label={restoreLabel || t.restoreClient}
+          onClick={e => { e.stopPropagation(); setMenuOpen(false); onRestore(); }}
+          color={tc.greenLight} hoverBg="rgba(34,197,94,.1)"
+          isRTL={isRTL} border />
+      )}
+      <MenuBtn
+        icon="🗑️" label={deleteLabel || t.deleteLabel}
+        onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
+        color={tc.danger} hoverBg="rgba(239,68,68,.12)"
+        isRTL={isRTL} />
+    </div>,
+    document.body
+  ) : null;
+
+  if (isMobileCard) {
+    return (
+      <div className="animate-fadeInUp client-card-mobile-wrapper" style={{ animationDelay:`${index*.025}s` }}>
+        <div
+          className={`client-card-mobile${isChecked ? " is-selected" : ""}`}
+          onClick={handleRowClick}
+        >
+          <div className="client-card-mobile-heading">
+            <div className="client-card-mobile-main">
+              <span className="client-card-mobile-index">{index + 1}</span>
+              <div className="client-card-mobile-avatar">
+                {(client.name || "?")[0]}
+              </div>
+              <div className="client-card-mobile-texts">
+                <p className="client-card-mobile-name-text" title={client.name || "—"}>
+                  {client.name || "—"}
+                </p>
+                {phoneLine && <p className="client-card-mobile-phone">📞 {phoneLine}</p>}
+              </div>
+            </div>
+            <div className="client-card-mobile-action" onClick={e => e.stopPropagation()}>
+              {showCheckbox ? (
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={(e) => { e.stopPropagation(); onCheck(); }}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width:20, height:20, accentColor:tc.gold }}
+                />
+              ) : (
+                <button
+                  ref={btnRef}
+                  type="button"
+                  className="client-card-mobile-kebab"
+                  onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
+                >
+                  ···
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="client-card-mobile-subinfo">
+            <span>{reference}</span>
+            <span>•</span>
+            <span>{program?.name || "—"}</span>
+          </div>
+          <div className="client-card-mobile-finance">
+            <div>
+              <span>{t.paid}</span>
+              <strong className="is-success">{formatCurrency(paid, lang)}</strong>
+            </div>
+            <div>
+              <span>{t.remaining}</span>
+              <strong className={remaining>0 ? "is-warning" : "is-success"}>
+                {formatCurrency(remaining, lang)}
+              </strong>
+            </div>
+            <div className="client-card-mobile-status">
+              <StatusBadge status={status} />
+            </div>
+          </div>
+          <div className="client-card-mobile-tags">
+            {cityLine && <span>📍 {cityLine}</span>}
+            {ticketLine && <span>🎫 {ticketLine}</span>}
+          </div>
+        </div>
+        {menuNode}
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.025}s` }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
       <div style={{
-        display:"flex", alignItems:"center", gap:10, padding:"11px 14px",
+        display:"flex", alignItems:"center", gap:12, padding:"11px 14px",
         background:isChecked?"rgba(212,175,55,.1)":hov?"rgba(212,175,55,.05)":"rgba(255,255,255,.02)",
         border:`1px solid ${isChecked?"rgba(212,175,55,.4)":hov?"rgba(212,175,55,.24)":"rgba(255,255,255,.05)"}`,
         borderRadius:12, transition:"all .18s", position:"relative",
       }}>
 
-        {/* Checkbox */}
-        {selectMode && (
-          <input type="checkbox" checked={isChecked}
-            onChange={e => { e.stopPropagation(); onCheck(); }}
-            onClick={e => e.stopPropagation()}
-            style={{ width:18, height:18, accentColor:tc.gold, cursor:"pointer", flexShrink:0 }} />
-        )}
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+          <span style={{ width:22, textAlign:"center", fontSize:12, color:tc.grey, fontWeight:600 }}>
+            {index + 1}
+          </span>
+          <div style={{ width:36, height:36, borderRadius:10, flexShrink:0,
+            background:"linear-gradient(135deg,rgba(212,175,55,.22),rgba(212,175,55,.06))",
+            border:"1px solid rgba(212,175,55,.2)",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:15, fontWeight:700, color:tc.gold }}>
+            {(client.name || "?")[0]}
+          </div>
+          {showCheckbox && (
+            <input
+              type="checkbox"
+              checked={isChecked}
+              onChange={(e) => { e.stopPropagation(); onCheck(); }}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width:18, height:18, accentColor:tc.gold, cursor:"pointer" }}
+            />
+          )}
+        </div>
 
-        {/* Archived badge */}
         {isArchived && (
           <span style={{
             fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20,
@@ -399,19 +747,14 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           }}>📦 {t.archivedBadge}</span>
         )}
 
-        {/* Main clickable area */}
-        <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:12, flex:1, cursor:"pointer", minWidth:0 }}>
-          <div style={{ width:40, height:40, borderRadius:10, flexShrink:0,
-            background:"linear-gradient(135deg,rgba(212,175,55,.22),rgba(212,175,55,.06))",
-            border:"1px solid rgba(212,175,55,.2)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:16, fontWeight:700, color:tc.gold }}>
-            {(client.name || "?")[0]}
-          </div>
+        <div
+          onClick={handleRowClick}
+          style={{ display:"flex", alignItems:"center", gap:12, flex:1, cursor:"pointer", minWidth:0 }}
+        >
           <div style={{ flex:1, minWidth:0 }}>
             <p style={{ fontWeight:700, fontSize:14, color:"#f8fafc" }}>{client.name || "—"}</p>
             <p style={{ fontSize:11, color:tc.grey, marginTop:2 }}>
-              {client.id} • 📞 {client.phone} • 📍 {client.city} • {program?.name||"—"}
+              {reference} • 📞 {client.phone} • 📍 {client.city} • {program?.name||"—"}
               {isArchived && client.archivedAt && (
                 <span style={{ color:tc.warning }}> • 📦 {new Date(client.archivedAt).toLocaleDateString("ar-MA")}</span>
               )}
@@ -440,7 +783,6 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           )}
         </div>
 
-        {/* ··· Button + Menu */}
         {!selectMode && (
           <div style={{ position:"relative", flexShrink:0 }}>
             <button
@@ -457,52 +799,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
               }}>
               ···
             </button>
-
-            {menuOpen && createPortal(
-              <div
-                ref={menuRef}
-                style={{
-                  position:"fixed",
-                  top: menuPos.top,
-                  left: menuPos.left,
-                  visibility: menuPos.visibility,
-                  zIndex:9999,
-                  background:"rgba(20,30,50,0.96)",
-                  border:"1px solid rgba(212,175,55,.3)",
-                  borderRadius:12,
-                  boxShadow:"0 10px 25px rgba(0,0,0,0.35)",
-                  minWidth:160,
-                  overflow:"hidden",
-                }}>
-                {!isArchived && (
-                  <MenuBtn
-                    icon="✏️" label={editLabel || t.editLabel}
-                    onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit(); }}
-                    color="#f8fafc" hoverBg="rgba(212,175,55,.1)"
-                    isRTL={isRTL} border />
-                )}
-                {!isArchived && (
-                  <MenuBtn
-                    icon="📦" label={archiveLabel || t.archiveClient}
-                    onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive(); }}
-                    color={tc.warning} hoverBg="rgba(245,158,11,.1)"
-                    isRTL={isRTL} border />
-                )}
-                {isArchived && (
-                  <MenuBtn
-                    icon="♻️" label={restoreLabel || t.restoreClient}
-                    onClick={e => { e.stopPropagation(); setMenuOpen(false); onRestore(); }}
-                    color={tc.greenLight} hoverBg="rgba(34,197,94,.1)"
-                    isRTL={isRTL} border />
-                )}
-                <MenuBtn
-                  icon="🗑️" label={deleteLabel || t.deleteLabel}
-                  onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
-                  color={tc.danger} hoverBg="rgba(239,68,68,.12)"
-                  isRTL={isRTL} />
-              </div>,
-              document.body
-            )}
+            {menuNode}
           </div>
         )}
       </div>

@@ -295,7 +295,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>
           👤 {t.arabicNameSection}
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--two">
           <Input
             label={t.lastName}
             value={form.lastName} onChange={set("lastName")}
@@ -318,7 +318,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <p style={{ fontSize:11, color:tc.grey, marginBottom:12 }}>
           {t.latinNameHint}
         </p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--two">
           <Input
             label={t.nom}
             value={form.nom} onChange={set("nom")}
@@ -347,7 +347,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Contact ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>📞 {t.contactInfo}</p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--two">
           <Input label={t.phone} value={form.phone} onChange={set("phone")}
             placeholder={t.phonePlaceholder} required error={errors.phone} />
           <Select label={t.city} value={form.city} onChange={set("city")}
@@ -358,7 +358,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Program + Hotel ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>📋 {t.programHotelSection}</p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--two">
           <Select label={t.program} value={form.programId} onChange={set("programId")}
             options={programs.map(p => ({ value:p.id, label:p.name }))}
             style={{ gridColumn:"1/-1" }} />
@@ -418,7 +418,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Price ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>💰 {t.priceSection}</p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--three">
           <Input label={`${t.officialPrice} (${currencyLabel})`} value={form.officialPrice} onChange={set("officialPrice")} type="number" />
           <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={set("salePrice")}
             type="number" required error={errors.salePrice}
@@ -437,7 +437,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Passport ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>🛂 {t.passport}</p>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+        <div className="form-grid form-grid--three">
           <Input label={t.passportNo} value={form.passport.number} onChange={setPass("number")}
             placeholder={t.passportPlaceholder} inputStyle={{ textTransform:"uppercase" }} />
           <Select label={t.nationality} value={form.passport.nationality} onChange={setPass("nationality")}

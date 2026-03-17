@@ -10,15 +10,27 @@ const SYNC_DOT = {
   offline: { color: "#f59e0b", label: "●" },
 };
 
-export default function Sidebar({ active, onNavigate, stats, onExport, onImport, syncStatus = "synced", onLogout }) {
-  const { t, lang, dir, setLang } = useLang();
+export default function Sidebar({ active, onNavigate, stats, onExport, onImport, syncStatus = "synced", onLogout, notificationsCount = 0 }) {
+  const { t, lang, dir } = useLang();
   const [collapsed, setCollapsed] = React.useState(false);
   const fileRef = React.useRef();
+  const [brandHover, setBrandHover] = React.useState(false);
+
+  const handleBrandClick = React.useCallback(() => {
+    if (typeof onNavigate === "function") {
+      onNavigate("dashboard");
+    }
+    if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [onNavigate]);
 
   const NAV_ITEMS = [
     { id:"dashboard", icon:"🏠", label:t.dashboard },
     { id:"clients",   icon:"👥", label:t.clients },
     { id:"programs",  icon:"📋", label:t.programs },
+    { id:"activity",  icon:"🗒️", label:t.activityLog || t.recentActivity },
+    { id:"notifications", icon:"🔔", label:t.notifications, badge:notificationsCount },
     { id:"clearance", icon:"📊", label:t.clearance },
     { id:"settings",  icon:"⚙️", label:t.settings },
   ];
@@ -38,18 +50,43 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
         borderBottom:"1px solid rgba(212,175,55,.1)",
         display:"flex", alignItems:"center",
         justifyContent:collapsed?"center":"space-between", gap:8 }}>
-        {!collapsed && (
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{ fontSize:22, animation:"float 4s ease-in-out infinite" }}>🕋</span>
-            <div>
-              <p style={{ fontSize:14, fontWeight:900, fontFamily:"'Amiri',serif",
-                background:"linear-gradient(135deg,#f0d060,#d4af37)",
-                WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{t.appName}</p>
-              <p style={{ fontSize:9, color:tc.grey }}>{t.agencyName}</p>
-            </div>
-          </div>
-        )}
-        {collapsed && <span style={{ fontSize:20 }}>🕋</span>}
+        <button
+          type="button"
+          onClick={handleBrandClick}
+          onMouseEnter={()=>setBrandHover(true)}
+          onMouseLeave={()=>setBrandHover(false)}
+          onFocus={()=>setBrandHover(true)}
+          onBlur={()=>setBrandHover(false)}
+          style={{
+            flex:1,
+            display:"flex",
+            alignItems:"center",
+            justifyContent:collapsed?"center":"flex-start",
+            gap:collapsed?0:10,
+            background:"none",
+            border:"none",
+            padding:0,
+            cursor:"pointer",
+            color:"inherit",
+            transition:"transform .2s ease, opacity .2s ease",
+            transform:brandHover?"translateY(-1px)":"none",
+            opacity:brandHover?0.92:1,
+          }}
+        >
+          {!collapsed ? (
+            <>
+              <span style={{ fontSize:22, animation:"float 4s ease-in-out infinite" }}>🕋</span>
+              <div>
+                <p style={{ fontSize:14, fontWeight:900, fontFamily:"'Amiri',serif",
+                  background:"linear-gradient(135deg,#f0d060,#d4af37)",
+                  WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{t.appName}</p>
+                <p style={{ fontSize:9, color:tc.grey }}>{t.agencyName}</p>
+              </div>
+            </>
+          ) : (
+            <span style={{ fontSize:20 }}>🕋</span>
+          )}
+        </button>
         <button onClick={()=>setCollapsed(!collapsed)} style={{
           background:"rgba(255,255,255,.05)", border:"1px solid rgba(255,255,255,.08)",
           borderRadius:8, width:24, height:24, color:tc.grey,
@@ -58,23 +95,6 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
           {collapsed?(dir==="rtl"?"→":"←"):(dir==="rtl"?"←":"→")}
         </button>
       </div>
-
-      {/* Lang toggle */}
-      {!collapsed && (
-        <div style={{ padding:"8px 12px", display:"flex", gap:4 }}>
-          {["ar","fr","en"].map(l=>(
-            <button key={l} onClick={()=>setLang(l)} style={{
-              flex:1, padding:"5px", borderRadius:6,
-              background:lang===l?"rgba(212,175,55,.15)":"rgba(255,255,255,.03)",
-              border:`1px solid ${lang===l?tc.gold:"rgba(255,255,255,.08)"}`,
-              color:lang===l?tc.gold:tc.grey,
-              fontSize:11, fontWeight:lang===l?700:400,
-              cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-              {l==="ar"?t.arabic:l==="fr"?t.french:t.english}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Nav */}
       <nav style={{ flex:1, padding:"8px 8px" }}>
@@ -177,7 +197,25 @@ function NavItem({ item, active, collapsed, onClick }) {
         transition:"all .18s", textAlign:"start" }}
       title={collapsed?item.label:undefined}>
       <span style={{ fontSize:16, flexShrink:0 }}>{item.icon}</span>
-      {!collapsed && <span style={{ flex:1 }}>{item.label}</span>}
+      {!collapsed && (
+        <span style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+          <span>{item.label}</span>
+          {item.badge > 0 && (
+            <span style={{
+              minWidth:20,
+              padding:"0 6px",
+              borderRadius:999,
+              background:"rgba(212,175,55,.18)",
+              color:theme.colors.gold,
+              fontSize:11,
+              fontWeight:700,
+              textAlign:"center",
+            }}>
+              {item.badge > 99 ? "99+" : item.badge}
+            </span>
+          )}
+        </span>
+      )}
       {active && !collapsed && <div style={{ width:5, height:5, borderRadius:"50%",
         background:theme.colors.gold, boxShadow:"0 0 8px rgba(212,175,55,.6)" }} />}
     </button>
