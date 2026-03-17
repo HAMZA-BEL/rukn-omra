@@ -128,8 +128,18 @@ export function Button({ children, onClick, variant = "primary", size = "md",
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────────
-export function Input({ label, value, onChange, placeholder, type = "text",
-  required, error, style, inputStyle }) {
+export function Input({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  required,
+  error,
+  style,
+  inputStyle,
+  ...rest
+}) {
   const { dir } = useLang();
   const [focused, setFocused] = React.useState(false);
   return (
@@ -146,6 +156,7 @@ export function Input({ label, value, onChange, placeholder, type = "text",
         placeholder={placeholder}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        {...rest}
         style={{
           background: "rgba(255,255,255,0.04)",
           border: `1px solid ${error ? t.danger : focused ? t.gold : "rgba(255,255,255,.1)"}`,

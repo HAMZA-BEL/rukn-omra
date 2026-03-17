@@ -1032,6 +1032,27 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     mealPlan:  program?.mealPlan  || "",
   });
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  React.useEffect(() => {
+    const days = Number(form.duration);
+    if (!form.departure || !Number.isFinite(days) || days <= 0) {
+      setForm(prev => (prev.returnDate ? { ...prev, returnDate: "" } : prev));
+      return;
+    }
+    const parts = form.departure.split("-");
+    if (parts.length !== 3) {
+      setForm(prev => (prev.returnDate ? { ...prev, returnDate: "" } : prev));
+      return;
+    }
+    const [year, month, day] = parts.map(Number);
+    if ([year, month, day].some(v => Number.isNaN(v))) {
+      setForm(prev => (prev.returnDate ? { ...prev, returnDate: "" } : prev));
+      return;
+    }
+    const utcBase = Date.UTC(year, month - 1, day);
+    const ms = utcBase + (days - 1) * 86400000;
+    const iso = new Date(ms).toISOString().split("T")[0];
+    setForm(prev => (prev.returnDate === iso ? prev : { ...prev, returnDate: iso }));
+  }, [form.departure, form.duration]);
   const programTypeOptions = React.useMemo(() => {
     const base = [
       { value:"عمرة رمضان",     label:t.programTypeRamadan },
@@ -1060,9 +1081,24 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       <Input label={t.program} value={form.name} onChange={set("name")} required style={{gridColumn:"1/-1"}}/>
       <Select label={t.programType} value={form.type} onChange={set("type")}
         options={programTypeOptions}/>
-      <Input label={t.duration} value={form.duration} onChange={set("duration")} placeholder={t.durationPlaceholder}/>
+      <Input
+        label={t.duration}
+        value={form.duration}
+        onChange={set("duration")}
+        placeholder={t.durationPlaceholder}
+        type="number"
+        min={1}
+      />
       <Input label={t.departure} value={form.departure} onChange={set("departure")} type="date"/>
-      <Input label={t.returnDate} value={form.returnDate} onChange={set("returnDate")} type="date"/>
+      <Input
+        label={t.returnDate}
+        value={form.returnDate}
+        onChange={() => {}}
+        type="date"
+        readOnly
+        disabled
+        inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
+      />
       <Input label={t.hotelMecca} value={form.hotelMecca} onChange={set("hotelMecca")} style={{gridColumn:"1/-1"}}/>
       <Input label={t.hotelMadina} value={form.hotelMadina} onChange={set("hotelMadina")} style={{gridColumn:"1/-1"}}/>
       <Input label={t.programPriceLabel} value={form.price} onChange={set("price")} type="number" required/>
