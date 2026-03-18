@@ -29,6 +29,7 @@ import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
 import { usePaymentsSlice } from "./usePaymentsSlice";
 import { useClientsSlice } from "./useClientsSlice";
+import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -205,12 +206,17 @@ export function useStore(agencyId, onToast) {
   const [deletedPrograms, setDeletedPrograms] = useState([]);
   const {
     clients,
+    deletedClients,
     setClients,
+    setDeletedClients,
     setInitialClients,
     addClientLocal,
     updateClientLocal,
+    archiveClientLocal,
+    restoreArchivedClientLocal,
+    softDeleteClientsLocal,
+    transferClientsLocal,
   } = useClientsSlice();
-  const [deletedClients,  setDeletedClients]  = useState([]);
   const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY);
   const {
     activityLog,
@@ -708,62 +714,90 @@ export function useStore(agencyId, onToast) {
     sync(() => saveClient({ id, ...updated }, agencyId));
   }, [clients, programs, updateClientLocal, logActivity, sync, agencyId]);
 
-  const deleteClient = useCallback((id) => {
-    const c = clients.find(x => x.id === id);
-    if (!c) return;
-    const batchId = generateUUID();
-    const deletedAt = new Date().toISOString();
-    const deletedEntry = {
-      ...c,
-      deleted: true,
-      deletedAt,
-      deletedBatchId: batchId,
-    };
-    setClients(prev  => prev.filter(client => client.id !== id));
-    setDeletedClients(prev => {
-      const filtered = prev.filter(client => client.id !== id);
-      return [deletedEntry, ...filtered];
+  const transferClients = useCallback((ids, programId) => {
+    if (!Array.isArray(ids) || ids.length === 0 || !programId) return 0;
+    const idSet = new Set(ids);
+    const affected = clients.filter((c) => idSet.has(c.id));
+    if (!affected.length) return 0;
+    const now = new Date().toISOString().split("T")[0];
+    transferClientsLocal(ids, programId, now);
+    const programName = programs.find((p) => p.id === programId)?.name || programId;
+    affected.forEach((client) => {
+      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, client?.name || client.id);
     });
+    sync(async () => {
+      const responses = await Promise.all(
+        affected.map((client) => saveClient({ id: client.id, programId, lastModified: now }, agencyId))
+      );
+      const error = responses.find((r) => r?.error)?.error ?? null;
+      return { error };
+    });
+    return affected.length;
+  }, [clients, programs, transferClientsLocal, logActivity, sync, agencyId]);
+
+  const deleteClient = useCallback((id) => {
+    const client = clients.find((x) => x.id === id);
+    if (!client) return;
+    const batchId   = generateUUID();
+    const deletedAt = new Date().toISOString();
+    softDeleteClientsLocal([client], deletedAt, batchId);
     removePaymentsByClient(id);
-    logActivity("client_delete", "تم حذف معتمر", c?.name || id);
+    logActivity("client_delete", "تم حذف معتمر", client?.name || id);
     sync(() => markClientsDeleted([id], agencyId, batchId));
-  }, [clients, setClients, removePaymentsByClient, logActivity, sync, agencyId]);
+  }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
+
+  const deleteClientsBulk = useCallback((ids) => {
+    if (!Array.isArray(ids) || !ids.length) return 0;
+    const idSet = new Set(ids);
+    const entries = clients.filter((c) => idSet.has(c.id));
+    if (!entries.length) return 0;
+    const batchId   = generateUUID();
+    const deletedAt = new Date().toISOString();
+    softDeleteClientsLocal(entries, deletedAt, batchId);
+    removePaymentsByClient(ids);
+    logActivity(
+      "client_bulk_delete",
+      `تم حذف ${entries.length} معتمر`,
+      ""
+    );
+    sync(() => markClientsDeleted(ids, agencyId, batchId));
+    return entries.length;
+  }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
 
   // ── Archive / Restore ─────────────────────────────────────────────────────
   const archiveClient = useCallback((id) => {
     const now = new Date().toISOString();
-    setClients(prev => prev.map(c => c.id === id ? { ...c, archived: true, archivedAt: now } : c));
-    const c = clients.find(x => x.id === id);
+    archiveClientLocal([id], now);
+    const c = clients.find((x) => x.id === id);
     logActivity("client_archive", "تم أرشفة المعتمر", c?.name || id);
     sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId));
-  }, [clients, setClients, logActivity, sync, agencyId]);
+  }, [clients, archiveClientLocal, logActivity, sync, agencyId]);
 
   const archiveClients = useCallback((ids) => {
+    if (!ids?.length) return;
     const now = new Date().toISOString();
-    setClients(prev => prev.map(c => ids.includes(c.id) ? { ...c, archived: true, archivedAt: now } : c));
-    ids.forEach(id => sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId)));
-    if (ids.length) {
-      logActivity("client_bulk_archive", `تمت أرشفة ${ids.length} معتمر`, "");
-    }
-  }, [setClients, sync, agencyId, logActivity]);
+    archiveClientLocal(ids, now);
+    ids.forEach((id) => sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId)));
+    logActivity("client_bulk_archive", `تمت أرشفة ${ids.length} معتمر`, "");
+  }, [archiveClientLocal, sync, agencyId, logActivity]);
 
   const restoreClient = useCallback((id) => {
-    setClients(prev => prev.map(c => c.id === id ? { ...c, archived: false, archivedAt: null } : c));
-    const c = clients.find(x => x.id === id);
+    restoreArchivedClientLocal(id);
+    const c = clients.find((x) => x.id === id);
     logActivity("client_restore", "تمت استعادة المعتمر من الأرشيف", c?.name || id);
     sync(() => saveClient({ id, archived: false, archivedAt: null }, agencyId));
-  }, [clients, setClients, logActivity, sync, agencyId]);
+  }, [clients, restoreArchivedClientLocal, logActivity, sync, agencyId]);
 
   const archiveProgram = useCallback((programId) => {
     const now        = new Date().toISOString();
     const progClients = activeClients.filter(c => c.programId === programId);
     if (progClients.length === 0) return;
     const ids = progClients.map(c => c.id);
-    setClients(prev => prev.map(c => ids.includes(c.id) ? { ...c, archived: true, archivedAt: now } : c));
+    archiveClientLocal(ids, now);
     ids.forEach(id => sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId)));
     const program = programs.find(p => p.id === programId);
     logActivity("program_archive", `تم أرشفة برنامج ${program?.name || programId}`, "");
-  }, [activeClients, programs, setClients, logActivity, sync, agencyId]);
+  }, [activeClients, programs, archiveClientLocal, logActivity, sync, agencyId]);
 
   const addPayment = useCallback((data) => {
     const id          = genId("PMT");
@@ -832,18 +866,7 @@ export function useStore(agencyId, onToast) {
       return [deletedProgramEntry, ...filtered];
     });
     if (clientIds.length) {
-      setClients(prev => prev.filter(c => !clientIds.includes(c.id)));
-      const deletedClientEntries = relatedClients.map((client) => ({
-        ...client,
-        deleted: true,
-        deletedAt,
-        deletedBatchId: batchId,
-      }));
-      setDeletedClients(prev => {
-        const idSet = new Set(clientIds);
-        const filtered = prev.filter(c => !idSet.has(c.id));
-        return [...deletedClientEntries, ...filtered];
-      });
+      softDeleteClientsLocal(relatedClients, deletedAt, batchId);
       removePaymentsByClient(clientIds);
     }
     logActivity("program_delete", `تم حذف برنامج ${prog?.name || id}`, "");
@@ -856,7 +879,7 @@ export function useStore(agencyId, onToast) {
       const error = responses.find(r => r?.error)?.error ?? null;
       return { error };
     });
-  }, [programs, clients, setPrograms, setClients, removePaymentsByClient, logActivity, sync, agencyId]);
+  }, [programs, clients, setPrograms, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
 
   const restoreTrashItems = useCallback(({ programIds = [], clientIds = [] }) => {
     if (!programIds.length && !clientIds.length) return;
@@ -981,8 +1004,8 @@ export function useStore(agencyId, onToast) {
 
   // ── Backup ────────────────────────────────────────────────────────────────
   const exportData = () => {
-    const data = { programs, clients, payments, agency, exportedAt: new Date().toISOString(), version: 4 };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const payload = buildExportPayload({ programs, clients, payments, agency });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href = url;
@@ -996,17 +1019,13 @@ export function useStore(agencyId, onToast) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = JSON.parse(e.target.result);
-        if (!data.programs || !data.clients || !data.payments) throw new Error("ملف غير صالح");
-        const safePrograms = (data.programs || []).filter(p => !p.deleted);
-        const safeClients = (data.clients || []).filter(c => !c.deleted);
-        const clientIds = new Set(safeClients.map(c => c.id));
-        setPrograms(safePrograms);
-        setClients(safeClients);
+        const parsed = parseImportPayload(JSON.parse(e.target.result));
+        setPrograms(parsed.programs);
+        setClients(parsed.clients);
         setDeletedPrograms([]);
         setDeletedClients([]);
-        replacePayments((data.payments || []).filter(p => clientIds.has(p.clientId)));
-        if (data.agency) setAgency(data.agency);
+        replacePayments(parsed.payments);
+        if (parsed.agency) setAgency(parsed.agency);
         logActivity("import_excel", "تم استيراد بيانات من ملف", "");
         res();
       } catch(err) { rej(err); }
@@ -1026,7 +1045,8 @@ export function useStore(agencyId, onToast) {
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
     getClientPayments, getClientTotalPaid, getClientStatus,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
-    addClient, updateClient, deleteClient,
+    addClient, updateClient, deleteClient, deleteClientsBulk,
+    transferClients,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, deletePayment,
     addProgram, updateProgram, deleteProgram,

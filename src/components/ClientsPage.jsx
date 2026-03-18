@@ -54,8 +54,9 @@ export default function ClientsPage({ store, onToast }) {
   const isRTL = dir === "rtl";
   const { activeClients, archivedClients, programs,
           getClientStatus, getClientTotalPaid,
-          deleteClient, archiveClient, archiveClients, restoreClient,
-          updateClient, recordActivity } = store;
+          deleteClient, deleteClientsBulk,
+          archiveClient, archiveClients, restoreClient,
+          updateClient, transferClients: transferClientsToProgram } = store;
 
   const [tab,        setTab]        = React.useState("active");
   const [search,     setSearch]     = React.useState("");
@@ -122,13 +123,14 @@ export default function ClientsPage({ store, onToast }) {
     const ids = Array.from(checkedIds);
     if (!ids.length) return;
     if (!window.confirm(tr("confirmBulkDelete", { count: ids.length }))) return;
-    ids.forEach(id => deleteClient(id));
-    if (typeof recordActivity === "function") {
-      recordActivity("client_bulk_delete", tr("bulkDeleteSuccess", { count: ids.length }), "");
+    const removed = deleteClientsBulk(ids);
+    if (removed) {
+      onToast(tr("bulkDeleteSuccess", { count: removed }), "info");
+    } else {
+      onToast(t.noClientsSelected || "لم يتم اختيار أي معتمر", "info");
     }
-    onToast(tr("bulkDeleteSuccess", { count: ids.length }), "info");
     exitSelectMode();
-  }, [checkedIds, deleteClient, exitSelectMode, onToast, tr, recordActivity]);
+  }, [checkedIds, deleteClientsBulk, exitSelectMode, onToast, tr, t.noClientsSelected]);
 
   const handleBulkArchive = () => {
     if (!checkedIds.size) return;
@@ -205,7 +207,7 @@ export default function ClientsPage({ store, onToast }) {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const transferClients = React.useMemo(
+  const transferList = React.useMemo(
     () => transferTargets
       .map(id => activeClients.find(c => c.id === id))
       .filter(Boolean),
@@ -246,14 +248,15 @@ export default function ClientsPage({ store, onToast }) {
       onToast(fullMsg, "error");
       return;
     }
-    clientsToMove.forEach(client => {
-      if (!client) return;
-      updateClient(client.id, { ...client, programId });
-    });
-    onToast(tr("transferSuccess", { count: clientsToMove.length, program: destination.name }), "success");
+    const movedCount = transferClientsToProgram(clientsToMove.map((client) => client.id), programId);
+    if (!movedCount) {
+      onToast(noSelectionMsg, "info");
+      return;
+    }
+    onToast(tr("transferSuccess", { count: movedCount, program: destination.name }), "success");
     closeTransferSheet();
     exitSelectMode();
-  }, [programs, transferTargets, activeClients, programOccupancy, updateClient, onToast, tr, t, closeTransferSheet, exitSelectMode]);
+  }, [programs, transferTargets, activeClients, programOccupancy, transferClientsToProgram, onToast, tr, t, closeTransferSheet, exitSelectMode]);
 
   return (
     <div className="page-body clients-page" style={{ padding:"24px 32px" }}>
@@ -515,7 +518,7 @@ export default function ClientsPage({ store, onToast }) {
       <TransferSheet
         open={transferSheetOpen}
         onClose={closeTransferSheet}
-        clients={transferClients}
+        clients={transferList}
         programs={programs}
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}

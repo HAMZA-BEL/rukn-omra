@@ -282,7 +282,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
     agency,
     programs: allPrograms,
     activeClients = [],
-    updateClient,
+    transferClients,
   } = store;
   const { t, tr, lang, dir } = useLang();
   const formatCurrencyForLang = React.useCallback((value) => formatCurrency(value, lang), [lang]);
@@ -352,7 +352,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
     openTransferSheet(Array.from(checkedIds));
   }, [checkedIds, onToast, t.noClientsSelected, openTransferSheet]);
 
-  const transferClients = React.useMemo(
+  const transferList = React.useMemo(
     () => transferTargets
       .map(id => activeClients.find(c => c.id === id) || clients.find(c => c.id === id))
       .filter(Boolean),
@@ -374,9 +374,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       onToast(t.programNotFound || "البرنامج غير متاح", "error");
       return;
     }
-    const clientsToMove = transferTargets
-      .map(id => activeClients.find(c => c.id === id) || clients.find(c => c.id === id))
-      .filter(Boolean);
+    const clientsToMove = transferList;
     if (!clientsToMove.length) {
       onToast(t.noClientsSelected || "لم يتم اختيار أي معتمر", "info");
       closeTransferSheet();
@@ -388,13 +386,16 @@ function ProgramInner({ program, store, onToast, onBack }) {
       onToast(t.programFull || "البرنامج ممتلئ", "error");
       return;
     }
-    clientsToMove.forEach(client => {
-      updateClient(client.id, { ...client, programId });
-    });
-    onToast(tr("transferSuccess", { count: clientsToMove.length, program: destination.name }), "success");
+    const movedCount = transferClients(clientsToMove.map((client) => client.id), programId);
+    if (!movedCount) {
+      onToast(t.noClientsSelected || "لم يتم اختيار أي معتمر", "info");
+      closeTransferSheet();
+      return;
+    }
+    onToast(tr("transferSuccess", { count: movedCount, program: destination.name }), "success");
     closeTransferSheet();
     exitSelectMode();
-  }, [allPrograms, transferTargets, activeClients, clients, programOccupancy, updateClient, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode]);
+  }, [allPrograms, transferTargets, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode]);
 
   const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
 
@@ -731,7 +732,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       <TransferSheet
         open={transferSheetOpen}
         onClose={closeTransferSheet}
-        clients={transferClients}
+        clients={transferList}
         programs={allPrograms}
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
