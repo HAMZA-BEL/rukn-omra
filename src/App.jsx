@@ -112,6 +112,7 @@ function AppInner({ agencyId, onLogout }) {
         <Sidebar active={page} onNavigate={navigate} stats={store.stats}
           syncStatus={store.syncStatus}
           notificationsCount={store.unreadNotificationsCount}
+          agency={store.agency}
           onExport={() => { store.exportData(); showToast(t.exportSuccess, "success"); }}
           onImport={async(f)=>{ try{ await store.importData(f); showToast(t.importSuccess, "success"); }catch{ showToast(t.importError, "error"); } }}
           onLogout={onLogout} />

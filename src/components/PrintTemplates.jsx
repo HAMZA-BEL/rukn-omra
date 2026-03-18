@@ -2,9 +2,26 @@
 import React from "react";
 import { TRANSLATIONS } from "../data/initialData";
 
+const trimValue = (value) => (typeof value === "string" ? value.trim() : "");
+const resolveAgencyIdentity = (agency = {}, t, lang = "ar") => {
+  const nameAr = trimValue(agency.nameAr);
+  const nameFr = trimValue(agency.nameFr);
+  const fallbackPrimary = t.agencyName || "Tiznit Voyages";
+  const fallbackSecondary = t.agencyNameAr || fallbackPrimary;
+  const primary = lang === "fr"
+    ? (nameFr || nameAr || fallbackPrimary)
+    : (nameAr || nameFr || fallbackPrimary);
+  const secondary = lang === "fr"
+    ? (nameAr || nameFr || fallbackSecondary)
+    : (nameFr || nameAr || fallbackSecondary);
+  const slogan = trimValue(agency.slogan) || t.agencySlogan || "";
+  return { primary, secondary, slogan };
+};
+
 export function printReceipt({ payment, client, program, agency, lang = "ar" }) {
   const isFr = lang === "fr";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
+  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
   const html = `<!DOCTYPE html>
 <html dir="${isFr?"ltr":"rtl"}" lang="${lang}">
 <head>
@@ -31,9 +48,9 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
 <body>
 <div class="page">
   <div class="header">
-    <div class="agency-name">${agency.nameFr || "Tiznit Voyages"} | ${agency.nameAr || "تيزنيت أسفار"}</div>
-    <div class="agency-sub">${agency.phoneTiznit1} / ${agency.phoneTiznit2}</div>
-    <div class="agency-sub">${isFr ? agency.addressTiznit : agency.addressTiznit}</div>
+    <div class="agency-name">${primary}${secondary ? ` | ${secondary}` : ""}</div>
+    <div class="agency-sub">${[agency.phoneTiznit1, agency.phoneTiznit2].filter(Boolean).join(" / ")}</div>
+    <div class="agency-sub">${agency.addressTiznit || ""}</div>
     ${agency.ice ? `<div class="agency-sub">ICE: ${agency.ice}</div>` : ""}
   </div>
   <div class="receipt-title">${isFr?"REÇU DE PAIEMENT":"وصل استلام مبلغ"}</div>
@@ -54,7 +71,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
     <span>${isFr?"Signature du client":"توقيع المعتمر"}</span>
   </div>
   <div class="footer">
-    ${agency.nameFr || t.agencyName} — ${t.agencySlogan}
+    ${primary}${secondary ? ` | ${secondary}` : ""}${slogan ? ` — ${slogan}` : ""}
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
@@ -65,6 +82,10 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
 
 export function printClientCard({ client, program, agency, lang = "ar" }) {
   const isFr = lang === "fr";  const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;  const p = client.passport || {};
+  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
+  const headerPhones = [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join(" / ");
+  const footerPhones = [agency?.phoneTiznit1, agency?.phoneAgadir1].filter(Boolean).join(" / ");
+  const footerName = secondary && secondary !== primary ? `${secondary} | ${primary}` : primary;
   const html = `<!DOCTYPE html>
 <html dir="${isFr?"ltr":"rtl"}" lang="${lang}">
 <head>
@@ -91,11 +112,11 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
 </style>
 </head>
 <body>
-<div class="card">
+  <div class="card">
   <div class="header">
     <div>
-      <div class="agency">🕋 ${agency.nameFr || t.agencyName}</div>
-      <div style="font-size:10px;color:#888">${agency.phoneTiznit1}</div>
+      <div class="agency">🕋 ${primary}</div>
+      <div style="font-size:10px;color:#888">${headerPhones}</div>
     </div>
     <div class="badge">${client.name[0]}</div>
   </div>
@@ -118,7 +139,9 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
     ${[["passportCopy",isFr?"Passeport":"صورة الجواز"],["photo",isFr?"Photo":"صورة"],["vaccine",isFr?"Vaccin":"تطعيم"],["contract",isFr?"Contrat":"عقد"]].map(([k,l])=>`
     <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"✓":"✗"} ${l}</span>`).join("")}
   </div>` : ""}
-  <div class="footer">${t.agencyNameAr} | ${t.agencyName} — ${agency.phoneTiznit1} / ${agency.phoneAgadir1}</div>
+  <div class="footer">
+    ${footerName}${footerPhones ? ` — ${footerPhones}` : ""}${slogan ? ` — ${slogan}` : ""}
+  </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
@@ -129,6 +152,10 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
 export function printInvoice({ client, program, payments, agency, lang = "ar" }) {
   const isFr = lang === "fr";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
+  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
+  const headerPhones = [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join(" / ");
+  const footerPhones = [agency?.phoneTiznit1, agency?.phoneAgadir1].filter(Boolean).join(" / ");
+  const footerName = secondary && secondary !== primary ? `${secondary} | ${primary}` : primary;
   const totalPaid = payments.reduce((s,p) => s+p.amount, 0);
   const salePrice = client.salePrice || client.price || 0;
   const remaining = Math.max(0, salePrice - totalPaid);
@@ -170,10 +197,10 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
 <div class="page">
   <div class="header">
     <div>
-      <div class="logo">🕋 ${agency.nameFr || "Tiznit Voyages"}</div>
-      <div class="logo-sub">${agency.nameAr || "تيزنيت أسفار"}</div>
+      <div class="logo">🕋 ${primary}</div>
+      <div class="logo-sub">${secondary && secondary !== primary ? secondary : ""}</div>
       <div class="logo-sub">${agency.addressTiznit || ""}</div>
-      <div class="logo-sub">Tél: ${agency.phoneTiznit1} / ${agency.phoneTiznit2}</div>
+      <div class="logo-sub">${headerPhones ? `${isFr ? "Tél" : "هاتف"}: ${headerPhones}` : ""}</div>
       ${agency.ice ? `<div class="logo-sub">ICE: ${agency.ice}</div>` : ""}
     </div>
     <div style="text-align:${isFr?"right":"left"}">
@@ -241,8 +268,7 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
     <div style="text-align:center;font-size:11px"><div style="border:1px dashed #ccc;width:120px;height:60px;margin-bottom:4px"></div>${isFr?"Signature client":"توقيع المعتمر"}</div>
   </div>
   <div class="footer">
-    ${agency.nameFr || t.agencyName} — ${t.agencySlogan} | ${agency.phoneTiznit1} — ${agency.phoneAgadir1}
-    ${agency.ice ? ` | ICE: ${agency.ice}` : ""}
+    ${footerName}${footerPhones ? ` — ${footerPhones}` : ""}${slogan ? ` — ${slogan}` : ""}${agency.ice ? ` — ICE: ${agency.ice}` : ""}
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>

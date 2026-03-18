@@ -10,6 +10,9 @@ export default function SettingsPage({ store, onToast }) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
+  React.useEffect(() => {
+    setForm(agency);
+  }, [agency]);
   const [isSyncing,  setIsSyncing] = React.useState(false);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
 

@@ -10,7 +10,7 @@ const SYNC_DOT = {
   offline: { color: "#f59e0b", label: "●" },
 };
 
-export default function Sidebar({ active, onNavigate, stats, onExport, onImport, syncStatus = "synced", onLogout, notificationsCount = 0 }) {
+export default function Sidebar({ active, onNavigate, stats, onExport, onImport, syncStatus = "synced", onLogout, notificationsCount = 0, agency }) {
   const { t, lang, dir } = useLang();
   const [collapsed, setCollapsed] = React.useState(false);
   const fileRef = React.useRef();
@@ -80,7 +80,9 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
                 <p style={{ fontSize:14, fontWeight:900, fontFamily:"'Amiri',serif",
                   background:"linear-gradient(135deg,#f0d060,#d4af37)",
                   WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{t.appName}</p>
-                <p style={{ fontSize:9, color:tc.grey }}>{t.agencyName}</p>
+                <p style={{ fontSize:9, color:tc.grey }}>
+                  {agency?.nameAr || agency?.nameFr || t.agencyName}
+                </p>
               </div>
             </>
           ) : (

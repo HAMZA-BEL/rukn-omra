@@ -28,6 +28,7 @@ import {
 import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
 import { usePaymentsSlice } from "./usePaymentsSlice";
+import { useClientsSlice } from "./useClientsSlice";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -202,7 +203,13 @@ export function useStore(agencyId, onToast) {
 
   const [programs,        setPrograms]        = useState([]);
   const [deletedPrograms, setDeletedPrograms] = useState([]);
-  const [clients,         setClients]         = useState([]);
+  const {
+    clients,
+    setClients,
+    setInitialClients,
+    addClientLocal,
+    updateClientLocal,
+  } = useClientsSlice();
   const [deletedClients,  setDeletedClients]  = useState([]);
   const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY);
   const {
@@ -344,7 +351,7 @@ export function useStore(agencyId, onToast) {
       const trashPrograms = !dp.error && dp.data ? dp.data : [];
       const trashClients  = !dc.error && dc.data ? dc.data : [];
       if (programData) setPrograms(programData);
-      if (clientData) setClients(clientData);
+      setInitialClients(clientData);
       setDeletedPrograms(trashPrograms);
       setDeletedClients(trashClients);
       if (!pay.error && pay.data) {
@@ -680,18 +687,18 @@ export function useStore(agencyId, onToast) {
       archived:         false,
       archivedAt:       null,
     };
-    setClients(prev => [...prev, newClient]);
+    addClientLocal(newClient);
     logActivity("client_add", "تم تسجيل معتمر جديد", newClient.name);
     sync(() => saveClient(newClient, agencyId));
     return id;
-  }, [setClients, logActivity, sync, agencyId]);
+  }, [addClientLocal, logActivity, sync, agencyId]);
 
   const updateClient = useCallback((id, data) => {
     const now      = new Date().toISOString().split("T")[0];
     const prepared = prepareClientForSave(data);
     const updated  = { ...prepared, lastModified: now };
     const previous = clients.find(c => c.id === id);
-    setClients(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c));
+    updateClientLocal(id, updated);
     if (previous && previous.programId !== updated.programId) {
       const programName = programs.find(p => p.id === updated.programId)?.name || updated.programId || "";
       logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, updated.name || id);
@@ -699,7 +706,7 @@ export function useStore(agencyId, onToast) {
       logActivity("client_update", "تم تعديل ملف المعتمر", updated.name || id);
     }
     sync(() => saveClient({ id, ...updated }, agencyId));
-  }, [clients, programs, setClients, logActivity, sync, agencyId]);
+  }, [clients, programs, updateClientLocal, logActivity, sync, agencyId]);
 
   const deleteClient = useCallback((id) => {
     const c = clients.find(x => x.id === id);

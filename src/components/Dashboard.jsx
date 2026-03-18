@@ -146,7 +146,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
               {t.appName}
             </h1>
             <p style={{ fontSize:12, color:tc.grey }}>
-              {t.agencyName}{t.agencyNameAr ? ` | ${t.agencyNameAr}` : ""}
+              {store.agency?.nameAr || store.agency?.nameFr || t.agencyName}
             </p>
           </div>
         </button>
