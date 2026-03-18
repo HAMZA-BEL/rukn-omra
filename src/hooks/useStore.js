@@ -75,7 +75,13 @@ const sanitizeDocs = (docs = {}) => ({
   contract:     Boolean(docs.contract),
 });
 
-const getNotificationKey = (type, programId) => `${type}:${programId || "none"}`;
+const getNotificationKey = (notif) => {
+  if (!notif) return "ntf:none";
+  const type = notif.type || "system";
+  const target = notif.targetId || notif.programId || "none";
+  const state = notif.stateHash || (notif.meta && notif.meta.stateHash) || "default";
+  return `${type}:${target}:${state}`;
+};
 
 const prepareClientForSave = (data) => {
   const cleaned = {
@@ -555,9 +561,13 @@ export function useStore(agencyId, onToast) {
     const activeKeys = new Set();
     const today = new Date();
     const track = (notif) => {
-      const key = getNotificationKey(notif.type, notif.programId);
+      const key = getNotificationKey(notif);
       activeKeys.add(key);
-      ensureNotificationExists(notif);
+      ensureNotificationExists({
+        ...notif,
+        targetType: notif.targetType ?? (notif.programId ? "program" : null),
+        targetId: notif.targetId ?? notif.programId ?? null,
+      });
     };
 
     programs.forEach((program) => {
@@ -571,6 +581,11 @@ export function useStore(agencyId, onToast) {
           message: `${seatsLeft} seats remaining`,
           severity: "warn",
           programId: program.id,
+          targetType: "program",
+          targetId: program.id,
+          actionRoute: "programs",
+          stateHash: `seat_low:${seatsLeft}`,
+          meta: { seatsLeft },
         });
       }
       if (seats > 0 && seatsLeft <= 0) {
@@ -580,6 +595,11 @@ export function useStore(agencyId, onToast) {
           message: "Program is full",
           severity: "critical",
           programId: program.id,
+          targetType: "program",
+          targetId: program.id,
+          actionRoute: "programs",
+          stateHash: "seat_full",
+          meta: { seats },
         });
       }
       if (program.departure) {
@@ -595,6 +615,11 @@ export function useStore(agencyId, onToast) {
                 message: `${unsettled.length} clients not cleared before departure`,
                 severity: "critical",
                 programId: program.id,
+                targetType: "program",
+                targetId: program.id,
+                actionRoute: "programs",
+                stateHash: `unsettled:${daysLeft}:${unsettled.length}`,
+                meta: { daysLeft, unsettled: unsettled.length },
               });
             }
           }
@@ -609,13 +634,18 @@ export function useStore(agencyId, onToast) {
         message: `Program ended ${daysAgo} days ago — ${count} active pilgrims`,
         severity: "info",
         programId: program.id,
+        targetType: "program",
+        targetId: program.id,
+        actionRoute: "programs",
+        stateHash: `archive:${daysAgo}:${count}`,
+        meta: { daysAgo, count },
       });
     });
 
     notifications.forEach((notif) => {
       if (notif.isArchived) return;
       if (!notif.type || !notif.type.startsWith("system:")) return;
-      const key = getNotificationKey(notif.type, notif.programId);
+      const key = getNotificationKey(notif);
       if (!activeKeys.has(key)) {
         archiveNotification(notif.id, { silent: true });
       }

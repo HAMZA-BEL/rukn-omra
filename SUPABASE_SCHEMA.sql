@@ -145,11 +145,49 @@ create table if not exists public.notifications (
   title        text,
   message      text,
   program_id   uuid references public.programs(id) on delete set null,
+  target_type  text,
+  target_id    uuid,
+  action_route text,
+  state_hash   text,
+  meta         jsonb not null default '{}'::jsonb,
   severity     text not null default 'info',
   is_read      boolean not null default false,
   is_archived  boolean not null default false,
   created_at   timestamptz default now()
 );
+
+alter table if exists public.notifications
+  add column if not exists target_type  text,
+  add column if not exists target_id    uuid,
+  add column if not exists action_route text,
+  add column if not exists state_hash   text,
+  add column if not exists meta         jsonb not null default '{}'::jsonb;
+
+-- Backfill legacy rows to ensure actionable metadata exists for dedupe logic.
+update public.notifications
+set target_type = coalesce(target_type, case when program_id is not null then 'program' else target_type end),
+    target_id   = coalesce(target_id, program_id),
+    action_route = coalesce(action_route, case when program_id is not null then 'programs' else action_route end)
+where target_type is null or target_id is null or action_route is null;
+
+update public.notifications
+set state_hash = coalesce(
+  state_hash,
+  concat_ws(
+    ':',
+    coalesce(type, 'system'),
+    coalesce(target_id::text, 'global'),
+    md5(
+      coalesce(message, '') ||
+      coalesce(meta::text, '{}') ||
+      coalesce(program_id::text, '')
+    )
+  )
+)
+where state_hash is null;
+
+create index if not exists idx_notifications_dedupe
+  on public.notifications(agency_id, type, target_id, state_hash);
 
 -- ── 2. Performance Indexes ────────────────────────────────────
 create index if not exists idx_users_agency       on public.users(agency_id);

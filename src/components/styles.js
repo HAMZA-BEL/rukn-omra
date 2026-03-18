@@ -220,6 +220,22 @@ export const globalCSS = `
     display: flex;
     flex-direction: column;
     gap: 4px;
+    cursor: pointer;
+    text-align: inherit;
+    transition: border-color .2s ease, background .2s ease, transform .15s ease;
+    font-family: inherit;
+    color: inherit;
+    appearance: none;
+    outline: none;
+  }
+  .notification-dropdown__item:focus-visible {
+    outline: 2px solid rgba(212,175,55,0.6);
+    outline-offset: 3px;
+  }
+  .notification-dropdown__item:hover {
+    border-color: rgba(212,175,55,0.35);
+    background: rgba(255,255,255,0.06);
+    transform: translateY(-1px);
   }
   .notification-dropdown__item.is-unread {
     border-color: rgba(212,175,55,0.45);
@@ -748,8 +764,8 @@ export const globalCSS = `
   }
   .mobile-nav {
     position: fixed;
-    bottom: 24px;
-    width: 260px;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    width: 230px;
     height: 260px;
     pointer-events: none;
     display: none;
@@ -759,17 +775,17 @@ export const globalCSS = `
   .mobile-nav--ltr { left: 18px; }
   .mobile-nav-items {
     position: absolute;
-    bottom: 18px;
-    right: 18px;
+    bottom: 20px;
+    right: 16px;
   }
-  .mobile-nav--ltr .mobile-nav-items { left: 18px; right: auto; }
+  .mobile-nav--ltr .mobile-nav-items { left: 16px; right: auto; }
   .mobile-nav-item {
     position: absolute;
     bottom: 0;
     right: 0;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     background: none;
     border: none;
     color: #f8fafc;
@@ -792,8 +808,8 @@ export const globalCSS = `
     text-align: right;
   }
   .mobile-nav-bubble {
-    width: 44px;
-    height: 44px;
+    width: 42px;
+    height: 42px;
     border-radius: 50%;
     background: linear-gradient(145deg, rgba(15,35,66,0.95), rgba(6,13,26,0.92));
     border: 1px solid rgba(212,175,55,0.25);
@@ -808,8 +824,53 @@ export const globalCSS = `
   }
   .mobile-nav-label {
     white-space: nowrap;
-    letter-spacing: 0.1px;
-    opacity: 0.9;
+    letter-spacing: 0.2px;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(248,250,252,0.92);
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(6,13,26,0.82);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    backdrop-filter: blur(18px);
+  }
+  .mobile-nav-label--secondary {
+    font-size: 10px;
+    opacity: 0.85;
+    padding: 2px 9px;
+  }
+  .mobile-nav-badge {
+    position: absolute;
+    top: -6px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #d4af37;
+    color: #060d1a;
+    font-size: 10px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+  }
+  .mobile-nav-bubble--secondary {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(145deg, rgba(12,28,50,0.9), rgba(5,10,20,0.92));
+    border-color: rgba(255,255,255,0.12);
+  }
+  .mobile-nav-item--secondary .mobile-nav-label {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+  }
+  .mobile-nav-bubble--more {
+    background: linear-gradient(145deg, rgba(212,175,55,0.22), rgba(8,18,32,0.92));
+    border-color: rgba(212,175,55,0.4);
+  }
+  .mobile-nav-bubble--more.is-open {
+    border-color: rgba(212,175,55,0.8);
+    box-shadow: inset 0 2px 8px rgba(212,175,55,0.4), 0 12px 24px rgba(212,175,55,0.25);
   }
   .mobile-nav-toggle {
     position: absolute;
@@ -904,14 +965,13 @@ export const globalCSS = `
     .app-main { padding-bottom: 200px !important; }
     .mobile-nav {
       display: block;
-      bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-      width: 240px;
-      height: 240px;
+      width: 220px;
+      height: 230px;
       right: 12px;
       left: auto;
     }
     .mobile-nav--ltr { left: 12px; right: auto; }
-    .mobile-nav-items { bottom: 12px; }
+    .mobile-nav-items { bottom: 10px; }
     .mobile-nav-toggle { bottom: 0; }
     .clearance-header {
       position: sticky !important;
@@ -939,6 +999,7 @@ export const globalCSS = `
     .clearance-page { padding-top: 0 !important; }
     .invoice-btn { font-size: 10px; padding: 5px 8px; }
     .clear-card-grid { grid-template-columns: minmax(0, 1fr); }
-    .mobile-nav { width: 220px; height: 220px; }
+    .mobile-nav { width: 210px; height: 220px; }
+    .mobile-nav-bubble { width: 38px; height: 38px; }
   }
 `;

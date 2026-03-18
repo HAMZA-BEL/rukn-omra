@@ -9,7 +9,7 @@ const tc = theme.colors;
 const STATUS_FILTERS = ["all", "unread", "archived"];
 const SEVERITY_FILTERS = ["all", "info", "warn", "critical"];
 
-export default function NotificationsPage({ store }) {
+export default function NotificationsPage({ store, onNotificationAction }) {
   const { t, tr, lang, dir } = useLang();
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [severityFilter, setSeverityFilter] = React.useState("all");
@@ -60,6 +60,11 @@ export default function NotificationsPage({ store }) {
   );
 
   const unreadCount = store.unreadNotificationsCount ?? (store.unreadNotifications ? store.unreadNotifications.length : 0);
+  const handleOpenNotification = React.useCallback((notification) => {
+    if (!notification) return;
+    store.markNotificationRead?.(notification.id);
+    onNotificationAction?.(notification);
+  }, [onNotificationAction, store]);
 
   return (
     <div className="page-shell" style={{ padding: "28px 32px 40px" }}>
@@ -160,6 +165,9 @@ export default function NotificationsPage({ store }) {
                   <p style={{ fontSize: 11, color: "rgba(148,163,184,.6)" }}>{createdAt}</p>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 160 }}>
+                  <Button variant="primary" size="sm" onClick={() => handleOpenNotification(notification)}>
+                    {t.viewDetails || "عرض التفاصيل"}
+                  </Button>
                   {!notification.isRead && !notification.isArchived && (
                     <Button variant="secondary" size="sm" onClick={() => store.markNotificationRead(notification.id)}>
                       {t.markAsRead || "وضع كمقروء"}

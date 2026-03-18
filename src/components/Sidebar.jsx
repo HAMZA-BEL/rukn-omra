@@ -30,9 +30,8 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
     { id:"clients",   icon:"👥", label:t.clients },
     { id:"programs",  icon:"📋", label:t.programs },
     { id:"activity",  icon:"🗒️", label:t.activityLog || t.recentActivity },
-    { id:"notifications", icon:"🔔", label:t.notifications, badge:notificationsCount },
-    { id:"trash", icon:"🗑️", label:t.trash },
     { id:"clearance", icon:"📊", label:t.clearance },
+    { id:"trash", icon:"🗑️", label:t.trash },
     { id:"settings",  icon:"⚙️", label:t.settings },
   ];
 

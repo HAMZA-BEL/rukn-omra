@@ -1,3 +1,50 @@
+const stableStringify = (value) => {
+  if (value === null || value === undefined) return "null";
+  if (typeof value !== "object") return String(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${key}:${stableStringify(value[key])}`).join(",")}}`;
+};
+
+export function buildNotificationStateHash(notification) {
+  if (!notification) return "ntf:unknown";
+  if (notification.stateHash && typeof notification.stateHash === "string") {
+    return notification.stateHash;
+  }
+  if (notification.meta && typeof notification.meta.stateHash === "string") {
+    return notification.meta.stateHash;
+  }
+  const type = notification.type || "system";
+  const target = notification.targetId
+    || notification.programId
+    || notification.meta?.targetId
+    || "global";
+  const signature = notification.meta && Object.keys(notification.meta).length
+    ? stableStringify(notification.meta)
+    : (notification.message || "");
+  return `${type}:${target}:${signature}`;
+}
+
+export function resolveNotificationTarget(notification) {
+  if (!notification) return null;
+  const metaRoute = notification.meta?.route || notification.meta?.actionRoute;
+  const actionRoute = notification.actionRoute || metaRoute;
+  if (actionRoute) {
+    return { type: "route", route: actionRoute, targetId: notification.targetId };
+  }
+  const targetType = notification.targetType || notification.meta?.targetType || (notification.programId ? "program" : null);
+  const targetId = notification.targetId || notification.meta?.targetId || notification.programId || null;
+  if (!targetType) return null;
+  const defaultRoutes = {
+    program: "programs",
+    client: "clients",
+    clearance: "clearance",
+    trash: "trash",
+    payments: "clients",
+  };
+  const route = defaultRoutes[targetType] || null;
+  return { type: targetType, route, targetId };
+}
+
 export function formatNotificationMessage(notification, { programs = [], activeClients = [], getClientStatus, tr } = {}) {
   if (!notification) return "";
   if (!notification.type || !notification.type.startsWith("system:")) {

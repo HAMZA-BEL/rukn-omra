@@ -4,6 +4,7 @@
  * on top of Supabase RLS policies).
  */
 import { supabase } from "./supabase";
+import { buildNotificationStateHash } from "../utils/notifications";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -154,17 +155,39 @@ const fromPayment = (row) => ({
   note:      row.note,
 });
 
-const toNotification = (n, agencyId) => ({
-  id:          n.id,
-  agency_id:   agencyId,
-  type:        n.type        ?? null,
-  title:       n.title       ?? null,
-  message:     n.message     ?? null,
-  program_id:  normalizeForeignKey(n.programId),
-  severity:    n.severity    ?? "info",
-  is_read:     n.isRead      ?? false,
-  is_archived: n.isArchived  ?? false,
-});
+const toNotification = (n, agencyId) => {
+  const normalizedTargetId = normalizeForeignKey(n.targetId ?? n.programId);
+  const normalizedMeta = (n.meta && typeof n.meta === "object") ? n.meta : {};
+  const derivedStateHash = buildNotificationStateHash({
+    ...n,
+    targetId: normalizedTargetId ?? n.programId ?? null,
+    meta: normalizedMeta,
+  });
+  const inferredTargetType = n.targetType
+    ?? (normalizedTargetId && n.targetType !== null
+      ? (n.targetType ?? (n.programId ? "program" : null))
+      : null);
+  const inferredRoute = n.actionRoute
+    ?? (inferredTargetType === "program" ? "programs"
+      : inferredTargetType === "client" ? "clients"
+        : null);
+  return {
+    id:          n.id,
+    agency_id:   agencyId,
+    type:        n.type        ?? null,
+    title:       n.title       ?? null,
+    message:     n.message     ?? null,
+    program_id:  normalizeForeignKey(n.programId),
+    target_type: inferredTargetType,
+    target_id:   normalizedTargetId,
+    action_route: inferredRoute,
+    state_hash:  derivedStateHash,
+    meta:        normalizedMeta,
+    severity:    n.severity    ?? "info",
+    is_read:     n.isRead      ?? false,
+    is_archived: n.isArchived  ?? false,
+  };
+};
 
 const fromNotification = (row) => ({
   id:          row.id,
@@ -172,6 +195,11 @@ const fromNotification = (row) => ({
   title:       row.title,
   message:     row.message,
   programId:   row.program_id,
+  targetType:  row.target_type,
+  targetId:    row.target_id,
+  actionRoute: row.action_route,
+  stateHash:   row.state_hash,
+  meta:        row.meta ?? {},
   severity:    row.severity || "info",
   isRead:      row.is_read ?? false,
   isArchived:  row.is_archived ?? false,
@@ -371,8 +399,52 @@ export const db = {
     },
     async upsert(notification, agencyId) {
       const payload = toNotification(notification, agencyId);
+      const createdAt = notification.createdAt || new Date().toISOString();
+      payload.created_at = createdAt;
+
+      let query = supabase
+        .from("notifications")
+        .select("id,is_archived")
+        .eq("agency_id", agencyId)
+        .eq("state_hash", payload.state_hash)
+        .limit(1);
+
+      if (payload.type) query = query.eq("type", payload.type);
+      else query = query.is("type", null);
+
+      if (payload.target_id) query = query.eq("target_id", payload.target_id);
+      else query = query.is("target_id", null);
+
+      const { data: existing, error: lookupError } = await query.maybeSingle();
+      if (lookupError && lookupError.code !== "PGRST116") {
+        return { error: lookupError };
+      }
+
+      if (existing) {
+        if (existing.is_archived) {
+          return { error: null, deduped: true };
+        }
+        const { error: updateError } = await supabase
+          .from("notifications")
+          .update({
+            title: payload.title,
+            message: payload.message,
+            severity: payload.severity,
+            meta: payload.meta,
+            action_route: payload.action_route,
+            target_type: payload.target_type,
+            program_id: payload.program_id,
+            is_read: false,
+            is_archived: false,
+            created_at: createdAt,
+          })
+          .eq("id", existing.id);
+        return { error: updateError };
+      }
+
       const { error } = await supabase
-        .from("notifications").upsert(payload, { onConflict: "id" });
+        .from("notifications")
+        .insert(payload);
       return { error };
     },
     async markRead(id, isRead = true) {

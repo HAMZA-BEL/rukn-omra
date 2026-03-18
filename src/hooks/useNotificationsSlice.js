@@ -6,6 +6,7 @@ import {
   markNotificationRead as markNotificationReadRemote,
   upsertNotification,
 } from "../services/notificationsService";
+import { buildNotificationStateHash } from "../utils/notifications";
 
 export function useNotificationsSlice({
   agencyId,
@@ -77,17 +78,24 @@ export function useNotificationsSlice({
   const ensureNotificationExists = useCallback(
     (notif) => {
       if (!isSupabaseEnabled || !agencyId || !notif) return;
-      const key = getNotificationKey(notif.type, notif.programId);
-      const exists = notifications.some(
-        (n) => !n.isArchived && getNotificationKey(n.type, n.programId) === key
-      );
-      if (exists) return;
-      const payload = {
+      const normalizedMeta = notif.meta && typeof notif.meta === "object" ? notif.meta : {};
+      const normalized = {
         ...notif,
-        id: notif.id || generateUUID(),
+        meta: normalizedMeta,
+        targetId: notif.targetId ?? notif.programId ?? null,
+        targetType: notif.targetType ?? (notif.programId ? "program" : notif.targetType),
+      };
+      normalized.stateHash = buildNotificationStateHash(normalized);
+      const key = getNotificationKey(normalized);
+      const hasAny = notifications.some((n) => getNotificationKey(n) === key);
+      if (hasAny) return;
+      const payload = {
+        ...normalized,
+        programId: normalized.programId ?? normalized.targetId,
+        id: normalized.id || generateUUID(),
         isRead: false,
         isArchived: false,
-        createdAt: notif.createdAt || new Date().toISOString(),
+        createdAt: normalized.createdAt || new Date().toISOString(),
       };
       upsertNotification(payload, agencyId);
     },
