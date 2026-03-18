@@ -42,8 +42,13 @@ export function usePaymentsSlice() {
     setPayments((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
-  const removePaymentsByClient = useCallback((clientId) => {
-    setPayments((prev) => prev.filter((p) => p.clientId !== clientId));
+  const removePaymentsByClient = useCallback((clientIdOrIds) => {
+    if (Array.isArray(clientIdOrIds)) {
+      const idSet = new Set(clientIdOrIds);
+      setPayments((prev) => prev.filter((p) => !idSet.has(p.clientId)));
+    } else {
+      setPayments((prev) => prev.filter((p) => p.clientId !== clientIdOrIds));
+    }
   }, []);
 
   const getClientPayments = useCallback(

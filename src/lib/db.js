@@ -46,6 +46,9 @@ const toProgram = (p, agencyId) => ({
   hotel_madina: p.hotelMadina  ?? null,
   price_table:  p.priceTable   ?? [],
   notes:        p.notes        ?? null,
+  deleted:      p.deleted      ?? false,
+  deleted_at:   p.deletedAt    ?? null,
+  deleted_batch_id: p.deletedBatchId ?? null,
   status:       p.status       ?? "active",
   updated_at:   new Date().toISOString(),
 });
@@ -65,6 +68,9 @@ const fromProgram = (row) => ({
   hotelMadina: row.hotel_madina,
   priceTable:  row.price_table ?? [],
   notes:       row.notes,
+  deleted:     row.deleted ?? false,
+  deletedAt:   row.deleted_at,
+  deletedBatchId: row.deleted_batch_id,
   status:      row.status,
 });
 
@@ -93,6 +99,9 @@ const toClient = (c, agencyId) => ({
   last_modified:     c.lastModified     ?? null,
   archived:          c.archived         ?? false,
   archived_at:       c.archivedAt       ?? null,
+  deleted:           c.deleted          ?? false,
+  deleted_at:        c.deletedAt        ?? null,
+  deleted_batch_id:  c.deletedBatchId   ?? null,
 });
 
 const fromClient = (row) => ({
@@ -119,6 +128,9 @@ const fromClient = (row) => ({
   lastModified:     row.last_modified,
   archived:         row.archived   ?? false,
   archivedAt:       row.archived_at ?? null,
+  deleted:          row.deleted ?? false,
+  deletedAt:        row.deleted_at,
+  deletedBatchId:   row.deleted_batch_id,
 });
 
 const toPayment = (p, agencyId) => ({
@@ -203,9 +215,20 @@ export const db = {
   programs: {
     async fetchAll(agencyId) {
       const { data, error } = await supabase
-        .from("programs").select("*")
+        .from("programs")
+        .select("*")
         .eq("agency_id", agencyId)
+        .or("deleted.is.null,deleted.eq.false")
         .order("created_at", { ascending: true });
+      return { data: data?.map(fromProgram) ?? null, error };
+    },
+    async fetchDeleted(agencyId) {
+      const { data, error } = await supabase
+        .from("programs")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .eq("deleted", true)
+        .order("deleted_at", { ascending: false });
       return { data: data?.map(fromProgram) ?? null, error };
     },
     async upsert(program, agencyId) {
@@ -218,14 +241,55 @@ export const db = {
         .from("programs").delete().eq("id", id).eq("agency_id", agencyId);
       return { error };
     },
+    async markDeleted(id, agencyId, batchId) {
+      const payload = {
+        deleted: true,
+        deleted_at: new Date().toISOString(),
+        deleted_batch_id: batchId ?? null,
+      };
+      const { error } = await supabase
+        .from("programs")
+        .update(payload)
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async restore(id, agencyId) {
+      const { error } = await supabase
+        .from("programs")
+        .update({ deleted: false, deleted_at: null, deleted_batch_id: null })
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async deleteMany(ids, agencyId) {
+      if (!ids || !ids.length) return { error: null };
+      const { error } = await supabase
+        .from("programs")
+        .delete()
+        .in("id", ids)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
   },
 
   clients: {
     async fetchAll(agencyId) {
       const { data, error } = await supabase
-        .from("clients").select("*")
+        .from("clients")
+        .select("*")
         .eq("agency_id", agencyId)
+        .or("deleted.is.null,deleted.eq.false")
         .order("registration_date", { ascending: true });
+      return { data: data?.map(fromClient) ?? null, error };
+    },
+    async fetchDeleted(agencyId) {
+      const { data, error } = await supabase
+        .from("clients")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .eq("deleted", true)
+        .order("deleted_at", { ascending: false });
       return { data: data?.map(fromClient) ?? null, error };
     },
     async upsert(client, agencyId) {
@@ -240,6 +304,38 @@ export const db = {
     async delete(id, agencyId) {
       const { error } = await supabase
         .from("clients").delete().eq("id", id).eq("agency_id", agencyId);
+      return { error };
+    },
+    async markDeleted(ids, agencyId, batchId) {
+      if (!ids || ids.length === 0) return { error: null };
+      const payload = {
+        deleted: true,
+        deleted_at: new Date().toISOString(),
+        deleted_batch_id: batchId ?? null,
+      };
+      const { error } = await supabase
+        .from("clients")
+        .update(payload)
+        .in("id", ids)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async restore(ids, agencyId) {
+      if (!ids || ids.length === 0) return { error: null };
+      const { error } = await supabase
+        .from("clients")
+        .update({ deleted: false, deleted_at: null, deleted_batch_id: null })
+        .in("id", ids)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async deleteMany(ids, agencyId) {
+      if (!ids || !ids.length) return { error: null };
+      const { error } = await supabase
+        .from("clients")
+        .delete()
+        .in("id", ids)
+        .eq("agency_id", agencyId);
       return { error };
     },
   },

@@ -31,6 +31,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
     { id:"programs",  icon:"📋", label:t.programs },
     { id:"activity",  icon:"🗒️", label:t.activityLog || t.recentActivity },
     { id:"notifications", icon:"🔔", label:t.notifications, badge:notificationsCount },
+    { id:"trash", icon:"🗑️", label:t.trash },
     { id:"clearance", icon:"📊", label:t.clearance },
     { id:"settings",  icon:"⚙️", label:t.settings },
   ];

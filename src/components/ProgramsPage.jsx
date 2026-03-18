@@ -30,6 +30,7 @@ export default function ProgramsPage({ store, onToast }) {
   const [editing,       setEditing]       = React.useState(null);
   const [activeProgram, setActiveProgram] = React.useState(null);
   const [search,        setSearch]        = React.useState("");
+  const [deletePrompt,  setDeletePrompt]  = React.useState(null);
 
   const searchPlaceholder = React.useMemo(() => {
     if (lang === "fr") return "Rechercher un programme...";
@@ -42,6 +43,14 @@ export default function ProgramsPage({ store, onToast }) {
     if (!q) return programs;
     return programs.filter(p => (p.name || "").toLowerCase().includes(q));
   }, [programs, search]);
+
+  const handleConfirmDeleteProgram = React.useCallback(() => {
+    if (!deletePrompt) return;
+    deleteProgram(deletePrompt.program.id);
+    if (activeProgram === deletePrompt.program.id) setActiveProgram(null);
+    setDeletePrompt(null);
+    onToast(t.deleteSuccess, "info");
+  }, [deletePrompt, deleteProgram, activeProgram, setActiveProgram, onToast, t.deleteSuccess]);
 
   if (activeProgram) {
     const prog = programs.find(p => p.id === activeProgram);
@@ -99,9 +108,7 @@ export default function ProgramsPage({ store, onToast }) {
                 onEdit={e => { e.stopPropagation(); setEditing(p); }}
                 onDelete={e => {
                   e.stopPropagation();
-                  if (window.confirm(tr("confirmDeleteProgram", { name: p.name }))) {
-                    deleteProgram(p.id); onToast(t.deleteSuccess, "info");
-                  }
+                  setDeletePrompt({ program: p, clients: pc });
                 }}
                 lang={lang}
                 formatCurrencyForLang={formatCurrencyForLang}
@@ -121,6 +128,35 @@ export default function ProgramsPage({ store, onToast }) {
             onToast(editing ? t.updateSuccess : t.addSuccess, "success");
           }}
           onCancel={() => { setShowForm(false); setEditing(null); }} />
+      </Modal>
+      <Modal
+        open={!!deletePrompt}
+        onClose={() => setDeletePrompt(null)}
+        title={t.programTrashTitle}
+        width={520}
+      >
+        {deletePrompt && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <p style={{ fontSize:14, color:tc.white }}>
+              {tr("programTrashMessage", { name: deletePrompt.program.name })}
+            </p>
+            {deletePrompt.clients.length > 0 && (
+              <GlassCard style={{ padding:12, background:"rgba(239,68,68,.08)", borderColor:"rgba(239,68,68,.3)" }}>
+                <p style={{ margin:0, fontSize:13, color:tc.danger }}>
+                  {tr("programTrashClientsWarning", { count: deletePrompt.clients.length })}
+                </p>
+              </GlassCard>
+            )}
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:12 }}>
+              <Button variant="ghost" onClick={() => setDeletePrompt(null)}>
+                {t.cancel}
+              </Button>
+              <Button variant="danger" onClick={handleConfirmDeleteProgram}>
+                {t.programTrashConfirm || t.delete}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

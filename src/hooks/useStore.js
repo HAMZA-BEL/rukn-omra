@@ -11,13 +11,19 @@ import {
 } from "../services/paymentsService";
 import {
   fetchClients,
+  fetchDeletedClients,
   saveClient,
-  deleteClient as deleteClientRemote,
+  markClientsDeleted,
+  restoreClients,
+  deleteClientsPermanent,
 } from "../services/clientsService";
 import {
   fetchPrograms,
+  fetchDeletedPrograms,
   saveProgram,
-  deleteProgram as deleteProgramRemote,
+  markProgramDeleted,
+  restoreProgram,
+  deleteProgramsPermanent,
 } from "../services/programsService";
 import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
@@ -188,8 +194,10 @@ export function useStore(agencyId, onToast) {
   // Namespace localStorage keys per agency so each agency's cache is isolated.
   const ns = agencyId || "local";
 
-  const [programs,    setPrograms]    = useState([]);
-  const [clients,     setClients]     = useState([]);
+  const [programs,        setPrograms]        = useState([]);
+  const [deletedPrograms, setDeletedPrograms] = useState([]);
+  const [clients,         setClients]         = useState([]);
+  const [deletedClients,  setDeletedClients]  = useState([]);
   const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY);
   const {
     activityLog,
@@ -315,14 +323,25 @@ export function useStore(agencyId, onToast) {
     Promise.all([
       fetchPrograms(agencyId),
       fetchClients(agencyId),
+      fetchDeletedPrograms(agencyId),
+      fetchDeletedClients(agencyId),
       fetchPayments(agencyId),
       db.agency.fetch(agencyId),
       fetchNotifications(agencyId),
       fetchRecentActivity(agencyId, 5),
-    ]).then(([p, c, pay, ag, notif, act]) => {
-      if (!p.error   && p.data)   setPrograms(p.data);
-      if (!c.error   && c.data)   setClients(c.data);
-      if (!pay.error && pay.data) setInitialPayments(pay.data);
+    ]).then(([p, c, dp, dc, pay, ag, notif, act]) => {
+      const programData  = !p.error  && p.data  ? p.data  : [];
+      const clientData   = !c.error  && c.data  ? c.data  : [];
+      const trashPrograms = !dp.error && dp.data ? dp.data : [];
+      const trashClients  = !dc.error && dc.data ? dc.data : [];
+      if (programData) setPrograms(programData);
+      if (clientData) setClients(clientData);
+      setDeletedPrograms(trashPrograms);
+      setDeletedClients(trashClients);
+      if (!pay.error && pay.data) {
+        const clientIds = new Set(clientData.map(cl => cl.id));
+        setInitialPayments(pay.data.filter(pmt => clientIds.has(pmt.clientId)));
+      }
       if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
       if (!notif.error && notif.data) setInitialNotifications(notif.data);
       if (!act.error && act.data) setInitialActivity(act.data);
@@ -365,51 +384,109 @@ export function useStore(agencyId, onToast) {
   useEffect(() => {
     if (!isSupabaseEnabled || !agencyId) return;
 
+    const mapProgramRow = (row) => ({
+      id: row.id,
+      name: row.name,
+      nameFr: row.name_fr,
+      type: row.type,
+      duration: row.duration,
+      departure: row.departure,
+      returnDate: row.return_date,
+      transport: row.transport,
+      mealPlan: row.meal_plan,
+      seats: row.seats,
+      hotelMecca: row.hotel_mecca,
+      hotelMadina: row.hotel_madina,
+      priceTable: row.price_table ?? [],
+      notes: row.notes,
+      status: row.status,
+      deleted: row.deleted ?? false,
+      deletedAt: row.deleted_at ?? null,
+      deletedBatchId: row.deleted_batch_id ?? null,
+    });
+    const mapClientRow = (row) => ({
+      id: row.id,
+      programId: row.program_id,
+      name: row.name,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      nom: row.nom,
+      prenom: row.prenom,
+      phone: row.phone,
+      city: row.city,
+      hotelLevel: row.hotel_level,
+      hotelMecca: row.hotel_mecca,
+      hotelMadina: row.hotel_madina,
+      roomType: row.room_type,
+      officialPrice: Number(row.official_price ?? 0),
+      salePrice: Number(row.sale_price ?? 0),
+      ticketNo: row.ticket_no,
+      passport: row.passport ?? {},
+      docs: row.docs ?? {},
+      notes: row.notes,
+      registrationDate: row.registration_date,
+      lastModified: row.last_modified,
+      archived: row.archived ?? false,
+      archivedAt: row.archived_at ?? null,
+      deleted: row.deleted ?? false,
+      deletedAt: row.deleted_at ?? null,
+      deletedBatchId: row.deleted_batch_id ?? null,
+    });
+
     const channel = db.subscribeAll({
       onProgram: ({ eventType, new: row, old }) => {
         // Extra check: ignore rows that don't belong to this agency
         if (row?.agency_id && row.agency_id !== agencyId) return;
-        if (eventType === "INSERT" || eventType === "UPDATE")
+        if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
+          const mapped = mapProgramRow(row);
+          if (mapped.deleted) {
+            setPrograms(prev => prev.filter(p => p.id !== mapped.id));
+            setDeletedPrograms(prev => {
+              const exists = prev.find(p => p.id === mapped.id);
+              return exists
+                ? prev.map(p => p.id === mapped.id ? { ...p, ...mapped } : p)
+                : [mapped, ...prev];
+            });
+            return;
+          }
+          setDeletedPrograms(prev => prev.filter(p => p.id !== mapped.id));
           setPrograms(prev => {
-            const exists = prev.find(p => p.id === row.id);
-            const mapped = {
-              id: row.id, name: row.name, nameFr: row.name_fr,
-              type: row.type, duration: row.duration, departure: row.departure,
-              returnDate: row.return_date, transport: row.transport, mealPlan: row.meal_plan,
-              seats: row.seats, hotelMecca: row.hotel_mecca, hotelMadina: row.hotel_madina,
-              priceTable: row.price_table ?? [], notes: row.notes, status: row.status,
-            };
+            const exists = prev.find(p => p.id === mapped.id);
             return exists
-              ? prev.map(p => p.id === row.id ? { ...p, ...mapped } : p)
+              ? prev.map(p => p.id === mapped.id ? { ...p, ...mapped } : p)
               : [...prev, mapped];
           });
-        else if (eventType === "DELETE")
+        } else if (eventType === "DELETE") {
           setPrograms(prev => prev.filter(p => p.id !== old.id));
+          setDeletedPrograms(prev => prev.filter(p => p.id !== old.id));
+        }
       },
       onClient: ({ eventType, new: row, old }) => {
         if (row?.agency_id && row.agency_id !== agencyId) return;
-        if (eventType === "INSERT" || eventType === "UPDATE")
+        if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
+          const mapped = mapClientRow(row);
+          if (mapped.deleted) {
+            setClients(prev => prev.filter(c => c.id !== mapped.id));
+            removePaymentsByClient(mapped.id);
+            setDeletedClients(prev => {
+              const exists = prev.find(c => c.id === mapped.id);
+              return exists
+                ? prev.map(c => c.id === mapped.id ? { ...c, ...mapped } : c)
+                : [mapped, ...prev];
+            });
+            return;
+          }
+          setDeletedClients(prev => prev.filter(c => c.id !== mapped.id));
           setClients(prev => {
-            const exists = prev.find(c => c.id === row.id);
-            const mapped = {
-              id: row.id, programId: row.program_id, name: row.name,
-              firstName: row.first_name, lastName: row.last_name,
-              nom: row.nom, prenom: row.prenom, phone: row.phone, city: row.city,
-              hotelLevel: row.hotel_level, hotelMecca: row.hotel_mecca,
-              hotelMadina: row.hotel_madina, roomType: row.room_type,
-              officialPrice: Number(row.official_price ?? 0),
-              salePrice: Number(row.sale_price ?? 0),
-              ticketNo: row.ticket_no, passport: row.passport ?? {},
-              docs: row.docs ?? {}, notes: row.notes,
-              registrationDate: row.registration_date, lastModified: row.last_modified,
-              archived: row.archived ?? false, archivedAt: row.archived_at ?? null,
-            };
+            const exists = prev.find(c => c.id === mapped.id);
             return exists
-              ? prev.map(c => c.id === row.id ? { ...c, ...mapped } : c)
+              ? prev.map(c => c.id === mapped.id ? { ...c, ...mapped } : c)
               : [...prev, mapped];
           });
-        else if (eventType === "DELETE")
+        } else if (eventType === "DELETE") {
           setClients(prev => prev.filter(c => c.id !== old.id));
+          setDeletedClients(prev => prev.filter(c => c.id !== old.id));
+        }
       },
       onPayment: ({ eventType, new: row, old }) => {
         if (row?.agency_id && row.agency_id !== agencyId) return;
@@ -593,10 +670,23 @@ export function useStore(agencyId, onToast) {
 
   const deleteClient = useCallback((id) => {
     const c = clients.find(x => x.id === id);
-    setClients(prev  => prev.filter(c => c.id !== id));
+    if (!c) return;
+    const batchId = generateUUID();
+    const deletedAt = new Date().toISOString();
+    const deletedEntry = {
+      ...c,
+      deleted: true,
+      deletedAt,
+      deletedBatchId: batchId,
+    };
+    setClients(prev  => prev.filter(client => client.id !== id));
+    setDeletedClients(prev => {
+      const filtered = prev.filter(client => client.id !== id);
+      return [deletedEntry, ...filtered];
+    });
     removePaymentsByClient(id);
     logActivity("client_delete", "تم حذف معتمر", c?.name || id);
-    sync(() => deleteClientRemote(id, agencyId));
+    sync(() => markClientsDeleted([id], agencyId, batchId));
   }, [clients, setClients, removePaymentsByClient, logActivity, sync, agencyId]);
 
   // ── Archive / Restore ─────────────────────────────────────────────────────
@@ -685,11 +775,143 @@ export function useStore(agencyId, onToast) {
 
   const deleteProgram = useCallback((id) => {
     const prog = programs.find(p => p.id === id);
+    if (!prog) return;
+    const relatedClients = clients.filter(c => c.programId === id);
+    const clientIds = relatedClients.map(c => c.id);
+    const batchId = generateUUID();
+    const deletedAt = new Date().toISOString();
+    const deletedProgramEntry = {
+      ...prog,
+      deleted: true,
+      deletedAt,
+      deletedBatchId: batchId,
+    };
     setPrograms(prev => prev.filter(p => p.id !== id));
-    setClients(prev => prev.map(c => c.programId === id ? { ...c, programId: null } : c));
+    setDeletedPrograms(prev => {
+      const filtered = prev.filter(p => p.id !== id);
+      return [deletedProgramEntry, ...filtered];
+    });
+    if (clientIds.length) {
+      setClients(prev => prev.filter(c => !clientIds.includes(c.id)));
+      const deletedClientEntries = relatedClients.map((client) => ({
+        ...client,
+        deleted: true,
+        deletedAt,
+        deletedBatchId: batchId,
+      }));
+      setDeletedClients(prev => {
+        const idSet = new Set(clientIds);
+        const filtered = prev.filter(c => !idSet.has(c.id));
+        return [...deletedClientEntries, ...filtered];
+      });
+      removePaymentsByClient(clientIds);
+    }
     logActivity("program_delete", `تم حذف برنامج ${prog?.name || id}`, "");
-    sync(() => deleteProgramRemote(id, agencyId));
-  }, [programs, setPrograms, setClients, logActivity, sync, agencyId]);
+    sync(async () => {
+      const responses = [];
+      responses.push(await markProgramDeleted(id, agencyId, batchId));
+      if (clientIds.length) {
+        responses.push(await markClientsDeleted(clientIds, agencyId, batchId));
+      }
+      const error = responses.find(r => r?.error)?.error ?? null;
+      return { error };
+    });
+  }, [programs, clients, setPrograms, setClients, removePaymentsByClient, logActivity, sync, agencyId]);
+
+  const restoreTrashItems = useCallback(({ programIds = [], clientIds = [] }) => {
+    if (!programIds.length && !clientIds.length) return;
+    const programsToRestore = deletedPrograms.filter(p => programIds.includes(p.id));
+    const batchIdsFromPrograms = new Set(
+      programsToRestore
+        .map(p => p.deletedBatchId)
+        .filter(Boolean)
+    );
+    const clientsFromPrograms = deletedClients
+      .filter(c => c.deletedBatchId && batchIdsFromPrograms.has(c.deletedBatchId))
+      .map(c => c.id);
+    const combinedClientIds = Array.from(new Set([...clientIds, ...clientsFromPrograms]));
+
+    if (programsToRestore.length) {
+      const restoredPrograms = programsToRestore.map((prog) => ({
+        ...prog,
+        deleted: false,
+        deletedAt: null,
+        deletedBatchId: null,
+      }));
+      setPrograms(prev => {
+        const filtered = prev.filter(p => !programIds.includes(p.id));
+        return [...filtered, ...restoredPrograms];
+      });
+      setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
+      const label = programsToRestore.length === 1
+        ? `تمت استعادة برنامج ${programsToRestore[0].name || programsToRestore[0].id}`
+        : `تمت استعادة ${programsToRestore.length} برامج من سلة المحذوفات`;
+      logActivity("program_restore", label, "");
+    }
+
+    if (combinedClientIds.length) {
+      const restoredClients = deletedClients
+        .filter(c => combinedClientIds.includes(c.id))
+        .map(c => ({
+          ...c,
+          deleted: false,
+          deletedAt: null,
+          deletedBatchId: null,
+        }));
+      setClients(prev => {
+        const filtered = prev.filter(c => !combinedClientIds.includes(c.id));
+        return [...filtered, ...restoredClients];
+      });
+      setDeletedClients(prev => prev.filter(c => !combinedClientIds.includes(c.id)));
+      const label = combinedClientIds.length === 1
+        ? `تمت استعادة معتمر من السلة`
+        : `تمت استعادة ${combinedClientIds.length} معتمرين من السلة`;
+      logActivity("client_restore", label, "");
+    }
+
+    sync(async () => {
+      const responses = [];
+      for (const programId of programIds) {
+        responses.push(await restoreProgram(programId, agencyId));
+      }
+      if (combinedClientIds.length) {
+        responses.push(await restoreClients(combinedClientIds, agencyId));
+      }
+      const error = responses.find(r => r?.error)?.error ?? null;
+      return { error };
+    });
+  }, [agencyId, deletedPrograms, deletedClients, logActivity, restoreClients, restoreProgram, sync]);
+
+  const purgeTrashItems = useCallback(({ programIds = [], clientIds = [] }) => {
+    if (!programIds.length && !clientIds.length) return;
+    const programsToPurge = deletedPrograms.filter(p => programIds.includes(p.id));
+    const batchIds = new Set(
+      programsToPurge
+        .map(p => p.deletedBatchId)
+        .filter(Boolean)
+    );
+    const clientsFromPrograms = deletedClients
+      .filter(c => c.deletedBatchId && batchIds.has(c.deletedBatchId))
+      .map(c => c.id);
+    const finalClientIds = Array.from(new Set([...clientIds, ...clientsFromPrograms]));
+
+    setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
+    setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
+    setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+    setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+
+    sync(async () => {
+      const responses = [];
+      if (programIds.length) {
+        responses.push(await deleteProgramsPermanent(programIds, agencyId));
+      }
+      if (finalClientIds.length) {
+        responses.push(await deleteClientsPermanent(finalClientIds, agencyId));
+      }
+      const error = responses.find(r => r?.error)?.error ?? null;
+      return { error };
+    });
+  }, [agencyId, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));
@@ -736,9 +958,14 @@ export function useStore(agencyId, onToast) {
       try {
         const data = JSON.parse(e.target.result);
         if (!data.programs || !data.clients || !data.payments) throw new Error("ملف غير صالح");
-        setPrograms(data.programs);
-        setClients(data.clients);
-        replacePayments(data.payments);
+        const safePrograms = (data.programs || []).filter(p => !p.deleted);
+        const safeClients = (data.clients || []).filter(c => !c.deleted);
+        const clientIds = new Set(safeClients.map(c => c.id));
+        setPrograms(safePrograms);
+        setClients(safeClients);
+        setDeletedPrograms([]);
+        setDeletedClients([]);
+        replacePayments((data.payments || []).filter(p => clientIds.has(p.clientId)));
         if (data.agency) setAgency(data.agency);
         logActivity("import_excel", "تم استيراد بيانات من ملف", "");
         res();
@@ -751,6 +978,7 @@ export function useStore(agencyId, onToast) {
 
   return {
     programs, clients, payments, agency, activityLog, stats,
+    deletedPrograms, deletedClients,
     activeClients, archivedClients,
     notifications,
     unreadNotifications,
@@ -762,6 +990,7 @@ export function useStore(agencyId, onToast) {
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, deletePayment,
     addProgram, updateProgram, deleteProgram,
+    restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync,
     markNotificationRead, markAllNotificationsRead, archiveNotification, restoreNotification,
     ensureNotificationExists,

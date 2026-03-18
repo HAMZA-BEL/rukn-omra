@@ -4,7 +4,7 @@ import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
-import { Menu as MenuIcon, Home, Users, ClipboardList, Receipt, Settings as SettingsIcon, Bell, History } from "lucide-react";
+import { Menu as MenuIcon, Home, Users, ClipboardList, Receipt, Settings as SettingsIcon, Bell, History, Trash2 } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
@@ -13,6 +13,7 @@ import ClearancePage from "./components/ClearancePage";
 import NotificationsPage from "./components/NotificationsPage";
 import SettingsPage from "./components/SettingsPage";
 import ActivityLogPage from "./components/ActivityLogPage";
+import TrashPage from "./components/TrashPage";
 import LoginPage from "./components/LoginPage";
 import SetPasswordPage from "./components/SetPasswordPage";
 import { Modal, Toast } from "./components/UI";
@@ -60,6 +61,7 @@ function AppInner({ agencyId, onLogout }) {
     { id: "programs",      icon: ClipboardList, label: t.programs },
     { id: "activity",      icon: History,       label: t.activityLog || t.recentActivity },
     { id: "notifications", icon: Bell,          label: t.notifications, badge: store.unreadNotificationsCount },
+    { id: "trash",         icon: Trash2,        label: t.trash },
     { id: "clearance",     icon: Receipt,       label: t.clearance },
     { id: "settings",      icon: SettingsIcon,  label: t.settings },
   ]), [t, store.unreadNotificationsCount]);
@@ -127,7 +129,7 @@ function AppInner({ agencyId, onLogout }) {
                   variant="compact"
                 />
               }
-              pageName={{ clients:t.clients, programs:t.programs, notifications:t.notifications, activity:t.activityLog, clearance:t.clearance, settings:t.settings }[page]}
+              pageName={{ clients:t.clients, programs:t.programs, notifications:t.notifications, trash:t.trash, activity:t.activityLog, clearance:t.clearance, settings:t.settings }[page]}
             />
           )}
 
@@ -156,6 +158,7 @@ function AppInner({ agencyId, onLogout }) {
           {page==="clients"    && <ErrorBoundary><ClientsPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="notifications" && <ErrorBoundary><NotificationsPage store={store} /></ErrorBoundary>}
+          {page==="trash" && <ErrorBoundary><TrashPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="activity" && <ErrorBoundary><ActivityLogPage store={store} /></ErrorBoundary>}
           {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} /></ErrorBoundary>}
           {page==="settings"   && <ErrorBoundary><SettingsPage store={store} onToast={showToast} /></ErrorBoundary>}
