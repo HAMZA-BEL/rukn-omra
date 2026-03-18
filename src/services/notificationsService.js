@@ -23,3 +23,15 @@ export function markManyNotificationsRead(ids) {
 export function markNotificationArchived(id, archived = true) {
   return db.notifications.markArchived(id, archived);
 }
+
+export function deleteNotification(id, agencyId) {
+  return db.notifications.delete(id, agencyId);
+}
+
+export function deleteNotifications(ids, agencyId) {
+  return db.notifications.deleteMany(ids, agencyId);
+}
+
+export function deleteArchivedNotifications(agencyId) {
+  return db.notifications.deleteAllArchived(agencyId);
+}

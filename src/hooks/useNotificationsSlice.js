@@ -4,6 +4,9 @@ import {
   markManyNotificationsRead as markManyNotificationsReadRemote,
   markNotificationArchived as markNotificationArchivedRemote,
   markNotificationRead as markNotificationReadRemote,
+  deleteNotification as deleteNotificationRemote,
+  deleteNotifications as deleteNotificationsRemote,
+  deleteArchivedNotifications as deleteArchivedNotificationsRemote,
   upsertNotification,
 } from "../services/notificationsService";
 import { buildNotificationStateHash } from "../utils/notifications";
@@ -102,6 +105,29 @@ export function useNotificationsSlice({
     [agencyId, isSupabaseEnabled, notifications, generateUUID, getNotificationKey]
   );
 
+  const deleteNotification = useCallback(
+    (id) => {
+      if (!id) return;
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      if (isSupabaseEnabled && agencyId) deleteNotificationRemote(id, agencyId);
+    },
+    [agencyId, isSupabaseEnabled]
+  );
+
+  const deleteNotifications = useCallback(
+    (ids = []) => {
+      if (!ids.length) return;
+      setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
+      if (isSupabaseEnabled && agencyId) deleteNotificationsRemote(ids, agencyId);
+    },
+    [agencyId, isSupabaseEnabled]
+  );
+
+  const deleteAllArchived = useCallback(() => {
+    setNotifications((prev) => prev.filter((n) => !n.isArchived));
+    if (isSupabaseEnabled && agencyId) deleteArchivedNotificationsRemote(agencyId);
+  }, [agencyId, isSupabaseEnabled]);
+
   return {
     notifications,
     unreadNotifications,
@@ -114,5 +140,8 @@ export function useNotificationsSlice({
     archiveNotification,
     restoreNotification,
     ensureNotificationExists,
+    deleteNotification,
+    deleteNotifications,
+    deleteAllArchived,
   };
 }

@@ -224,6 +224,9 @@ export function useStore(agencyId, onToast) {
     archiveNotification,
     restoreNotification,
     ensureNotificationExists,
+    deleteNotification,
+    deleteNotifications,
+    deleteAllArchived,
   } = useNotificationsSlice({ agencyId, isSupabaseEnabled, generateUUID, getNotificationKey });
   const {
     payments,
@@ -1024,6 +1027,9 @@ export function useStore(agencyId, onToast) {
     updateAgency, exportData, importData, forceSync,
     markNotificationRead, markAllNotificationsRead, archiveNotification, restoreNotification,
     ensureNotificationExists,
+    deleteNotification,
+    deleteNotifications,
+    deleteAllArchivedNotifications: deleteAllArchived,
     fetchActivityLogPage, archiveOldActivityLog, recordActivity: logActivity,
   };
 }

@@ -463,6 +463,31 @@ export const db = {
         .from("notifications").update({ is_archived: archived }).eq("id", id);
       return { error };
     },
+    async delete(id, agencyId) {
+      const { error } = await supabase
+        .from("notifications")
+        .delete()
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async deleteMany(ids, agencyId) {
+      if (!ids || ids.length === 0) return { error: null };
+      const { error } = await supabase
+        .from("notifications")
+        .delete()
+        .in("id", ids)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async deleteAllArchived(agencyId) {
+      const { error } = await supabase
+        .from("notifications")
+        .delete()
+        .eq("agency_id", agencyId)
+        .eq("is_archived", true);
+      return { error };
+    },
   },
 
   agency: {
