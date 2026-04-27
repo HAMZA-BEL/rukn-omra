@@ -3,6 +3,13 @@ const crypto = require("crypto");
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SITE_URL = (
+  process.env.APP_SITE_URL ||
+  process.env.REACT_APP_SITE_URL ||
+  process.env.URL ||
+  process.env.DEPLOY_PRIME_URL ||
+  ""
+).replace(/\/$/, "");
 const ALLOWED_ROLES = new Set(["owner", "manager", "staff"]);
 const ALLOWED_STATUS = new Set(["active", "disabled", "invited"]);
 const ADMIN_ROLES = new Set(["owner", "manager"]);
@@ -113,9 +120,33 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: insertError.message }) };
     }
 
+    let setupEmailSent = false;
+    if (status !== "disabled") {
+      if (!SITE_URL) {
+        await supabase.auth.admin.deleteUser(authUserId);
+        return {
+          statusCode: 500,
+          body: JSON.stringify({ error: "Missing APP_SITE_URL for password setup email" }),
+        };
+      }
+
+      const { error: setupEmailError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: SITE_URL,
+      });
+
+      if (setupEmailError) {
+        await supabase.auth.admin.deleteUser(authUserId);
+        return {
+          statusCode: setupEmailError?.status || 502,
+          body: JSON.stringify({ error: setupEmailError.message || "Failed to send password setup email" }),
+        };
+      }
+      setupEmailSent = true;
+    }
+
     return {
       statusCode: 201,
-      body: JSON.stringify({ id: authUserId, email, role, status }),
+      body: JSON.stringify({ id: authUserId, email, role, status, setupEmailSent }),
     };
   } catch (err) {
     console.error("create-user error", err);
