@@ -30,11 +30,18 @@ create table if not exists public.agencies (
 
 -- User profiles (linked to auth.users)
 create table if not exists public.users (
-  id          uuid primary key references auth.users(id) on delete cascade,
-  agency_id   uuid not null references public.agencies(id) on delete cascade,
-  role        text not null check (role in ('owner','agent')) default 'agent',
-  full_name   text,
-  created_at  timestamptz default now()
+  id            uuid primary key references auth.users(id) on delete cascade,
+  agency_id     uuid not null references public.agencies(id) on delete cascade,
+  email         text not null unique,
+  full_name     text,
+  role          text not null check (role in ('owner','manager','staff')) default 'staff',
+  status        text not null check (status in ('active','disabled','invited')) default 'active',
+  invited_at    timestamptz,
+  invited_by    uuid references public.users(id),
+  last_login    timestamptz,
+  disabled_at   timestamptz,
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now()
 );
 
 -- Programs
@@ -240,11 +247,14 @@ create policy "agencies_select" on public.agencies
 create policy "agencies_update" on public.agencies
   for update using (id = public.get_agency_id());
 
--- users: each user sees only their own profile row
+-- users: each user sees their own profile row and users in the same agency
 drop policy if exists "users_select" on public.users;
 drop policy if exists "users_update" on public.users;
 create policy "users_select" on public.users
-  for select using (id = auth.uid());
+  for select using (
+    id = auth.uid()
+    or agency_id = public.get_agency_id()
+  );
 create policy "users_update" on public.users
   for update using (id = auth.uid());
 
@@ -394,11 +404,16 @@ begin
   -- Pass it like: supabase.auth.signUp({ email, password,
   --   options: { data: { agency_id, role, full_name } } })
   if new.raw_user_meta_data->>'agency_id' is not null then
-    insert into public.users (id, agency_id, role, full_name)
+    insert into public.users (id, agency_id, email, role, full_name)
     values (
       new.id,
       (new.raw_user_meta_data->>'agency_id')::uuid,
-      coalesce(new.raw_user_meta_data->>'role', 'agent'),
+      new.email,
+      case
+        when new.raw_user_meta_data->>'role' in ('owner','manager','staff')
+          then new.raw_user_meta_data->>'role'
+        else 'staff'
+      end,
       coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
     )
     on conflict (id) do nothing;

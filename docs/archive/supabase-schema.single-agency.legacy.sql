@@ -1,3 +1,7 @@
+-- LEGACY ONLY. Do not run on current Rukn production/staging Supabase.
+-- Replaced by /SUPABASE_SCHEMA.sql multi-tenant schema.
+-- Kept only for historical reference.
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Umrah Pro — Supabase Schema
 -- Run this in: Supabase Dashboard → SQL Editor → New Query

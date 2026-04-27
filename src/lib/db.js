@@ -206,6 +206,17 @@ const fromNotification = (row) => ({
   createdAt:   row.created_at,
 });
 
+const fromUser = (row) => ({
+  id:        row.id,
+  agencyId:  row.agency_id,
+  email:     row.email,
+  fullName:  row.full_name,
+  role:      row.role,
+  status:    row.status,
+  lastLogin: row.last_login,
+  createdAt: row.created_at,
+});
+
 const toAgency = (a) => ({
   name_ar:        a.nameAr        ?? null,
   name_fr:        a.nameFr        ?? null,
@@ -322,9 +333,6 @@ export const db = {
     },
     async upsert(client, agencyId) {
       const payload = toClient(client, agencyId);
-      try {
-        console.debug("[Supabase] clients.upsert payload:", payload);
-      } catch (_) {}
       const { error } = await supabase
         .from("clients").upsert(payload, { onConflict: "id" });
       return { error };
@@ -589,6 +597,15 @@ export const db = {
         .from("users").select("id, agency_id, role, full_name")
         .eq("id", userId).single();
       return { data, error };
+    },
+    async fetchByAgency(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, agency_id, email, full_name, role, status, last_login, created_at")
+        .eq("agency_id", agencyId)
+        .order("created_at", { ascending: false });
+      return { data: (data || []).map(fromUser), error };
     },
   },
 
