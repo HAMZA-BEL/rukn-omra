@@ -29,6 +29,7 @@ import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
 import { usePaymentsSlice } from "./usePaymentsSlice";
 import { useClientsSlice } from "./useClientsSlice";
+import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -265,6 +266,7 @@ export function useStore(agencyId, onToast) {
       return s ? new Date(s) : null;
     } catch { return null; }
   });
+  const [agencyUsers, setAgencyUsers] = useState([]);
 
   // Prevent double-fetch in React StrictMode
   const fetchedRef = useRef(false);
@@ -299,6 +301,18 @@ export function useStore(agencyId, onToast) {
       setSyncStatus("offline");
     }
   }, [agencyId, ns]);
+
+  const refreshAgencyUsers = useCallback(async () => {
+    if (!isSupabaseEnabled || !agencyId) {
+      setAgencyUsers([]);
+      return { data: [], error: null };
+    }
+    const result = await fetchAgencyUsers(agencyId);
+    if (!result.error && Array.isArray(result.data)) {
+      setAgencyUsers(result.data);
+    }
+    return result;
+  }, [agencyId, isSupabaseEnabled]);
 
   // ── Legacy ID migration (ensures Supabase-compatible UUIDs) ───────────────
   useEffect(() => {
@@ -350,8 +364,9 @@ export function useStore(agencyId, onToast) {
       fetchPayments(agencyId),
       db.agency.fetch(agencyId),
       fetchNotifications(agencyId),
+      fetchAgencyUsers(agencyId),
       fetchRecentActivity(agencyId, 5),
-    ]).then(([p, c, dp, dc, pay, ag, notif, act]) => {
+    ]).then(([p, c, dp, dc, pay, ag, notif, usersResp, act]) => {
       const programData  = !p.error  && p.data  ? p.data  : [];
       const clientData   = !c.error  && c.data  ? c.data  : [];
       const trashPrograms = !dp.error && dp.data ? dp.data : [];
@@ -364,6 +379,7 @@ export function useStore(agencyId, onToast) {
         const clientIds = new Set(clientData.map(cl => cl.id));
         setInitialPayments(pay.data.filter(pmt => clientIds.has(pmt.clientId)));
       }
+      setAgencyUsers(usersResp?.data ?? []);
       if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
       if (!notif.error && notif.data) setInitialNotifications(notif.data);
       if (!act.error && act.data) setInitialActivity(act.data);
@@ -542,19 +558,34 @@ export function useStore(agencyId, onToast) {
   const getProgramClients = useCallback((id) => clients.filter(c => c.programId === id), [clients]);
 
   // ── Stats (active clients only) ───────────────────────────────────────────
-  const stats = useMemo(() => ({
-    totalClients:   activeClients.length,
-    archivedCount:  archivedClients.length,
-    totalPrograms:  programs.length,
-    cleared:        activeClients.filter(c => getClientStatus(c) === "cleared").length,
-    partial:        activeClients.filter(c => getClientStatus(c) === "partial").length,
-    unpaid:         activeClients.filter(c => getClientStatus(c) === "unpaid").length,
-    totalRevenue:   activeClients.reduce((s,c) => s+(c.salePrice??c.price??0), 0),
-    totalCollected: activeClients.reduce((s,c) => s+getClientTotalPaid(c.id), 0),
-    totalRemaining: activeClients.reduce((s,c) => s+Math.max(0,(c.salePrice??c.price??0)-getClientTotalPaid(c.id)), 0),
-    totalDiscount:  activeClients.reduce((s,c) => s+Math.max(0,(c.officialPrice??0)-(c.salePrice??c.officialPrice??0)), 0),
-    docsIncomplete: activeClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
-  }), [activeClients, archivedClients, programs, getClientStatus, getClientTotalPaid]);
+  const stats = useMemo(() => {
+    // Build paid lookup map once — O(n) over payments instead of O(n²)
+    const paidMap = new Map();
+    payments.forEach(p => {
+      paidMap.set(p.clientId, (paidMap.get(p.clientId) || 0) + p.amount);
+    });
+    const getPaid = (clientId) => paidMap.get(clientId) || 0;
+    const getStatus = (client) => {
+      const paid  = getPaid(client.id);
+      const price = client.salePrice ?? client.price ?? 0;
+      if (paid === 0)    return "unpaid";
+      if (paid >= price) return "cleared";
+      return "partial";
+    };
+    return {
+      totalClients:   activeClients.length,
+      archivedCount:  archivedClients.length,
+      totalPrograms:  programs.length,
+      cleared:        activeClients.filter(c => getStatus(c) === "cleared").length,
+      partial:        activeClients.filter(c => getStatus(c) === "partial").length,
+      unpaid:         activeClients.filter(c => getStatus(c) === "unpaid").length,
+      totalRevenue:   activeClients.reduce((s,c) => s+(c.salePrice??c.price??0), 0),
+      totalCollected: activeClients.reduce((s,c) => s+getPaid(c.id), 0),
+      totalRemaining: activeClients.reduce((s,c) => s+Math.max(0,(c.salePrice??c.price??0)-getPaid(c.id)), 0),
+      totalDiscount:  activeClients.reduce((s,c) => s+Math.max(0,(c.officialPrice??0)-(c.salePrice??c.officialPrice??0)), 0),
+      docsIncomplete: activeClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
+    };
+  }, [activeClients, archivedClients, programs, payments]);
 
   // ── Archive suggestions ───────────────────────────────────────────────────
   const getArchiveSuggestions = useCallback(() => {
@@ -763,6 +794,54 @@ export function useStore(agencyId, onToast) {
     sync(() => markClientsDeleted(ids, agencyId, batchId));
     return entries.length;
   }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
+
+  const createAgencyUser = useCallback(async ({ email, fullName, role = "staff", status = "active" }) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      throw new Error("Cloud features are unavailable");
+    }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const token = sessionData?.session?.access_token;
+    if (!token) throw new Error("Missing auth session");
+    const response = await fetch("/.netlify/functions/create-user", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ email, fullName, role, status }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to create user");
+    }
+    await refreshAgencyUsers();
+    return payload;
+  }, [agencyId, refreshAgencyUsers, isSupabaseEnabled]);
+
+  const updateAgencyUser = useCallback(async ({ userId, role, status }) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      throw new Error("Cloud features are unavailable");
+    }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    const token = sessionData?.session?.access_token;
+    if (!token) throw new Error("Missing auth session");
+    const response = await fetch("/.netlify/functions/update-user", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ userId, role, status }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to update user");
+    }
+    await refreshAgencyUsers();
+    return payload;
+  }, [agencyId, refreshAgencyUsers, isSupabaseEnabled]);
 
   // ── Archive / Restore ─────────────────────────────────────────────────────
   const archiveClient = useCallback((id) => {
@@ -1037,6 +1116,7 @@ export function useStore(agencyId, onToast) {
 
   return {
     programs, clients, payments, agency, activityLog, stats,
+    agencyUsers,
     deletedPrograms, deletedClients,
     activeClients, archivedClients,
     notifications,
@@ -1047,11 +1127,13 @@ export function useStore(agencyId, onToast) {
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
     addClient, updateClient, deleteClient, deleteClientsBulk,
     transferClients,
+    createAgencyUser,
+    updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, deletePayment,
     addProgram, updateProgram, deleteProgram,
     restoreTrashItems, purgeTrashItems,
-    updateAgency, exportData, importData, forceSync,
+    updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
     markNotificationRead, markAllNotificationsRead, archiveNotification, restoreNotification,
     ensureNotificationExists,
     deleteNotification,

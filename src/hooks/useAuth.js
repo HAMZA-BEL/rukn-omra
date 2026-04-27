@@ -28,10 +28,14 @@ export function useAuth() {
     try {
       const { data, error } = await db.users.fetchProfile(authUser.id);
       if (error || !data?.agency_id) {
-        // Auth succeeded but no profile row in public.users
         setUser(authUser);
         setAgencyId(null);
         setProfileError("no_profile");
+      } else if ((data.status || "").toLowerCase() === "disabled") {
+        setUser(null);
+        setAgencyId(null);
+        setProfileError("disabled");
+        try { await supabase.auth.signOut(); } catch {}
       } else {
         setProfileError(null);
         setUser({ ...authUser, profile: data });

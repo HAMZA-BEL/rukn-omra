@@ -22,12 +22,18 @@ import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-function AppInner({ agencyId, onLogout }) {
+const VALID_PAGES = ["dashboard","clients","programs","clearance","activity","trash","settings","notifications"];
+function getInitialPage() {
+  const hash = window.location.hash.replace("#", "").trim();
+  return VALID_PAGES.includes(hash) ? hash : "dashboard";
+}
+
+function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
   const store = useStore(agencyId, showToast);
-  const [page,           setPage]           = React.useState("dashboard");
+  const [page,           setPage]           = React.useState(getInitialPage);
   const [pageHistory,    setPageHistory]    = React.useState([]);
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [editingClient,  setEditingClient]  = React.useState(null);
@@ -36,15 +42,34 @@ function AppInner({ agencyId, onLogout }) {
   const navigate = React.useCallback((target) => {
     setPageHistory(h => [...h, page]);
     setPage(target);
+    window.history.pushState({ page: target }, "", "#" + target);
   }, [page]);
+
   const goBack = () => {
-    setPageHistory(h => {
-      const prev = [...h];
-      const last = prev.pop() || "dashboard";
-      setPage(last);
-      return prev;
-    });
+    if (pageHistory.length > 0) {
+      window.history.back(); // triggers popstate which handles state
+    } else {
+      navigate("dashboard");
+    }
   };
+
+  // Sync browser back/forward button with React state
+  React.useEffect(() => {
+    const handlePopState = (e) => {
+      const target = e.state?.page || getInitialPage();
+      setPage(target);
+      setPageHistory(h => h.slice(0, -1));
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  // On mount: ensure hash is set so refresh preserves current page
+  React.useEffect(() => {
+    if (!window.location.hash) {
+      window.history.replaceState({ page: "dashboard" }, "", "#dashboard");
+    }
+  }, []);
   const handleBrandNavigate = React.useCallback(() => {
     if (page === "dashboard") {
       if (typeof window !== "undefined" && typeof window.scrollTo === "function") {
@@ -160,7 +185,15 @@ function AppInner({ agencyId, onLogout }) {
                   onNotificationAction={handleNotificationAction}
                 />
               }
-              pageName={{ clients:t.clients, programs:t.programs, notifications:t.notifications, trash:t.trash, activity:t.activityLog, clearance:t.clearance, settings:t.settings }[page]}
+              pageName={{
+                clients: t.clients,
+                programs: t.programs,
+                notifications: t.notifications,
+                trash: t.trash,
+                activity: t.activityLog,
+                clearance: t.clearance,
+                settings: t.settings,
+              }[page]}
             />
           )}
 
@@ -200,7 +233,16 @@ function AppInner({ agencyId, onLogout }) {
           {page==="trash" && <ErrorBoundary><TrashPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="activity" && <ErrorBoundary><ActivityLogPage store={store} /></ErrorBoundary>}
           {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} /></ErrorBoundary>}
-          {page==="settings"   && <ErrorBoundary><SettingsPage store={store} onToast={showToast} /></ErrorBoundary>}
+          {page==="settings"   && (
+            <ErrorBoundary>
+              <SettingsPage
+                store={store}
+                onToast={showToast}
+                currentUserRole={currentUserRole}
+                currentUserId={currentUserId}
+              />
+            </ErrorBoundary>
+          )}
         </main>
       </div>
       <MobileNav navItems={navItems} dir={dir} active={page} onNavigate={navigate} />
@@ -758,7 +800,7 @@ function AuthGate() {
 
   // Local-only mode: bypass auth entirely
   if (!isSupabaseEnabled) {
-    return <AppInner agencyId={null} onLogout={null} />;
+    return <AppInner agencyId={null} onLogout={null} currentUserRole={null} currentUserId={null} />;
   }
 
   // Real Supabase invite/recovery link → SetPasswordPage handles its own session
@@ -767,6 +809,10 @@ function AuthGate() {
   }
 
   if (loading) return <AppLoadingScreen />;
+
+  if (profileError === "disabled") {
+    return <DisabledAccountScreen onLogout={logout} />;
+  }
 
   // Logged in but no row in public.users → show actionable error
   if (user && profileError === "no_profile") {
@@ -810,7 +856,14 @@ function AuthGate() {
     return <LoginPage onLogin={login} />;
   }
 
-  return <AppInner agencyId={agencyId} onLogout={logout} />;
+  return (
+    <AppInner
+      agencyId={agencyId}
+      onLogout={logout}
+      currentUserRole={user?.profile?.role || null}
+      currentUserId={user?.id || null}
+    />
+  );
 }
 
 // Minimal full-screen loader shown only during session restore (< 1 sec normally)
@@ -828,6 +881,38 @@ function AppLoadingScreen() {
         borderTop: "3px solid #d4af37", borderRadius: "50%",
         animation: "spin 1s linear infinite",
       }} />
+    </div>
+  );
+}
+
+function DisabledAccountScreen({ onLogout }) {
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+      background: "#060d1a", color: "#f8fafc", fontFamily: "'Cairo', sans-serif",
+      padding: 24, textAlign: "center",
+    }}>
+      <div style={{
+        maxWidth: 420, background: "rgba(10,22,45,.9)",
+        border: "1px solid rgba(239,68,68,.35)", borderRadius: 20, padding: 36,
+      }}>
+        <p style={{ fontSize: 34, marginBottom: 14 }}>⛔</p>
+        <h2 style={{ color: "#ef4444", marginBottom: 10 }}>الحساب موقوف</h2>
+        <p style={{ color: "rgba(148,163,184,.85)", fontSize: 13, lineHeight: 1.8, marginBottom: 22 }}>
+          تم تعطيل هذا الحساب. يرجى التواصل مع مسؤول الوكالة لإعادة تفعيله.
+        </p>
+        <button
+          type="button"
+          onClick={onLogout}
+          style={{
+            padding: "10px 24px", borderRadius: 10, border: "1px solid rgba(212,175,55,.3)",
+            background: "rgba(212,175,55,.1)", color: "#d4af37", fontSize: 14,
+            fontFamily: "'Cairo', sans-serif", cursor: "pointer",
+          }}
+        >
+          تسجيل الخروج
+        </button>
+      </div>
     </div>
   );
 }

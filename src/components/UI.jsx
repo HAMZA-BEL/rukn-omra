@@ -178,7 +178,7 @@ export function Input({
 }
 
 // ── Select ────────────────────────────────────────────────────────────────────
-export function Select({ label, value, onChange, options, required, style }) {
+export function Select({ label, value, onChange, options, required, style, disabled = false }) {
   const [focused, setFocused] = React.useState(false);
   const { dir } = useLang();
   return (
@@ -193,6 +193,7 @@ export function Select({ label, value, onChange, options, required, style }) {
         onChange={onChange}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        disabled={disabled}
         style={{
           background: "#0d1f3c",
           border: `1px solid ${focused ? t.gold : "rgba(255,255,255,.1)"}`,
@@ -205,14 +206,20 @@ export function Select({ label, value, onChange, options, required, style }) {
           outline: "none",
           transition: "border-color .2s",
           boxShadow: focused ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
-          cursor: "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
+          opacity: disabled ? 0.6 : 1,
         }}
       >
-        {options.map((o) =>
-          typeof o === "string"
-            ? <option key={o} value={o}>{o}</option>
-            : <option key={o.value} value={o.value}>{o.label}</option>
-        )}
+        {options.map((o) => {
+          if (typeof o === "string") {
+            return <option key={o} value={o}>{o}</option>;
+          }
+          return (
+            <option key={o.value} value={o.value} disabled={o.disabled}>
+              {o.label}
+            </option>
+          );
+        })}
       </select>
     </div>
   );

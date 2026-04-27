@@ -3,10 +3,11 @@ import { Input, Button, GlassCard, Divider } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled } from "../lib/supabase";
+import UsersPage from "./UsersPage";
 
 const t2 = theme.colors;
 
-export default function SettingsPage({ store, onToast }) {
+export default function SettingsPage({ store, onToast, currentUserRole, currentUserId }) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
@@ -32,6 +33,9 @@ export default function SettingsPage({ store, onToast }) {
     updateAgency(form);
     onToast(t.saveSettingsSuccess, "success");
   };
+
+  const normalizedRole = (currentUserRole || "").toLowerCase();
+  const canManageUsers = ["owner", "manager"].includes(normalizedRole);
 
   return (
     <div className="page-body settings-page" style={{ padding:"24px 32px" }}>
@@ -147,6 +151,18 @@ export default function SettingsPage({ store, onToast }) {
           </Button>
         </div>
       </GlassCard>
+
+      {canManageUsers && (
+        <div style={{ marginTop: 24 }}>
+          <UsersPage
+            store={store}
+            onToast={onToast}
+            embedded
+            currentUserRole={currentUserRole}
+            currentUserId={currentUserId}
+          />
+        </div>
+      )}
     </div>
   );
 }
