@@ -1,6 +1,7 @@
 import React from "react";
 import { theme } from "./styles";
 import { supabase } from "../lib/supabase";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -289,13 +290,7 @@ export default function LoginPage({ onLogin }) {
       }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div className="login-icon" style={{
-            width: 64, height: 64, borderRadius: 18,
-            background: "linear-gradient(135deg,rgba(212,175,55,.2),rgba(212,175,55,.06))",
-            border: "1px solid rgba(212,175,55,.3)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 32, margin: "0 auto 16px",
-          }}>🕋</div>
+          <IconBubble className="login-icon" name="brand" boxSize={64} size={30} style={{ borderRadius:18, margin:"0 auto 16px" }} />
           <h1 style={{
             fontSize: 22, fontWeight: 900, fontFamily: "'Amiri', serif",
             background: "linear-gradient(135deg,#f0d060,#d4af37)",
@@ -347,7 +342,7 @@ export default function LoginPage({ onLogin }) {
               background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)",
               color: tc.danger, fontWeight: 600, textAlign: "center",
             }}>
-              ⚠️ {error}
+              <AppIcon name="alert" size={14} color={tc.danger} /> {error}
             </div>
           )}
 
@@ -398,7 +393,7 @@ export default function LoginPage({ onLogin }) {
           }}>
             {resetSent ? (
               <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 28, marginBottom: 10 }}>📧</div>
+                <IconBubble name="mail" boxSize={44} size={22} style={{ margin:"0 auto 10px" }} />
                 <p style={{ color: "#4ade80", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
                   تم الإرسال بنجاح
                 </p>
@@ -439,7 +434,7 @@ export default function LoginPage({ onLogin }) {
                   }}
                 />
                 {resetError && (
-                  <p style={{ color: tc.danger, fontSize: 12, fontWeight: 600 }}>⚠️ {resetError}</p>
+                  <p style={{ color: tc.danger, fontSize: 12, fontWeight: 600, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="alert" size={13} color={tc.danger} /> {resetError}</p>
                 )}
                 <div style={{ display: "flex", gap: 8 }}>
                   <button

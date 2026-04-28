@@ -1,5 +1,8 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import jspreadsheet from "jspreadsheet-ce";
+import "jspreadsheet-ce/dist/jspreadsheet.css";
+import "jsuites/dist/jsuites.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge } from "./UI";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
@@ -10,9 +13,450 @@ import { downloadAmadeusExcel } from "../utils/amadeus";
 import { printProgramPDF } from "../utils/exportPdf";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import TransferSheet from "./TransferSheet";
+import { AppIcon } from "./Icon";
+import {
+  PROGRAM_ROOM_PRICE_KEYS,
+  getPackageStartingPrice,
+  getLegacyFieldsFromPackages,
+  getProgramPackageCount,
+  getProgramStartingPrice,
+  getRoomTypeLabel,
+  normalizeProgramPackages,
+} from "../utils/programPackages";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Columns3,
+  FileSpreadsheet,
+  Italic,
+  Maximize2,
+  Merge,
+  Minimize2,
+  MoreHorizontal,
+  PaintBucket,
+  PanelBottom,
+  PanelLeft,
+  PanelRightClose,
+  PanelRight,
+  PanelRightOpen,
+  PanelTop,
+  Redo2,
+  Search,
+  Square,
+  SquareSlash,
+  TableCellsMerge,
+  TableColumnsSplit,
+  TableRowsSplit,
+  Type,
+  Undo2,
+  WrapText,
+} from "lucide-react";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
+const PACKAGE_TEMPLATES = ["اقتصادي", "سياحي", "سياحي بالإفطار", "VIP"];
+const ROOMING_ROWS = 60;
+const ROOMING_COLS = 20;
+const ROOMING_BASE_CELL_WIDTH = 132;
+const ROOMING_BASE_FIRST_COL_WIDTH = 150;
+const ROOMING_BASE_ROW_HEIGHT = 34;
+const ROOMING_BASE_FONT_SIZE = 13;
+const ROOMING_CITY_LABELS = {
+  makkah: "تسكين مكة",
+  madinah: "تسكين المدينة",
+};
+const ROOMING_COLORS = ["#fef3c7", "#dcfce7", "#e0f2fe", "#fce7f3", "#ede9fe", "#fee2e2"];
+const ROOMING_ROOM_OPTIONS = [
+  { value: "single", label: "فردية", capacity: 1 },
+  { value: "double", label: "ثنائية", capacity: 2 },
+  { value: "triple", label: "ثلاثية", capacity: 3 },
+  { value: "quad", label: "رباعية", capacity: 4 },
+];
+const ROOMING_CATEGORY_OPTIONS = [
+  { value: "male_only", label: "رجال فقط" },
+  { value: "female_only", label: "نساء فقط" },
+  { value: "family", label: "عائلة" },
+];
+const ROOMING_BLOCK_WIDTH = 4;
+
+const getColumnName = (index) => {
+  let name = "";
+  let n = index + 1;
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    name = String.fromCharCode(65 + r) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+};
+
+const getCellName = (x, y) => `${getColumnName(x)}${y + 1}`;
+
+const getCellCoords = (cell) => {
+  const match = String(cell || "").match(/^([A-Z]+)(\d+)$/);
+  if (!match) return null;
+  const x = match[1].split("").reduce((sum, ch) => sum * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const y = Number(match[2]) - 1;
+  return { x, y };
+};
+
+const getRangeBounds = (range = [0, 0, 0, 0]) => {
+  const [x1 = 0, y1 = 0, x2 = x1, y2 = y1] = range.map(value => Number(value) || 0);
+  return {
+    minX: Math.min(x1, x2),
+    maxX: Math.max(x1, x2),
+    minY: Math.min(y1, y2),
+    maxY: Math.max(y1, y2),
+  };
+};
+
+const forEachCellInBounds = (bounds, callback) => {
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+      callback(x, y, getCellName(x, y));
+    }
+  }
+};
+
+const ROOMING_BORDER = "2px solid #111827";
+const ROOMING_FAMILY_KEYS = ["familyGroup", "familyId", "familyName", "groupId", "groupName"];
+
+const getRoomingRoomLabel = (roomType) => {
+  return ROOMING_ROOM_OPTIONS.find((option) => option.value === roomType)?.label || getRoomTypeLabel(roomType) || "—";
+};
+
+const getRoomingCapacity = (roomType) => {
+  return ROOMING_ROOM_OPTIONS.find((option) => option.value === roomType)?.capacity || 1;
+};
+
+const getRoomingCategoryLabel = (category) => {
+  return ROOMING_CATEGORY_OPTIONS.find((option) => option.value === category)?.label || "رجال فقط";
+};
+
+const getRoomingFamilyKey = (client) => {
+  for (const key of ROOMING_FAMILY_KEYS) {
+    const value = String(client?.[key] || "").trim();
+    if (value) return value;
+  }
+  return "";
+};
+
+const normalizeRoomingMeta = (meta) => ({
+  insertedClients: meta?.insertedClients || {},
+  rooms: meta?.rooms || {},
+  freeCanvas: meta?.freeCanvas !== false,
+  createdAt: meta?.createdAt || new Date().toISOString(),
+});
+
+const getProgramHotelsForCity = (program, packages, city) => {
+  const values = new Set();
+  packages.forEach((pkg) => {
+    const hotel = city === "makkah" ? pkg?.hotelMecca : pkg?.hotelMadina;
+    if (String(hotel || "").trim()) values.add(String(hotel).trim());
+  });
+  const fallback = city === "makkah" ? program?.hotelMecca : program?.hotelMadina;
+  if (String(fallback || "").trim()) values.add(String(fallback).trim());
+  return Array.from(values);
+};
+
+const createRoomId = () => `room-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const getRoomBlockHeight = (capacity) => Math.max(1, Number(capacity) || 1) + 3;
+
+const isCoordsInsideRoom = (room, x, y) => {
+  if (!room) return false;
+  const startX = Number(room.startX) || 0;
+  const startY = Number(room.startY) || 0;
+  const width = Number(room.width) || ROOMING_BLOCK_WIDTH;
+  const height = Number(room.height) || getRoomBlockHeight(room.capacity);
+  return x >= startX && x < startX + width && y >= startY && y < startY + height;
+};
+
+const cropSheetPayload = (payload, range) => {
+  if (!payload || !range) return payload;
+  const bounds = getRangeBounds(range);
+  const data = [];
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    data.push((payload.data?.[y] || []).slice(bounds.minX, bounds.maxX + 1));
+  }
+  const style = {};
+  Object.entries(payload.style || {}).forEach(([cell, value]) => {
+    const coords = getCellCoords(cell);
+    if (!coords) return;
+    if (coords.x < bounds.minX || coords.x > bounds.maxX || coords.y < bounds.minY || coords.y > bounds.maxY) return;
+    style[getCellName(coords.x - bounds.minX, coords.y - bounds.minY)] = value;
+  });
+  const mergeCells = {};
+  Object.entries(payload.mergeCells || {}).forEach(([cell, spans]) => {
+    const coords = getCellCoords(cell);
+    if (!coords) return;
+    if (coords.x < bounds.minX || coords.x > bounds.maxX || coords.y < bounds.minY || coords.y > bounds.maxY) return;
+    const maxColspan = bounds.maxX - coords.x + 1;
+    const maxRowspan = bounds.maxY - coords.y + 1;
+    mergeCells[getCellName(coords.x - bounds.minX, coords.y - bounds.minY)] = [
+      Math.min(spans?.[0] || 1, maxColspan),
+      Math.min(spans?.[1] || 1, maxRowspan),
+    ];
+  });
+  return { ...payload, data, style, mergeCells };
+};
+
+const createBlankSheetData = (rows = ROOMING_ROWS, cols = ROOMING_COLS) =>
+  Array.from({ length: rows }, () => Array.from({ length: cols }, () => ""));
+
+const normalizeSheetData = (data, rows = ROOMING_ROWS, cols = ROOMING_COLS) => {
+  const source = Array.isArray(data) ? data : [];
+  const targetRows = Math.max(rows, source.length || 0);
+  const targetCols = Math.max(cols, ...source.map(row => Array.isArray(row) ? row.length : 0), 0);
+  return Array.from({ length: targetRows }, (_, y) =>
+    Array.from({ length: targetCols }, (_, x) => source[y]?.[x] ?? "")
+  );
+};
+
+const getClientDisplayName = (client) => (
+  client.name ||
+  `${client.firstName || ""} ${client.lastName || ""}`.trim() ||
+  [client.nom, client.prenom].filter(Boolean).join(" / ") ||
+  "معتمر"
+);
+
+const slugifyFilePart = (value) => String(value || "program")
+  .replace(/\s+/g, "-")
+  .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, "")
+  .slice(0, 80);
+
+const escapeHtml = (value) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#039;");
+
+const parseStyleValue = (value) => {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  return String(value)
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((acc, part) => {
+      const [prop, ...rest] = part.split(":");
+      if (!prop || !rest.length) return acc;
+      acc[prop.trim()] = rest.join(":").trim();
+      return acc;
+    }, {});
+};
+
+const createRoomingHeaderSheet = ({ program, clients, city, agency }) => {
+  const data = createBlankSheetData();
+  const cityName = city === "makkah" ? "مكة" : "المدينة";
+  const hotel = city === "makkah" ? program.hotelMecca : program.hotelMadina;
+  const style = {
+    A1: "background-color:#0f172a;color:#d4af37;font-weight:bold;font-size:18px;text-align:center;",
+    A2: "background-color:#111827;color:#f8fafc;font-weight:bold;text-align:center;",
+    A3: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    E3: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    I3: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    M3: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    A4: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    E4: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    I4: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+    M4: "background-color:#1f2937;color:#e5e7eb;text-align:center;",
+  };
+  const mergeCells = {
+    A1: [16, 1],
+    A2: [16, 1],
+    A3: [4, 1],
+    E3: [4, 1],
+    I3: [4, 1],
+    M3: [4, 1],
+    A4: [4, 1],
+    E4: [4, 1],
+    I4: [4, 1],
+    M4: [4, 1],
+  };
+  data[0][0] = `ورقة التسكين - ${cityName}`;
+  data[1][0] = program.name || "";
+  data[2][0] = `تاريخ الذهاب: ${program.departure || "—"}`;
+  data[2][4] = `تاريخ الرجوع: ${program.returnDate || "—"}`;
+  data[2][8] = `عدد المعتمرين: ${clients.length}`;
+  data[2][12] = `المقاعد: ${program.seats || "—"}`;
+  data[3][0] = `الفندق: ${hotel || "—"}`;
+  data[3][4] = `الوكالة: ${agency?.nameAr || agency?.nameFr || "—"}`;
+  data[3][8] = "ملاحظات:";
+  data[3][12] = "";
+
+  return {
+    version: 2,
+    data,
+    style,
+    mergeCells,
+    meta: normalizeRoomingMeta({}),
+  };
+};
+
+const writeRoomBlock = (sheet, startX, startY, roomNo = "") => {
+  if (!sheet) return;
+  const x = Math.max(0, Number(startX) || 0);
+  const y = Math.max(0, Number(startY) || 0);
+  const data = normalizeSheetData(sheet.getData?.(false, false));
+  const rowCount = data.length;
+  const colCount = data[0]?.length || ROOMING_COLS;
+  if (x + 2 >= colCount) {
+    try { sheet.insertColumn(x + 3 - colCount); } catch {}
+  }
+  if (y + 5 >= rowCount) {
+    try { sheet.insertRow(y + 6 - rowCount); } catch {}
+  }
+  const titleCell = getCellName(x, y);
+  try { sheet.setMerge(titleCell, 3, 1); } catch {}
+  sheet.setValueFromCoords(x, y, roomNo ? `غرفة ${roomNo}` : "غرفة", true);
+  sheet.setValueFromCoords(x, y + 1, "المستوى", true);
+  sheet.setValueFromCoords(x + 1, y + 1, "نوع الغرفة", true);
+  sheet.setValueFromCoords(x + 2, y + 1, "ملاحظات", true);
+  for (let row = y + 2; row <= y + 5; row += 1) {
+    sheet.setValueFromCoords(x, row, "", true);
+    sheet.setValueFromCoords(x + 1, row, "", true);
+    sheet.setValueFromCoords(x + 2, row, "", true);
+  }
+  sheet.setStyle(titleCell, "background-color", "#d4af37", true);
+  sheet.setStyle(titleCell, "color", "#111827", true);
+  sheet.setStyle(titleCell, "font-weight", "700", true);
+  sheet.setStyle(titleCell, "text-align", "center", true);
+  for (let col = x; col < x + 3; col += 1) {
+    const header = getCellName(col, y + 1);
+    sheet.setStyle(header, "background-color", "#334155", true);
+    sheet.setStyle(header, "color", "#f8fafc", true);
+    sheet.setStyle(header, "font-weight", "700", true);
+    sheet.setStyle(header, "text-align", "center", true);
+    for (let row = y + 2; row <= y + 5; row += 1) {
+      const cell = getCellName(col, row);
+      sheet.setStyle(cell, "background-color", "#111827", true);
+      sheet.setStyle(cell, "color", "#e5e7eb", true);
+    }
+  }
+};
+
+const clearRoomBlockMerges = (sheet, room) => {
+  if (!sheet || !room) return;
+  const height = Number(room.height) || getRoomBlockHeight(room.capacity);
+  for (let offsetY = 0; offsetY < height; offsetY += 1) {
+    try { sheet.removeMerge(getCellName(room.startX, room.startY + offsetY)); } catch {}
+  }
+};
+
+const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
+  if (!sheet || !room) return;
+  const startX = Math.max(0, Number(room.startX) || 0);
+  const startY = Math.max(0, Number(room.startY) || 0);
+  const width = Number(room.width) || ROOMING_BLOCK_WIDTH;
+  const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
+  const height = Number(room.height) || getRoomBlockHeight(capacity);
+  const data = normalizeSheetData(sheet.getData?.(false, false));
+  const rowCount = data.length;
+  const colCount = data[0]?.length || ROOMING_COLS;
+  if (startX + width >= colCount) {
+    try { sheet.insertColumn(startX + width - colCount + 1); } catch {}
+  }
+  if (startY + height >= rowCount) {
+    try { sheet.insertRow(startY + height - rowCount + 1); } catch {}
+  }
+
+  clearRoomBlockMerges(sheet, room);
+
+  for (let y = startY; y < startY + height; y += 1) {
+    for (let x = startX; x < startX + width; x += 1) {
+      const cell = getCellName(x, y);
+      sheet.setValueFromCoords(x, y, "", true);
+      [
+        "background-color",
+        "color",
+        "font-weight",
+        "font-style",
+        "text-align",
+        "font-size",
+        "white-space",
+        "overflow-wrap",
+        "word-break",
+        "border-top",
+        "border-right",
+        "border-bottom",
+        "border-left",
+      ].forEach((prop) => sheet.setStyle(cell, prop, "", true));
+    }
+  }
+
+  const titleCell = getCellName(startX, startY);
+  const hotelCell = getCellName(startX, startY + 1);
+  const actionCell = getCellName(startX, startY + height - 1);
+
+  try { sheet.setMerge(titleCell, width, 1); } catch {}
+  try { sheet.setMerge(hotelCell, width, 1); } catch {}
+  try { sheet.setMerge(actionCell, width, 1); } catch {}
+
+  const occupants = Array.isArray(room.occupantIds) ? room.occupantIds : [];
+  const roomTitle = `غرفة ${room.roomNumber || "—"} — ${getRoomingRoomLabel(room.roomType)} — ${getRoomingCategoryLabel(room.category)} — ${occupants.length}/${capacity}`;
+  sheet.setValueFromCoords(startX, startY, roomTitle, true);
+  sheet.setValueFromCoords(startX, startY + 1, `الفندق: ${room.hotel || "—"}`, true);
+  sheet.setValueFromCoords(startX, startY + height - 1, "إضافة معتمر • تعديل الغرفة • حذف الغرفة", true);
+
+  for (let slot = 0; slot < capacity; slot += 1) {
+    const rowY = startY + 2 + slot;
+    const rowCell = getCellName(startX, rowY);
+    try { sheet.setMerge(rowCell, width, 1); } catch {}
+    const occupantId = occupants[slot];
+    const occupant = occupantId ? clientsById[occupantId] : null;
+    sheet.setValueFromCoords(
+      startX,
+      rowY,
+      occupant ? `${getClientDisplayName(occupant)}${occupant.gender === "male" ? " — ذكر" : occupant.gender === "female" ? " — أنثى" : ""}` : "مكان شاغر",
+      true
+    );
+  }
+
+  const applyBlockStyle = (rowY, styles) => {
+    for (let x = startX; x < startX + width; x += 1) {
+      const cell = getCellName(x, rowY);
+      Object.entries(styles).forEach(([prop, value]) => sheet.setStyle(cell, prop, value, true));
+      sheet.setStyle(cell, "border-top", ROOMING_BORDER, true);
+      sheet.setStyle(cell, "border-right", ROOMING_BORDER, true);
+      sheet.setStyle(cell, "border-bottom", ROOMING_BORDER, true);
+      sheet.setStyle(cell, "border-left", ROOMING_BORDER, true);
+    }
+  };
+
+  applyBlockStyle(startY, {
+    "background-color": "#0f172a",
+    color: "#f8fafc",
+    "font-weight": "700",
+    "text-align": "center",
+    "font-size": "13px",
+  });
+  applyBlockStyle(startY + 1, {
+    "background-color": "#f8fafc",
+    color: "#334155",
+    "font-weight": "700",
+    "text-align": "right",
+  });
+  for (let slot = 0; slot < capacity; slot += 1) {
+    applyBlockStyle(startY + 2 + slot, {
+      "background-color": occupants[slot] ? "#ecfeff" : "#ffffff",
+      color: "#0f172a",
+      "font-weight": occupants[slot] ? "700" : "500",
+      "text-align": "right",
+      "white-space": "pre-wrap",
+    });
+  }
+  applyBlockStyle(startY + height - 1, {
+    "background-color": "#eff6ff",
+    color: "#1d4ed8",
+    "font-weight": "700",
+    "text-align": "center",
+    "font-size": "12px",
+  });
+};
 
 // ═══════════════════════════════════════
 // PROGRAMS LIST PAGE
@@ -73,7 +517,7 @@ export default function ProgramsPage({ store, onToast }) {
               {tr("programsSubtitle", { count: programs.length })}
             </p>
           </div>
-          <Button variant="primary" icon="➕" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
+          <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
         </div>
         <SearchBar
           value={search}
@@ -85,9 +529,9 @@ export default function ProgramsPage({ store, onToast }) {
       </div>
 
       {programs.length === 0 ? (
-        <EmptyState icon="📋" title={t.noProgramsTitle} sub={t.noProgramsSub} />
+        <EmptyState icon="program" title={t.noProgramsTitle} sub={t.noProgramsSub} />
       ) : !filteredPrograms.length ? (
-        <EmptyState icon="🔍" title={t.noResultsTitle} sub={t.noResultsSub} />
+        <EmptyState icon="search" title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div>
           <div className="cards-grid program-card-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
@@ -169,18 +613,18 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   cleared, unpaid, delay, onClick, onEdit, onDelete, lang, formatCurrencyForLang }) {
   const [hov, setHov] = React.useState(false);
   const { t } = useLang();
-  const startingPrice = formatCurrencyForLang(
-    program.priceTable?.[program.priceTable.length-1]?.prices?.quint
-    || program.priceTable?.[0]?.prices?.double
-    || program.price
-    || 0
-  );
+  const packages = normalizeProgramPackages(program);
+  const packageCount = getProgramPackageCount(program);
+  const startingPriceValue = getProgramStartingPrice(program);
+  const startingPrice = startingPriceValue ? formatCurrencyForLang(startingPriceValue) : "—";
+  const packageLabel = `${packageCount} ${packageCount === 1 ? "مستوى" : "مستويات"}`;
+  const hotelSummary = packageCount > 1 ? "عدة فنادق حسب المستوى" : "";
   const remainingLabel = formatCurrencyForLang(totalRemaining);
   const infoRows = [
-    ["🕌", t.hotelMecca, program.hotelMecca],
-    ["🕍", t.hotelMadina, program.hotelMadina],
-    ["✈️", t.departure, program.departure],
-    ["🛬", t.returnDate, program.returnDate],
+    ["hotel", t.hotelMecca, hotelSummary || packages[0]?.hotelMecca || program.hotelMecca],
+    ["building", t.hotelMadina, hotelSummary || packages[0]?.hotelMadina || program.hotelMadina],
+    ["plane", t.departure, program.departure],
+    ["planeLanding", t.returnDate, program.returnDate],
   ];
   const miniStats = [
     { label: t.registered, value: registered, color: tc.gold },
@@ -205,11 +649,12 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{program.type}</span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
+              <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
             </div>
           </div>
           <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
-            <SmallBtn icon="✏️" onClick={onEdit}   color={tc.gold} />
-            <SmallBtn icon="🗑️" onClick={onDelete} color={tc.danger} />
+            <SmallBtn icon="edit" onClick={onEdit}   color={tc.gold} />
+            <SmallBtn icon="trash" onClick={onDelete} color={tc.danger} />
           </div>
         </div>
 
@@ -217,7 +662,9 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
           {infoRows.map(([ic,lb,vl])=>(
             <div key={lb}>
-              <p style={{ fontSize:10, color:tc.grey }}>{ic} {lb}</p>
+              <p style={{ fontSize:10, color:tc.grey, display:"inline-flex", alignItems:"center", gap:5 }}>
+                <AppIcon name={ic} size={13} color={tc.gold} /> {lb}
+              </p>
               <p style={{ fontSize:12, fontWeight:600, color:"#f8fafc" }}>{vl||"—"}</p>
             </div>
           ))}
@@ -271,10 +718,61 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   );
 }
 
+function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
+  const start = getPackageStartingPrice(pkg);
+  return (
+    <div style={{
+      border:"1px solid rgba(212,175,55,.18)",
+      background:"rgba(0,0,0,.16)",
+      borderRadius:12,
+      padding:12,
+    }}>
+      <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap", marginBottom:10 }}>
+        <div>
+          <strong style={{ color:"#f8fafc", fontSize:14 }}>{pkg.level}</strong>
+          <p style={{ color:tc.grey, fontSize:11, marginTop:3 }}>
+            {pkg.mealPlan || "بدون نظام وجبات محدد"}
+          </p>
+        </div>
+        <span style={{
+          color:tc.gold,
+          background:"rgba(212,175,55,.08)",
+          border:"1px solid rgba(212,175,55,.16)",
+          borderRadius:999,
+          padding:"4px 10px",
+          fontSize:12,
+          fontWeight:800,
+        }}>
+          {start ? `ابتداءً من ${formatCurrencyForLang(start)}` : "بدون سعر"}
+        </span>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8, marginBottom:10 }}>
+        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:"#f8fafc" }}>{pkg.hotelMecca || "—"}</span></p>
+        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:"#f8fafc" }}>{pkg.hotelMadina || "—"}</span></p>
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+        {PROGRAM_ROOM_PRICE_KEYS.map(key => (
+          <span key={key} style={{
+            border:"1px solid rgba(212,175,55,.14)",
+            background:"rgba(212,175,55,.06)",
+            borderRadius:999,
+            padding:"4px 9px",
+            color:pkg.prices?.[key] ? tc.gold : tc.grey,
+            fontSize:11,
+            fontWeight:700,
+          }}>
+            {getRoomTypeLabel(key)}: {pkg.prices?.[key] ? formatCurrencyForLang(pkg.prices[key]) : "—"}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════
 // PROGRAM INNER — full client list
 // ═══════════════════════════════════════
-function ProgramInner({ program, store, onToast, onBack }) {
+function ProgramInner({ program, store, onToast }) {
   const {
     clients,
     getClientTotalPaid,
@@ -284,7 +782,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
     activeClients = [],
     transferClients,
   } = store;
-  const { t, tr, lang, dir } = useLang();
+  const { t, tr, lang } = useLang();
   const formatCurrencyForLang = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
   const [filter,         setFilter]         = React.useState("all");
@@ -296,6 +794,13 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const [checkedIds,     setCheckedIds]     = React.useState(new Set());
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
+  const [packageFilter, setPackageFilter] = React.useState("all");
+  const [programTab, setProgramTab] = React.useState("clients");
+  const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
+  const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const searchInputRef = React.useRef(null);
+  const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
 
   const progClients = React.useMemo(() =>
     clients.filter(c => c.programId === program.id), [clients, program.id]);
@@ -303,13 +808,21 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const filtered = React.useMemo(() => progClients.filter(c => {
     const status = getClientStatus(c);
     const matchesFilter = filter === "all" || status === filter;
+    const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
+    const matchesPackage = packageFilter === "all"
+      || (packageFilter === "__unassigned" && !clientPackageLevel)
+      || clientPackageLevel === packageFilter;
     const q   = search.toLowerCase();
     const name = (c.name || "").toLowerCase();
     const phone = (c.phone || "").toLowerCase();
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
-    return matchesFilter && matchesSearch;
-  }), [progClients, filter, search, getClientStatus]);
+    return matchesFilter && matchesPackage && matchesSearch;
+  }), [progClients, filter, packageFilter, search, getClientStatus]);
+
+  React.useEffect(() => {
+    setPackageFilter("all");
+  }, [program.id]);
 
   const toggleCheck = React.useCallback((id) => {
     setCheckedIds(prev => {
@@ -399,11 +912,6 @@ function ProgramInner({ program, store, onToast, onBack }) {
 
   const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
 
-  const handleBack = React.useCallback(() => {
-    exitSelectMode();
-    onBack();
-  }, [exitSelectMode, onBack]);
-
   const totals = React.useMemo(() => ({
     revenue: progClients.reduce((s,c)=>s+(c.salePrice||c.price||0),0),
     paid:    progClients.reduce((s,c)=>s+getClientTotalPaid(c.id),0),
@@ -415,7 +923,6 @@ function ProgramInner({ program, store, onToast, onBack }) {
     unpaid:  progClients.filter(c=>getClientStatus(c)==="unpaid").length,
   }), [progClients, getClientStatus]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
-  const backArrow = dir === "rtl" ? "→" : "←";
 
   const filters = [
     { key:"all",     label:t.all,          count:progClients.length },
@@ -423,31 +930,41 @@ function ProgramInner({ program, store, onToast, onBack }) {
     { key:"partial", label:t.partialFilter, count:statusCounts.partial },
     { key:"unpaid",  label:t.unpaidFilter,  count:statusCounts.unpaid },
   ];
-  const tableGridTemplate = "46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)";
+  const activeStatusFilter = filters.find(f => f.key === filter) || filters[0];
+  const packageChips = React.useMemo(() => {
+    const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
+    const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
+    return [
+      { key: "all", label: "الكل", count: progClients.length },
+      ...packages.map(pkg => ({ key: pkg.level, label: pkg.level, count: countForLevel(pkg.level) })),
+      ...(unassignedCount ? [{ key: "__unassigned", label: "غير محدد", count: unassignedCount }] : []),
+    ];
+  }, [packages, progClients]);
+  const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned"
+    ? null
+    : packages.find(pkg => pkg.level === packageFilter) || null;
+  const activePackageChip = packageChips.find(chip => chip.key === packageFilter) || packageChips[0];
+  const searchExpanded = searchOpen || search.trim().length > 0;
+  const tableGridTemplate = selectMode
+    ? "38px 46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)"
+    : "46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)";
+  const totalsGridColumn = selectMode ? "1 / span 3" : "1 / span 2";
 
   return (
     <div style={{ padding:"28px 32px" }}>
 
       {/* back + title */}
       <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:24, flexWrap:"wrap" }}>
-        <button onClick={handleBack} style={{
-          background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
-          borderRadius:10, padding:"8px 16px", color:tc.gold,
-          fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif",
-          display:"inline-flex", alignItems:"center", gap:8,
-        }}>
-          {dir === "rtl" ? <>{t.backToPrograms} {backArrow}</> : <>{backArrow} {t.backToPrograms}</>}
-        </button>
-        <div style={{ flex:1 }}>
+        <div style={{ flex:"1 1 320px", minWidth:0 }}>
           <h1 style={{ fontSize:20, fontWeight:800, color:"#f8fafc" }}>{program.name}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>
-            ✈️ {t.departure}: {program.departure || "—"} &nbsp;•&nbsp;
-            🛬 {t.returnDate}: {program.returnDate || "—"} &nbsp;•&nbsp;
-            🕌 {t.hotelMecca}: {program.hotelMecca || "—"} &nbsp;•&nbsp;
-            🕍 {t.hotelMadina}: {program.hotelMadina || "—"}
+            {t.departure}: {program.departure || "—"} &nbsp;•&nbsp;
+            {t.returnDate}: {program.returnDate || "—"} &nbsp;•&nbsp;
+            {t.hotelMecca}: {program.hotelMecca || "—"} &nbsp;•&nbsp;
+            {t.hotelMadina}: {program.hotelMadina || "—"}
           </p>
         </div>
-        <Button variant="ghost" icon="🖨️" onClick={() => {
+        <Button variant="ghost" icon="print" onClick={() => {
           if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
           printProgramPDF({
             program,
@@ -461,35 +978,79 @@ function ProgramInner({ program, store, onToast, onBack }) {
         }}>
           {lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF"}
         </Button>
-        <Button variant="secondary" icon="📊" onClick={() => {
+        <Button variant="secondary" icon="clearance" onClick={() => {
           if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
           const missing = progClients.filter(c => !c.passport?.number);
           if (missing.length > 0) {
-            onToast(`⚠️ ${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
+            onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
           }
           downloadAmadeusExcel(progClients, program);
-          onToast(`✅ تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
+          onToast(`تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
         }}>
           Amadeus Excel
         </Button>
-        <Button variant="primary" icon="➕" onClick={() => setShowAddClient(true)}>
+        <Button variant="primary" icon="plus" onClick={() => setShowAddClient(true)}>
           {t.addClient}
         </Button>
       </div>
 
+      <div style={{
+        display:"inline-flex",
+        gap:4,
+        padding:4,
+        marginBottom:18,
+        borderRadius:14,
+        background:"rgba(255,255,255,.04)",
+        border:"1px solid rgba(212,175,55,.14)",
+      }}>
+        {[
+          { key:"clients", label:"المعتمرون", icon:"users" },
+          { key:"rooming", label:"التسكين", icon:"hotel" },
+        ].map(tab => (
+          <button key={tab.key} type="button" onClick={() => setProgramTab(tab.key)}
+            style={{
+              display:"inline-flex",
+              alignItems:"center",
+              gap:7,
+              border:0,
+              borderRadius:11,
+              padding:"8px 14px",
+              background:programTab === tab.key ? "rgba(212,175,55,.16)" : "transparent",
+              color:programTab === tab.key ? tc.gold : tc.grey,
+              fontSize:13,
+              fontWeight:800,
+              cursor:"pointer",
+              fontFamily:"'Cairo',sans-serif",
+            }}>
+            <AppIcon name={tab.icon} size={15} color={programTab === tab.key ? tc.gold : tc.grey} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {programTab === "rooming" ? (
+        <RoomingSheetWorkspace
+          program={program}
+          clients={progClients}
+          packages={packages}
+          agency={agency}
+          onToast={onToast}
+        />
+      ) : (
+        <>
       {/* KPI row */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))", gap:12, marginBottom:24 }}>
         {[
-          ["👥", t.registered, progClients.length,          tc.gold],
-          ["✅", t.cleared,    statusCounts.cleared,        tc.greenLight],
-          ["🟠", t.partial,    statusCounts.partial,        tc.warning],
-          ["🔴", t.unpaid,     statusCounts.unpaid,         tc.danger],
-          ["💰", t.collected,  formatCurrencyForLang(totals.paid), tc.gold],
-          ["⏳", t.remaining,  formatCurrencyForLang(totalRem),    tc.warning],
+          ["users", t.registered, progClients.length,          tc.gold],
+          ["success", t.cleared,    statusCounts.cleared,        tc.greenLight],
+          ["partial", t.partial,    statusCounts.partial,        tc.warning],
+          ["unpaid", t.unpaid,     statusCounts.unpaid,         tc.danger],
+          ["banknote", t.collected,  formatCurrencyForLang(totals.paid), tc.gold],
+          ["hourglass", t.remaining,  formatCurrencyForLang(totalRem),    tc.warning],
         ].map(([ic,lb,vl,cl],i)=>(
           <div key={lb} className="animate-fadeInUp" style={{ animationDelay:`${i*.04}s` }}>
             <GlassCard gold style={{ padding:"14px 16px", textAlign:"center" }}>
-              <p style={{ fontSize:20, marginBottom:5 }}>{ic}</p>
+              <AppIcon name={ic} size={20} color={cl} style={{ marginBottom:5 }} />
               <p style={{ fontSize:15, fontWeight:800, color:cl, fontFamily:"'Amiri',serif", lineHeight:1 }}>{vl}</p>
               <p style={{ fontSize:11, color:tc.grey, marginTop:5 }}>{lb}</p>
             </GlassCard>
@@ -511,43 +1072,337 @@ function ProgramInner({ program, store, onToast, onBack }) {
         </div>
       </div>
 
-      {/* filters + search */}
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:10 }}>
-        {filters.map(f=>(
-          <button key={f.key} onClick={()=>setFilter(f.key)} style={{
-            display:"inline-flex", alignItems:"center", gap:6,
-            padding:"6px 14px", borderRadius:20,
-            background:filter===f.key?"rgba(212,175,55,.15)":"rgba(255,255,255,.04)",
-            border:`1px solid ${filter===f.key?tc.gold:"rgba(255,255,255,.08)"}`,
-            color:filter===f.key?tc.gold:tc.grey,
-            fontSize:13, fontWeight:filter===f.key?700:400,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif",
+      <GlassCard gold style={{ padding:"14px 16px", marginBottom:18 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:10 }}>
+          <div>
+            <p style={{ fontSize:14, fontWeight:800, color:tc.gold }}>مستويات البرنامج</p>
+            <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>
+              اختر مستوى لعرض تفاصيله وتصفية المعتمرين المرتبطين به.
+            </p>
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            <span style={{
+              fontSize:12,
+              color:tc.gold,
+              background:"rgba(212,175,55,.08)",
+              border:"1px solid rgba(212,175,55,.18)",
+              borderRadius:999,
+              padding:"4px 10px",
+              fontWeight:800,
+            }}>{packages.length} مستويات</span>
+            <div style={{ position:"relative" }}>
+              <button type="button" onClick={() => setPackageFilterOpen(open => !open)}
+                style={{
+                  minWidth:150,
+                  display:"inline-flex",
+                  alignItems:"center",
+                  justifyContent:"space-between",
+                  gap:10,
+                  border:"1px solid rgba(212,175,55,.22)",
+                  background:"rgba(212,175,55,.08)",
+                  color:tc.gold,
+                  borderRadius:12,
+                  padding:"7px 11px",
+                  fontSize:12,
+                  fontWeight:800,
+                  cursor:"pointer",
+                  fontFamily:"'Cairo',sans-serif",
+                }}>
+                <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+                  <AppIcon name="program" size={14} color={tc.gold} />
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{activePackageChip.label}</span>
+                </span>
+                <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                  <span style={{
+                    minWidth:20,
+                    textAlign:"center",
+                    borderRadius:999,
+                    padding:"0 6px",
+                    background:"rgba(212,175,55,.16)",
+                    fontSize:10,
+                  }}>{activePackageChip.count}</span>
+                  <AppIcon name="chevronBack" size={13} color={tc.gold} style={{ transform:"rotate(-90deg)" }} />
+                </span>
+              </button>
+              {packageFilterOpen && (
+                <div style={{
+                  position:"absolute",
+                  insetInlineEnd:0,
+                  top:"calc(100% + 6px)",
+                  width:190,
+                  zIndex:20,
+                  background:"#111827",
+                  border:"1px solid rgba(212,175,55,.2)",
+                  borderRadius:12,
+                  boxShadow:"0 18px 40px rgba(0,0,0,.35)",
+                  padding:6,
+                }}>
+                  {packageChips.map(chip => (
+                    <button key={chip.key} type="button" onClick={() => {
+                      setPackageFilter(chip.key);
+                      setPackageFilterOpen(false);
+                    }} style={{
+                      width:"100%",
+                      display:"flex",
+                      justifyContent:"space-between",
+                      alignItems:"center",
+                      gap:10,
+                      border:0,
+                      borderRadius:9,
+                      padding:"8px 9px",
+                      background:packageFilter === chip.key ? "rgba(212,175,55,.14)" : "transparent",
+                      color:packageFilter === chip.key ? tc.gold : "#d1d5db",
+                      fontSize:12,
+                      fontWeight:packageFilter === chip.key ? 800 : 600,
+                      cursor:"pointer",
+                      fontFamily:"'Cairo',sans-serif",
+                      textAlign:"start",
+                    }}>
+                      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{chip.label}</span>
+                      <span style={{
+                        minWidth:20,
+                        textAlign:"center",
+                        borderRadius:999,
+                        padding:"0 6px",
+                        background:"rgba(255,255,255,.06)",
+                        color:packageFilter === chip.key ? tc.gold : tc.grey,
+                        fontSize:10,
+                      }}>{chip.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        {packageFilter === "__unassigned" ? (
+          <div style={{
+            border:"1px dashed rgba(148,163,184,.2)",
+            background:"rgba(148,163,184,.05)",
+            borderRadius:10,
+            padding:"10px 12px",
+            color:tc.grey,
+            fontSize:12,
           }}>
-            {f.label}
-            <span style={{ background:filter===f.key?"rgba(212,175,55,.2)":"rgba(255,255,255,.06)",
-              borderRadius:20, padding:"0 7px", fontSize:11 }}>{f.count}</span>
-          </button>
-        ))}
-      </div>
+            يعرض هذا الخيار المعتمرين القدامى الذين لم يتم ربطهم بمستوى بعد.
+          </div>
+        ) : selectedPackageDetail ? (
+          <PackageDetailCard pkg={selectedPackageDetail} formatCurrencyForLang={formatCurrencyForLang} t={t} />
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:8 }}>
+            {packages.map(pkg => {
+              const start = getPackageStartingPrice(pkg);
+              return (
+                <button key={pkg.id || pkg.level} type="button" onClick={() => setPackageFilter(pkg.level)}
+                  style={{
+                    border:"1px solid rgba(212,175,55,.14)",
+                    background:"rgba(0,0,0,.14)",
+                    borderRadius:10,
+                    padding:"10px 12px",
+                    display:"grid",
+                    gap:5,
+                    textAlign:"start",
+                    cursor:"pointer",
+                    fontFamily:"'Cairo',sans-serif",
+                  }}>
+                  <span style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center" }}>
+                    <strong style={{ color:"#f8fafc", fontSize:13 }}>{pkg.level}</strong>
+                    <span style={{ color:tc.gold, fontSize:11, fontWeight:800 }}>
+                      {start ? formatCurrencyForLang(start) : "—"}
+                    </span>
+                  </span>
+                  <span style={{ color:tc.grey, fontSize:11, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {pkg.hotelMecca || "—"} / {pkg.hotelMadina || "—"}
+                  </span>
+                  <span style={{ color:tc.grey, fontSize:11 }}>
+                    {pkg.mealPlan || "بدون نظام وجبات محدد"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </GlassCard>
 
+      {/* filters + search */}
       <div style={{
         display:"flex",
         flexWrap:"wrap",
-        gap:12,
+        gap:10,
         alignItems:"center",
+        justifyContent:"space-between",
         marginBottom: selectMode ? 8 : 16,
       }}>
-        <SearchBar
-          value={search}
-          onChange={e=>setSearch(e.target.value)}
-          placeholder={t.searchClients || t.searchPrograms}
-          style={{ flex:"1 1 280px", minWidth:220, maxWidth:420 }}
-        />
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ position:"relative" }}>
+            <button type="button" onClick={() => setStatusFilterOpen(open => !open)} style={{
+              minWidth:138,
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"space-between",
+              gap:10,
+              padding:"7px 11px",
+              borderRadius:12,
+              background:"rgba(255,255,255,.04)",
+              border:"1px solid rgba(255,255,255,.1)",
+              color:tc.grey,
+              fontSize:12,
+              fontWeight:800,
+              cursor:"pointer",
+              fontFamily:"'Cairo',sans-serif",
+            }}>
+              <span style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
+                <AppIcon name="clearance" size={14} color={filter === "all" ? tc.grey : tc.gold} />
+                <span>{activeStatusFilter.label}</span>
+              </span>
+              <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                <span style={{
+                  minWidth:20,
+                  textAlign:"center",
+                  borderRadius:999,
+                  padding:"0 6px",
+                  background:"rgba(255,255,255,.06)",
+                  color:filter === "all" ? tc.grey : tc.gold,
+                  fontSize:10,
+                }}>{activeStatusFilter.count}</span>
+                <AppIcon name="chevronBack" size={13} color={tc.grey} style={{ transform:"rotate(-90deg)" }} />
+              </span>
+            </button>
+            {statusFilterOpen && (
+              <div style={{
+                position:"absolute",
+                insetInlineStart:0,
+                top:"calc(100% + 6px)",
+                width:180,
+                zIndex:20,
+                background:"#111827",
+                border:"1px solid rgba(212,175,55,.18)",
+                borderRadius:12,
+                boxShadow:"0 18px 40px rgba(0,0,0,.35)",
+                padding:6,
+              }}>
+                {filters.map(f=>(
+                  <button key={f.key} type="button" onClick={() => {
+                    setFilter(f.key);
+                    setStatusFilterOpen(false);
+                  }} style={{
+                    width:"100%",
+                    display:"flex",
+                    justifyContent:"space-between",
+                    alignItems:"center",
+                    gap:10,
+                    border:0,
+                    borderRadius:9,
+                    padding:"8px 9px",
+                    background:filter === f.key ? "rgba(212,175,55,.14)" : "transparent",
+                    color:filter === f.key ? tc.gold : "#d1d5db",
+                    fontSize:12,
+                    fontWeight:filter === f.key ? 800 : 600,
+                    cursor:"pointer",
+                    fontFamily:"'Cairo',sans-serif",
+                  }}>
+                    <span>{f.label}</span>
+                    <span style={{
+                      minWidth:20,
+                      textAlign:"center",
+                      borderRadius:999,
+                      padding:"0 6px",
+                      background:"rgba(255,255,255,.06)",
+                      color:filter === f.key ? tc.gold : tc.grey,
+                      fontSize:10,
+                    }}>{f.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div
+            onMouseEnter={() => setSearchOpen(true)}
+            onMouseLeave={() => {
+              if (!search.trim() && document.activeElement !== searchInputRef.current) setSearchOpen(false);
+            }}
+            style={{
+              width:searchExpanded ? 280 : 38,
+              height:38,
+              maxWidth:"100%",
+              display:"flex",
+              alignItems:"center",
+              gap:6,
+              borderRadius:12,
+              background:"rgba(255,255,255,.04)",
+              border:`1px solid ${searchExpanded ? "rgba(212,175,55,.22)" : "rgba(255,255,255,.1)"}`,
+              padding:searchExpanded ? "0 9px" : 0,
+              overflow:"hidden",
+              transition:"width .22s ease, border-color .22s ease, padding .22s ease",
+            }}
+          >
+            <button type="button" onClick={() => {
+              setSearchOpen(true);
+              requestAnimationFrame(() => searchInputRef.current?.focus());
+            }} style={{
+              width:38,
+              height:36,
+              flex:"0 0 38px",
+              border:0,
+              background:"transparent",
+              color:tc.gold,
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"center",
+              cursor:"pointer",
+            }} aria-label={t.searchClients || t.searchPrograms}>
+              <AppIcon name="search" size={17} color={tc.gold} />
+            </button>
+            {searchExpanded && (
+              <>
+                <input
+                  ref={searchInputRef}
+                  value={search}
+                  onChange={e=>setSearch(e.target.value)}
+                  onFocus={() => setSearchOpen(true)}
+                  onBlur={() => {
+                    if (!search.trim()) setSearchOpen(false);
+                  }}
+                  placeholder={t.searchClients || t.searchPrograms}
+                  style={{
+                    flex:1,
+                    minWidth:0,
+                    border:0,
+                    outline:0,
+                    background:"transparent",
+                    color:"#f8fafc",
+                    fontSize:13,
+                    fontFamily:"'Cairo',sans-serif",
+                  }}
+                />
+                {search.trim() && (
+                  <button type="button" onClick={() => {
+                    setSearch("");
+                    requestAnimationFrame(() => searchInputRef.current?.focus());
+                  }} style={{
+                    width:24,
+                    height:24,
+                    border:0,
+                    borderRadius:8,
+                    background:"rgba(255,255,255,.06)",
+                    display:"inline-flex",
+                    alignItems:"center",
+                    justifyContent:"center",
+                    cursor:"pointer",
+                  }} aria-label={t.clear || "Clear"}>
+                    <AppIcon name="x" size={13} color={tc.grey} />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
         {filtered.length > 0 && (
           <Button
             variant={selectMode ? "warning" : "ghost"}
             size="sm"
-            icon="☑️"
+            icon="checked"
             onClick={() => {
               if (selectMode) {
                 exitSelectMode();
@@ -618,6 +1473,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
           fontWeight:700,
           color:tc.grey,
         }}>
+          {selectMode && <span style={{ textAlign:"center" }} />}
           <span>#</span>
           <span>{t.name}</span>
           <span style={{ textAlign:"center" }}>{t.roomType}</span>
@@ -629,7 +1485,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       )}
 
       {filtered.length === 0 ? (
-        <EmptyState icon="👥" title={t.programNoPilgrimsTitle}
+        <EmptyState icon="users" title={t.programNoPilgrimsTitle}
           sub={filter!=="all"?t.programNoPilgrimsFiltered:t.programNoPilgrimsSub} />
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -676,7 +1532,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
           alignItems:"center",
         }}>
           <div style={{
-            gridColumn:"1 / span 2",
+            gridColumn:totalsGridColumn,
             display:"flex",
             alignItems:"center",
             gap:10,
@@ -706,6 +1562,8 @@ function ProgramInner({ program, store, onToast, onBack }) {
           </span>
           <span />
         </div>
+      )}
+        </>
       )}
 
       {/* modals */}
@@ -737,6 +1595,1828 @@ function ProgramInner({ program, store, onToast, onBack }) {
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
       />
+    </div>
+  );
+}
+
+function RoomingToolbarButton({
+  title,
+  icon,
+  onClick,
+  active = false,
+  disabled = false,
+  children,
+  style,
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        minWidth: 34,
+        height: 34,
+        padding: children ? "0 10px" : 0,
+        borderRadius: 8,
+        border: `1px solid ${active ? "rgba(37,99,235,.32)" : "rgba(148,163,184,.28)"}`,
+        background: active ? "rgba(37,99,235,.08)" : "#fff",
+        color: active ? "#2563eb" : "#334155",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        transition: "background .15s ease, border-color .15s ease, color .15s ease",
+        fontFamily: "'Cairo',sans-serif",
+        fontSize: 12,
+        fontWeight: 700,
+        flexShrink: 0,
+        ...style,
+      }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function RoomingMenu({ open, children, align = "start", width = 220 }) {
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: "calc(100% + 8px)",
+        [align === "end" ? "insetInlineEnd" : "insetInlineStart"]: 0,
+        width,
+        background: "#fff",
+        border: "1px solid rgba(148,163,184,.22)",
+        borderRadius: 12,
+        boxShadow: "0 18px 42px rgba(15,23,42,.16)",
+        padding: 6,
+        zIndex: 30,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function RoomingMenuItem({ label, onClick, icon, destructive = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        border: 0,
+        borderRadius: 8,
+        background: "transparent",
+        color: destructive ? "#b91c1c" : "#334155",
+        padding: "8px 9px",
+        cursor: "pointer",
+        textAlign: "start",
+        fontFamily: "'Cairo',sans-serif",
+        fontSize: 12,
+        fontWeight: 700,
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) {
+  const [city, setCity] = React.useState("makkah");
+  const [panelOpen, setPanelOpen] = React.useState(true);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+  const [borderMenuOpen, setBorderMenuOpen] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [selectedCell, setSelectedCell] = React.useState({ x: 0, y: 0 });
+  const [selectedRange, setSelectedRange] = React.useState([0, 0, 0, 0]);
+  const [selectionUi, setSelectionUi] = React.useState({
+    merged: false,
+    bold: false,
+    italic: false,
+    align: "right",
+    wrap: false,
+  });
+  const [zoom, setZoom] = React.useState(100);
+  const [fontSize, setFontSize] = React.useState(13);
+  const [viewportTick, setViewportTick] = React.useState(0);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [metaTick, setMetaTick] = React.useState(0);
+  const [dirty, setDirty] = React.useState(false);
+  const [savedAt, setSavedAt] = React.useState(null);
+  const [roomModal, setRoomModal] = React.useState({ open: false, mode: "create", roomId: null });
+  const [roomDraft, setRoomDraft] = React.useState({
+    roomNumber: "",
+    roomType: "double",
+    category: "male_only",
+    hotel: "",
+  });
+  const [roomPickerState, setRoomPickerState] = React.useState({ open: false, roomId: null });
+  const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
+  const hostRef = React.useRef(null);
+  const gridViewportRef = React.useRef(null);
+  const sheetRef = React.useRef(null);
+  const saveTimerRef = React.useRef(null);
+  const metaRef = React.useRef(normalizeRoomingMeta({}));
+  const insertClientsRef = React.useRef(null);
+  const uninsertedClientsRef = React.useRef([]);
+  const workspaceRef = React.useRef(null);
+  const selectedCellRef = React.useRef({ x: 0, y: 0 });
+  const selectedRangeRef = React.useRef([0, 0, 0, 0]);
+  const viewportSizeRef = React.useRef({ width: 0, height: 0 });
+
+  const storageKey = React.useMemo(
+    () => `rukn_rooming_sheet_${program.id}_${city}`,
+    [program.id, city]
+  );
+
+  const packageByLevel = React.useMemo(() => {
+    const map = new Map();
+    packages.forEach(pkg => map.set(pkg.level, pkg));
+    return map;
+  }, [packages]);
+  const roomHotelOptions = React.useMemo(
+    () => getProgramHotelsForCity(program, packages, city),
+    [program, packages, city]
+  );
+
+  const readStoredSheet = React.useCallback(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return createRoomingHeaderSheet({ program, clients, city, agency });
+      const parsed = JSON.parse(raw);
+      return {
+        version: parsed.version || 2,
+        data: normalizeSheetData(parsed.data),
+        style: parsed.style || {},
+        mergeCells: parsed.mergeCells || {},
+        meta: normalizeRoomingMeta(parsed.meta),
+      };
+    } catch {
+      return createRoomingHeaderSheet({ program, clients, city, agency });
+    }
+  }, [storageKey, program, clients, city, agency]);
+
+  const captureSheet = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return null;
+    return {
+      version: 2,
+      data: normalizeSheetData(sheet.getData(false, false)),
+      style: sheet.getStyle?.() || {},
+      mergeCells: sheet.getMerge?.() || {},
+      meta: normalizeRoomingMeta(metaRef.current),
+      updatedAt: new Date().toISOString(),
+    };
+  }, []);
+
+  const saveSheet = React.useCallback((notify = true) => {
+    const payload = captureSheet();
+    if (!payload) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+      setDirty(false);
+      setSavedAt(new Date());
+      if (notify) onToast?.("تم حفظ ورقة التسكين محليًا", "success");
+    } catch {
+      onToast?.("تعذر حفظ ورقة التسكين محليًا", "error");
+    }
+  }, [captureSheet, storageKey, onToast]);
+
+  const scheduleSave = React.useCallback(() => {
+    setDirty(true);
+    window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => saveSheet(false), 900);
+  }, [saveSheet]);
+
+  const clearCellFormatting = React.useCallback((sheet, cell) => {
+    if (!sheet || !cell) return;
+    [
+      "background-color",
+      "color",
+      "font-weight",
+      "font-style",
+      "text-align",
+      "border",
+      "border-top",
+      "border-bottom",
+      "border-left",
+      "border-right",
+    ].forEach(prop => sheet.setStyle(cell, prop, "", true));
+  }, []);
+
+  const normalizeSelectionRange = React.useCallback((rangeLike, fallback = selectedRangeRef.current) => {
+    if (!Array.isArray(rangeLike) || rangeLike.length < 4) return fallback;
+    const normalized = rangeLike.slice(0, 4).map((value) => Number(value));
+    if (normalized.some((value) => !Number.isFinite(value) || value < 0)) return fallback;
+    return normalized;
+  }, []);
+
+  const syncSelectionState = React.useCallback((rangeLike) => {
+    const range = getRangeBounds(normalizeSelectionRange(rangeLike));
+    const nextRange = [range.minX, range.minY, range.maxX, range.maxY];
+    selectedRangeRef.current = nextRange;
+    selectedCellRef.current = { x: range.minX, y: range.minY };
+    setSelectedRange(nextRange);
+    setSelectedCell({ x: range.minX, y: range.minY });
+
+    const sheet = sheetRef.current;
+    if (!sheet) return nextRange;
+    const styleMap = sheet.getStyle?.() || {};
+    const activeCell = getCellName(range.minX, range.minY);
+    const styles = parseStyleValue(styleMap[activeCell]);
+    const merges = sheet.getMerge?.() || {};
+    const merged = Object.entries(merges).some(([cell, spans]) => {
+      const coords = getCellCoords(cell);
+      if (!coords) return false;
+      const maxX = coords.x + Math.max(1, Number(spans?.[0]) || 1) - 1;
+      const maxY = coords.y + Math.max(1, Number(spans?.[1]) || 1) - 1;
+      return range.minX >= coords.x && range.minX <= maxX && range.minY >= coords.y && range.minY <= maxY;
+    });
+    setSelectionUi({
+      merged,
+      bold: String(styles["font-weight"] || "").includes("700") || String(styles["font-weight"] || "").includes("bold"),
+      italic: String(styles["font-style"] || "").includes("italic"),
+      align: styles["text-align"] || "right",
+      wrap: String(styles["white-space"] || "").includes("pre-wrap"),
+    });
+    const nextFontSize = Number.parseInt(String(styles["font-size"] || ""), 10);
+    if (Number.isFinite(nextFontSize)) setFontSize(nextFontSize);
+    return nextRange;
+  }, [normalizeSelectionRange]);
+
+  const getCurrentSelection = React.useCallback(() => {
+    return selectedRangeRef.current || [0, 0, 0, 0];
+  }, []);
+
+  const refreshSelectionFromSheet = React.useCallback(() => {
+    const live = normalizeSelectionRange(sheetRef.current?.getSelection?.(), null);
+    if (!live) return getCurrentSelection();
+    return syncSelectionState(live);
+  }, [getCurrentSelection, normalizeSelectionRange, syncSelectionState]);
+
+  const getLiveSelection = React.useCallback(() => {
+    return getCurrentSelection();
+  }, [getCurrentSelection]);
+
+  const rememberCellFromEvent = React.useCallback((event) => {
+    const cell = event.target?.closest?.("td[data-x][data-y]");
+    if (!cell) return;
+    const x = Number(cell.getAttribute("data-x"));
+    const y = Number(cell.getAttribute("data-y"));
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return;
+    syncSelectionState([x, y, x, y]);
+  }, [syncSelectionState]);
+
+  const getActiveCell = React.useCallback(() => {
+    const range = getLiveSelection();
+    return { x: range?.[0] ?? selectedCellRef.current.x, y: range?.[1] ?? selectedCellRef.current.y };
+  }, [getLiveSelection]);
+
+  const getActiveMerge = React.useCallback((rangeLike) => {
+    const range = getRangeBounds(rangeLike || getLiveSelection());
+    const merges = sheetRef.current?.getMerge?.() || {};
+    return Object.entries(merges).find(([cell, spans]) => {
+      const coords = getCellCoords(cell);
+      if (!coords) return false;
+      const maxX = coords.x + Math.max(1, Number(spans?.[0]) || 1) - 1;
+      const maxY = coords.y + Math.max(1, Number(spans?.[1]) || 1) - 1;
+      return range.minX >= coords.x && range.minX <= maxX && range.minY >= coords.y && range.minY <= maxY;
+    }) || null;
+  }, [getLiveSelection]);
+
+  const applyFormattingToRange = React.useCallback((styleMap, rangeLike) => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const range = rangeLike || getLiveSelection();
+    const bounds = getRangeBounds(range);
+    forEachCellInBounds(bounds, (_x, _y, cell) => {
+      Object.entries(styleMap).forEach(([prop, value]) => {
+        sheet.setStyle(cell, prop, value, true);
+      });
+    });
+    scheduleSave();
+    syncSelectionState(range);
+  }, [getLiveSelection, scheduleSave, syncSelectionState]);
+
+  const clearRangeFormatting = React.useCallback((rangeLike) => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const range = rangeLike || getLiveSelection();
+    const bounds = getRangeBounds(range);
+    forEachCellInBounds(bounds, (_x, _y, cell) => clearCellFormatting(sheet, cell));
+    scheduleSave();
+    syncSelectionState(range);
+  }, [getLiveSelection, clearCellFormatting, scheduleSave, syncSelectionState]);
+
+  const applyBorder = React.useCallback((mode, rangeLike) => {
+    const sheet = sheetRef.current;
+    if (!sheet || !mode) return;
+    const range = rangeLike || getLiveSelection();
+    const bounds = getRangeBounds(range);
+    const setBorder = (cell, side, value = ROOMING_BORDER) => {
+      sheet.setStyle(cell, `border-${side}`, value, true);
+    };
+    forEachCellInBounds(bounds, (x, y, cell) => {
+      if (mode === "remove") {
+        ["top", "bottom", "left", "right"].forEach(side => setBorder(cell, side, "none"));
+        return;
+      }
+      if (mode === "all") {
+        ["top", "bottom", "left", "right"].forEach(side => setBorder(cell, side));
+        return;
+      }
+      if (mode === "outer") {
+        if (y === bounds.minY) setBorder(cell, "top");
+        if (y === bounds.maxY) setBorder(cell, "bottom");
+        if (x === bounds.minX) setBorder(cell, "left");
+        if (x === bounds.maxX) setBorder(cell, "right");
+        return;
+      }
+      if (mode === "inner") {
+        if (x < bounds.maxX) setBorder(cell, "right");
+        if (y < bounds.maxY) setBorder(cell, "bottom");
+        return;
+      }
+      if (mode === "top" && y === bounds.minY) setBorder(cell, "top");
+      if (mode === "bottom" && y === bounds.maxY) setBorder(cell, "bottom");
+      if (mode === "left" && x === bounds.minX) setBorder(cell, "left");
+      if (mode === "right" && x === bounds.maxX) setBorder(cell, "right");
+    });
+    scheduleSave();
+    syncSelectionState(range);
+  }, [getLiveSelection, scheduleSave, syncSelectionState]);
+
+  React.useEffect(() => () => window.clearTimeout(saveTimerRef.current), []);
+
+  React.useEffect(() => {
+    if (!sheetRef.current) return;
+    if (searchQuery.trim()) sheetRef.current.search(searchQuery.trim());
+    else sheetRef.current.resetSearch?.();
+  }, [searchQuery, refreshKey]);
+
+  React.useEffect(() => {
+    if (!moreMenuOpen && !borderMenuOpen) return undefined;
+    const handleOutside = (event) => {
+      if (workspaceRef.current?.contains(event.target)) return;
+      setMoreMenuOpen(false);
+      setBorderMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [moreMenuOpen, borderMenuOpen]);
+
+  React.useEffect(() => {
+    if (!fullscreen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [fullscreen]);
+
+  React.useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    const payload = readStoredSheet();
+    metaRef.current = normalizeRoomingMeta(payload.meta);
+    host.innerHTML = "";
+
+    const colCount = Math.max(ROOMING_COLS, payload.data?.[0]?.length || 0);
+    const rowCount = Math.max(ROOMING_ROWS, payload.data?.length || 0);
+    const columns = Array.from({ length: colCount }, (_, i) => ({
+      type: "text",
+      title: getColumnName(i),
+      width: i === 0 ? ROOMING_BASE_FIRST_COL_WIDTH : ROOMING_BASE_CELL_WIDTH,
+      wordWrap: true,
+    }));
+    const buildContextMenu = (instance, colIndex, rowIndex, event, _items, role) => {
+      const col = Number(colIndex);
+      const row = Number(rowIndex);
+      const setSelectionFromRole = () => {
+        if (Number.isFinite(col) && Number.isFinite(row)) {
+          instance.updateSelectionFromCoords(col, row, col, row);
+          syncSelectionState([col, row, col, row]);
+        }
+      };
+      const clearRow = () => {
+        const data = normalizeSheetData(instance.getData(false, false));
+        const cols = data[0]?.length || ROOMING_COLS;
+        for (let x = 0; x < cols; x += 1) instance.setValueFromCoords(x, row, "", true);
+        scheduleSave();
+      };
+      const clearColumn = () => {
+        const data = normalizeSheetData(instance.getData(false, false));
+        for (let y = 0; y < data.length; y += 1) instance.setValueFromCoords(col, y, "", true);
+        scheduleSave();
+      };
+      const clearCellRange = () => {
+        const range = Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection();
+        const bounds = getRangeBounds(range);
+        forEachCellInBounds(bounds, (x, y) => instance.setValueFromCoords(x, y, "", true));
+        scheduleSave();
+        syncSelectionState(range);
+      };
+      const clearFormatRange = () => {
+        const range = Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection();
+        const bounds = getRangeBounds(range);
+        forEachCellInBounds(bounds, (_x, _y, cell) => clearCellFormatting(instance, cell));
+        scheduleSave();
+        syncSelectionState(range);
+      };
+
+      if (role === "header") {
+        return [
+          { title:"إدراج عمود قبل", onclick:() => { instance.insertColumn(1, col, true); scheduleSave(); } },
+          { title:"إدراج عمود بعد", onclick:() => { instance.insertColumn(1, col, false); scheduleSave(); } },
+          { title:"حذف العمود", onclick:() => { instance.deleteColumn(col, 1); scheduleSave(); } },
+          { title:"مسح العمود", onclick:clearColumn },
+          { title:"عرض العمود", onclick:() => {
+            const nextWidth = Number(window.prompt("عرض العمود بالبكسل", "140"));
+            if (Number.isFinite(nextWidth) && nextWidth > 30) {
+              instance.setWidth(col, nextWidth);
+              scheduleSave();
+            }
+          } },
+        ];
+      }
+      if (role === "row") {
+        return [
+          { title:"إدراج صف أعلى", onclick:() => { instance.insertRow(1, row, true); scheduleSave(); } },
+          { title:"إدراج صف أسفل", onclick:() => { instance.insertRow(1, row, false); scheduleSave(); } },
+          { title:"حذف الصف", onclick:() => { instance.deleteRow(row, 1); scheduleSave(); } },
+          { title:"مسح الصف", onclick:clearRow },
+          { title:"ارتفاع الصف", onclick:() => {
+            const nextHeight = Number(window.prompt("ارتفاع الصف بالبكسل", "36"));
+            if (Number.isFinite(nextHeight) && nextHeight > 18) {
+              instance.setHeight(row, nextHeight);
+              scheduleSave();
+            }
+          } },
+        ];
+      }
+      if (role === "cell" || role === "grid") {
+        return [
+          { title:"مسح المحتوى", onclick:() => { setSelectionFromRole(); clearCellRange(); } },
+          { title:"مسح التنسيق", onclick:() => { setSelectionFromRole(); clearFormatRange(); } },
+          { title:"كل الحدود", onclick:() => { setSelectionFromRole(); applyBorder("all", Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection()); } },
+          { title:"إزالة الحدود", onclick:() => { setSelectionFromRole(); applyBorder("remove", Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection()); } },
+          { title:"تلوين ذهبي", onclick:() => { setSelectionFromRole(); applyFormattingToRange({ "background-color": "#fef3c7", color: "#111827" }, Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection()); } },
+          { title:"دمج الخلايا", onclick:() => { setSelectionFromRole(); instance.setMerge(); scheduleSave(); } },
+          { title:"إلغاء الدمج", onclick:() => {
+            const merge = getActiveMerge(Number.isFinite(col) && Number.isFinite(row) ? [col, row, col, row] : getLiveSelection());
+            try { if (merge) instance.removeMerge(merge[0]); scheduleSave(); } catch {}
+          } },
+          { title:"إدراج المعتمرين هنا", onclick:() => {
+            setSelectionFromRole();
+            insertClientsRef.current?.(uninsertedClientsRef.current, true);
+          } },
+        ];
+      }
+      return null;
+    };
+    const handleSheetMouseUp = () => window.requestAnimationFrame(refreshSelectionFromSheet);
+
+    let workbook;
+    try {
+      workbook = jspreadsheet(host, {
+        about: false,
+        contextMenu: buildContextMenu,
+        worksheets: [{
+          data: payload.data,
+          columns,
+          minDimensions: [colCount, rowCount],
+          tableOverflow: true,
+          tableWidth: "100%",
+          tableHeight: 620,
+          defaultRowHeight: ROOMING_BASE_ROW_HEIGHT,
+          wordWrap: true,
+          columnSorting: false,
+          filters: false,
+          allowInsertColumn: true,
+          allowInsertRow: true,
+          allowDeleteColumn: true,
+          allowDeleteRow: true,
+          mergeCells: payload.mergeCells,
+          style: payload.style,
+          onchange: scheduleSave,
+          onchangestyle: scheduleSave,
+          onmerge: scheduleSave,
+          onselection: (_instance, x1, y1, x2, y2) => {
+            syncSelectionState(normalizeSelectionRange([x1, y1, x2 ?? x1, y2 ?? y1]));
+          },
+        }],
+      });
+      sheetRef.current = Array.isArray(workbook) ? workbook[0] : workbook?.[0] || workbook;
+      syncSelectionState([0, 0, 0, 0]);
+      host.addEventListener("mousedown", rememberCellFromEvent, true);
+      host.addEventListener("mouseup", handleSheetMouseUp, true);
+      host.addEventListener("keyup", refreshSelectionFromSheet, true);
+      setDirty(false);
+      setSavedAt(null);
+    } catch (err) {
+      console.error("[RoomingSheet] init failed:", err);
+      onToast?.("تعذر فتح ورقة التسكين", "error");
+    }
+
+    return () => {
+      window.clearTimeout(saveTimerRef.current);
+      host.removeEventListener("mousedown", rememberCellFromEvent, true);
+      host.removeEventListener("mouseup", handleSheetMouseUp, true);
+      host.removeEventListener("keyup", refreshSelectionFromSheet, true);
+      try { if (host) jspreadsheet.destroy(host); } catch {}
+      if (host) host.innerHTML = "";
+      sheetRef.current = null;
+    };
+  }, [readStoredSheet, refreshKey, scheduleSave, onToast, syncSelectionState, normalizeSelectionRange, getLiveSelection, applyBorder, clearCellFormatting, applyFormattingToRange, getActiveMerge, rememberCellFromEvent, refreshSelectionFromSheet]);
+
+  const insertedClientIds = React.useMemo(() => {
+    const inserted = metaRef.current?.insertedClients || {};
+    return new Set(Object.keys(inserted));
+  }, [city, metaTick, dirty, savedAt]);
+
+  const uninsertedClients = clients.filter(client => !insertedClientIds.has(client.id));
+  uninsertedClientsRef.current = uninsertedClients;
+
+  const getClientContext = React.useCallback((client) => {
+    const level = client.packageLevel || client.hotelLevel || "";
+    const pkg = packageByLevel.get(level);
+    const hotel = city === "makkah"
+      ? (client.hotelMecca || pkg?.hotelMecca || program.hotelMecca || "")
+      : (client.hotelMadina || pkg?.hotelMadina || program.hotelMadina || "");
+    const roomTypeKey = client.roomType || "";
+    return {
+      name: getClientDisplayName(client),
+      level,
+      roomType: client.roomTypeLabel || getRoomTypeLabel(roomTypeKey) || roomTypeKey || "",
+      roomTypeKey,
+      phone: client.phone || "",
+      hotel,
+      gender: client.gender || "",
+      genderLabel: client.gender === "male" ? "ذكر" : client.gender === "female" ? "أنثى" : "",
+      familyKey: getRoomingFamilyKey(client),
+    };
+  }, [city, packageByLevel, program]);
+
+  const clientsById = React.useMemo(
+    () => Object.fromEntries(clients.map((client) => [client.id, client])),
+    [clients]
+  );
+
+  const getRooms = React.useCallback(() => metaRef.current?.rooms || {}, []);
+
+  const getRoomById = React.useCallback((roomId) => {
+    if (!roomId) return null;
+    return getRooms()[roomId] || null;
+  }, [getRooms]);
+
+  const getRoomFromSelection = React.useCallback((rangeLike) => {
+    const range = getRangeBounds(rangeLike || getLiveSelection());
+    return Object.values(getRooms()).find((room) => isCoordsInsideRoom(room, range.minX, range.minY)) || null;
+  }, [getLiveSelection, getRooms]);
+
+  const selectedRoom = React.useMemo(
+    () => getRoomFromSelection(selectedRange),
+    [getRoomFromSelection, selectedRange, metaTick, city]
+  );
+
+  const setRoomMeta = React.useCallback((updater) => {
+    const current = normalizeRoomingMeta(metaRef.current);
+    const next = typeof updater === "function" ? updater(current) : normalizeRoomingMeta(updater);
+    metaRef.current = normalizeRoomingMeta(next);
+    setMetaTick((value) => value + 1);
+  }, []);
+
+  const clearRoomArea = React.useCallback((room) => {
+    const sheet = sheetRef.current;
+    if (!sheet || !room) return;
+    const width = Number(room.width) || ROOMING_BLOCK_WIDTH;
+    const height = Number(room.height) || getRoomBlockHeight(room.capacity);
+    clearRoomBlockMerges(sheet, room);
+    for (let y = room.startY; y < room.startY + height; y += 1) {
+      for (let x = room.startX; x < room.startX + width; x += 1) {
+        const cell = getCellName(x, y);
+        sheet.setValueFromCoords(x, y, "", true);
+        [
+          "background-color",
+          "color",
+          "font-weight",
+          "font-style",
+          "text-align",
+          "font-size",
+          "white-space",
+          "overflow-wrap",
+          "word-break",
+          "border-top",
+          "border-right",
+          "border-bottom",
+          "border-left",
+        ].forEach((prop) => sheet.setStyle(cell, prop, "", true));
+      }
+    }
+  }, []);
+
+  const renderRoom = React.useCallback((room) => {
+    const sheet = sheetRef.current;
+    if (!sheet || !room) return;
+    renderStructuredRoomBlock(sheet, room, clientsById);
+  }, [clientsById]);
+
+  const getNextRoomNumber = React.useCallback(() => {
+    const values = Object.values(getRooms())
+      .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    return String((values.length ? Math.max(...values) : 0) + 1).padStart(2, "0");
+  }, [getRooms]);
+
+  const getRoomCompatibleClients = React.useCallback((room) => {
+    if (!room) return [];
+    const occupants = (room.occupantIds || []).map((id) => clientsById[id]).filter(Boolean);
+    const occupantGenders = new Set(occupants.map((client) => client.gender).filter(Boolean));
+    const occupantFamilyKeys = new Set(occupants.map((client) => getRoomingFamilyKey(client)).filter(Boolean));
+    return uninsertedClientsRef.current.filter((client) => {
+      const context = getClientContext(client);
+      if (room.category === "male_only" && context.gender !== "male") return false;
+      if (room.category === "female_only" && context.gender !== "female") return false;
+      if (room.hotel && context.hotel && room.hotel !== context.hotel) return false;
+      if (room.category === "family" && occupants.length) {
+        if (!occupantGenders.size || occupantGenders.has(context.gender)) return true;
+        const familyKey = context.familyKey;
+        if (!familyKey) return false;
+        if (!occupantFamilyKeys.size) return false;
+        return occupantFamilyKeys.has(familyKey);
+      }
+      return true;
+    }).sort((left, right) => {
+      const leftExact = left.roomType === room.roomType ? 1 : 0;
+      const rightExact = right.roomType === room.roomType ? 1 : 0;
+      if (leftExact !== rightExact) return rightExact - leftExact;
+      return getClientDisplayName(left).localeCompare(getClientDisplayName(right), "ar");
+    });
+  }, [clientsById, getClientContext]);
+
+  const pickerRoom = roomPickerState.open ? getRoomById(roomPickerState.roomId) : null;
+  const compatiblePilgrims = React.useMemo(
+    () => getRoomCompatibleClients(pickerRoom),
+    [getRoomCompatibleClients, pickerRoom, metaTick, city]
+  );
+
+  const findEmptyCell = React.useCallback((startX, startY) => {
+    const sheet = sheetRef.current;
+    const data = normalizeSheetData(sheet?.getData(false, false));
+    const rowCount = data.length;
+    const colCount = data[0]?.length || ROOMING_COLS;
+    for (let y = Math.max(0, startY); y < rowCount; y += 1) {
+      for (let x = y === startY ? Math.max(0, startX) : 0; x < colCount; x += 1) {
+        const value = String(data[y]?.[x] || "").trim();
+        if (!value || /^اسم\s*\d+$/i.test(value)) return { x, y };
+      }
+    }
+    return { x: 0, y: Math.max(0, rowCount - 1) };
+  }, []);
+
+  const insertClients = React.useCallback((items, useSelection = true) => {
+    const sheet = sheetRef.current;
+    if (!sheet || !items.length) return;
+    let cursor = useSelection ? getActiveCell() : findEmptyCell(0, 4);
+    const currentMeta = normalizeRoomingMeta(metaRef.current);
+    const inserted = { ...currentMeta.insertedClients };
+
+    items.forEach((client, index) => {
+      cursor = index === 0 && useSelection ? cursor : findEmptyCell(cursor.x, cursor.y + (index ? 1 : 0));
+      const context = getClientContext(client);
+      const value = [
+        context.name,
+        [context.level, context.roomType].filter(Boolean).join(" / "),
+        context.phone,
+        context.hotel,
+      ].filter(Boolean).join("\n");
+      const cellName = getCellName(cursor.x, cursor.y);
+      sheet.setValueFromCoords(cursor.x, cursor.y, value, true);
+      sheet.setMeta(cellName, "clientId", client.id);
+      sheet.setMeta(cellName, "city", city);
+      sheet.setMeta(cellName, "packageLevel", context.level);
+      sheet.setMeta(cellName, "roomType", context.roomType);
+      sheet.setMeta(cellName, "hotel", context.hotel);
+      sheet.setStyle(cellName, "background-color", ROOMING_COLORS[index % ROOMING_COLORS.length], true);
+      sheet.setStyle(cellName, "color", "#111827", true);
+      sheet.setStyle(cellName, "font-weight", "700", true);
+      inserted[client.id] = {
+        cell: cellName,
+        city,
+        name: context.name,
+        packageLevel: context.level,
+        roomType: context.roomType,
+        hotel: context.hotel,
+        roomId: null,
+        insertedAt: new Date().toISOString(),
+      };
+    });
+
+    metaRef.current = { ...currentMeta, insertedClients: inserted };
+    scheduleSave();
+    syncSelectionState([cursor.x, cursor.y, cursor.x, cursor.y]);
+    setMetaTick(k => k + 1);
+    onToast?.(`تم إدراج ${items.length} معتمر في ورقة التسكين`, "success");
+  }, [city, getActiveCell, findEmptyCell, getClientContext, scheduleSave, onToast, syncSelectionState]);
+  insertClientsRef.current = insertClients;
+
+  const openCreateRoomModal = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const activeCell = getActiveCell();
+    if (!Number.isFinite(activeCell?.x) || !Number.isFinite(activeCell?.y)) {
+      onToast?.("اختر خلية أولا لإنشاء الغرفة", "info");
+      return;
+    }
+    if (getRoomFromSelection([activeCell.x, activeCell.y, activeCell.x, activeCell.y])) {
+      onToast?.("الموضع المحدد يحتوي على غرفة بالفعل", "info");
+      return;
+    }
+    setRoomDraft({
+      roomNumber: getNextRoomNumber(),
+      roomType: "double",
+      category: "male_only",
+      hotel: roomHotelOptions[0] || (city === "makkah" ? program.hotelMecca || "" : program.hotelMadina || ""),
+    });
+    setRoomModal({ open: true, mode: "create", roomId: null });
+  }, [getActiveCell, getNextRoomNumber, roomHotelOptions, city, program, onToast, getRoomFromSelection]);
+
+  const openEditRoomModal = React.useCallback((room = selectedRoom) => {
+    if (!room) {
+      onToast?.("اختر غرفة أولا لتعديلها", "info");
+      return;
+    }
+    setRoomDraft({
+      roomNumber: room.roomNumber || "",
+      roomType: room.roomType || "double",
+      category: room.category || "male_only",
+      hotel: room.hotel || "",
+    });
+    setRoomModal({ open: true, mode: "edit", roomId: room.id });
+  }, [selectedRoom, onToast]);
+
+  const upsertRoom = React.useCallback(() => {
+    const activeCell = getActiveCell();
+    const roomType = roomDraft.roomType || "double";
+    const capacity = getRoomingCapacity(roomType);
+    const category = roomDraft.category || "male_only";
+    const hotel = String(roomDraft.hotel || "").trim();
+    const roomNumber = String(roomDraft.roomNumber || "").trim();
+    if (!roomNumber) {
+      onToast?.("يرجى إدخال رقم الغرفة", "error");
+      return;
+    }
+    if (!hotel) {
+      onToast?.("يرجى اختيار الفندق", "error");
+      return;
+    }
+    const existing = roomModal.mode === "edit" ? getRoomById(roomModal.roomId) : null;
+    const startX = existing ? existing.startX : activeCell.x;
+    const startY = existing ? existing.startY : activeCell.y;
+    const nextRoom = {
+      ...(existing || {}),
+      id: existing?.id || createRoomId(),
+      city,
+      startX,
+      startY,
+      width: ROOMING_BLOCK_WIDTH,
+      roomNumber,
+      roomType,
+      category,
+      hotel,
+      capacity,
+      height: getRoomBlockHeight(capacity),
+      occupantIds: Array.isArray(existing?.occupantIds) ? existing.occupantIds.slice(0, capacity) : [],
+      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
+    };
+
+    const nextInserted = { ...normalizeRoomingMeta(metaRef.current).insertedClients };
+    let removedCount = 0;
+    if (existing && (existing.category !== category || existing.capacity !== capacity)) {
+      const kept = [];
+      (nextRoom.occupantIds || []).forEach((clientId) => {
+        const client = clientsById[clientId];
+        if (!client) return;
+        if (category === "male_only" && client.gender !== "male") {
+          delete nextInserted[clientId];
+          removedCount += 1;
+          return;
+        }
+        if (category === "female_only" && client.gender !== "female") {
+          delete nextInserted[clientId];
+          removedCount += 1;
+          return;
+        }
+        if (kept.length < capacity) kept.push(clientId);
+        else {
+          delete nextInserted[clientId];
+          removedCount += 1;
+        }
+      });
+      nextRoom.occupantIds = kept;
+    }
+
+    if (existing) clearRoomArea(existing);
+    setRoomMeta((current) => ({
+      ...current,
+      insertedClients: nextInserted,
+      rooms: {
+        ...current.rooms,
+        [nextRoom.id]: nextRoom,
+      },
+    }));
+    renderRoom(nextRoom);
+    scheduleSave();
+    setRoomModal({ open: false, mode: "create", roomId: null });
+    if (removedCount) {
+      if (category === "male_only") onToast?.("تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
+      else if (category === "female_only") onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+    } else {
+      onToast?.(existing ? "تم تحديث الغرفة" : "تم إنشاء الغرفة", "success");
+    }
+  }, [getActiveCell, roomDraft, roomModal, getRoomById, city, clientsById, clearRoomArea, setRoomMeta, renderRoom, scheduleSave, onToast]);
+
+  const deleteRoom = React.useCallback((room = selectedRoom) => {
+    if (!room) {
+      onToast?.("اختر غرفة أولا لحذفها", "info");
+      return;
+    }
+    if (!window.confirm(`سيتم حذف الغرفة ${room.roomNumber || ""} وإرجاع المعتمرين إلى غير المدرجين. هل تريد المتابعة؟`)) return;
+    const nextInserted = { ...normalizeRoomingMeta(metaRef.current).insertedClients };
+    (room.occupantIds || []).forEach((clientId) => {
+      delete nextInserted[clientId];
+    });
+    clearRoomArea(room);
+    setRoomMeta((current) => {
+      const rooms = { ...current.rooms };
+      delete rooms[room.id];
+      return {
+        ...current,
+        insertedClients: nextInserted,
+        rooms,
+      };
+    });
+    scheduleSave();
+    onToast?.("تم حذف الغرفة", "info");
+  }, [selectedRoom, onToast, clearRoomArea, setRoomMeta, scheduleSave]);
+
+  const openRoomPicker = React.useCallback((room = selectedRoom) => {
+    if (!room) {
+      onToast?.("اختر غرفة أولا لإضافة معتمرين", "info");
+      return;
+    }
+    if ((room.occupantIds || []).length >= room.capacity) {
+      onToast?.("الغرفة ممتلئة بالفعل", "info");
+      return;
+    }
+    setSelectedPilgrimIds([]);
+    setRoomPickerState({ open: true, roomId: room.id });
+  }, [selectedRoom, onToast]);
+
+  const insertPilgrimsIntoRoom = React.useCallback(() => {
+    const room = getRoomById(roomPickerState.roomId);
+    if (!room) return;
+    if (!selectedPilgrimIds.length) {
+      onToast?.("اختر معتمرًا واحدًا على الأقل", "info");
+      return;
+    }
+    const currentMeta = normalizeRoomingMeta(metaRef.current);
+    const insertedClients = { ...currentMeta.insertedClients };
+    const rooms = { ...currentMeta.rooms };
+    const nextRoom = { ...room, occupantIds: [...(room.occupantIds || [])] };
+    const remaining = Math.max(0, nextRoom.capacity - nextRoom.occupantIds.length);
+    const idsToInsert = selectedPilgrimIds.slice(0, remaining || selectedPilgrimIds.length);
+    if (selectedPilgrimIds.length > remaining && remaining > 0 && !window.confirm("عدد المعتمرين المحدد أكبر من سعة الغرفة. سيتم إدراج العدد المسموح فقط. هل تريد المتابعة؟")) {
+      return;
+    }
+    idsToInsert.forEach((clientId) => {
+      const client = clientsById[clientId];
+      if (!client || nextRoom.occupantIds.includes(clientId)) return;
+      const context = getClientContext(client);
+      nextRoom.occupantIds.push(clientId);
+      insertedClients[clientId] = {
+        roomId: nextRoom.id,
+        city,
+        name: context.name,
+        packageLevel: context.level,
+        roomType: context.roomType,
+        hotel: context.hotel,
+        insertedAt: new Date().toISOString(),
+      };
+    });
+    rooms[nextRoom.id] = nextRoom;
+    metaRef.current = { ...currentMeta, insertedClients, rooms };
+    renderRoom(nextRoom);
+    scheduleSave();
+    setRoomPickerState({ open: false, roomId: null });
+    setSelectedPilgrimIds([]);
+    setMetaTick((value) => value + 1);
+    onToast?.("تم إدراج المعتمرين في الغرفة", "success");
+  }, [roomPickerState.roomId, selectedPilgrimIds, getRoomById, clientsById, getClientContext, city, renderRoom, scheduleSave, onToast]);
+
+  const generateTemplateBlocks = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    if (!window.confirm("سيتم إنشاء بلوكات غرف ابتداءً من الخلية المحددة بدون مسح الورقة. قد يتم استبدال محتوى الخلايا داخل هذه المساحة فقط. هل تريد المتابعة؟")) return;
+    const activeCell = getActiveCell();
+    const starts = [
+      [activeCell.x, activeCell.y],
+      [activeCell.x + 4, activeCell.y],
+      [activeCell.x + 8, activeCell.y],
+      [activeCell.x, activeCell.y + 7],
+      [activeCell.x + 4, activeCell.y + 7],
+      [activeCell.x + 8, activeCell.y + 7],
+    ];
+    starts.forEach(([x, y], index) => writeRoomBlock(sheet, x, y, String(index + 1).padStart(2, "0")));
+    scheduleSave();
+    onToast?.("تم توليد نموذج تسكين في مساحة الورقة المحددة", "success");
+  }, [getActiveCell, scheduleSave, onToast]);
+
+  const resetSheet = React.useCallback(() => {
+    if (!window.confirm("سيتم حذف ورقة التسكين المحلية لهذا الفندق. هل أنت متأكد؟")) return;
+    localStorage.removeItem(storageKey);
+    metaRef.current = normalizeRoomingMeta({});
+    setMetaTick((value) => value + 1);
+    setRefreshKey(k => k + 1);
+    onToast?.("تمت إعادة ضبط ورقة التسكين", "info");
+  }, [storageKey, onToast]);
+
+  const clearWholeSheet = React.useCallback(() => {
+    if (!window.confirm("سيتم مسح الورقة الحالية وإرجاعها إلى ترويسة البرنامج فقط. هل تريد المتابعة؟")) return;
+    const payload = createRoomingHeaderSheet({ program, clients, city, agency });
+    localStorage.setItem(storageKey, JSON.stringify(payload));
+    metaRef.current = normalizeRoomingMeta(payload.meta);
+    setMetaTick((value) => value + 1);
+    setRefreshKey(k => k + 1);
+    onToast?.("تم مسح الورقة", "info");
+  }, [program, clients, city, agency, storageKey, onToast]);
+
+  const clearSelection = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const [x1, y1, x2, y2] = getLiveSelection();
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    const minY = Math.min(y1, y2);
+    const maxY = Math.max(y1, y2);
+    const currentMeta = normalizeRoomingMeta(metaRef.current);
+    const inserted = { ...currentMeta.insertedClients };
+    const rooms = { ...currentMeta.rooms };
+    const merges = sheet.getMerge?.() || {};
+    Object.keys(merges).forEach((cell) => {
+      const match = cell.match(/^([A-Z]+)(\d+)$/);
+      if (!match) return;
+      const x = match[1].split("").reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      const y = Number(match[2]) - 1;
+      if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+        try { sheet.removeMerge(cell); } catch {}
+      }
+    });
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const cell = getCellName(x, y);
+        sheet.setValueFromCoords(x, y, "", true);
+        try { sheet.resetStyle?.(cell); } catch {}
+        Object.entries(inserted).forEach(([clientId, meta]) => {
+          if (meta?.cell === cell) delete inserted[clientId];
+        });
+      }
+    }
+    Object.values(rooms).forEach((room) => {
+      const width = Number(room.width) || ROOMING_BLOCK_WIDTH;
+      const height = Number(room.height) || getRoomBlockHeight(room.capacity);
+      const overlaps = !(room.startX + width - 1 < minX || room.startX > maxX || room.startY + height - 1 < minY || room.startY > maxY);
+      if (!overlaps) return;
+      (room.occupantIds || []).forEach((clientId) => delete inserted[clientId]);
+      delete rooms[room.id];
+    });
+    metaRef.current = { ...currentMeta, insertedClients: inserted, rooms };
+    scheduleSave();
+    syncSelectionState([minX, minY, maxX, maxY]);
+    setMetaTick(k => k + 1);
+  }, [getLiveSelection, scheduleSave, syncSelectionState]);
+
+  const addRows = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.insertRow(10);
+    scheduleSave();
+  }, [scheduleSave]);
+
+  const addColumns = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.insertColumn(4);
+    scheduleSave();
+  }, [scheduleSave]);
+
+  const applyColor = React.useCallback((color) => {
+    applyFormattingToRange({
+      "background-color": color,
+      color: color === "#111827" ? "#f8fafc" : "#111827",
+    });
+  }, [applyFormattingToRange]);
+
+  const applyTextColor = React.useCallback((color) => {
+    applyFormattingToRange({ color });
+  }, [applyFormattingToRange]);
+
+  const applyFontSize = React.useCallback((size) => {
+    setFontSize(size);
+    applyFormattingToRange({ "font-size": `${size}px` });
+  }, [applyFormattingToRange]);
+
+  const applyTextAlign = React.useCallback((align) => {
+    applyFormattingToRange({ "text-align": align });
+  }, [applyFormattingToRange]);
+
+  const applyWrapText = React.useCallback(() => {
+    applyFormattingToRange(selectionUi.wrap
+      ? {
+          "white-space": "",
+          "overflow-wrap": "",
+          "word-break": "",
+        }
+      : {
+          "white-space": "pre-wrap",
+          "overflow-wrap": "anywhere",
+          "word-break": "break-word",
+        });
+  }, [applyFormattingToRange, selectionUi.wrap]);
+
+  const toggleBold = React.useCallback(() => {
+    applyFormattingToRange({ "font-weight": selectionUi.bold ? "" : "700" });
+  }, [applyFormattingToRange, selectionUi.bold]);
+
+  const toggleItalic = React.useCallback(() => {
+    applyFormattingToRange({ "font-style": selectionUi.italic ? "" : "italic" });
+  }, [applyFormattingToRange, selectionUi.italic]);
+
+  const undoSheet = React.useCallback(() => {
+    sheetRef.current?.undo?.();
+    window.requestAnimationFrame(() => syncSelectionState(getLiveSelection()));
+  }, [getLiveSelection, syncSelectionState]);
+
+  const redoSheet = React.useCallback(() => {
+    sheetRef.current?.redo?.();
+    window.requestAnimationFrame(() => syncSelectionState(getLiveSelection()));
+  }, [getLiveSelection, syncSelectionState]);
+
+  const toggleMergeSelection = React.useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const range = getLiveSelection();
+    const merge = getActiveMerge(range);
+    try {
+      if (merge) sheet.removeMerge(merge[0]);
+      else sheet.setMerge();
+      scheduleSave();
+      syncSelectionState(range);
+    } catch {
+      onToast?.("اختر الخلية الرئيسية للدمج لإلغائه", "info");
+    }
+  }, [getLiveSelection, getActiveMerge, scheduleSave, syncSelectionState, onToast]);
+
+  const exportExcel = React.useCallback(async (selectedOnly = false) => {
+    const payload = selectedOnly ? cropSheetPayload(captureSheet(), getLiveSelection()) : captureSheet();
+    if (!payload) return;
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.aoa_to_sheet(payload.data);
+    ws["!merges"] = Object.entries(payload.mergeCells || {}).map(([cell, spans]) => {
+      const start = XLSX.utils.decode_cell(cell);
+      return {
+        s: start,
+        e: { r: start.r + (spans?.[1] || 1) - 1, c: start.c + (spans?.[0] || 1) - 1 },
+      };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, selectedOnly ? "Selected" : (city === "makkah" ? "Makkah" : "Madinah"));
+    XLSX.writeFile(wb, `rooming-${city}${selectedOnly ? "-selected" : ""}-${slugifyFilePart(program.name)}.xlsx`);
+  }, [captureSheet, getLiveSelection, city, program.name]);
+
+  const printSheet = React.useCallback((selectedOnly = false) => {
+    const payload = selectedOnly ? cropSheetPayload(captureSheet(), getLiveSelection()) : captureSheet();
+    if (!payload) return;
+    const hidden = new Set();
+    const mergeMap = payload.mergeCells || {};
+    Object.entries(mergeMap).forEach(([cell, spans]) => {
+      const match = cell.match(/^([A-Z]+)(\d+)$/);
+      if (!match) return;
+      const col = match[1].split("").reduce((s, ch) => s * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      const row = Number(match[2]) - 1;
+      for (let y = row; y < row + (spans?.[1] || 1); y += 1) {
+        for (let x = col; x < col + (spans?.[0] || 1); x += 1) {
+          if (x !== col || y !== row) hidden.add(`${x}:${y}`);
+        }
+      }
+    });
+    const rows = payload.data.map((row, y) => `<tr>${row.map((value, x) => {
+      if (hidden.has(`${x}:${y}`)) return "";
+      const cell = getCellName(x, y);
+      const merge = mergeMap[cell];
+      const attrs = merge ? ` colspan="${merge[0]}" rowspan="${merge[1]}"` : "";
+      const style = payload.style?.[cell] || "";
+      return `<td${attrs} style="${escapeHtml(style)}">${escapeHtml(value).replace(/\n/g, "<br/>")}</td>`;
+    }).join("")}</tr>`).join("");
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${ROOMING_CITY_LABELS[city]}</title>
+      <style>
+        @page{size:A4 landscape;margin:10mm}
+        body{font-family:Arial,sans-serif;color:#111;background:#fff}
+        table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:10px}
+        td{border:1px solid #888;min-height:22px;padding:5px;white-space:pre-wrap;vertical-align:top}
+      </style></head><body><table>${rows}</table><script>window.onload=()=>window.print()</script></body></html>`);
+    win.document.close();
+  }, [captureSheet, getLiveSelection, city]);
+
+  React.useEffect(() => {
+    const viewport = gridViewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      const previous = viewportSizeRef.current;
+      if (Math.abs(previous.width - width) < 2 && Math.abs(previous.height - height) < 2) return;
+      viewportSizeRef.current = { width, height };
+      setViewportTick((value) => value + 1);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  React.useEffect(() => {
+    const sheet = sheetRef.current;
+    const viewport = gridViewportRef.current;
+    if (!sheet || !viewport) return undefined;
+
+    const zoomFactor = zoom / 100;
+    const scaledFirstColWidth = Math.max(96, Math.round(ROOMING_BASE_FIRST_COL_WIDTH * zoomFactor));
+    const scaledCellWidth = Math.max(72, Math.round(ROOMING_BASE_CELL_WIDTH * zoomFactor));
+    const scaledRowHeight = Math.max(24, Math.round(ROOMING_BASE_ROW_HEIGHT * zoomFactor));
+    const scaledFontSize = Math.max(11, Math.round(ROOMING_BASE_FONT_SIZE * zoomFactor));
+
+    const data = normalizeSheetData(sheet.getData(false, false));
+    const rowCount = data.length;
+    const colCount = data[0]?.length || ROOMING_COLS;
+    const previousIgnoreHistory = sheet.ignoreHistory;
+    const previousIgnoreEvents = sheet.parent?.ignoreEvents;
+
+    sheet.ignoreHistory = true;
+    if (sheet.parent) sheet.parent.ignoreEvents = true;
+    for (let x = 0; x < colCount; x += 1) {
+      sheet.setWidth(x, x === 0 ? scaledFirstColWidth : scaledCellWidth);
+    }
+    for (let y = 0; y < rowCount; y += 1) {
+      sheet.setHeight(y, scaledRowHeight);
+    }
+    sheet.ignoreHistory = previousIgnoreHistory;
+    if (sheet.parent) sheet.parent.ignoreEvents = previousIgnoreEvents;
+
+    if (workspaceRef.current) {
+      workspaceRef.current.style.setProperty("--rooming-grid-font-size", `${scaledFontSize}px`);
+      workspaceRef.current.style.setProperty("--rooming-grid-line-height", zoomFactor > 1 ? "1.5" : "1.4");
+    }
+
+    const content = hostRef.current?.querySelector?.(".jss_content");
+    if (content) {
+      content.style.width = `${Math.max(320, viewport.clientWidth)}px`;
+      content.style.maxWidth = `${Math.max(320, viewport.clientWidth)}px`;
+      content.style.height = `${Math.max(240, viewport.clientHeight)}px`;
+      content.style.maxHeight = `${Math.max(240, viewport.clientHeight)}px`;
+      content.style.overflow = "auto";
+      content.style.overflowX = "auto";
+      content.style.overflowY = "auto";
+    }
+
+    return undefined;
+  }, [zoom, fullscreen, panelOpen, refreshKey, viewportTick]);
+
+  const roomingViewportHeight = fullscreen ? "calc(100vh - 214px)" : "min(72vh, 680px)";
+
+  return (
+    <div
+      ref={workspaceRef}
+      style={fullscreen ? {
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        padding: 0,
+      } : undefined}
+    >
+      <GlassCard
+        gold
+        style={{
+          padding: 12,
+          marginBottom: fullscreen ? 0 : 24,
+          height: fullscreen ? "100vh" : "auto",
+          width: fullscreen ? "100vw" : "100%",
+          display: "flex",
+          flexDirection: "column",
+          background: "#f3f5f8",
+          border: "1px solid rgba(203,213,225,.85)",
+          boxShadow: fullscreen ? "none" : "0 10px 30px rgba(15,23,42,.08)",
+          overflow: "hidden",
+        }}
+      >
+        <style>{`
+          .rooming-workspace .jss_container { width: 100% !important; max-width: 100% !important; }
+          .rooming-workspace .jss_container,
+          .rooming-workspace .jss_content {
+            direction: ltr;
+          }
+          .rooming-workspace .jss_content,
+          .rooming-workspace .jss_container,
+          .rooming-workspace .jexcel,
+          .rooming-workspace .jexcel > div {
+            min-width: 100% !important;
+          }
+          .rooming-workspace .jss_content {
+            background: #ffffff;
+            border-radius: 0;
+            border: 0;
+            box-shadow: none !important;
+            overscroll-behavior: contain;
+          }
+          .rooming-workspace .jss_worksheet { background: #fff; color: #111827; direction: ltr; }
+          .rooming-workspace .jss_worksheet > thead > tr > td,
+          .rooming-workspace .jss_worksheet > tbody > tr > td:first-child {
+            background: #f8fafc !important;
+            color: #475569 !important;
+            border-color: #dbe3ee !important;
+            font-weight: 700;
+            font-size: var(--rooming-grid-font-size, 13px) !important;
+            direction: ltr;
+            text-align: center;
+          }
+          .rooming-workspace .jss_worksheet > tbody > tr > td:not(:first-child) {
+            border-color: #e2e8f0 !important;
+            background-color: #ffffff;
+            color: #111827;
+            white-space: pre-wrap;
+            line-height: var(--rooming-grid-line-height, 1.45);
+            font-size: var(--rooming-grid-font-size, 13px) !important;
+            direction: rtl;
+            text-align: right;
+            box-sizing: border-box;
+          }
+          .rooming-workspace .jss_worksheet > tbody > tr > td[style*="border-top"],
+          .rooming-workspace .jss_worksheet > tbody > tr > td[style*="border-right"],
+          .rooming-workspace .jss_worksheet > tbody > tr > td[style*="border-bottom"],
+          .rooming-workspace .jss_worksheet > tbody > tr > td[style*="border-left"] {
+            border-style: solid !important;
+            border-color: #111827 !important;
+            position: relative;
+            z-index: 1;
+          }
+          .rooming-workspace .jss_worksheet .highlight,
+          .rooming-workspace .jss_worksheet .highlight-selected {
+            border-color: #2563eb !important;
+            box-shadow: inset 0 0 0 1px #2563eb;
+          }
+          .rooming-workspace .jss_corner { background: #2563eb !important; }
+          .rooming-workspace .jss_textarea { background: transparent; }
+          .rooming-workspace .jss_worksheet > tbody > tr > td > input,
+          .rooming-workspace .jss_worksheet > tbody > tr > td > textarea {
+            color: #111827 !important;
+            background: #fff !important;
+            font-size: var(--rooming-grid-font-size, 13px) !important;
+          }
+          .rooming-workspace .jss_selectall {
+            background: #eef2ff !important;
+          }
+        `}</style>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>ورقة التسكين</p>
+            <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
+              معتمرون غير مدرجين: <strong style={{ color: uninsertedClients.length ? "#b45309" : "#15803d" }}>{uninsertedClients.length}</strong>
+              {dirty ? " • تغييرات غير محفوظة" : savedAt ? ` • آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}` : ""}
+            </p>
+          </div>
+          <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "#fff", border: "1px solid rgba(148,163,184,.22)" }}>
+            {Object.entries(ROOMING_CITY_LABELS).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setCity(key)}
+                style={{
+                  border: 0,
+                  background: city === key ? "#e8eefc" : "transparent",
+                  color: city === key ? "#1d4ed8" : "#475569",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "'Cairo',sans-serif",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 8,
+          padding: 8,
+          marginBottom: 10,
+          borderRadius: 12,
+          background: "#ffffff",
+          border: "1px solid rgba(148,163,184,.2)",
+          position: "sticky",
+          top: 0,
+          zIndex: 6,
+        }}>
+          <div style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 170,
+            height: 34,
+            paddingInline: 10,
+            borderRadius: 8,
+            border: "1px solid rgba(148,163,184,.24)",
+            background: "#fff",
+          }}>
+            <Search size={15} color="#64748b" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="بحث داخل الورقة"
+              style={{
+                border: 0,
+                outline: 0,
+                width: "100%",
+                background: "transparent",
+                color: "#0f172a",
+                fontSize: 12,
+                fontFamily: "'Cairo',sans-serif",
+              }}
+            />
+          </div>
+
+          <RoomingToolbarButton title="تراجع" onClick={undoSheet} icon={<Undo2 size={15} />} />
+          <RoomingToolbarButton title="إعادة" onClick={redoSheet} icon={<Redo2 size={15} />} />
+          <RoomingToolbarButton title="طباعة" onClick={() => printSheet(false)} icon={<AppIcon name="print" size={15} />} />
+          <RoomingToolbarButton title="تصدير Excel" onClick={() => exportExcel(false)} icon={<FileSpreadsheet size={15} />} />
+          <RoomingToolbarButton title="حفظ الورقة" onClick={() => saveSheet(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
+          <RoomingToolbarButton title="إنشاء غرفة" onClick={openCreateRoomModal} icon={<AppIcon name="plus" size={15} />}>
+            <span>إنشاء غرفة</span>
+          </RoomingToolbarButton>
+
+          <select
+            value={zoom}
+            title="التكبير"
+            onChange={(e) => setZoom(Number(e.target.value))}
+            style={{
+              height: 34,
+              borderRadius: 8,
+              border: "1px solid rgba(148,163,184,.24)",
+              background: "#fff",
+              color: "#334155",
+              padding: "0 10px",
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "'Cairo',sans-serif",
+              outline: "none",
+            }}
+          >
+            {[50, 75, 90, 100, 125, 150].map(value => <option key={value} value={value}>{value}%</option>)}
+          </select>
+
+          <select
+            value={fontSize}
+            title="حجم الخط"
+            onChange={(e) => applyFontSize(Number(e.target.value))}
+            style={{
+              height: 34,
+              borderRadius: 8,
+              border: "1px solid rgba(148,163,184,.24)",
+              background: "#fff",
+              color: "#334155",
+              padding: "0 10px",
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "'Cairo',sans-serif",
+              outline: "none",
+            }}
+          >
+            {[11, 12, 13, 14, 16, 18, 20].map(value => <option key={value} value={value}>{value}px</option>)}
+          </select>
+
+          <RoomingToolbarButton title="عريض" onClick={toggleBold} active={selectionUi.bold} icon={<Bold size={15} />} />
+          <RoomingToolbarButton title="مائل" onClick={toggleItalic} active={selectionUi.italic} icon={<Italic size={15} />} />
+
+          <label title="لون النص" style={{ display: "inline-flex" }}>
+            <RoomingToolbarButton title="لون النص" icon={<Type size={15} />} style={{ position: "relative", overflow: "hidden" }}>
+              <input
+                type="color"
+                onChange={(e) => applyTextColor(e.target.value)}
+                style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                aria-label="لون النص"
+              />
+            </RoomingToolbarButton>
+          </label>
+
+          <label title="لون الخلفية" style={{ display: "inline-flex" }}>
+            <RoomingToolbarButton title="لون الخلفية" icon={<PaintBucket size={15} />} style={{ position: "relative", overflow: "hidden" }}>
+              <input
+                type="color"
+                onChange={(e) => applyColor(e.target.value)}
+                style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+                aria-label="لون الخلفية"
+              />
+            </RoomingToolbarButton>
+          </label>
+
+          <div style={{ position: "relative" }}>
+            <RoomingToolbarButton
+              title="الحدود"
+              onClick={() => {
+                setMoreMenuOpen(false);
+                setBorderMenuOpen(open => !open);
+              }}
+              active={borderMenuOpen}
+              icon={<Columns3 size={15} />}
+            />
+            <RoomingMenu open={borderMenuOpen} width={164}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
+                {[
+                  { title: "كل الحدود", mode: "all", icon: <Square size={15} /> },
+                  { title: "الحد الخارجي", mode: "outer", icon: <Columns3 size={15} /> },
+                  { title: "الحدود الداخلية", mode: "inner", icon: <TableCellsMerge size={15} /> },
+                  { title: "إزالة الحدود", mode: "remove", icon: <SquareSlash size={15} /> },
+                  { title: "حد علوي", mode: "top", icon: <PanelTop size={15} /> },
+                  { title: "حد سفلي", mode: "bottom", icon: <PanelBottom size={15} /> },
+                  { title: "حد أيسر", mode: "left", icon: <PanelLeft size={15} /> },
+                  { title: "حد أيمن", mode: "right", icon: <PanelRight size={15} /> },
+                ].map(({ title, mode, icon }) => (
+                  <RoomingToolbarButton
+                    key={mode}
+                    title={title}
+                    onClick={() => {
+                      applyBorder(mode);
+                      setBorderMenuOpen(false);
+                    }}
+                    icon={icon}
+                    style={{ width: "100%" }}
+                  />
+                ))}
+              </div>
+            </RoomingMenu>
+          </div>
+
+          <RoomingToolbarButton title={selectionUi.merged ? "إلغاء دمج الخلايا" : "دمج الخلايا"} onClick={toggleMergeSelection} active={selectionUi.merged} icon={<Merge size={15} />} />
+          <RoomingToolbarButton title="محاذاة يمين" onClick={() => applyTextAlign("right")} active={selectionUi.align === "right"} icon={<AlignRight size={15} />} />
+          <RoomingToolbarButton title="محاذاة وسط" onClick={() => applyTextAlign("center")} active={selectionUi.align === "center"} icon={<AlignCenter size={15} />} />
+          <RoomingToolbarButton title="محاذاة يسار" onClick={() => applyTextAlign("left")} active={selectionUi.align === "left"} icon={<AlignLeft size={15} />} />
+          <RoomingToolbarButton title="التفاف النص" onClick={applyWrapText} active={selectionUi.wrap} icon={<WrapText size={15} />} />
+          <RoomingToolbarButton
+            title={selectedRoom ? "إضافة معتمرين إلى الغرفة المحددة" : "إدراج المعتمرين"}
+            onClick={() => (selectedRoom ? openRoomPicker(selectedRoom) : insertClients(uninsertedClients, true))}
+            disabled={!uninsertedClients.length}
+            icon={<AppIcon name="users" size={15} />}
+          />
+          <RoomingToolbarButton
+            title={panelOpen ? "إخفاء لوحة المعتمرين" : "إظهار لوحة المعتمرين"}
+            onClick={() => setPanelOpen(open => !open)}
+            icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+            active={panelOpen}
+          />
+          <RoomingToolbarButton
+            title={fullscreen ? "الخروج من ملء الشاشة" : "ملء الشاشة"}
+            onClick={() => {
+              setMoreMenuOpen(false);
+              setBorderMenuOpen(false);
+              setFullscreen(open => !open);
+            }}
+            icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            active={fullscreen}
+          />
+
+          <div style={{ position: "relative", marginInlineStart: "auto" }}>
+            <RoomingToolbarButton
+              title="المزيد"
+              onClick={() => {
+                setBorderMenuOpen(false);
+                setMoreMenuOpen(open => !open);
+              }}
+              active={moreMenuOpen}
+              icon={<MoreHorizontal size={16} />}
+            />
+            <RoomingMenu open={moreMenuOpen} align="end" width={220}>
+              <RoomingMenuItem label="توليد نموذج تسكين" icon={<AppIcon name="refresh" size={14} />} onClick={() => { generateTemplateBlocks(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="طباعة المحدد" icon={<AppIcon name="print" size={14} />} onClick={() => { printSheet(true); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="تصدير المحدد" icon={<FileSpreadsheet size={14} />} onClick={() => { exportExcel(true); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="حذف المحدد" icon={<AppIcon name="trash" size={14} />} onClick={() => { clearSelection(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="مسح التنسيق" icon={<AppIcon name="x" size={14} />} onClick={() => { clearRangeFormatting(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="مسح لون الخلايا" icon={<PaintBucket size={14} />} onClick={() => { applyFormattingToRange({ "background-color": "" }); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="إضافة صفوف" icon={<TableRowsSplit size={14} />} onClick={() => { addRows(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="إضافة أعمدة" icon={<TableColumnsSplit size={14} />} onClick={() => { addColumns(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="مسح الورقة" destructive icon={<AppIcon name="x" size={14} />} onClick={() => { clearWholeSheet(); setMoreMenuOpen(false); }} />
+              <RoomingMenuItem label="إعادة ضبط" destructive icon={<AppIcon name="restore" size={14} />} onClick={() => { resetSheet(); setMoreMenuOpen(false); }} />
+            </RoomingMenu>
+          </div>
+        </div>
+
+        {selectedRoom && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 10,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#ffffff",
+            border: "1px solid rgba(148,163,184,.2)",
+          }}>
+            <div>
+              <p style={{ color: "#0f172a", fontWeight: 800, fontSize: 13 }}>
+                غرفة {selectedRoom.roomNumber || "—"} • {getRoomingRoomLabel(selectedRoom.roomType)} • {getRoomingCategoryLabel(selectedRoom.category)}
+              </p>
+              <p style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                {selectedRoom.hotel || "—"} • {(selectedRoom.occupantIds || []).length}/{selectedRoom.capacity}
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <RoomingToolbarButton title="إضافة معتمر" onClick={() => openRoomPicker(selectedRoom)} icon={<AppIcon name="users" size={14} />}>
+                <span>إضافة معتمر</span>
+              </RoomingToolbarButton>
+              <RoomingToolbarButton title="تعديل الغرفة" onClick={() => openEditRoomModal(selectedRoom)} icon={<AppIcon name="edit" size={14} />}>
+                <span>تعديل الغرفة</span>
+              </RoomingToolbarButton>
+              <RoomingToolbarButton title="حذف الغرفة" onClick={() => deleteRoom(selectedRoom)} icon={<AppIcon name="trash" size={14} />}>
+                <span>حذف الغرفة</span>
+              </RoomingToolbarButton>
+            </div>
+          </div>
+        )}
+
+        <div
+          className="rooming-workspace"
+          style={{
+            display: "grid",
+            gridTemplateColumns: panelOpen ? "minmax(0,1fr) 248px" : "1fr",
+            gap: 10,
+            alignItems: "stretch",
+            flex: 1,
+            minHeight: 0,
+            height: roomingViewportHeight,
+            maxHeight: roomingViewportHeight,
+          }}
+        >
+          <div
+            ref={gridViewportRef}
+            style={{
+              minWidth: 0,
+              minHeight: 0,
+              height: roomingViewportHeight,
+              maxHeight: roomingViewportHeight,
+              overflow: "hidden",
+              borderRadius: 12,
+              border: "1px solid rgba(148,163,184,.2)",
+              background: "#fff",
+              boxShadow: "0 12px 28px rgba(15,23,42,.08)",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                minHeight: 0,
+                background: "#fff",
+              }}
+            >
+              <div ref={hostRef} style={{ height: "100%", width: "100%" }} />
+            </div>
+          </div>
+
+          {panelOpen && (
+            <div style={{
+              border: "1px solid rgba(148,163,184,.2)",
+              background: "#fff",
+              borderRadius: 12,
+              padding: 10,
+              height: roomingViewportHeight,
+              maxHeight: roomingViewportHeight,
+              overflow: "auto",
+              boxShadow: "0 12px 28px rgba(15,23,42,.08)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <p style={{ color: "#0f172a", fontWeight: 800, fontSize: 13 }}>المعتمرون غير المدرجين</p>
+                <RoomingToolbarButton
+                  title="إخفاء اللوحة"
+                  onClick={() => setPanelOpen(false)}
+                  icon={<PanelRightClose size={14} />}
+                  style={{ minWidth: 28, height: 28 }}
+                />
+              </div>
+              {!uninsertedClients.length ? (
+                <p style={{ color: "#64748b", fontSize: 12 }}>كل المعتمرين مدرجون في هذه الورقة.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {uninsertedClients.map(client => {
+                    const context = getClientContext(client);
+                    const isCompatibleWithSelectedRoom = !selectedRoom || compatiblePilgrims.some((item) => item.id === client.id);
+                    return (
+                      <button
+                        key={client.id}
+                        type="button"
+                        onClick={() => {
+                          if (selectedRoom) {
+                            if (!isCompatibleWithSelectedRoom) {
+                              onToast?.("هذا المعتمر غير متوافق مع الغرفة المحددة", "info");
+                              return;
+                            }
+                            setSelectedPilgrimIds([client.id]);
+                            setRoomPickerState({ open: true, roomId: selectedRoom.id });
+                            return;
+                          }
+                          insertClients([client], true);
+                        }}
+                        style={{
+                          border: `1px solid ${selectedRoom && !isCompatibleWithSelectedRoom ? "rgba(239,68,68,.18)" : "rgba(148,163,184,.18)"}`,
+                          background: selectedRoom && !isCompatibleWithSelectedRoom ? "#fff1f2" : "#f8fafc",
+                          borderRadius: 10,
+                          padding: 9,
+                          color: "#0f172a",
+                          cursor: "pointer",
+                          fontFamily: "'Cairo',sans-serif",
+                          textAlign: "start",
+                        }}
+                      >
+                        <strong style={{ display: "block", fontSize: 12 }}>{context.name}</strong>
+                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                          {[context.genderLabel, context.roomType, context.hotel].filter(Boolean).join(" • ") || "بدون تفاصيل"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <Modal
+          open={roomModal.open}
+          onClose={() => setRoomModal({ open: false, mode: "create", roomId: null })}
+          title={roomModal.mode === "edit" ? "تعديل الغرفة" : "إنشاء غرفة"}
+          width={520}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Input
+              label="رقم الغرفة"
+              value={roomDraft.roomNumber}
+              onChange={(e) => setRoomDraft((prev) => ({ ...prev, roomNumber: e.target.value }))}
+            />
+            <Select
+              label="نوع الغرفة"
+              value={roomDraft.roomType}
+              onChange={(e) => setRoomDraft((prev) => ({ ...prev, roomType: e.target.value }))}
+              options={ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+            />
+            <Select
+              label="تصنيف الغرفة"
+              value={roomDraft.category}
+              onChange={(e) => setRoomDraft((prev) => ({ ...prev, category: e.target.value }))}
+              options={ROOMING_CATEGORY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+            />
+            <Select
+              label="الفندق"
+              value={roomDraft.hotel}
+              onChange={(e) => setRoomDraft((prev) => ({ ...prev, hotel: e.target.value }))}
+              options={(roomHotelOptions.length ? roomHotelOptions : [roomDraft.hotel || "—"]).map((hotel) => ({ value: hotel, label: hotel }))}
+            />
+            {roomDraft.category === "family" && (
+              <p style={{ color: "#64748b", fontSize: 12 }}>
+                الغرفة العائلية تسمح بالمزج بين الذكور والإناث فقط عند توفر بيانات عائلة/مجموعة واضحة.
+              </p>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "create", roomId: null })}>
+                إلغاء
+              </Button>
+              <Button onClick={upsertRoom}>
+                {roomModal.mode === "edit" ? "حفظ التعديل" : "إنشاء"}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          open={roomPickerState.open}
+          onClose={() => {
+            setRoomPickerState({ open: false, roomId: null });
+            setSelectedPilgrimIds([]);
+          }}
+          title="إضافة معتمر"
+          width={560}
+        >
+          {pickerRoom && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <GlassCard style={{ padding: 12, background: "rgba(248,250,252,.95)", borderColor: "rgba(148,163,184,.18)" }}>
+                <p style={{ color: "#0f172a", fontWeight: 800, fontSize: 13 }}>
+                  غرفة {pickerRoom.roomNumber || "—"} • {getRoomingRoomLabel(pickerRoom.roomType)} • {getRoomingCategoryLabel(pickerRoom.category)}
+                </p>
+                <p style={{ color: "#64748b", fontSize: 12, marginTop: 4 }}>
+                  {pickerRoom.hotel || "—"} • المتاح {Math.max(0, pickerRoom.capacity - (pickerRoom.occupantIds || []).length)} من {pickerRoom.capacity}
+                </p>
+              </GlassCard>
+              {!compatiblePilgrims.length ? (
+                <p style={{ color: "#64748b", fontSize: 12 }}>
+                  لا يوجد معتمرون متوافقون غير مدرجين لهذه الغرفة حاليًا.
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflow: "auto" }}>
+                  {compatiblePilgrims.map((client) => {
+                    const context = getClientContext(client);
+                    const checked = selectedPilgrimIds.includes(client.id);
+                    const remaining = Math.max(0, pickerRoom.capacity - (pickerRoom.occupantIds || []).length);
+                    const disabled = !checked && selectedPilgrimIds.length >= remaining;
+                    return (
+                      <label
+                        key={client.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          padding: 10,
+                          borderRadius: 10,
+                          border: "1px solid rgba(148,163,184,.18)",
+                          background: checked ? "rgba(37,99,235,.07)" : "#f8fafc",
+                          cursor: disabled ? "not-allowed" : "pointer",
+                          opacity: disabled ? 0.55 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={(e) => {
+                            const isChecked = e.target.checked;
+                            setSelectedPilgrimIds((prev) => {
+                              if (isChecked) return [...prev, client.id];
+                              return prev.filter((id) => id !== client.id);
+                            });
+                          }}
+                          style={{ marginTop: 2 }}
+                        />
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{context.name}</strong>
+                          <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                            {[context.genderLabel, context.roomType, context.hotel].filter(Boolean).join(" • ") || "بدون تفاصيل"}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setRoomPickerState({ open: false, roomId: null });
+                    setSelectedPilgrimIds([]);
+                  }}
+                >
+                  إلغاء
+                </Button>
+                <Button onClick={insertPilgrimsIntoRoom} disabled={!selectedPilgrimIds.length}>
+                  إدراج المحدد
+                </Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      </GlassCard>
     </div>
   );
 }
@@ -782,9 +3462,12 @@ function InnerClientRow({
     client.prenom ||
     "؟").trim();
   const avatarInitial = fallbackName ? fallbackName[0] : "؟";
-  const phoneLabel = client.phone ? `📞 ${client.phone}` : "";
+  const phoneLabel = client.phone ? `${client.phone}` : "";
   const cityLabel = client.city ? `• ${client.city}` : "";
-  const infoLine = [phoneLabel, cityLabel].filter(Boolean).join(" ");
+  const packageLabel = client.packageLevel || client.hotelLevel || "";
+  const roomLabel = client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "";
+  const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
+  const infoLine = [phoneLabel, cityLabel, bookingLabel ? `• ${bookingLabel}` : ""].filter(Boolean).join(" ");
 
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
@@ -854,6 +3537,20 @@ function InnerClientRow({
             alignItems: "center",
           }}
         >
+          {showCheckbox && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onCheck?.();
+                }}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: 18, height: 18, accentColor: tc.gold, cursor: "pointer" }}
+              />
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: tc.grey, fontWeight: 600, width: 22, textAlign: "center" }}>
               {index + 1}
@@ -876,18 +3573,6 @@ function InnerClientRow({
               >
                 {avatarInitial}
               </div>
-              {showCheckbox && (
-                <input
-                  type="checkbox"
-                  checked={isChecked}
-                  onChange={(e) => {
-                    e.stopPropagation();
-                    onCheck?.();
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ width: 18, height: 18, accentColor: tc.gold, cursor: "pointer" }}
-                />
-              )}
             </div>
           </div>
           <div style={{ minWidth: 0 }}>
@@ -895,7 +3580,7 @@ function InnerClientRow({
             <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 12 }}>
-            {client.roomType || "—"}
+            {client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "—"}
           </span>
           <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 12 }}>
             {client.ticketNo || "—"}
@@ -958,7 +3643,7 @@ function InnerClientRow({
                   }}
                 >
                   <InnerMenuBtn
-                    icon="✏️"
+                    icon="edit"
                     label={t.editLabel || "تعديل"}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -972,7 +3657,7 @@ function InnerClientRow({
                   />
                   {onTransfer && (
                     <InnerMenuBtn
-                      icon="🔁"
+                      icon="refresh"
                       label={t.transferClient || "نقل إلى برنامج"}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -986,7 +3671,7 @@ function InnerClientRow({
                     />
                   )}
                   <InnerMenuBtn
-                    icon="🗑️"
+                    icon="trash"
                     label={t.deleteLabel || "حذف"}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1027,7 +3712,7 @@ function InnerMenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
         textAlign: isRTL ? "right" : "left",
         transition:"background .15s",
       }}>
-      <span>{icon}</span>
+      <AppIcon name={icon} size={15} color={color} />
       <span>{label}</span>
     </button>
   );
@@ -1043,7 +3728,7 @@ function SmallBtn({ icon, onClick, color }) {
         borderRadius:8, cursor:"pointer",
         display:"flex", alignItems:"center", justifyContent:"center",
         fontSize:13, transition:"all .2s" }}>
-      {icon}
+      <AppIcon name={icon} size={15} color={color} />
     </button>
   );
 }
@@ -1055,20 +3740,67 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   const { addProgram, updateProgram } = store;
   const { t } = useLang();
   const isEdit = !!program;
+  const createPackage = React.useCallback((level = "اقتصادي") => ({
+    id: `pkg-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    level,
+    hotelMecca: "",
+    hotelMadina: "",
+    mealPlan: "",
+    notes: "",
+    prices: {},
+  }), []);
+  const initialPackages = React.useMemo(() => {
+    if (program) return normalizeProgramPackages(program).map(({ legacy, ...pkg }) => pkg);
+    return [createPackage("اقتصادي")];
+  }, [program, createPackage]);
   const [form, setForm] = React.useState({
     name:      program?.name      || "",
     type:      program?.type      || "عمرة مفردة",
     duration:  program?.duration  || "",
     departure: program?.departure || "",
     returnDate:program?.returnDate|| "",
-    hotelMecca:program?.hotelMecca|| "",
-    hotelMadina:program?.hotelMadina||"",
     price:     program?.price     || "",
     seats:     program?.seats     || "",
     transport: program?.transport || "",
-    mealPlan:  program?.mealPlan  || "",
+    notes:     program?.notes     || "",
   });
+  const [packages, setPackages] = React.useState(initialPackages);
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const setPackageField = (index, key, value) => {
+    setPackages(prev => prev.map((pkg, i) => i === index ? { ...pkg, [key]: value } : pkg));
+  };
+  const setPackagePrice = (index, key, value) => {
+    setPackages(prev => prev.map((pkg, i) => {
+      if (i !== index) return pkg;
+      return { ...pkg, prices: { ...(pkg.prices || {}), [key]: value } };
+    }));
+  };
+  const addPackage = (level = "اقتصادي") => setPackages(prev => [...prev, createPackage(level)]);
+  const removePackage = (index) => setPackages(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index));
+
+  const cleanPackages = React.useCallback(() => packages.map((pkg, index) => {
+    const prices = {};
+    PROGRAM_ROOM_PRICE_KEYS.forEach((key) => {
+      const raw = pkg.prices?.[key];
+      if (raw === "" || raw === null || raw === undefined) return;
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 0) prices[key] = value;
+    });
+    if (pkg.prices?.quint !== "" && pkg.prices?.quint !== null && pkg.prices?.quint !== undefined) {
+      const legacyQuint = Number(pkg.prices.quint);
+      if (Number.isFinite(legacyQuint) && legacyQuint >= 0) prices.quint = legacyQuint;
+    }
+    return {
+      id: pkg.id || `pkg-${index + 1}`,
+      level: (pkg.level || "").trim() || `مستوى ${index + 1}`,
+      hotelMecca: (pkg.hotelMecca || "").trim(),
+      hotelMadina: (pkg.hotelMadina || "").trim(),
+      mealPlan: (pkg.mealPlan || "").trim(),
+      notes: (pkg.notes || "").trim(),
+      prices,
+    };
+  }), [packages]);
+
   React.useEffect(() => {
     const days = Number(form.duration);
     if (!form.departure || !Number.isFinite(days) || days <= 0) {
@@ -1105,46 +3837,142 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   }, [t, form.type]);
 
   const handleSave = () => {
-    if (!form.name||!form.price||!form.seats) {
-      alert(t.programFormValidation); return;
+    if (!form.name||!form.seats) {
+      alert("يرجى إدخال اسم البرنامج وعدد المقاعد"); return;
     }
-    const data = {...form, price:Number(form.price), seats:Number(form.seats)};
+    const priceTable = cleanPackages();
+    const legacyFields = getLegacyFieldsFromPackages(priceTable, program || form);
+    const data = {
+      ...form,
+      ...legacyFields,
+      price: Number(legacyFields.price || 0),
+      seats: Number(form.seats),
+      priceTable,
+    };
     isEdit ? updateProgram(program.id,data) : addProgram(data);
     onSave();
   };
 
+  const packageCount = packages.length;
+  const startingPrice = getProgramStartingPrice({ ...form, priceTable: cleanPackages() });
+  const summaryPrice = startingPrice ? `${startingPrice.toLocaleString("ar-MA")} د.م` : "—";
+
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
-      <Input label={t.program} value={form.name} onChange={set("name")} required style={{gridColumn:"1/-1"}}/>
-      <Select label={t.programType} value={form.type} onChange={set("type")}
-        options={programTypeOptions}/>
-      <Input
-        label={t.duration}
-        value={form.duration}
-        onChange={set("duration")}
-        placeholder={t.durationPlaceholder}
-        type="number"
-        min={1}
-      />
-      <Input label={t.departure} value={form.departure} onChange={set("departure")} type="date"/>
-      <Input
-        label={t.returnDate}
-        value={form.returnDate}
-        onChange={() => {}}
-        type="date"
-        readOnly
-        disabled
-        inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
-      />
-      <Input label={t.hotelMecca} value={form.hotelMecca} onChange={set("hotelMecca")} style={{gridColumn:"1/-1"}}/>
-      <Input label={t.hotelMadina} value={form.hotelMadina} onChange={set("hotelMadina")} style={{gridColumn:"1/-1"}}/>
-      <Input label={t.programPriceLabel} value={form.price} onChange={set("price")} type="number" required/>
-      <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
-      <Input label={t.transport} value={form.transport} onChange={set("transport")}/>
-      <Input label={t.mealPlan} value={form.mealPlan} onChange={set("mealPlan")}/>
-      <div style={{ gridColumn:"1/-1", display:"flex", gap:10, justifyContent:"flex-end", marginTop:8 }}>
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <GlassCard gold style={{ padding:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:14 }}>
+          <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>معلومات البرنامج</p>
+          <span style={{ fontSize:12, color:tc.grey }}>{packageCount} مستويات • ابتداءً من {summaryPrice}</span>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <Input label={t.program} value={form.name} onChange={set("name")} required style={{gridColumn:"1/-1"}}/>
+          <Select label={t.programType} value={form.type} onChange={set("type")}
+            options={programTypeOptions}/>
+          <Input
+            label={t.duration}
+            value={form.duration}
+            onChange={set("duration")}
+            placeholder={t.durationPlaceholder}
+            type="number"
+            min={1}
+          />
+          <Input label={t.departure} value={form.departure} onChange={set("departure")} type="date"/>
+          <Input
+            label={t.returnDate}
+            value={form.returnDate}
+            onChange={() => {}}
+            type="date"
+            readOnly
+            disabled
+            inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
+          />
+          <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
+          <Input label={t.transport} value={form.transport} onChange={set("transport")}/>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:6 }}>{t.notes}</label>
+            <textarea value={form.notes} onChange={set("notes")} rows={2}
+              style={{ width:"100%", background:"rgba(255,255,255,.04)",
+                border:"1px solid rgba(255,255,255,.1)", borderRadius:10,
+                padding:"10px 14px", color:"#f8fafc", fontSize:13,
+                fontFamily:"'Cairo',sans-serif", outline:"none", resize:"vertical" }} />
+          </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard style={{ padding:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:14 }}>
+          <div>
+            <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>المستويات والباقات</p>
+            <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>أضف الفنادق ونظام الوجبات وأسعار الغرف لكل مستوى.</p>
+          </div>
+          <Button variant="primary" size="sm" icon="plus" onClick={() => addPackage("اقتصادي")}>إضافة مستوى</Button>
+        </div>
+
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+          {PACKAGE_TEMPLATES.map(level => (
+            <button key={level} type="button" onClick={() => addPackage(level)}
+              style={{
+                border:"1px solid rgba(212,175,55,.25)",
+                background:"rgba(212,175,55,.08)",
+                color:tc.gold,
+                borderRadius:20,
+                padding:"6px 12px",
+                fontSize:12,
+                fontWeight:700,
+                cursor:"pointer",
+                fontFamily:"'Cairo',sans-serif",
+              }}>
+              {level}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {packages.map((pkg, index) => (
+            <div key={pkg.id || index} style={{
+              border:"1px solid rgba(212,175,55,.16)",
+              background:"rgba(255,255,255,.025)",
+              borderRadius:12,
+              padding:14,
+            }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", marginBottom:12 }}>
+                <strong style={{ color:"#f8fafc", fontSize:13 }}>المستوى {index + 1}</strong>
+                {packages.length > 1 && (
+                  <Button variant="ghost" size="sm" icon="trash" onClick={() => removePackage(index)}>
+                    {t.delete}
+                  </Button>
+                )}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <Input label="اسم المستوى" value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
+                <Input label={t.mealPlan} value={pkg.mealPlan || ""} onChange={e => setPackageField(index, "mealPlan", e.target.value)} />
+                <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />
+                <Input label={t.hotelMadina} value={pkg.hotelMadina || ""} onChange={e => setPackageField(index, "hotelMadina", e.target.value)} />
+                <Input label={t.notes} value={pkg.notes || ""} onChange={e => setPackageField(index, "notes", e.target.value)} style={{ gridColumn:"1/-1" }} />
+              </div>
+              <div style={{ marginTop:12 }}>
+                <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:8 }}>أسعار الغرف</p>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10 }}>
+                  {PROGRAM_ROOM_PRICE_KEYS.map(key => (
+                    <Input
+                      key={key}
+                      label={getRoomTypeLabel(key)}
+                      value={pkg.prices?.[key] ?? ""}
+                      onChange={e => setPackagePrice(index, key, e.target.value)}
+                      type="number"
+                      min={0}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+
+      <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:2 }}>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
-        <Button variant="primary" icon={isEdit?"💾":"➕"} onClick={handleSave}>
+        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave}>
           {isEdit?t.save:t.addProgram}
         </Button>
       </div>

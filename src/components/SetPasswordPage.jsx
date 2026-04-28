@@ -2,6 +2,7 @@ import React from "react";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { supabase } from "../lib/supabase";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -30,14 +31,7 @@ function PasswordShell({ lbl, children }) {
         position: "relative",
       }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 18,
-            background: "linear-gradient(135deg,rgba(212,175,55,.2),rgba(212,175,55,.06))",
-            border: "1px solid rgba(212,175,55,.3)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 32, margin: "0 auto 16px",
-            animation: "float 4s ease-in-out infinite",
-          }}>🔐</div>
+          <IconBubble name="shieldCheck" boxSize={64} size={30} style={{ borderRadius:18, margin:"0 auto 16px", animation:"float 4s ease-in-out infinite" }} />
           <h1 style={{
             fontSize: 20, fontWeight: 900, fontFamily: "'Amiri', serif",
             background: "linear-gradient(135deg,#f0d060,#d4af37)",
@@ -62,7 +56,7 @@ const Requirement = React.memo(function Requirement({ ok, label }) {
       color: ok ? "#4ade80" : "rgba(148,163,184,.5)",
       transition: "color .25s",
     }}>
-      <span style={{ fontSize: 13 }}>{ok ? "✓" : "○"}</span>
+      <AppIcon name={ok ? "check" : "status"} size={13} color={ok ? "#4ade80" : "rgba(148,163,184,.5)"} />
       <span>{label}</span>
     </div>
   );
@@ -211,7 +205,7 @@ export default function SetPasswordPage({ authData }) {
     }}
     onMouseEnter={e => e.currentTarget.style.color = "#d4af37"}
     onMouseLeave={e => e.currentTarget.style.color = "rgba(148,163,184,.5)"}
-    >{visible ? "🙈" : "👁️"}</button>
+    ><AppIcon name={visible ? "eyeOff" : "eye"} size={18} color="currentColor" /></button>
   );
 
   // ── Preparing (waiting for Supabase to process token) ─────────────────────
@@ -245,7 +239,7 @@ export default function SetPasswordPage({ authData }) {
             background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 26,
-          }}>⏰</div>
+          }}><AppIcon name="clock" size={26} color={tc.danger} /></div>
           <p style={{ color: tc.danger, fontSize: 14, fontWeight: 700, lineHeight: 1.6 }}>
             {lbl.expired}
           </p>
@@ -286,7 +280,7 @@ export default function SetPasswordPage({ authData }) {
             background: "rgba(74,222,128,.12)", border: "1px solid rgba(74,222,128,.3)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 28,
-          }}>✓</div>
+          }}><AppIcon name="success" size={28} color="#4ade80" /></div>
           <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700 }}>{lbl.success}</p>
         </div>
       </PasswordShell>
@@ -355,7 +349,7 @@ export default function SetPasswordPage({ authData }) {
             background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)",
             color: tc.danger, fontWeight: 600, textAlign: "center",
           }}>
-            ⚠️ {error}
+            <AppIcon name="alert" size={14} color={tc.danger} /> {error}
           </div>
         )}
 

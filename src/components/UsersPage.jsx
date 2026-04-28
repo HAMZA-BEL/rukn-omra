@@ -185,7 +185,7 @@ export default function UsersPage({
             size="sm"
             onClick={refresh}
             disabled={loading}
-            icon={loading ? "⏳" : "↻"}
+            icon={loading ? "loading" : "refresh"}
           >
             {loading ? (t.loading || "...") : (t.usersRefresh || "تحديث")}
           </Button>
@@ -206,7 +206,7 @@ export default function UsersPage({
       </header>
 
       {users.length === 0 ? (
-        <EmptyState title={t.usersEmpty || "لا يوجد مستخدمون"} icon="👥" />
+        <EmptyState title={t.usersEmpty || "لا يوجد مستخدمون"} icon="users" />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{

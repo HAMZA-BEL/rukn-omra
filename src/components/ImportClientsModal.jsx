@@ -1,8 +1,8 @@
 import React from "react";
-import * as XLSX from "xlsx";
 import { Button } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -59,8 +59,9 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
+        const XLSX = await import("xlsx");
         const wb   = XLSX.read(e.target.result, { type: "array" });
         const ws   = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
@@ -126,10 +127,13 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
         roomType:    get("roomType"),
         ticketNo:    get("ticketNo"),
         notes:       get("notes"),
+        gender:      /^f(emale)?$/i.test(get("gender")) || get("gender") === "أنثى" ? "female"
+          : /^m(ale)?$/i.test(get("gender")) || get("gender") === "ذكر" ? "male"
+            : "",
         passport: {
           number:      get("passportNo"),
           nationality: get("nationality") || "MAR",
-          gender:      get("gender")      || "M",
+          gender:      get("gender")      || "",
           birthDate:   get("birthDate"),
           expiry:      get("expiryDate"),
           issueDate:   "",
@@ -167,14 +171,14 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
           transition: "all .2s",
           marginBottom: 16,
         }}>
-        <div style={{ fontSize: 44, marginBottom: 12 }}>📊</div>
+        <IconBubble name="import" size={44} iconSize={24} style={{ margin:"0 auto 12px" }} />
         <p style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc", marginBottom: 6 }}>
           {t.importDropHint || "اسحب ملف Excel أو CSV وأفلته هنا"}
         </p>
         <p style={{ fontSize: 12, color: tc.grey, marginBottom: 20 }}>
           {t.importDropOr || "أو اضغط لاختيار الملف"} — .xlsx, .xls, .csv
         </p>
-        <Button variant="primary" icon="📂" onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}>
+        <Button variant="primary" icon="upload" onClick={e => { e.stopPropagation(); fileRef.current?.click(); }}>
           {t.importChooseFile || "اختيار ملف"}
         </Button>
         <input
@@ -201,7 +205,7 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
         marginTop: 8,
       }}>
         <p style={{ fontSize: 12, fontWeight: 700, color: tc.gold, marginBottom: 8 }}>
-          {t.importTips || "💡 تلميح للاستيراد الأمثل:"}
+          {t.importTips || "تلميح للاستيراد الأمثل:"}
         </p>
         <ul style={{ fontSize: 12, color: tc.grey, paddingInlineStart: 20, lineHeight: 2 }}>
           <li>{t.importTip1 || "يجب أن يحتوي الملف على صف عناوين (Header row) في الأعلى"}</li>
@@ -227,8 +231,8 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
         <div style={{
           display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16,
         }}>
-          <Chip icon="📄" label={`${rows.length} ${t.importRowsFound || "صف مكتشف"}`} />
-          <Chip icon="🗂️" label={`${headers.length} ${t.importColsFound || "عمود"}`} />
+          <Chip icon="file" label={`${rows.length} ${t.importRowsFound || "صف مكتشف"}`} />
+          <Chip icon="archive" label={`${headers.length} ${t.importColsFound || "عمود"}`} />
         </div>
 
         {/* Program selector */}
@@ -326,7 +330,7 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
             <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
             <Button
               variant="primary"
-              icon="✅"
+              icon="success"
               disabled={mapping.name === undefined || mapping.name === ""}
               onClick={doImport}>
               {t.importConfirm || "تأكيد الاستيراد"} ({rows.length})
@@ -336,7 +340,7 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
 
         {(mapping.name === undefined || mapping.name === "") && (
           <p style={{ fontSize: 11, color: tc.danger, marginTop: 8, textAlign: "center" }}>
-            {t.importNameRequired || "⚠️ يجب ربط حقل الاسم الكامل أولاً"}
+            {t.importNameRequired || "يجب ربط حقل الاسم الكامل أولاً"}
           </p>
         )}
       </div>
@@ -346,9 +350,7 @@ export default function ImportClientsModal({ store, onClose, onToast }) {
   // ── Stage 3: Report ──────────────────────────────────────────────────────────
   return (
     <div style={{ direction: dir, fontFamily: "'Cairo',sans-serif", textAlign: "center", padding: "24px 0" }}>
-      <div style={{ fontSize: 52, marginBottom: 16 }}>
-        {report.imported > 0 ? "✅" : "⚠️"}
-      </div>
+      <IconBubble name={report.imported > 0 ? "success" : "alert"} size={52} iconSize={28} style={{ margin:"0 auto 16px" }} />
       <h3 style={{ fontSize: 18, fontWeight: 800, color: "#f8fafc", marginBottom: 24 }}>
         {t.importDone || "اكتمل الاستيراد"}
       </h3>
@@ -396,7 +398,7 @@ function Chip({ icon, label }) {
       fontSize: 12, color: tc.gold, fontWeight: 600,
       fontFamily: "'Cairo',sans-serif",
     }}>
-      {icon} {label}
+      <AppIcon name={icon} size={14} color={tc.gold} /> {label}
     </span>
   );
 }

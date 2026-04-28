@@ -4,6 +4,7 @@ import { theme } from "./styles";
 import { parseMRZ, extractMRZFromText } from "../utils/mrzReader";
 import { extractMRZFromImage } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -40,7 +41,6 @@ export default function MRZReader({ onResult, onClose }) {
   const HANDLE   = 12;
   const HALF     = HANDLE / 2;
 
-  // Translations already include emoji — use as-is (no duplication)
   const modeButtons = [
     { id: "manual", label: t.mrzModeManual },
     { id: "image",  label: t.mrzModeImage  },
@@ -300,7 +300,7 @@ export default function MRZReader({ onResult, onClose }) {
                 onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(212,175,55,.6)"}
                 onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(212,175,55,.3)"}
               >
-                <p style={{ fontSize: 32, marginBottom: 8 }}>📷</p>
+                <IconBubble name="camera" size={22} boxSize={42} style={{ margin:"0 auto 8px" }} />
                 <p style={{ fontSize: 14, color: tc.white, fontWeight: 600 }}>{t.mrzUploadPrompt}</p>
                 <p style={{ fontSize: 11, color: tc.grey, marginTop: 4 }}>{t.mrzUploadSizeHint}</p>
               </div>
@@ -309,7 +309,7 @@ export default function MRZReader({ onResult, onClose }) {
             /* Crop interface */
             <div>
               <p style={{ fontSize: 11, color: tc.grey, marginBottom: 8, lineHeight: 1.6 }}>
-                🟩 ضع المستطيل الأخضر فوق سطري MRZ في أسفل الجواز — اسحبه أو غيّر حجمه من الزوايا
+                ضع المستطيل الأخضر فوق سطري MRZ في أسفل الجواز — اسحبه أو غيّر حجمه من الزوايا
               </p>
 
               {/* Image + crop overlay */}
@@ -388,7 +388,7 @@ export default function MRZReader({ onResult, onClose }) {
                   border: "1px solid rgba(245,158,11,.3)",
                   borderRadius: 8, fontSize: 12, color: tc.warning,
                 }}>
-                  ⚠️ {ocrError}
+                  <AppIcon name="alert" size={14} color={tc.warning} /> {ocrError}
                 </div>
               )}
 
@@ -396,7 +396,7 @@ export default function MRZReader({ onResult, onClose }) {
               <div style={{ marginTop: 10 }}>
                 <Button variant="secondary" size="sm"
                   onClick={() => { setPreview(null); setResult(null); setOcrError(""); fileRef.current.click(); }}>
-                  🔄 رفع صورة أخرى
+                  رفع صورة أخرى
                 </Button>
               </div>
             </div>
@@ -436,7 +436,7 @@ export default function MRZReader({ onResult, onClose }) {
           borderRadius: 10, padding: "10px 14px", marginBottom: 14,
           color: tc.danger, fontSize: 13,
         }}>
-          ❌ {error}
+          <AppIcon name="error" size={14} color={tc.danger} /> {error}
         </div>
       )}
 
@@ -471,15 +471,15 @@ export default function MRZReader({ onResult, onClose }) {
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
         <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
         {result ? (
-          <Button variant="success" icon="✅" onClick={handleApply}>
+          <Button variant="success" icon="success" onClick={handleApply}>
             {t.mrzApplyData}
           </Button>
         ) : mode === "image" && preview ? (
-          <Button variant="primary" icon="🔍" onClick={handleCropAndRead} disabled={ocrLoading}>
+          <Button variant="primary" icon="search" onClick={handleCropAndRead} disabled={ocrLoading}>
             {ocrLoading ? `${ocrProgress}%...` : "قراءة المنطقة المحددة"}
           </Button>
         ) : (
-          <Button variant="primary" icon="🔍" onClick={handleParse}>
+          <Button variant="primary" icon="search" onClick={handleParse}>
             {t.mrzReadData}
           </Button>
         )}

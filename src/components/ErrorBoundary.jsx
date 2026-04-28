@@ -1,4 +1,5 @@
 import React from "react";
+import { AppIcon } from "./Icon";
 
 /**
  * ErrorBoundary — wraps page-level components so a crash in one section
@@ -38,7 +39,7 @@ export default class ErrorBoundary extends React.Component {
           background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 36,
-        }}>⚠️</div>
+        }}><AppIcon name="alert" size={36} color="#ef4444" /></div>
 
         <h2 style={{ fontSize: 18, fontWeight: 700, color: "#f8fafc", textAlign: "center", margin: 0 }}>
           {this.props.fallbackTitle || "حدث خطأ في هذا القسم"}
@@ -69,7 +70,7 @@ export default class ErrorBoundary extends React.Component {
           onMouseEnter={e => e.currentTarget.style.background = "rgba(212,175,55,.22)"}
           onMouseLeave={e => e.currentTarget.style.background = "rgba(212,175,55,.12)"}
         >
-          🔄 إعادة المحاولة
+          <AppIcon name="refresh" size={15} color="#d4af37" /> إعادة المحاولة
         </button>
       </div>
     );

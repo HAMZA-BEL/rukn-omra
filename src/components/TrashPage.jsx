@@ -202,18 +202,20 @@ export default function TrashPage({ store, onToast }) {
               <Button
                 variant="success"
                 size="sm"
+                icon="restore"
                 disabled={!selectedCount}
                 onClick={handleRestore}
               >
-                ♻️ {t.trashRestoreSelected}
+                {t.trashRestoreSelected}
               </Button>
               <Button
                 variant="danger"
                 size="sm"
+                icon="trash"
                 disabled={!selectedCount}
                 onClick={handleDelete}
               >
-                🗑️ {t.trashDeleteSelected}
+                {t.trashDeleteSelected}
               </Button>
             </div>
           </div>
@@ -223,7 +225,7 @@ export default function TrashPage({ store, onToast }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {visibleItems.length === 0 ? (
           <GlassCard style={{ padding: 24 }}>
-            <EmptyState icon="🗑️" title={t.trashEmptyTitle} sub={t.trashEmptySubtitle} />
+            <EmptyState icon="trash" title={t.trashEmptyTitle} sub={t.trashEmptySubtitle} />
           </GlassCard>
         ) : (
           visibleItems.map((item) => {
@@ -305,8 +307,8 @@ export default function TrashPage({ store, onToast }) {
           <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
             {t.trashCancel || t.cancel}
           </Button>
-          <Button variant="danger" onClick={confirmDelete}>
-            🗑️ {t.trashDeleteSelected}
+          <Button variant="danger" icon="trash" onClick={confirmDelete}>
+            {t.trashDeleteSelected}
           </Button>
         </div>
       </Modal>

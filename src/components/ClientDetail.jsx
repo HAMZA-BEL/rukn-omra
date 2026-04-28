@@ -4,6 +4,8 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
 import { printReceipt, printClientCard, printInvoice } from "./PrintTemplates";
+import { AppIcon } from "./Icon";
+import { getRoomTypeLabel } from "../utils/programPackages";
 
 const tc = theme.colors;
 
@@ -52,7 +54,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 fontSize:11, fontWeight:700, padding:"2px 10px", borderRadius:20,
                 background:"rgba(245,158,11,.12)", border:"1px solid rgba(245,158,11,.3)",
                 color:tc.warning,
-              }}>📦 {t.archivedBadge}</span>
+              }}><AppIcon name="archive" size={12} color={tc.warning} /> {t.archivedBadge}</span>
             )}
           </div>
           {/* Amadeus format */}
@@ -62,10 +64,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             </p>
           )}
           <div style={{ display:"flex", flexWrap:"wrap", gap:10 }}>
-            <span style={{ fontSize:12, color:tc.grey }}>📞 {client.phone}</span>
-            <span style={{ fontSize:12, color:tc.grey }}>📍 {client.city}</span>
-            <span style={{ fontSize:12, color:tc.grey }}>🗂️ {client.id}</span>
-            {client.ticketNo && <span style={{ fontSize:12, color:tc.gold }}>🎫 {client.ticketNo}</span>}
+            <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="phone" size={13} color={tc.grey} /> {client.phone}</span>
+            <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="location" size={13} color={tc.grey} /> {client.city}</span>
+            <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="archive" size={13} color={tc.grey} /> {client.id}</span>
+            {client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
           </div>
         </div>
         <StatusBadge status={status} />
@@ -74,16 +76,16 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       {/* Print buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         {payments.map && payments.length > 0 && lastPmt && (
-          <Button variant="secondary" size="sm" icon="🖨️"
+          <Button variant="secondary" size="sm" icon="print"
             onClick={() => printReceipt({ payment:lastPmt, client, program, agency, lang })}>
             {t.printReceipt}
           </Button>
         )}
-        <Button variant="secondary" size="sm" icon="🪪"
+        <Button variant="secondary" size="sm" icon="passport"
           onClick={() => printClientCard({ client, program, agency, lang })}>
           {t.printCard}
         </Button>
-        <Button variant="secondary" size="sm" icon="📄"
+        <Button variant="secondary" size="sm" icon="file"
           onClick={() => printInvoice({ client, program, payments, agency, lang })}>
           {t.printInvoice}
         </Button>
@@ -92,14 +94,14 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       {/* Program */}
       {program && (
         <GlassCard gold style={{ padding:14, marginBottom:14 }}>
-          <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10 }}>📋 {t.program}</p>
+          <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> {t.program}</p>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {[
               [t.program,     program.name],
-              [t.hotelLevel,  client.hotelLevel||"—"],
+              ["المستوى",  client.packageLevel || client.hotelLevel || "—"],
               [t.hotelMecca,  client.hotelMecca||"—"],
               [t.hotelMadina, client.hotelMadina||"—"],
-              [t.roomType,    client.roomType||"—"],
+              [t.roomType,    client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "—"],
               [t.transport,   program.transport||"—"],
               [t.departure,   program.departure||"—"],
               [t.returnDate,  program.returnDate||"—"],
@@ -137,7 +139,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         <div style={{ background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.18)",
           borderRadius:10, padding:"8px 14px", marginBottom:12,
           display:"flex", alignItems:"center", gap:8 }}>
-          <span>🎁</span>
+          <AppIcon name="discount" size={16} color={tc.danger} />
           <span style={{ fontSize:13, color:tc.danger, fontWeight:600 }}>
             {t.discount}: {discount.toLocaleString("ar-MA")} د.م ({Math.round((discount/offPrice)*100)}%)
           </span>
@@ -158,7 +160,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {/* Passport */}
       <GlassCard style={{ padding:14, marginBottom:14 }}>
-        <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10 }}>🛂 {t.passport}</p>
+        <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="passport" size={14} color={tc.gold} /> {t.passport}</p>
         {daysToExp !== null && daysToExp < 180 && (
           <div style={{ background:daysToExp<90?"rgba(239,68,68,.1)":"rgba(245,158,11,.1)",
             border:`1px solid ${daysToExp<90?tc.danger:tc.warning}`,
@@ -186,7 +188,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {/* Documents */}
       <GlassCard style={{ padding:14, marginBottom:14 }}>
-        <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10 }}>📂 {t.documents}</p>
+        <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="documents" size={14} color={tc.gold} /> {t.documents}</p>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {[
             ["passportCopy", t.passportCopy],
@@ -200,7 +202,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
               border:`1px solid ${docs[key]?tc.greenLight:tc.danger}`,
               color:docs[key]?tc.greenLight:tc.danger,
             }}>
-              {docs[key]?"✓":"✗"} {label}
+              <AppIcon name={docs[key] ? "success" : "error"} size={13} color={docs[key]?tc.greenLight:tc.danger} /> {label}
             </span>
           ))}
         </div>
@@ -210,7 +212,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       {client.notes && (
         <div style={{ background:"rgba(212,175,55,.06)", border:"1px solid rgba(212,175,55,.15)",
           borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
-          <p style={{ fontSize:11, color:tc.grey, marginBottom:3 }}>📝 {t.notes}</p>
+          <p style={{ fontSize:11, color:tc.grey, marginBottom:3, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="notes" size={13} color={tc.gold} /> {t.notes}</p>
           <p style={{ fontSize:13, color:"#f8fafc" }}>{client.notes}</p>
         </div>
       )}
@@ -219,7 +221,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {/* Add payment */}
       {status !== "cleared" && !showPayForm && (
-        <Button variant="success" icon="➕" onClick={() => setShowPayForm(true)}
+        <Button variant="success" icon="plus" onClick={() => setShowPayForm(true)}
           style={{ marginBottom:12 }}>
           {t.addPayment}
         </Button>
@@ -263,17 +265,17 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         {/* Left: destructive actions */}
         <div style={{ display:"flex", gap:8 }}>
           {onDelete && (
-            <Button variant="danger" icon="🗑️" onClick={onDelete}>
+            <Button variant="danger" icon="trash" onClick={onDelete}>
               {t.deleteClient || "حذف"}
             </Button>
           )}
           {!client.archived && onArchive && (
-            <Button variant="warning" icon="📦" onClick={onArchive}>
+            <Button variant="warning" icon="archive" onClick={onArchive}>
               {t.archiveClient}
             </Button>
           )}
           {client.archived && onRestore && (
-            <Button variant="success" icon="♻️" onClick={onRestore}>
+            <Button variant="success" icon="restore" onClick={onRestore}>
               {t.restoreClient}
             </Button>
           )}
@@ -281,7 +283,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         <div style={{ display:"flex", gap:8 }}>
           <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
           {!client.archived && (
-            <Button variant="secondary" icon="✏️" onClick={() => onEdit(client)}>{t.edit}</Button>
+            <Button variant="secondary" icon="edit" onClick={() => onEdit(client)}>{t.edit}</Button>
           )}
         </div>
       </div>
@@ -292,7 +294,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 function PaymentRow({ payment, onPrint, onDelete }) {
   const { t } = useLang();
   const [hov, setHov] = React.useState(false);
-  const icons = {"نقدًا":"💵","تحويل بنكي":"🏦","شيك":"📄","بطاقة بنكية":"💳","وقفة بنك":"🏧"};
+  const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","بطاقة بنكية":"payment","وقفة بنك":"bank"};
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
@@ -300,7 +302,7 @@ function PaymentRow({ payment, onPrint, onDelete }) {
         background:hov?"rgba(255,255,255,.04)":"rgba(255,255,255,.02)",
         border:"1px solid rgba(255,255,255,.06)", borderRadius:10, transition:"all .2s" }}>
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <span style={{ fontSize:18 }}>{icons[payment.method]||"💰"}</span>
+        <AppIcon name={icons[payment.method] || "payment"} size={18} color={theme.colors.gold} />
         <div>
           <p style={{ fontWeight:700, color:theme.colors.greenLight, fontSize:14 }}>
             {payment.amount.toLocaleString("ar-MA")} د.م
@@ -308,7 +310,7 @@ function PaymentRow({ payment, onPrint, onDelete }) {
           <p style={{ fontSize:11, color:theme.colors.grey }}>
             {payment.method} • {payment.date} • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong>
           </p>
-          {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>📝 {payment.note}</p>}
+          {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>{payment.note}</p>}
         </div>
       </div>
       {hov && (
@@ -316,7 +318,7 @@ function PaymentRow({ payment, onPrint, onDelete }) {
           <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
             border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
             borderRadius:8, padding:"4px 10px", fontSize:11,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>🖨️</button>
+            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}><AppIcon name="print" size={13} color={theme.colors.gold} /></button>
           <button onClick={onDelete} style={{ background:"rgba(239,68,68,.1)",
             border:"1px solid rgba(239,68,68,.2)", color:"#ef4444",
             borderRadius:8, padding:"4px 10px", fontSize:11,

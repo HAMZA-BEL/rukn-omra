@@ -3,6 +3,7 @@ import { GlassCard, SearchBar, StatusBadge } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -138,7 +139,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             transform:brandHover?"translateY(-1px)":"none",
           }}
         >
-          <span style={{ fontSize:36, animation:"float 4s ease-in-out infinite" }}>🕋</span>
+          <IconBubble name="brand" boxSize={46} size={22} style={{ animation:"float 4s ease-in-out infinite" }} />
           <div>
             <h1 style={{ fontSize:24, fontWeight:900, fontFamily:"'Amiri',serif",
               background:"linear-gradient(135deg,#f0d060,#d4af37)",
@@ -167,7 +168,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
         ))}
         <div style={{ position:"relative", zIndex:1 }}>
           <SearchBar value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder={`🔍  ${t.search}`}
+            placeholder={t.search}
             style={{ maxWidth:560, marginTop:16 }} />
         </div>
       </div>
@@ -214,14 +215,14 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             {/* KPIs */}
             <div className="kpi-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:12, marginBottom:26 }}>
               {[
-                { label:t.totalClients,  val:stats.archivedCount > 0 ? `${stats.totalClients} ${tr("archivedCountLabel",{n:stats.archivedCount})}` : stats.totalClients,  icon:"👥", color:tc.gold,       delay:0    },
-                { label:t.totalPrograms, val:stats.totalPrograms, icon:"📋", color:tc.gold,       delay:.04  },
-                { label:t.cleared,       val:stats.cleared,       icon:"✅", color:tc.greenLight, delay:.08  },
-                { label:t.partial,       val:stats.partial,       icon:"🟠", color:tc.warning,    delay:.12  },
-                { label:t.unpaid,        val:stats.unpaid,        icon:"🔴", color:tc.danger,     delay:.16  },
-                { label:t.collected,     val:formatCurrencyForLang(stats.totalCollected), icon:"💰", color:tc.gold, delay:.20 },
-                { label:t.remaining,     val:formatCurrencyForLang(stats.totalRemaining), icon:"⏳", color:tc.warning, delay:.24 },
-                { label:t.discounts,     val:formatCurrencyForLang(stats.totalDiscount),  icon:"🎁", color:tc.danger,  delay:.28 },
+                { label:t.totalClients,  val:stats.archivedCount > 0 ? `${stats.totalClients} ${tr("archivedCountLabel",{n:stats.archivedCount})}` : stats.totalClients,  icon:"users", color:tc.gold,       delay:0    },
+                { label:t.totalPrograms, val:stats.totalPrograms, icon:"program", color:tc.gold,       delay:.04  },
+                { label:t.cleared,       val:stats.cleared,       icon:"success", color:tc.greenLight, delay:.08  },
+                { label:t.partial,       val:stats.partial,       icon:"partial", color:tc.warning,    delay:.12  },
+                { label:t.unpaid,        val:stats.unpaid,        icon:"unpaid", color:tc.danger,     delay:.16  },
+                { label:t.collected,     val:formatCurrencyForLang(stats.totalCollected), icon:"banknote", color:tc.gold, delay:.20 },
+                { label:t.remaining,     val:formatCurrencyForLang(stats.totalRemaining), icon:"hourglass", color:tc.warning, delay:.24 },
+                { label:t.discounts,     val:formatCurrencyForLang(stats.totalDiscount),  icon:"discount", color:tc.danger,  delay:.28 },
               ].map(({label,val,icon,color,delay})=>(
                 <KPICard key={label} label={label} val={val} icon={icon} color={color} delay={delay} />
               ))}
@@ -326,7 +327,7 @@ const KPICard = React.memo(function KPICard({ label, val, icon, color, delay }) 
           <div style={{ width:36, height:36, borderRadius:10,
             background:`${color}15`, border:`1px solid ${color}28`,
             display:"flex", alignItems:"center", justifyContent:"center", fontSize:17 }}>
-            {icon}
+            <AppIcon name={icon} size={17} color={color} />
           </div>
         </div>
       </GlassCard>
@@ -349,7 +350,9 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
             {program.duration}
           </span>
         </div>
-        <p style={{ fontSize:11, color:theme.colors.grey, marginBottom:9 }}>✈️ {program.departure}</p>
+        <p style={{ fontSize:11, color:theme.colors.grey, marginBottom:9, display:"flex", alignItems:"center", gap:5 }}>
+          <AppIcon name="plane" size={13} /> {program.departure}
+        </p>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:11 }}>
           <span style={{ color:theme.colors.grey }}>{t.registered}</span>
           <span style={{ color:theme.colors.gold, fontWeight:700 }}>{registered}/{program.seats}</span>
@@ -359,7 +362,7 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
             background:pct>80?"linear-gradient(90deg,#ef4444,#f97316)":"linear-gradient(90deg,#22c55e,#d4af37)" }} />
         </div>
         <p style={{ fontSize:11, color:remaining>0?theme.colors.greenLight:theme.colors.danger, marginTop:6, fontWeight:600 }}>
-          {remaining>0?`${remaining} ${t.seatsLeft}`:`🔴 ${t.full}`}
+          {remaining>0?`${remaining} ${t.seatsLeft}`:t.full}
         </p>
       </GlassCard>
     </div>
@@ -369,22 +372,22 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
 const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
   const { t } = useLang();
   const icons = {
-    client_add:"👤",
-    client_update:"✏️",
-    client_delete:"🗑️",
-    client_transfer:"🔁",
-    client_archive:"📦",
-    client_restore:"♻️",
-    client_bulk_archive:"📦",
-    client_bulk_delete:"🧹",
-    payment_add:"💰",
-    payment_delete:"❌",
-    program_add:"📋",
-    program_update:"⚙️",
-    program_delete:"🧾",
-    program_archive:"🗂️",
-    program_restore:"♻️",
-    import_excel:"📥",
+    client_add:"user",
+    client_update:"edit",
+    client_delete:"trash",
+    client_transfer:"refresh",
+    client_archive:"archive",
+    client_restore:"restore",
+    client_bulk_archive:"archive",
+    client_bulk_delete:"trash",
+    payment_add:"payment",
+    payment_delete:"error",
+    program_add:"program",
+    program_update:"settings",
+    program_delete:"receipt",
+    program_archive:"archivedFolder",
+    program_restore:"restore",
+    import_excel:"import",
   };
   const colors= {
     client_add:theme.colors.greenLight,
@@ -405,7 +408,7 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
     import_excel:theme.colors.gold,
   };
   const type = activity.type || "default";
-  const icon = icons[type] || "📌";
+  const icon = icons[type] || "status";
   const accent = colors[type] || theme.colors.gold;
   const time = new Date(activity.time);
   const timeStr = `${time.toLocaleDateString("ar-MA")} ${time.toLocaleTimeString("ar-MA",{hour:"2-digit",minute:"2-digit"})}`;
@@ -414,7 +417,7 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px",
         background:"rgba(255,255,255,.02)", border:"1px solid rgba(255,255,255,.05)",
         borderRadius:10 }}>
-        <span style={{ fontSize:16 }}>{icon}</span>
+        <AppIcon name={icon} size={16} color={accent} />
         <div style={{ flex:1 }}>
           <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{activity.description}</span>
           {activity.isArchived && (
@@ -457,7 +460,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
         <div>
           <p style={{ fontWeight:700, fontSize:14, color:"#f8fafc" }}>{client.name}</p>
           <p style={{ fontSize:11, color:theme.colors.grey, marginTop:2 }}>
-            {client.id} • 📞 {client.phone} • {program?.name||"—"}
+            {client.id} • {client.phone} • {program?.name||"—"}
           </p>
         </div>
       </div>
@@ -473,7 +476,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           </p>
         </div>
         <StatusBadge status={status} />
-        <span style={{ color:theme.colors.grey, fontSize:18 }}>{isRTL?"→":"←"}</span>
+        <AppIcon name="chevronBack" size={18} color={theme.colors.grey} style={{ transform:isRTL?"rotate(180deg)":"none" }} />
       </div>
     </div>
   );

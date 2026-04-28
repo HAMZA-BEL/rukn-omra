@@ -4,6 +4,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled } from "../lib/supabase";
 import UsersPage from "./UsersPage";
+import { AppIcon } from "./Icon";
 
 const t2 = theme.colors;
 
@@ -21,7 +22,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     setIsSyncing(true);
     try {
       await forceSync();
-      onToast("تمت المزامنة بنجاح ✅", "success");
+      onToast("تمت المزامنة بنجاح", "success");
     } catch {
       onToast("فشلت المزامنة — تحقق من الاتصال", "error");
     } finally {
@@ -49,9 +50,9 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
         <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:12 }}>{t.languageTitle}</p>
         <div className="button-row" style={{ display:"flex", gap:10 }}>
           {[
-            { code:"ar", label:"العربية", flag:"🇲🇦" },
-            { code:"fr", label:"Français", flag:"🇫🇷" },
-            { code:"en", label:"English", flag:"🇺🇸" },
+            { code:"ar", label:"العربية" },
+            { code:"fr", label:"Français" },
+            { code:"en", label:"English" },
           ].map(l => (
             <button key={l.code} onClick={() => setLang(l.code)} style={{
               padding:"10px 24px", borderRadius:10,
@@ -61,7 +62,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
               fontSize:14, fontWeight:700, cursor:"pointer",
               fontFamily:"'Cairo',sans-serif", transition:"all .2s",
             }}>
-              {l.flag} {l.label}
+              {l.label}
             </button>
           ))}
         </div>
@@ -90,7 +91,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           <Input label={t.website} value={form.website} onChange={set("website")} />
         </div>
         <div className="page-actions" style={{ marginTop:16 }}>
-          <Button variant="primary" icon="💾" onClick={handleSave}>{t.saveSettingsLabel}</Button>
+          <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
         </div>
       </GlassCard>
 
@@ -98,7 +99,8 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       {isSupabaseEnabled && (
         <GlassCard style={{ padding:20, marginBottom:20 }}>
           <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:16 }}>
-            {lang === "fr" ? "☁️ État du système" : lang === "en" ? "☁️ System Status" : "☁️ حالة النظام"}
+            <AppIcon name="shieldCheck" size={15} style={{ marginInlineEnd:6, verticalAlign:"middle" }} />
+            {lang === "fr" ? "État du système" : lang === "en" ? "System Status" : "حالة النظام"}
           </p>
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
             <span style={{
@@ -129,7 +131,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           </div>
           <Button
             variant={isSyncing ? "ghost" : "secondary"}
-            icon="🔄"
+            icon="refresh"
             disabled={isSyncing}
             onClick={handleForceSync}>
             {isSyncing
@@ -146,7 +148,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           {t.backupHint}
         </p>
         <div className="page-actions" style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-          <Button variant="success" icon="⬇️" onClick={() => { store.exportData(); onToast(t.exportSuccess, "success"); }}>
+          <Button variant="success" icon="download" onClick={() => { store.exportData(); onToast(t.exportSuccess, "success"); }}>
             {t.exportAllData}
           </Button>
         </div>

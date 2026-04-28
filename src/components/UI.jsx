@@ -1,6 +1,7 @@
 import React from "react";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { AppIcon, IconBubble } from "./Icon";
 
 const t = theme.colors;
 
@@ -121,7 +122,7 @@ export function Button({ children, onClick, variant = "primary", size = "md",
         ...style,
       }}
     >
-      {icon && <span>{icon}</span>}
+      {icon && (React.isValidElement(icon) ? icon : <AppIcon name={icon} size={16} />)}
       {children}
     </button>
   );
@@ -353,7 +354,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
             onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,.15)"; e.currentTarget.style.color = t.danger; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,.05)"; e.currentTarget.style.color = t.grey; }}
           >
-            ✕
+            <AppIcon name="x" size={16} color="currentColor" />
           </button>
         </div>
         {/* body */}
@@ -376,12 +377,12 @@ export function SearchBar({ value, onChange, placeholder = "ابحث...", style,
   const isRTL = dir === "rtl";
   return (
     <div style={{ position: "relative", ...style }}>
-      <span style={{
+      <AppIcon name="search" size={18} style={{
         position: "absolute", top: "50%", right: isRTL ? 14 : "auto", left: isRTL ? "auto" : 14,
         transform: "translateY(-50%)",
         color: disabled ? "rgba(148,163,184,.4)" : "rgba(212,175,55,.6)",
-        fontSize: 18, pointerEvents: "none",
-      }}>🔍</span>
+        pointerEvents: "none",
+      }} />
       <input
         value={value}
         onChange={onChange}
@@ -419,13 +420,20 @@ export function SearchBar({ value, onChange, placeholder = "ابحث...", style,
 }
 
 // ── Empty State ───────────────────────────────────────────────────────────────
-export function EmptyState({ icon = "🕌", title, sub }) {
+export function EmptyState({ icon = "empty", title, sub }) {
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", padding: "60px 20px", gap: 12,
     }}>
-      <div style={{ fontSize: 48, animation: "float 3s ease-in-out infinite" }}>{icon}</div>
+      <IconBubble
+        name={typeof icon === "string" ? icon : undefined}
+        icon={typeof icon === "function" ? icon : undefined}
+        boxSize={54}
+        size={24}
+        color={t.gold}
+        style={{ animation: "float 3s ease-in-out infinite" }}
+      />
       <p style={{ fontSize: 16, fontWeight: 700, color: t.grey }}>{title}</p>
       {sub && <p style={{ fontSize: 13, color: "rgba(148,163,184,.6)", textAlign: "center" }}>{sub}</p>}
     </div>
@@ -451,9 +459,9 @@ export function Toast({ message, type = "success", onClose }) {
   }, [onClose]);
 
   const colors = {
-    success: { bg: "rgba(34,197,94,.15)", border: "#22c55e", icon: "✅" },
-    error:   { bg: "rgba(239,68,68,.15)",  border: "#ef4444", icon: "❌" },
-    info:    { bg: "rgba(212,175,55,.15)", border: "#d4af37", icon: "ℹ️" },
+    success: { bg: "rgba(34,197,94,.15)", border: "#22c55e", icon: "success" },
+    error:   { bg: "rgba(239,68,68,.15)",  border: "#ef4444", icon: "error" },
+    info:    { bg: "rgba(212,175,55,.15)", border: "#d4af37", icon: "alert" },
   };
   const c = colors[type] || colors.info;
 
@@ -472,9 +480,11 @@ export function Toast({ message, type = "success", onClose }) {
         minWidth: 240,
       }}
     >
-      <span style={{ fontSize: 18 }}>{c.icon}</span>
+      <AppIcon name={c.icon} size={18} color={c.border} />
       <span style={{ fontSize: 14, fontWeight: 600, color: "#f8fafc", flex: 1 }}>{message}</span>
-      <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 16 }}>✕</button>
+      <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+        <AppIcon name="x" size={16} color="currentColor" />
+      </button>
     </div>
   );
 }

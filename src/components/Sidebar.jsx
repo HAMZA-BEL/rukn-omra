@@ -1,6 +1,7 @@
 import React from "react";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { AppIcon, IconBubble } from "./Icon";
 
 const tc = theme.colors;
 
@@ -26,13 +27,13 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
   }, [onNavigate]);
 
   const NAV_ITEMS = [
-    { id:"dashboard", icon:"🏠", label:t.dashboard },
-    { id:"clients",   icon:"👥", label:t.clients },
-    { id:"programs",  icon:"📋", label:t.programs },
-    { id:"activity",  icon:"🗒️", label:t.activityLog || t.recentActivity },
-    { id:"clearance", icon:"📊", label:t.clearance },
-    { id:"trash", icon:"🗑️", label:t.trash },
-    { id:"settings",  icon:"⚙️", label:t.settings },
+    { id:"dashboard", icon:"home", label:t.dashboard },
+    { id:"clients",   icon:"users", label:t.clients },
+    { id:"programs",  icon:"program", label:t.programs },
+    { id:"activity",  icon:"activity", label:t.activityLog || t.recentActivity },
+    { id:"clearance", icon:"clearance", label:t.clearance },
+    { id:"trash", icon:"trash", label:t.trash },
+    { id:"settings",  icon:"settings", label:t.settings },
   ];
 
   return (
@@ -75,7 +76,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
         >
           {!collapsed ? (
             <>
-              <span style={{ fontSize:22, animation:"float 4s ease-in-out infinite" }}>🕋</span>
+              <IconBubble name="brand" boxSize={34} size={17} style={{ animation:"float 4s ease-in-out infinite" }} />
               <div>
                 <p style={{ fontSize:14, fontWeight:900, fontFamily:"'Amiri',serif",
                   background:"linear-gradient(135deg,#f0d060,#d4af37)",
@@ -86,7 +87,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
               </div>
             </>
           ) : (
-            <span style={{ fontSize:20 }}>🕋</span>
+            <IconBubble name="brand" boxSize={34} size={17} />
           )}
         </button>
         <button onClick={()=>setCollapsed(!collapsed)} style={{
@@ -94,7 +95,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
           borderRadius:8, width:24, height:24, color:tc.grey,
           cursor:"pointer", fontSize:11, flexShrink:0,
           display:"flex", alignItems:"center", justifyContent:"center" }}>
-          {collapsed?(dir==="rtl"?"→":"←"):(dir==="rtl"?"←":"→")}
+          <AppIcon name="chevronBack" size={14} style={{ transform: collapsed === (dir === "rtl") ? "rotate(180deg)" : "none" }} />
         </button>
       </div>
 
@@ -138,13 +139,13 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
             background:"rgba(34,197,94,.1)", border:"1px solid rgba(34,197,94,.25)",
             borderRadius:8, color:tc.greenLight, fontSize:11, fontWeight:600,
             cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-            ⬇️ {t.exportData}
+            <AppIcon name="download" size={13} /> {t.exportData}
           </button>
           <button onClick={()=>fileRef.current.click()} style={{ width:"100%", padding:"6px",
             background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
             borderRadius:8, color:tc.gold, fontSize:11, fontWeight:600,
             cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-            ⬆️ {t.importData}
+            <AppIcon name="upload" size={13} /> {t.importData}
           </button>
           <input ref={fileRef} type="file" accept=".json" style={{ display:"none" }}
             onChange={e=>{ if(e.target.files[0]) onImport(e.target.files[0]); e.target.value=""; }} />
@@ -198,7 +199,7 @@ function NavItem({ item, active, collapsed, onClick }) {
         fontSize:12, fontWeight:active?700:400,
         transition:"all .18s", textAlign:"start" }}
       title={collapsed?item.label:undefined}>
-      <span style={{ fontSize:16, flexShrink:0 }}>{item.icon}</span>
+      <AppIcon name={item.icon} size={16} />
       {!collapsed && (
         <span style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
           <span>{item.label}</span>

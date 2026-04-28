@@ -61,7 +61,7 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
         <td style="text-align:center">${gLabel}</td>
         <td>${c.roomType || "—"}</td>
         <td style="text-align:center"><span class="status ${sClass}">${sLabel}</span></td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? fmt(rem) : "✓"}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? fmt(rem) : "OK"}</td>
       </tr>`;
   }).join("");
 
@@ -227,13 +227,13 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
 </head>
 <body>
 
-  <button class="print-btn no-print" onclick="window.print()">🖨 ${lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة"}</button>
+  <button class="print-btn no-print" onclick="window.print()">${lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة"}</button>
 
   <!-- Header -->
   <div class="page-header">
     <div class="agency-block">
       <div class="agency-name">${L.agencyName}</div>
-      ${L.phones ? `<div class="agency-phones">📞 ${L.phones}</div>` : ""}
+      ${L.phones ? `<div class="agency-phones">${L.phones}</div>` : ""}
     </div>
     <div class="print-meta">
       <div>${L.printedOn}: <strong>${today}</strong></div>
@@ -243,11 +243,11 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
 
   <!-- Program bar -->
   <div class="prog-bar">
-    <div class="prog-name">✈️ ${program.name}</div>
+    <div class="prog-name">${program.name}</div>
     <div class="info-item"><strong>${L.departure}:</strong>${program.departure || "—"}</div>
     <div class="info-item"><strong>${L.returnDate}:</strong>${program.returnDate || "—"}</div>
-    <div class="info-item"><strong>🕌 ${L.hotelMecca}:</strong>${program.hotelMecca || "—"}</div>
-    <div class="info-item"><strong>🕍 ${L.hotelMadina}:</strong>${program.hotelMadina || "—"}</div>
+    <div class="info-item"><strong>${L.hotelMecca}:</strong>${program.hotelMecca || "—"}</div>
+    <div class="info-item"><strong>${L.hotelMadina}:</strong>${program.hotelMadina || "—"}</div>
   </div>
 
   <!-- Table -->
@@ -260,11 +260,11 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
   <div class="footer">
     <div class="footer-card">
       <div class="fc-val">${clients.length}</div>
-      <div class="fc-lbl">👥 ${L.totalClients}</div>
+      <div class="fc-lbl">${L.totalClients}</div>
     </div>
     <div class="footer-card">
       <div class="fc-val">${fmt(totalPaid)}</div>
-      <div class="fc-lbl">💰 ${L.collected}</div>
+      <div class="fc-lbl">${L.collected}</div>
     </div>
     <div class="footer-card">
       <div class="fc-val" style="color:${totalRem > 0 ? "#b91c1c" : "#15803d"}">${fmt(totalRem)}</div>
@@ -342,7 +342,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
         <td style="font-size:10px;color:#444">${c.prog?.name || "—"}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#0d4a1a">${fmt(c.salePrice)}</td>
         <td style="text-align:${isRTL ? "left" : "right"};color:#15803d;font-weight:600">${fmt(c.paid)}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? fmt(c.remaining) : "✓"}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? fmt(c.remaining) : "OK"}</td>
         <td style="text-align:center"><span class="status ${sClass}">${sLabel}</span></td>
       </tr>`;
   }).join("");
@@ -521,14 +521,14 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
 </head>
 <body>
 
-  <button class="print-btn no-print" onclick="window.print()">🖨 ${L.printBtn}</button>
+  <button class="print-btn no-print" onclick="window.print()">${L.printBtn}</button>
 
   <!-- Page header -->
   <div class="page-header">
     <div>
       <div class="agency-name">${L.agencyName}</div>
       <div class="agency-sub">
-        ${L.phones ? `📞 ${L.phones}` : ""}
+        ${L.phones ? `${L.phones}` : ""}
         ${L.address ? `<br>${L.address}` : ""}
       </div>
     </div>
@@ -540,7 +540,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
 
   <!-- Title + filter -->
   <div class="title-row">
-    <div class="report-title">📋 ${L.title}</div>
+    <div class="report-title">${L.title}</div>
     <span class="filter-badge">${L.filter}: ${filterLabel}</span>
   </div>
 
@@ -554,11 +554,11 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
   <div class="totals-row">
     <div class="total-card">
       <div class="tc-val">${fmt(totals.rev)}</div>
-      <div class="tc-lbl">💵 ${L.totalRevenue}</div>
+      <div class="tc-lbl">${L.totalRevenue}</div>
     </div>
     <div class="total-card">
       <div class="tc-val" style="color:#15803d">${fmt(totals.paid)}</div>
-      <div class="tc-lbl">✅ ${L.collected}</div>
+      <div class="tc-lbl">${L.collected}</div>
     </div>
     <div class="total-card">
       <div class="tc-val" style="color:${totals.rem > 0 ? "#b91c1c" : "#15803d"}">${fmt(totals.rem)}</div>
@@ -566,7 +566,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
     </div>
     <div class="total-card">
       <div class="tc-val" style="color:#b45309">${fmt(totals.disc)}</div>
-      <div class="tc-lbl">🎁 ${L.discounts}</div>
+      <div class="tc-lbl">${L.discounts}</div>
     </div>
   </div>
 
@@ -577,7 +577,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
       <div class="pie-total">${total}</div>
     </div>
     <div class="legend">
-      <div class="legend-title">📊 ${L.chartTitle}</div>
+      <div class="legend-title">${L.chartTitle}</div>
       <div class="legend-item">
         <div class="dot cleared"></div>
         <div style="flex:1">${L.cleared}</div>

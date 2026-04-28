@@ -67,7 +67,7 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
           placeholder={t.notePlaceholder} style={{ gridColumn:"1/-1" }} />
       </div>
       <div style={{ display:"flex", gap:8 }}>
-        <Button variant="success" onClick={handleSave} icon="💾">{t.savePayment}</Button>
+        <Button variant="success" onClick={handleSave} icon="save">{t.savePayment}</Button>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
       </div>
     </GlassCard>

@@ -10,6 +10,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
+import { AppIcon } from "./Icon";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
@@ -62,6 +63,8 @@ export default function ClientsPage({ store, onToast }) {
   const [search,     setSearch]     = React.useState("");
   const [filter,     setFilter]     = React.useState("all");
   const [filterProg, setFilterProg] = React.useState("all");
+  const ITEMS_PER_PAGE = 50;
+  const [currentPage, setCurrentPage] = React.useState(1);
   const [selected,   setSelected]   = React.useState(null);
   const [editing,    setEditing]    = React.useState(null);
   const [showAdd,    setShowAdd]    = React.useState(false);
@@ -85,10 +88,10 @@ export default function ClientsPage({ store, onToast }) {
   };
 
   const FILTERS = [
-    { key:"all",     label:t.all,           icon:"👥" },
-    { key:"cleared", label:t.clearedFilter, icon:"✅" },
-    { key:"partial", label:t.partialFilter, icon:"🟠" },
-    { key:"unpaid",  label:t.unpaidFilter,  icon:"🔴" },
+    { key:"all",     label:t.all,           icon:"users" },
+    { key:"cleared", label:t.clearedFilter, icon:"success" },
+    { key:"partial", label:t.partialFilter, icon:"partial" },
+    { key:"unpaid",  label:t.unpaidFilter,  icon:"unpaid" },
   ];
 
   const sourceList = tab === "active" ? activeClients : archivedClients;
@@ -103,6 +106,15 @@ export default function ClientsPage({ store, onToast }) {
       (c.ticketNo||"").toLowerCase().includes(q);
     return ok1 && ok2 && ok3;
   }), [sourceList, filter, filterProg, search, getClientStatus, tab]);
+
+  // Reset to page 1 whenever filters or tab change
+  React.useEffect(() => { setCurrentPage(1); }, [search, filter, filterProg, tab]);
+
+  const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
+  const paginated  = filtered.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
 
   const toggleCheck = (id) => setCheckedIds(prev => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
@@ -270,13 +282,13 @@ export default function ClientsPage({ store, onToast }) {
         </div>
         {tab === "active" && (
           <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Button variant="primary" icon="🛂" onClick={() => setShowMRZ(true)}>
-              + {t.mrzScan}
+            <Button variant="primary" icon="passport" onClick={() => setShowMRZ(true)}>
+              {t.mrzScan}
             </Button>
-            <Button variant="ghost" icon="📊" onClick={() => setShowImport(true)}>
+            <Button variant="ghost" icon="import" onClick={() => setShowImport(true)}>
               {t.importExcel}
             </Button>
-            <Button variant="primary" icon="➕" onClick={() => setShowAdd(true)}>
+            <Button variant="primary" icon="plus" onClick={() => setShowAdd(true)}>
               {t.addClient}
             </Button>
           </div>
@@ -288,8 +300,8 @@ export default function ClientsPage({ store, onToast }) {
         background:"rgba(255,255,255,.03)", border:"1px solid rgba(255,255,255,.07)",
         borderRadius:12, padding:4, width:"fit-content" }}>
         {[
-          { key:"active",   icon:"👥", label:`${t.activeTab} (${activeClients.length})` },
-          { key:"archived", icon:"📦", label:`${t.archiveTab} (${archivedClients.length})` },
+          { key:"active",   icon:"users", label:`${t.activeTab} (${activeClients.length})` },
+          { key:"archived", icon:"archive", label:`${t.archiveTab} (${archivedClients.length})` },
         ].map(({ key, icon, label }) => {
           const showIcon = icon && !startsWithIcon(label, icon);
           return (
@@ -301,7 +313,7 @@ export default function ClientsPage({ store, onToast }) {
               fontFamily:"'Cairo',sans-serif", transition:"all .2s",
               display:"inline-flex", alignItems:"center", gap:6,
             }}>
-              {showIcon && <span>{icon}</span>}
+              {showIcon && <AppIcon name={icon} size={15} color={tab===key?tc.gold:tc.grey} />}
               <span>{label}</span>
             </button>
           );
@@ -360,7 +372,7 @@ export default function ClientsPage({ store, onToast }) {
           <Button
             variant={selectMode ? "warning" : "ghost"}
             size="sm"
-            icon="☑️"
+            icon="checked"
             disabled={!filtered.length}
             onClick={() => {
               if (selectMode) {
@@ -420,7 +432,7 @@ export default function ClientsPage({ store, onToast }) {
                 <Button
                   variant="danger"
                   size="sm"
-                  icon="🗑️"
+                  icon="trash"
                   onClick={handleBulkDelete}
                 >
                   {t.deleteSelected}
@@ -445,7 +457,7 @@ export default function ClientsPage({ store, onToast }) {
           : <EmptyState title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
-          {filtered.map((c,i) => {
+          {paginated.map((c,i) => {
             const prog      = store.getProgramById(c.programId);
             const paid      = getClientTotalPaid(c.id);
             const price     = c.salePrice || c.price || 0;
@@ -475,6 +487,45 @@ export default function ClientsPage({ store, onToast }) {
               />
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          gap: 10, marginTop: 20, paddingTop: 16,
+          borderTop: "1px solid rgba(212,175,55,.1)",
+        }}>
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            style={{
+              padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: "rgba(212,175,55,.08)", border: "1px solid rgba(212,175,55,.25)",
+              color: currentPage === 1 ? "rgba(212,175,55,.3)" : "#d4af37",
+              cursor: currentPage === 1 ? "default" : "pointer",
+              fontFamily: "'Cairo',sans-serif", transition: "all .18s",
+            }}
+          >
+            {isRTL ? "›" : "‹"}
+          </button>
+          <span style={{ fontSize: 13, color: "rgba(248,250,252,.7)", fontFamily: "'Cairo',sans-serif", minWidth: 80, textAlign: "center" }}>
+            {currentPage} / {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            style={{
+              padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: "rgba(212,175,55,.08)", border: "1px solid rgba(212,175,55,.25)",
+              color: currentPage === totalPages ? "rgba(212,175,55,.3)" : "#d4af37",
+              cursor: currentPage === totalPages ? "default" : "pointer",
+              fontFamily: "'Cairo',sans-serif", transition: "all .18s",
+            }}
+          >
+            {isRTL ? "‹" : "›"}
+          </button>
         </div>
       )}
 
@@ -539,7 +590,7 @@ const FilterChip = React.memo(function FilterChip({ icon, label, active, onClick
       color:active?tc.gold:tc.grey, fontSize:12, fontWeight:active?700:400,
       cursor:"pointer", fontFamily:"'Cairo',sans-serif", transition:"all .2s",
     }}>
-      {showIcon && <span>{icon}</span>}
+      {showIcon && <AppIcon name={icon} size={14} color={active?tc.gold:tc.grey} />}
       <span>{label}</span>
     </button>
   );
@@ -604,34 +655,34 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
       }}>
       {!isArchived && (
         <MenuBtn
-          icon="✏️" label={editLabel || t.editLabel}
+          icon="edit" label={editLabel || t.editLabel}
           onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit(); }}
           color="#f8fafc" hoverBg="rgba(212,175,55,.1)"
           isRTL={isRTL} border />
       )}
       {!isArchived && onTransfer && (
         <MenuBtn
-          icon="🔁" label={t.transferClient || "نقل إلى برنامج"}
+          icon="refresh" label={t.transferClient || "نقل إلى برنامج"}
           onClick={e => { e.stopPropagation(); setMenuOpen(false); onTransfer(); }}
           color={tc.gold} hoverBg="rgba(212,175,55,.15)"
           isRTL={isRTL} border />
       )}
       {!isArchived && (
         <MenuBtn
-          icon="📦" label={archiveLabel || t.archiveClient}
+          icon="archive" label={archiveLabel || t.archiveClient}
           onClick={e => { e.stopPropagation(); setMenuOpen(false); onArchive(); }}
           color={tc.warning} hoverBg="rgba(245,158,11,.1)"
           isRTL={isRTL} border />
       )}
       {isArchived && (
         <MenuBtn
-          icon="♻️" label={restoreLabel || t.restoreClient}
+          icon="restore" label={restoreLabel || t.restoreClient}
           onClick={e => { e.stopPropagation(); setMenuOpen(false); onRestore(); }}
           color={tc.greenLight} hoverBg="rgba(34,197,94,.1)"
           isRTL={isRTL} border />
       )}
       <MenuBtn
-        icon="🗑️" label={deleteLabel || t.deleteLabel}
+        icon="trash" label={deleteLabel || t.deleteLabel}
         onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
         color={tc.danger} hoverBg="rgba(239,68,68,.12)"
         isRTL={isRTL} />
@@ -656,7 +707,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 <p className="client-card-mobile-name-text" title={client.name || "—"}>
                   {client.name || "—"}
                 </p>
-                {phoneLine && <p className="client-card-mobile-phone">📞 {phoneLine}</p>}
+                {phoneLine && <p className="client-card-mobile-phone">{phoneLine}</p>}
               </div>
             </div>
             <div className="client-card-mobile-action" onClick={e => e.stopPropagation()}>
@@ -701,8 +752,8 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             </div>
           </div>
           <div className="client-card-mobile-tags">
-            {cityLine && <span>📍 {cityLine}</span>}
-            {ticketLine && <span>🎫 {ticketLine}</span>}
+            {cityLine && <span>{cityLine}</span>}
+            {ticketLine && <span>{ticketLine}</span>}
           </div>
         </div>
         {menuNode}
@@ -747,7 +798,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20,
             background:"rgba(245,158,11,.12)", border:"1px solid rgba(245,158,11,.3)",
             color:tc.warning, whiteSpace:"nowrap", flexShrink:0,
-          }}>📦 {t.archivedBadge}</span>
+          }}><AppIcon name="archive" size={12} color={tc.warning} /> {t.archivedBadge}</span>
         )}
 
         <div
@@ -757,9 +808,9 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           <div style={{ flex:1, minWidth:0 }}>
             <p style={{ fontWeight:700, fontSize:14, color:"#f8fafc" }}>{client.name || "—"}</p>
             <p style={{ fontSize:11, color:tc.grey, marginTop:2 }}>
-              {reference} • 📞 {client.phone} • 📍 {client.city} • {program?.name||"—"}
+              {reference} • {client.phone} • {client.city} • {program?.name||"—"}
               {isArchived && client.archivedAt && (
-                <span style={{ color:tc.warning }}> • 📦 {new Date(client.archivedAt).toLocaleDateString("ar-MA")}</span>
+                <span style={{ color:tc.warning }}> • {new Date(client.archivedAt).toLocaleDateString("ar-MA")}</span>
               )}
             </p>
           </div>
@@ -831,7 +882,7 @@ function MenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
         textAlign: isRTL ? "right" : "left",
         transition:"background .15s",
       }}>
-      <span>{icon}</span>
+      <AppIcon name={icon} size={15} color={color} />
       <span>{label}</span>
     </button>
   );

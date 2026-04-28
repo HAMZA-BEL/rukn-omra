@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Button, GlassCard, SearchBar } from "./UI";
 import { useLang } from "../hooks/useLang";
+import { AppIcon } from "./Icon";
 
 export default function TransferSheet({
   open,
@@ -256,7 +257,7 @@ export default function TransferSheet({
                               {program.name}
                             </p>
                             <p style={{ fontSize: 11, color: "rgba(148,163,184,.8)" }}>
-                              ✈️ {program.departure || "—"} • 🛬 {program.returnDate || "—"}
+                              {program.departure || "—"} • {program.returnDate || "—"}
                             </p>
                           </div>
                           {selected && (
@@ -274,7 +275,7 @@ export default function TransferSheet({
                                 fontSize: 14,
                               }}
                             >
-                              ✓
+                              <AppIcon name="check" size={14} color="#d4af37" />
                             </span>
                           )}
                           <div style={{ textAlign: "right" }}>

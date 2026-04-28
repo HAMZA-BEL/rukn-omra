@@ -31,6 +31,7 @@ import { usePaymentsSlice } from "./usePaymentsSlice";
 import { useClientsSlice } from "./useClientsSlice";
 import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
+import { getRoomTypeLabel } from "../utils/programPackages";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -53,6 +54,19 @@ const isUUID = (value) => typeof value === "string" && UUID_REGEX.test(value);
 
 const trimString = (value) => (typeof value === "string" ? value.trim() : "");
 
+const normalizeClientGender = (value) => {
+  const normalized = trimString(value).toLowerCase();
+  if (normalized === "male" || normalized === "m" || normalized === "ذكر") return "male";
+  if (normalized === "female" || normalized === "f" || normalized === "أنثى") return "female";
+  return "";
+};
+
+const toPassportGender = (gender) => {
+  if (gender === "male") return "M";
+  if (gender === "female") return "F";
+  return "";
+};
+
 const buildDisplayName = (data) => {
   const first = trimString(data.firstName);
   const last  = trimString(data.lastName);
@@ -67,7 +81,7 @@ const sanitizePassport = (passport = {}) => ({
   nationality: trimString(passport.nationality || "") || "MAR",
   birthDate:   trimString(passport.birthDate || ""),
   expiry:      trimString(passport.expiry || ""),
-  gender:      trimString(passport.gender || "") || "M",
+  gender:      trimString(passport.gender || ""),
   issueDate:   trimString(passport.issueDate || ""),
 });
 
@@ -87,6 +101,8 @@ const getNotificationKey = (notif) => {
 };
 
 const prepareClientForSave = (data) => {
+  const gender = normalizeClientGender(data.gender || data.passport?.gender);
+  const passport = sanitizePassport(data.passport);
   const cleaned = {
     ...data,
     firstName: trimString(data.firstName),
@@ -97,7 +113,11 @@ const prepareClientForSave = (data) => {
     city:      trimString(data.city),
     ticketNo:  trimString(data.ticketNo),
     notes:     typeof data.notes === "string" ? data.notes.trim() : data.notes ?? "",
-    passport:  sanitizePassport(data.passport),
+    gender,
+    passport:  {
+      ...passport,
+      gender: toPassportGender(gender),
+    },
     docs:      sanitizeDocs(data.docs),
   };
   cleaned.name = buildDisplayName(cleaned);
@@ -453,9 +473,11 @@ export function useStore(agencyId, onToast) {
       phone: row.phone,
       city: row.city,
       hotelLevel: row.hotel_level,
+      packageLevel: row.hotel_level,
       hotelMecca: row.hotel_mecca,
       hotelMadina: row.hotel_madina,
       roomType: row.room_type,
+      roomTypeLabel: getRoomTypeLabel(row.room_type),
       officialPrice: Number(row.official_price ?? 0),
       salePrice: Number(row.sale_price ?? 0),
       ticketNo: row.ticket_no,

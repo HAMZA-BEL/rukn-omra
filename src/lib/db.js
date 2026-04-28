@@ -5,6 +5,7 @@
  */
 import { supabase } from "./supabase";
 import { buildNotificationStateHash } from "../utils/notifications";
+import { getRoomTypeLabel } from "../utils/programPackages";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -27,6 +28,19 @@ const composeClientName = (row) => {
     .filter(Boolean)
     .join(" / ");
   return latin || "";
+};
+
+const normalizeGender = (value) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "male" || normalized === "m" || normalized === "ذكر") return "male";
+  if (normalized === "female" || normalized === "f" || normalized === "أنثى") return "female";
+  return "";
+};
+
+const toPassportGender = (gender) => {
+  if (gender === "male") return "M";
+  if (gender === "female") return "F";
+  return "";
 };
 
 // ─── Mappers: app (camelCase) ↔ Supabase (snake_case) ────────────────────────
@@ -75,7 +89,13 @@ const fromProgram = (row) => ({
   status:      row.status,
 });
 
-const toClient = (c, agencyId) => ({
+const toClient = (c, agencyId) => {
+  const normalizedGender = normalizeGender(c.gender || c.passport?.gender);
+  const passport = {
+    ...(c.passport ?? {}),
+    gender: toPassportGender(normalizedGender),
+  };
+  return {
   id:                c.id,
   agency_id:         agencyId,
   program_id:        normalizeForeignKey(c.programId),
@@ -86,14 +106,14 @@ const toClient = (c, agencyId) => ({
   prenom:            cleanString(c.prenom),
   phone:             cleanString(c.phone),
   city:              cleanString(c.city),
-  hotel_level:       cleanString(c.hotelLevel),
+  hotel_level:       cleanString(c.packageLevel ?? c.hotelLevel),
   hotel_mecca:       cleanString(c.hotelMecca),
   hotel_madina:      cleanString(c.hotelMadina),
   room_type:         cleanString(c.roomType),
   official_price:    c.officialPrice    ?? 0,
   sale_price:        c.salePrice        ?? c.price ?? 0,
   ticket_no:         cleanString(c.ticketNo),
-  passport:          c.passport         ?? {},
+  passport:          passport,
   docs:              c.docs             ?? {},
   notes:             cleanString(c.notes),
   registration_date: c.registrationDate ?? null,
@@ -103,9 +123,12 @@ const toClient = (c, agencyId) => ({
   deleted:           c.deleted          ?? false,
   deleted_at:        c.deletedAt        ?? null,
   deleted_batch_id:  c.deletedBatchId   ?? null,
-});
+  };
+};
 
-const fromClient = (row) => ({
+const fromClient = (row) => {
+  const gender = normalizeGender(row.gender || row.passport?.gender);
+  return {
   id:               row.id,
   programId:        row.program_id,
   name:             composeClientName(row),
@@ -116,9 +139,12 @@ const fromClient = (row) => ({
   phone:            row.phone,
   city:             row.city,
   hotelLevel:       row.hotel_level,
+  packageLevel:     row.hotel_level,
   hotelMecca:       row.hotel_mecca,
   hotelMadina:      row.hotel_madina,
   roomType:         row.room_type,
+  roomTypeLabel:    getRoomTypeLabel(row.room_type),
+  gender,
   officialPrice:    Number(row.official_price ?? 0),
   salePrice:        Number(row.sale_price ?? 0),
   ticketNo:         row.ticket_no,
@@ -132,7 +158,8 @@ const fromClient = (row) => ({
   deleted:          row.deleted ?? false,
   deletedAt:        row.deleted_at,
   deletedBatchId:   row.deleted_batch_id,
-});
+  };
+};
 
 const toPayment = (p, agencyId) => ({
   id:         p.id,

@@ -4,6 +4,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
 import { printInvoice } from "./PrintTemplates";
+import { AppIcon } from "./Icon";
 
 const tc = theme.colors;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -117,7 +118,7 @@ export default function ClearancePage({ store }) {
           <h1 style={{ fontSize:21, fontWeight:800, color:"#f8fafc" }}>{t.clearanceReport}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>{t.clearanceDesc}</p>
         </div>
-        <Button variant="ghost" icon="🖨️" onClick={() => {
+        <Button variant="ghost" icon="print" onClick={() => {
           if (data.length === 0) return;
           printClearancePDF({
             data,
@@ -135,16 +136,16 @@ export default function ClearancePage({ store }) {
       {/* KPIs */}
       <div className="kpi-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:24 }}>
         {[
-          ["👥", t.clients, clients.length, t.gold],
-          ["✅", t.clearedFilter, clients.filter(c => getClientStatus(c) === "cleared").length, t.greenLight],
-          ["🟠", t.partialFilter, clients.filter(c => getClientStatus(c) === "partial").length, t.warning],
-          ["🔴", t.unpaidFilter, clients.filter(c => getClientStatus(c) === "unpaid").length, t.danger],
-          ["💰", t.collected, clients.reduce((s,c) => s + getClientTotalPaid(c.id), 0).toLocaleString("ar-MA") + " د.م", t.gold],
-          ["⏳", t.remaining, clients.reduce((s,c) => s + Math.max(0, (c.salePrice||c.price||0) - getClientTotalPaid(c.id)), 0).toLocaleString("ar-MA") + " د.م", t.warning],
-          ["🎁", t.discounts, clients.reduce((s,c) => s + Math.max(0, (c.officialPrice||0) - (c.salePrice||c.officialPrice||0)), 0).toLocaleString("ar-MA") + " د.م", t.danger],
+          ["users", t.clients, clients.length, t.gold],
+          ["success", t.clearedFilter, clients.filter(c => getClientStatus(c) === "cleared").length, t.greenLight],
+          ["partial", t.partialFilter, clients.filter(c => getClientStatus(c) === "partial").length, t.warning],
+          ["unpaid", t.unpaidFilter, clients.filter(c => getClientStatus(c) === "unpaid").length, t.danger],
+          ["banknote", t.collected, clients.reduce((s,c) => s + getClientTotalPaid(c.id), 0).toLocaleString("ar-MA") + " د.م", t.gold],
+          ["hourglass", t.remaining, clients.reduce((s,c) => s + Math.max(0, (c.salePrice||c.price||0) - getClientTotalPaid(c.id)), 0).toLocaleString("ar-MA") + " د.م", t.warning],
+          ["discount", t.discounts, clients.reduce((s,c) => s + Math.max(0, (c.officialPrice||0) - (c.salePrice||c.officialPrice||0)), 0).toLocaleString("ar-MA") + " د.م", t.danger],
         ].map(([ic,lb,vl,cl])=>(
           <GlassCard gold key={lb} style={{ padding:"13px 14px", textAlign:"center" }}>
-            <p style={{ fontSize:18, marginBottom:5 }}>{ic}</p>
+            <AppIcon name={ic} size={19} color={cl} style={{ marginBottom:5 }} />
             <p style={{ fontSize:15, fontWeight:800, color:cl, fontFamily:"'Amiri',serif", lineHeight:1 }}>{vl}</p>
             <p style={{ fontSize:11, color:t.grey, marginTop:4 }}>{lb}</p>
           </GlassCard>
@@ -280,7 +281,7 @@ export default function ClearancePage({ store }) {
 
 function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel }) {
   const [hov, setHov] = React.useState(false);
-  const contactLine = [client.phone ? `📞 ${client.phone}` : "", client.city ? `• ${client.city}` : ""].filter(Boolean).join(" ");
+  const contactLine = [client.phone ? `${client.phone}` : "", client.city ? `• ${client.city}` : ""].filter(Boolean).join(" ");
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.018}s` }}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
@@ -354,8 +355,8 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
       <div className="clear-card-header">
         <div className="clear-card-title">
           <p className="clear-card-name" title={client.name || "—"}>{client.name || "—"}</p>
-          {phoneLine && <p className="clear-card-phone">📞 {phoneLine}</p>}
-          {cityLine && <p className="clear-card-meta">📍 {cityLine}</p>}
+          {phoneLine && <p className="clear-card-phone">{phoneLine}</p>}
+          {cityLine && <p className="clear-card-meta">{cityLine}</p>}
         </div>
         <div className="clear-card-actions" ref={menuRef}>
           <button

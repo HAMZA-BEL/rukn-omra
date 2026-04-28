@@ -1,22 +1,19 @@
 import React from "react";
 import { Input, Select, Button, Divider, GlassCard, Modal } from "./UI";
-import { ROOM_KEYS, CITIES, NATIONALITIES } from "../data/initialData";
+import { CITIES, NATIONALITIES } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { calcExpiry } from "../utils/amadeus";
+import { AppIcon } from "./Icon";
+import {
+  getPackageRoomPrice,
+  getRoomTypeLabel,
+  getRoomTypeOptions,
+  normalizeProgramPackages,
+  normalizeRoomTypeKey,
+} from "../utils/programPackages";
 
 const tc = theme.colors;
-
-const ROOM_TYPE_OPTIONS = [
-  { value: "غرفة مزدوجة", labelKey: "roomTypeDouble" },
-  { value: "غرفة ثلاثية", labelKey: "roomTypeTriple" },
-  { value: "غرفة رباعية", labelKey: "roomTypeQuad" },
-  { value: "غرفة خماسية", labelKey: "roomTypeQuint" },
-  { value: "غرفة مفردة", labelKey: "roomTypeSingle" },
-  { value: "جناح فاخر", labelKey: "roomTypeSuite" },
-];
-
-const ROOM_TABLE_KEYS = ["roomDoubleShort", "roomTripleShort", "roomQuadShort", "roomQuintShort"];
 
 const DOCUMENT_FIELDS = [
   ["passportCopy", "passportCopy"],
@@ -67,6 +64,19 @@ const pickNumber = (...candidates) => {
     if (!Number.isNaN(parsed)) return parsed;
   }
   return 0;
+};
+
+const normalizeGenderValue = (value) => {
+  const normalized = pickString(value).toLowerCase();
+  if (normalized === "male" || normalized === "m" || normalized === "ذكر") return "male";
+  if (normalized === "female" || normalized === "f" || normalized === "أنثى") return "female";
+  return "";
+};
+
+const genderToPassportValue = (gender) => {
+  if (gender === "male") return "M";
+  if (gender === "female") return "F";
+  return "";
 };
 
 const splitArabicName = (value) => {
@@ -134,6 +144,10 @@ const buildFormState = (client, defaultProgramId, programs) => {
     defaultProgramId,
     programs[0]?.id
   );
+  const selectedProgram = programs.find(p => p.id === programId);
+  const firstPackage = selectedProgram ? normalizeProgramPackages(selectedProgram)[0] : null;
+  const packageLevel = pickString(client?.packageLevel, client?.hotelLevel, client?.hotel_level, firstPackage?.level);
+  const packageId = pickString(client?.packageId, client?.package_id, firstPackage?.id);
 
   const officialPrice = pickNumber(
     client?.officialPrice,
@@ -149,6 +163,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
 
   const passport = client?.passport || {};
   const docs     = client?.docs     || {};
+  const gender = normalizeGenderValue(client?.gender || passport.gender);
 
   return {
     firstName,
@@ -158,20 +173,24 @@ const buildFormState = (client, defaultProgramId, programs) => {
     phone:       pickString(client?.phone, client?.phoneNumber, client?.mobile),
     city:        pickString(client?.city, client?.ville, client?.addressCity),
     programId:   programId || "",
-    hotelLevel:  pickString(client?.hotelLevel, client?.hotel_level),
+    packageId,
+    hotelLevel:  packageLevel,
+    packageLevel,
     hotelMecca:  pickString(client?.hotelMecca, client?.hotel_mecca),
     hotelMadina: pickString(client?.hotelMadina, client?.hotel_madina),
-    roomType:    pickString(client?.roomType, client?.room_type, "غرفة مزدوجة") || "غرفة مزدوجة",
+    roomType:    normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, "double")) || "double",
+    roomTypeLabel: pickString(client?.roomTypeLabel, client?.room_type_label),
     officialPrice,
     salePrice,
     ticketNo: pickString(client?.ticketNo, client?.ticket_no, client?.ticketNumber, client?.ticket),
     notes:    pickString(client?.notes, client?.note),
+    gender,
     passport: {
       number:      pickString(passport.number, client?.passportNumber, client?.passport_no),
       nationality: pickString(passport.nationality, client?.passportNationality, client?.nationality, "MAR") || "MAR",
       birthDate:   pickString(passport.birthDate, client?.birthDate, client?.dateOfBirth),
       expiry:      pickString(passport.expiry, client?.passportExpiry, client?.expiryDate),
-      gender:      pickString(passport.gender, client?.gender, "M") || "M",
+      gender:      genderToPassportValue(gender),
       issueDate:   pickString(passport.issueDate, client?.passportIssueDate, client?.issueDate),
     },
     docs: {
@@ -200,52 +219,108 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   React.useEffect(() => {
     if (client) {
       skipProgramResetRef.current = true;
+      skipInitialAutoFillRef.current = true;
       setForm(buildFormState(client, defaultProgramId, programs));
     }
   }, [client, defaultProgramId, programs]);
 
   const [errors,  setErrors]  = React.useState({});
+  const [autoPriceNote, setAutoPriceNote] = React.useState("");
 
   const set     = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  const setSalePrice = e => {
+    setAutoPriceNote("");
+    setForm(f => ({ ...f, salePrice: e.target.value }));
+  };
   const setPass = k => e => setForm(f => ({...f, passport:{...f.passport, [k]:e.target.value}}));
   const setDoc  = k => e => setForm(f => ({...f, docs:{...f.docs, [k]:e.target.checked}}));
+  const setGender = React.useCallback((gender) => {
+    setForm((f) => ({
+      ...f,
+      gender,
+      passport: {
+        ...f.passport,
+        gender: genderToPassportValue(gender),
+      },
+    }));
+    setErrors((prev) => {
+      if (!prev.gender) return prev;
+      const next = { ...prev };
+      delete next.gender;
+      return next;
+    });
+  }, []);
 
   const selectedProgram = React.useMemo(
     () => programs.find(p => p.id === form.programId) ?? null,
     [programs, form.programId]
   );
-  const priceTable = React.useMemo(
-    () => selectedProgram?.priceTable ?? [],
+  const programPackages = React.useMemo(
+    () => selectedProgram ? normalizeProgramPackages(selectedProgram) : [],
     [selectedProgram]
   );
-  const selectedRow = React.useMemo(
-    () => priceTable.find(r => r.level === form.hotelLevel) ?? null,
-    [priceTable, form.hotelLevel]
+  const selectedPackage = React.useMemo(
+    () => programPackages.find(pkg => pkg.id === form.packageId)
+      || programPackages.find(pkg => pkg.level === (form.packageLevel || form.hotelLevel))
+      || null,
+    [programPackages, form.packageId, form.packageLevel, form.hotelLevel]
   );
 
-  // Auto-fill hotel + price when level or room changes
-  const prevLevelRef = React.useRef("");
-  const prevRoomRef  = React.useRef("");
-
-  React.useEffect(() => {
-    if (!selectedRow) return;
-    if (
-      prevLevelRef.current === form.hotelLevel &&
-      prevRoomRef.current  === form.roomType
-    ) return;
-    prevLevelRef.current = form.hotelLevel;
-    prevRoomRef.current  = form.roomType;
-
-    const rk = ROOM_KEYS[form.roomType] || "double";
-    const ap = selectedRow.prices[rk] || selectedRow.prices.double || 0;
+  const handlePackageChange = React.useCallback((e) => {
+    const pkg = programPackages.find(item => item.id === e.target.value) || null;
+    setAutoPriceNote("");
     setForm(f => ({
       ...f,
-      hotelMecca:    selectedRow.hotelMecca,
-      hotelMadina:   selectedRow.hotelMadina,
-      officialPrice: ap,
-      salePrice: f.salePrice === 0 || f.salePrice === f.officialPrice ? ap : f.salePrice,
+      packageId: pkg?.id || "",
+      hotelLevel: pkg?.level || "",
+      packageLevel: pkg?.level || "",
+      hotelMecca: pkg?.hotelMecca || "",
+      hotelMadina: pkg?.hotelMadina || "",
     }));
-  }, [form.hotelLevel, form.roomType, selectedRow]);
+  }, [programPackages]);
+
+  const handleRoomTypeChange = React.useCallback((e) => {
+    setAutoPriceNote("");
+    setForm(f => ({
+      ...f,
+      roomType: e.target.value,
+      roomTypeLabel: getRoomTypeLabel(e.target.value),
+    }));
+  }, []);
+
+  // Auto-fill hotel + price when package or room changes
+  const prevLevelRef = React.useRef("");
+  const prevRoomRef  = React.useRef("");
+  const skipInitialAutoFillRef = React.useRef(isEdit);
+
+  React.useEffect(() => {
+    if (!selectedPackage) return;
+    if (skipInitialAutoFillRef.current) {
+      skipInitialAutoFillRef.current = false;
+      prevLevelRef.current = selectedPackage.id;
+      prevRoomRef.current = form.roomType;
+      return;
+    }
+    if (
+      prevLevelRef.current === selectedPackage.id &&
+      prevRoomRef.current  === form.roomType
+    ) return;
+    prevLevelRef.current = selectedPackage.id;
+    prevRoomRef.current  = form.roomType;
+
+    const ap = getPackageRoomPrice(selectedPackage, form.roomType);
+    setForm(f => ({
+      ...f,
+      packageId: selectedPackage.id,
+      hotelLevel: selectedPackage.level,
+      packageLevel: selectedPackage.level,
+      roomTypeLabel: getRoomTypeLabel(f.roomType),
+      hotelMecca:    selectedPackage.hotelMecca,
+      hotelMadina:   selectedPackage.hotelMadina,
+      ...(ap ? { officialPrice: ap, salePrice: ap } : {}),
+    }));
+    setAutoPriceNote(ap ? "تم تعبئة السعر تلقائيًا من المستوى ونوع الغرفة المختارين" : "");
+  }, [form.roomType, selectedPackage]);
 
   // Reset hotel when program changes
   React.useEffect(() => {
@@ -253,8 +328,21 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       skipProgramResetRef.current = false;
       return;
     }
-    setForm(f => ({...f, hotelLevel:"", hotelMecca:"", hotelMadina:"", officialPrice:0, salePrice:0}));
-  }, [form.programId]);
+    const firstPackage = programPackages[0];
+    setAutoPriceNote("");
+    setForm(f => ({
+      ...f,
+      packageId: firstPackage?.id || "",
+      hotelLevel: firstPackage?.level || "",
+      packageLevel: firstPackage?.level || "",
+      hotelMecca: firstPackage?.hotelMecca || "",
+      hotelMadina: firstPackage?.hotelMadina || "",
+      roomType: "double",
+      roomTypeLabel: getRoomTypeLabel("double"),
+      officialPrice:0,
+      salePrice:0,
+    }));
+  }, [form.programId, programPackages]);
 
   // Auto-calculate expiry = issueDate + 5 years
   React.useEffect(() => {
@@ -271,6 +359,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (!form.firstName.trim() && !form.lastName.trim()) e.firstName = t.firstNameError;
     if (!form.phone.trim())    e.phone    = t.phoneError;
     if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
+    if (!form.gender) e.gender = "يرجى تحديد الجنس";
     return e;
   };
 
@@ -279,8 +368,20 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (Object.keys(e).length) { setErrors(e); return; }
     const data = {
       ...form,
+      packageId: selectedPackage?.id || form.packageId || "",
+      packageLevel: selectedPackage?.level || form.packageLevel || form.hotelLevel || "",
+      hotelLevel: selectedPackage?.level || form.hotelLevel || "",
+      hotelMecca: selectedPackage?.hotelMecca || form.hotelMecca,
+      hotelMadina: selectedPackage?.hotelMadina || form.hotelMadina,
+      roomType: normalizeRoomTypeKey(form.roomType),
+      roomTypeLabel: getRoomTypeLabel(form.roomType),
       officialPrice: Number(form.officialPrice),
       salePrice:     Number(form.salePrice),
+      gender: form.gender,
+      passport: {
+        ...form.passport,
+        gender: genderToPassportValue(form.gender),
+      },
     };
     isEdit ? updateClient(client.id, data) : addClient(data);
     onSave();
@@ -293,7 +394,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Arabic Name ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>
-          👤 {t.arabicNameSection}
+          <AppIcon name="user" size={14} color={tc.gold} /> {t.arabicNameSection}
         </p>
         <div className="form-grid form-grid--two">
           <Input
@@ -313,7 +414,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {/* ── Latin Name ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:6 }}>
-          🔤 {t.latinName}
+          <AppIcon name="language" size={14} color={tc.gold} /> {t.latinName}
         </p>
         <p style={{ fontSize:11, color:tc.grey, marginBottom:12 }}>
           {t.latinNameHint}
@@ -346,81 +447,106 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
       {/* ── Contact ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>📞 {t.contactInfo}</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="phone" size={14} color={tc.gold} /> {t.contactInfo}</p>
         <div className="form-grid form-grid--two">
           <Input label={t.phone} value={form.phone} onChange={set("phone")}
             placeholder={t.phonePlaceholder} required error={errors.phone} />
           <Select label={t.city} value={form.city} onChange={set("city")}
             options={["", ...CITIES].map(c => ({ value:c, label:c || t.selectCityPlaceholder }))} />
         </div>
+        <div style={{ marginTop:12 }}>
+          <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:8 }}>
+            الجنس *
+          </label>
+          <div style={{ display:"inline-flex", gap:8, flexWrap:"wrap" }}>
+            {[
+              { value: "male", label: "ذكر" },
+              { value: "female", label: "أنثى" },
+            ].map((option) => {
+              const active = form.gender === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setGender(option.value)}
+                  style={{
+                    minWidth: 92,
+                    padding: "10px 16px",
+                    borderRadius: 12,
+                    border: `1px solid ${active ? tc.gold : "rgba(255,255,255,.12)"}`,
+                    background: active ? "rgba(212,175,55,.12)" : "rgba(255,255,255,.04)",
+                    color: active ? tc.gold : "#f8fafc",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "'Cairo',sans-serif",
+                    transition: "all .15s ease",
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {errors.gender && (
+            <p style={{ color: tc.danger, fontSize: 11, marginTop: 6 }}>{errors.gender}</p>
+          )}
+        </div>
       </GlassCard>
 
-      {/* ── Program + Hotel ── */}
+      {/* ── Program + Booking ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>📋 {t.programHotelSection}</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> بيانات البرنامج والحجز</p>
         <div className="form-grid form-grid--two">
           <Select label={t.program} value={form.programId} onChange={set("programId")}
             options={programs.map(p => ({ value:p.id, label:p.name }))}
             style={{ gridColumn:"1/-1" }} />
-          {priceTable.length > 0 && (
-            <Select label={t.hotelLevel} value={form.hotelLevel} onChange={set("hotelLevel")}
-              options={[{value:"",label:t.selectLevelPlaceholder},...priceTable.map(r=>({value:r.level,label:formatLevelLabel(r.level)}))]}
-              style={{ gridColumn:"1/-1" }} />
+          {programPackages.length > 0 && (
+            <Select
+              label="المستوى"
+              value={selectedPackage?.id || ""}
+              onChange={handlePackageChange}
+              options={[
+                { value:"", label:t.selectLevelPlaceholder },
+                ...programPackages.map(pkg => ({ value:pkg.id, label:formatLevelLabel(pkg.level) })),
+              ]}
+            />
           )}
-          <Select label={t.roomType} value={form.roomType} onChange={set("roomType")}
-            options={ROOM_TYPE_OPTIONS.map(opt => ({ value: opt.value, label: t[opt.labelKey] || opt.value }))} />
+          <Select
+            label={t.roomType}
+            value={form.roomType}
+            onChange={handleRoomTypeChange}
+            options={getRoomTypeOptions()}
+          />
           <Input  label={t.ticketNo} value={form.ticketNo} onChange={set("ticketNo")} placeholder={t.ticketPlaceholder} />
         </div>
-
-        {/* Price table */}
-        {priceTable.length > 0 && (
-          <div style={{ marginTop:14, overflowX:"auto" }}>
-            <p style={{ fontSize:11, color:tc.grey, marginBottom:6 }}>{t.priceTableHint}</p>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-              <thead>
-                <tr style={{ background:"rgba(212,175,55,.1)" }}>
-                  {[
-                    { key:"_level",   label: t.hotelLevel  },
-                    { key:"_mecca",   label: t.hotelMecca  },
-                    { key:"_madina",  label: t.hotelMadina },
-                    ...ROOM_TABLE_KEYS.map(k => ({ key: k, label: t[k] })),
-                  ].map(({ key, label }) => (
-                    <th key={key} style={{ padding:"5px 8px", color:tc.gold, fontWeight:700,
-                      textAlign:"center", border:"1px solid rgba(212,175,55,.15)" }}>{label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {priceTable.map(row=>(
-                  <tr key={row.level}
-                    onClick={()=>setForm(f=>({...f,hotelLevel:row.level}))}
-                    style={{ background:row.level===form.hotelLevel?"rgba(212,175,55,.08)":"transparent", cursor:"pointer" }}>
-                    <td style={{ padding:"5px 8px", color:"#f8fafc",
-                      fontWeight:row.level===form.hotelLevel?700:400,
-                      border:"1px solid rgba(255,255,255,.05)", textAlign:"center" }}>{formatLevelLabel(row.level)}</td>
-                    <td style={{ padding:"5px 8px", color:tc.grey, border:"1px solid rgba(255,255,255,.05)", textAlign:"center", fontSize:10 }}>{formatHotelName(row.hotelMecca)}</td>
-                    <td style={{ padding:"5px 8px", color:tc.grey, border:"1px solid rgba(255,255,255,.05)", textAlign:"center", fontSize:10 }}>{formatHotelName(row.hotelMadina)}</td>
-                    {["double","triple","quad","quint"].map(k=>(
-                      <td key={k} style={{ padding:"5px 8px", textAlign:"center",
-                        border:"1px solid rgba(255,255,255,.05)",
-                        color:row.prices[k]?tc.gold:tc.grey, fontWeight:600 }}>
-                        {row.prices[k]?formatPrice(row.prices[k]):"—"}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {selectedPackage && (
+          <div style={{
+            marginTop:12,
+            padding:"10px 12px",
+            borderRadius:10,
+            background:"rgba(0,0,0,.16)",
+            border:"1px solid rgba(212,175,55,.14)",
+          }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMecca) || "—"}</span></p>
+              <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMadina) || "—"}</span></p>
+              <p style={{ fontSize:11, color:tc.grey }}>{t.mealPlan}: <span style={{ color:"#f8fafc" }}>{selectedPackage.mealPlan || "—"}</span></p>
+              <p style={{ fontSize:11, color:tc.grey }}>{t.salePrice}: <span style={{ color:tc.gold }}>{getPackageRoomPrice(selectedPackage, form.roomType) ? `${formatPrice(getPackageRoomPrice(selectedPackage, form.roomType))} ${currencyLabel}` : "—"}</span></p>
+            </div>
+            {autoPriceNote && (
+              <p style={{ fontSize:11, color:tc.greenLight, marginTop:8 }}>{autoPriceNote}</p>
+            )}
           </div>
         )}
       </GlassCard>
 
       {/* ── Price ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>💰 {t.priceSection}</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="banknote" size={14} color={tc.gold} /> {t.priceSection}</p>
         <div className="form-grid form-grid--three">
           <Input label={`${t.officialPrice} (${currencyLabel})`} value={form.officialPrice} onChange={set("officialPrice")} type="number" />
-          <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={set("salePrice")}
+          <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={setSalePrice}
             type="number" required error={errors.salePrice}
             inputStyle={{ border:`1px solid ${tc.gold}`, color:tc.gold, fontWeight:700 }} />
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -436,14 +562,17 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
       {/* ── Passport ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>🛂 {t.passport}</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="passport" size={14} color={tc.gold} /> {t.passport}</p>
         <div className="form-grid form-grid--three">
           <Input label={t.passportNo} value={form.passport.number} onChange={setPass("number")}
             placeholder={t.passportPlaceholder} inputStyle={{ textTransform:"uppercase" }} />
           <Select label={t.nationality} value={form.passport.nationality} onChange={setPass("nationality")}
             options={NATIONALITIES} />
-          <Select label={t.gender} value={form.passport.gender} onChange={setPass("gender")}
-            options={[{value:"M",label:t.male},{value:"F",label:t.female}]} />
+          <Select
+            label={t.gender}
+            value={form.passport.gender}
+            onChange={(e) => setGender(normalizeGenderValue(e.target.value))}
+            options={[{value:"",label:"—"},{value:"M",label:t.male},{value:"F",label:t.female}]} />
           <Input label={t.birthDate} value={form.passport.birthDate} onChange={setPass("birthDate")} type="date" />
           <Input label={t.issueDate} value={form.passport.issueDate} onChange={setPass("issueDate")} type="date" />
           <Input label={t.expiry} value={form.passport.expiry} onChange={setPass("expiry")} type="date" />
@@ -455,7 +584,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
       {/* ── Documents ── */}
       <GlassCard style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>📂 {t.documents}</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="documents" size={14} color={tc.gold} /> {t.documents}</p>
         <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
           {DOCUMENT_FIELDS.map(([key, labelKey])=>(
             <label key={key} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer",
@@ -484,7 +613,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <Divider />
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
-        <Button variant="primary" icon={isEdit?"💾":"➕"} onClick={handleSave}>
+        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave}>
           {isEdit ? t.save : t.addClient}
         </Button>
       </div>

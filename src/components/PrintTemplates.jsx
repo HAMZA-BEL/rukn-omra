@@ -115,7 +115,7 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
   <div class="card">
   <div class="header">
     <div>
-      <div class="agency">🕋 ${primary}</div>
+      <div class="agency">${primary}</div>
       <div style="font-size:10px;color:#888">${headerPhones}</div>
     </div>
     <div class="badge">${client.name[0]}</div>
@@ -137,7 +137,7 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
   </div>
   ${client.docs ? `<div class="docs">
     ${[["passportCopy",isFr?"Passeport":"صورة الجواز"],["photo",isFr?"Photo":"صورة"],["vaccine",isFr?"Vaccin":"تطعيم"],["contract",isFr?"Contrat":"عقد"]].map(([k,l])=>`
-    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"✓":"✗"} ${l}</span>`).join("")}
+    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"OK":"NO"} ${l}</span>`).join("")}
   </div>` : ""}
   <div class="footer">
     ${footerName}${footerPhones ? ` — ${footerPhones}` : ""}${slogan ? ` — ${slogan}` : ""}
@@ -197,7 +197,7 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
 <div class="page">
   <div class="header">
     <div>
-      <div class="logo">🕋 ${primary}</div>
+      <div class="logo">${primary}</div>
       <div class="logo-sub">${secondary && secondary !== primary ? secondary : ""}</div>
       <div class="logo-sub">${agency.addressTiznit || ""}</div>
       <div class="logo-sub">${headerPhones ? `${isFr ? "Tél" : "هاتف"}: ${headerPhones}` : ""}</div>

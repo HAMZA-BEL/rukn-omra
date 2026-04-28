@@ -4,7 +4,7 @@ import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
-import { Menu as MenuIcon, Home, Users, ClipboardList, Receipt, Settings as SettingsIcon, Bell, History, Trash2, MoreHorizontal } from "lucide-react";
+import { Menu as MenuIcon, Home, Users, FolderKanban, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
@@ -17,6 +17,7 @@ import TrashPage from "./components/TrashPage";
 import LoginPage from "./components/LoginPage";
 import SetPasswordPage from "./components/SetPasswordPage";
 import { Modal, Toast, Button } from "./components/UI";
+import { IconBubble } from "./components/Icon";
 import { formatNotificationMessage, resolveNotificationTarget } from "./utils/notifications";
 import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
@@ -84,9 +85,9 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const navItems = React.useMemo(() => ([
     { id: "dashboard", icon: Home,          label: t.dashboard },
     { id: "clients",   icon: Users,         label: t.clients },
-    { id: "programs",  icon: ClipboardList, label: t.programs },
-    { id: "activity",  icon: History,       label: t.activityLog || t.recentActivity },
-    { id: "clearance", icon: Receipt,       label: t.clearance },
+    { id: "programs",  icon: FolderKanban,  label: t.programs },
+    { id: "activity",  icon: ClipboardList, label: t.activityLog || t.recentActivity },
+    { id: "clearance", icon: BarChart3,     label: t.clearance },
     { id: "trash",     icon: Trash2,        label: t.trash },
     { id: "settings",  icon: SettingsIcon,  label: t.settings },
   ]), [t]);
@@ -826,7 +827,7 @@ function AuthGate() {
           maxWidth: 480, background: "rgba(10,22,45,.9)",
           border: "1px solid rgba(212,175,55,.3)", borderRadius: 20, padding: 40,
         }}>
-          <p style={{ fontSize: 40, marginBottom: 16 }}>⚠️</p>
+          <IconBubble name="alert" boxSize={56} size={26} color="#f59e0b" bg="rgba(245,158,11,.12)" border="rgba(245,158,11,.28)" style={{ margin:"0 auto 16px" }} />
           <h2 style={{ color: "#d4af37", marginBottom: 12 }}>الحساب غير مرتبط بوكالة</h2>
           <p style={{ color: "rgba(148,163,184,.8)", fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
             تم تسجيل الدخول بنجاح لكن لا يوجد ملف تعريف لهذا المستخدم في قاعدة البيانات.
@@ -875,7 +876,7 @@ function AppLoadingScreen() {
       display: "flex", alignItems: "center", justifyContent: "center",
       flexDirection: "column", gap: 16,
     }}>
-      <span style={{ fontSize: 40, animation: "float 4s ease-in-out infinite" }}>🕋</span>
+      <IconBubble name="brand" boxSize={56} size={26} style={{ animation: "float 4s ease-in-out infinite" }} />
       <div style={{
         width: 32, height: 32, border: "3px solid rgba(212,175,55,.2)",
         borderTop: "3px solid #d4af37", borderRadius: "50%",
@@ -896,7 +897,7 @@ function DisabledAccountScreen({ onLogout }) {
         maxWidth: 420, background: "rgba(10,22,45,.9)",
         border: "1px solid rgba(239,68,68,.35)", borderRadius: 20, padding: 36,
       }}>
-        <p style={{ fontSize: 34, marginBottom: 14 }}>⛔</p>
+        <IconBubble name="shieldAlert" boxSize={54} size={25} color="#ef4444" bg="rgba(239,68,68,.12)" border="rgba(239,68,68,.3)" style={{ margin:"0 auto 14px" }} />
         <h2 style={{ color: "#ef4444", marginBottom: 10 }}>الحساب موقوف</h2>
         <p style={{ color: "rgba(148,163,184,.85)", fontSize: 13, lineHeight: 1.8, marginBottom: 22 }}>
           تم تعطيل هذا الحساب. يرجى التواصل مع مسؤول الوكالة لإعادة تفعيله.
