@@ -24,6 +24,7 @@ import { printProgramPDF } from "../utils/exportPdf";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
+import tiznitVoyagesLogo from "../assets/tiznit-voyages-logo.png";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
   getPackageStartingPrice,
@@ -40,9 +41,11 @@ import {
   AlignRight,
   Bold,
   Columns3,
+  Copy,
   FileSpreadsheet,
   Italic,
   LayoutGrid,
+  Lock,
   Maximize2,
   Merge,
   Minimize2,
@@ -65,6 +68,7 @@ import {
   Trash2,
   Type,
   Undo2,
+  Unlock,
   UserPlus,
   WrapText,
   Scan,
@@ -100,6 +104,7 @@ const ROOMING_BLOCK_WIDTH = 4;
 const ROOMING_NODE_WIDTH = 250;
 const ROOMING_NODE_MIN_HEIGHT = 170;
 const ROOMING_NODE_MIN_GAP = 28;
+const ROOMING_NODE_COLLISION_GAP = 0;
 const PROGRAM_TYPE_OPTIONS = [
   { value: "عمرة", label: "عمرة" },
   { value: "حج", label: "حج" },
@@ -330,7 +335,7 @@ const getRoomingNodeRect = (node, position = node?.position || {}) => {
   };
 };
 
-const doRoomingRectsOverlap = (a, b, gap = ROOMING_NODE_MIN_GAP) => {
+const doRoomingRectsOverlap = (a, b, gap = ROOMING_NODE_COLLISION_GAP) => {
   return a.x < b.x + b.width + gap
     && a.x + a.width + gap > b.x
     && a.y < b.y + b.height + gap
@@ -1846,8 +1851,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const [dirty, setDirty] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState(null);
   const [selectedRoomId, setSelectedRoomId] = React.useState(null);
-  const [roomModal, setRoomModal] = React.useState({ open: false, roomId: null });
+  const [roomModal, setRoomModal] = React.useState({ open: false, mode: "edit", roomId: null });
   const [roomDraft, setRoomDraft] = React.useState({ roomType: "double", category: "male_only", hotel: "" });
+  const [roomCreatePosition, setRoomCreatePosition] = React.useState({ x: 0, y: 0 });
+  const [canvasMenu, setCanvasMenu] = React.useState({ open: false, x: 0, y: 0, position: { x: 0, y: 0 } });
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
   const [panelSearch, setPanelSearch] = React.useState("");
@@ -1980,6 +1987,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
 
   const markDirty = React.useCallback(() => setDirty(true), []);
 
+  React.useEffect(() => {
+    if (!dirty) return undefined;
+    const timer = window.setTimeout(() => saveCanvas(false), 650);
+    return () => window.clearTimeout(timer);
+  }, [dirty, rooms, unassigned, saveCanvas]);
+
+  const switchCity = React.useCallback((nextCity) => {
+    if (nextCity === city) return;
+    if (dirty) saveCanvas(false);
+    setCity(nextCity);
+  }, [city, dirty, saveCanvas]);
+
+  React.useEffect(() => {
+    if (!canvasMenu.open) return undefined;
+    const close = () => setCanvasMenu((current) => ({ ...current, open: false }));
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canvasMenu.open]);
+
   const clientIdsInRooms = React.useMemo(() => {
     const ids = new Set();
     rooms.forEach((room) => (room.occupantIds || []).forEach((id) => ids.add(id)));
@@ -2082,8 +2115,36 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     return hotelMatch && roomTypeMatch;
   }), [rooms, panelHotel, panelRoomType]);
 
+  const getNextRoomNumber = React.useCallback(() => {
+    const values = rooms
+      .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    return String((values.length ? Math.max(...values) : 0) + 1).padStart(2, "0");
+  }, [rooms]);
+
+  const roomToCollisionNode = React.useCallback((room) => ({
+    id: room.id,
+    type: "room",
+    position: { x: Number(room.x) || 0, y: Number(room.y) || 0 },
+    data: { room },
+    width: ROOMING_NODE_WIDTH,
+  }), []);
+
+  const allCollisionNodes = React.useMemo(
+    () => rooms.map((room) => roomToCollisionNode(room)),
+    [rooms, roomToCollisionNode]
+  );
+
+  const findFreePositionForRoom = React.useCallback((room, preferredPosition) => {
+    const node = {
+      ...roomToCollisionNode(room),
+      position: preferredPosition,
+    };
+    return findNearestFreeRoomingPosition(node, allCollisionNodes.filter((item) => item.id !== room.id), preferredPosition);
+  }, [allCollisionNodes, roomToCollisionNode]);
+
   const generateRooms = React.useCallback(() => {
-    if (rooms.length && !window.confirm("سيتم استبدال التسكين الحالي بتسكين مولد من بيانات المعتمرين. هل تريد المتابعة؟")) return;
+    if (rooms.length && !window.confirm("يوجد تسكين محفوظ لهذه المدينة، هل تريد إعادة التوليد واستبدال الحالي؟")) return;
     const nextRooms = [];
     const nextUnassigned = [];
     const grouped = new Map();
@@ -2150,6 +2211,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     onToast?.("تم توليد الغرف من بيانات المعتمرين", "success");
   }, [rooms.length, clients, getClientContext, onToast]);
 
+  const openCreateRoom = React.useCallback((position = { x: 0, y: 0 }) => {
+    setRoomDraft({
+      roomType: "double",
+      category: "male_only",
+      hotel: hotelOptions[0] || (city === "makkah" ? program.hotelMecca || "" : program.hotelMadina || ""),
+    });
+    setRoomCreatePosition(position);
+    setRoomModal({ open: true, mode: "create", roomId: null });
+  }, [hotelOptions, city, program.hotelMecca, program.hotelMadina]);
+
   const openEditRoom = React.useCallback((room) => {
     setSelectedRoomId(room.id);
     setRoomDraft({
@@ -2157,13 +2228,36 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       category: room.category || "male_only",
       hotel: room.hotel || hotelOptions[0] || "",
     });
-    setRoomModal({ open: true, roomId: room.id });
+    setRoomModal({ open: true, mode: "edit", roomId: room.id });
   }, [hotelOptions]);
 
   const saveRoomEdit = React.useCallback(() => {
+    const capacity = getRoomingCapacity(roomDraft.roomType);
+    if (roomModal.mode === "create") {
+      const draftRoom = {
+        id: createRoomId(),
+        order: rooms.length,
+        roomNumber: getNextRoomNumber(),
+        roomType: roomDraft.roomType,
+        category: roomDraft.category,
+        hotel: roomDraft.hotel || hotelOptions[0] || "",
+        capacity,
+        occupantIds: [],
+        locked: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const position = findFreePositionForRoom(draftRoom, roomCreatePosition);
+      setRooms((prev) => [...prev, { ...draftRoom, x: position.x, y: position.y }]);
+      setSelectedRoomId(draftRoom.id);
+      setRoomModal({ open: false, mode: "edit", roomId: null });
+      markDirty();
+      onToast?.("تمت إضافة الغرفة", "success");
+      return;
+    }
+
     const room = rooms.find((item) => item.id === roomModal.roomId);
     if (!room) return;
-    const capacity = getRoomingCapacity(roomDraft.roomType);
     const kept = [];
     const removed = [];
     (room.occupantIds || []).forEach((clientId) => {
@@ -2186,9 +2280,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       else if (roomDraft.category === "female_only") onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
       else onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
     }
-    setRoomModal({ open: false, roomId: null });
+    setRoomModal({ open: false, mode: "edit", roomId: null });
     markDirty();
-  }, [rooms, roomModal.roomId, roomDraft, clientsById, getCompatibilityReason, markDirty, onToast]);
+  }, [rooms, roomModal.mode, roomModal.roomId, roomDraft, hotelOptions, getNextRoomNumber, findFreePositionForRoom, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast]);
 
   const deleteRoom = React.useCallback((roomId) => {
     const room = rooms.find((item) => item.id === roomId);
@@ -2201,6 +2295,37 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     setSelectedRoomId((current) => current === roomId ? null : current);
     markDirty();
   }, [rooms, markDirty]);
+
+  const copyRoom = React.useCallback((roomId) => {
+    const room = rooms.find((item) => item.id === roomId);
+    if (!room) return;
+    const draftRoom = {
+      ...room,
+      id: createRoomId(),
+      order: rooms.length,
+      roomNumber: getNextRoomNumber(),
+      occupantIds: [],
+      locked: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const preferred = {
+      x: Number(room.x || 0) + ROOMING_NODE_WIDTH + ROOMING_NODE_MIN_GAP,
+      y: Number(room.y || 0),
+    };
+    const position = findFreePositionForRoom(draftRoom, preferred);
+    setRooms((prev) => [...prev, { ...draftRoom, x: position.x, y: position.y }]);
+    setSelectedRoomId(draftRoom.id);
+    markDirty();
+    onToast?.("تم نسخ الغرفة بدون المعتمرين", "success");
+  }, [rooms, getNextRoomNumber, findFreePositionForRoom, markDirty, onToast]);
+
+  const toggleRoomLock = React.useCallback((roomId) => {
+    setRooms((prev) => prev.map((room) => room.id === roomId
+      ? { ...room, locked: !room.locked, updatedAt: new Date().toISOString() }
+      : room));
+    markDirty();
+  }, [markDirty]);
 
   const removeClientFromRoom = React.useCallback((roomId, clientId) => {
     setRooms((prev) => prev.map((room) => room.id === roomId
@@ -2288,11 +2413,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       onDragComplete: () => setDraggingClientId(null),
       onAdd: openPickerForRoom,
       onEdit: openEditRoomById,
+      onCopy: copyRoom,
+      onToggleLock: toggleRoomLock,
       onDelete: deleteRoom,
       onRemoveClient: removeClientFromRoom,
     },
+    draggable: !room.locked,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, deleteRoom, removeClientFromRoom, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, selectedRoomId]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
 
@@ -2321,26 +2449,27 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }, [setFlowNodes]);
 
   const onNodeDragStart = React.useCallback((_event, node) => {
+    if (node.data?.room?.locked) return;
     roomDragActiveRef.current = true;
     dragStartPositionRef.current.set(node.id, { ...node.position });
-    const nodes = flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes;
+    const nodes = allCollisionNodes;
     const isValidStart = !hasRoomingNodeCollision(node, nodes, node.position);
     if (isValidStart) lastValidPositionRef.current.set(node.id, { ...node.position });
     setFlowNodeDragInvalid(node.id, false);
-  }, [roomFlowNodes, setFlowNodeDragInvalid]);
+  }, [allCollisionNodes, setFlowNodeDragInvalid]);
 
   const onNodeDrag = React.useCallback((_event, node) => {
-    const nodes = (flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes).map((item) => (
+    const nodes = allCollisionNodes.map((item) => (
       item.id === node.id ? { ...item, position: node.position, measured: node.measured || item.measured } : item
     ));
     const currentNode = nodes.find((item) => item.id === node.id) || node;
     const invalid = hasRoomingNodeCollision(currentNode, nodes, node.position);
     if (!invalid) lastValidPositionRef.current.set(node.id, { ...node.position });
     setFlowNodeDragInvalid(node.id, invalid);
-  }, [roomFlowNodes, setFlowNodeDragInvalid]);
+  }, [allCollisionNodes, setFlowNodeDragInvalid]);
 
   const onNodeDragStop = React.useCallback((_event, node) => {
-    const nodes = (flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes).map((item) => (
+    const nodes = allCollisionNodes.map((item) => (
       item.id === node.id ? { ...item, position: node.position, measured: node.measured || item.measured } : item
     ));
     const currentNode = nodes.find((item) => item.id === node.id) || node;
@@ -2364,7 +2493,25 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     lastValidPositionRef.current.set(node.id, { ...nextPosition });
     markDirty();
     if (invalid) onToast?.("تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
-  }, [markDirty, onToast, roomFlowNodes, setFlowNodes]);
+  }, [allCollisionNodes, markDirty, onToast, setFlowNodes]);
+
+  const openCanvasContextMenu = React.useCallback((event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = flowRef.current?.screenToFlowPosition
+      ? flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : { x: 0, y: 0 };
+    setCanvasMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      position,
+    });
+  }, []);
+
+  const closeCanvasContextMenu = React.useCallback(() => {
+    setCanvasMenu((current) => ({ ...current, open: false }));
+  }, []);
 
   const fitView = React.useCallback(() => {
     flowRef.current?.fitView?.({ padding: 0.18, duration: 450 });
@@ -2397,39 +2544,147 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }, [rooms, clientsById, city, program.name]);
 
   const printCanvas = React.useCallback(() => {
-    const sections = Array.from(groupedRooms.entries()).map(([hotel, byType]) => `
-      <section>
-        <h2>${escapeHtml(hotel)}</h2>
-        ${Array.from(byType.entries()).map(([roomType, typeRooms]) => `
-          <h3>${escapeHtml(getRoomingRoomLabel(roomType))}</h3>
-          <div class="rooms">
-            ${typeRooms.map((room) => `
-              <article>
-                <strong>${escapeHtml(getRoomingCategoryLabel(room.category))} · ${escapeHtml(getRoomingRoomLabel(room.roomType))} · ${(room.occupantIds || []).length}/${room.capacity}</strong>
-                <small>${escapeHtml(room.hotel || "")}</small>
-                ${(room.occupantIds || []).map((clientId) => `<p>${escapeHtml(getClientDisplayName(clientsById[clientId] || {}))}</p>`).join("")}
-              </article>
-            `).join("")}
+    const totalRooms = rooms.length;
+    const totalAssigned = rooms.reduce((sum, room) => sum + (room.occupantIds || []).length, 0);
+    const cityLabel = city === "makkah" ? "مكة" : "المدينة";
+    const period = [program.departure, program.returnDate].filter(Boolean).join(" - ") || "—";
+    const sortedRooms = rooms.slice().sort((a, b) => {
+      const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
+      if (hotel) return hotel;
+      const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
+      if (type) return type;
+      return String(a.roomNumber || "").localeCompare(String(b.roomNumber || ""), "ar", { numeric: true });
+    });
+    const roomsByHotel = sortedRooms.reduce((map, room) => {
+      const hotel = room.hotel || "فندق غير محدد";
+      if (!map.has(hotel)) map.set(hotel, []);
+      map.get(hotel).push(room);
+      return map;
+    }, new Map());
+    const sections = Array.from(roomsByHotel.entries()).map(([hotel, hotelRooms]) => {
+      const assigned = hotelRooms.reduce((sum, room) => sum + (room.occupantIds || []).length, 0);
+      return `
+        <section class="hotel-section">
+          <div class="hotel-title">
+            <h2>${escapeHtml(hotel)}</h2>
+            <span>${hotelRooms.length} غرف · ${assigned} معتمر</span>
           </div>
-        `).join("")}
-      </section>
-    `).join("");
+          <div class="rooms-grid">
+            ${hotelRooms.map((room) => {
+              const occupants = room.occupantIds || [];
+              const capacity = Math.max(Number(room.capacity) || getRoomingCapacity(room.roomType), occupants.length || 1);
+              const category = room.category || "male_only";
+              const names = occupants.map((clientId, index) => {
+                const client = clientsById[clientId];
+                return `<li><span>${index + 1}</span><b>${client ? escapeHtml(getClientDisplayName(client)) : "—"}</b></li>`;
+              }).join("") || `<li class="empty"><span>0</span><b>بدون معتمرين</b></li>`;
+              return `
+                <article class="room-card ${escapeHtml(category)}">
+                  <div class="room-head">
+                    <div>
+                      <strong>${escapeHtml(getRoomingRoomLabel(room.roomType))}</strong>
+                      <small>${escapeHtml(room.hotel || hotel)}</small>
+                    </div>
+                    <span class="occupancy">${occupants.length}/${capacity}</span>
+                  </div>
+                  <div class="badges">
+                    <span>${escapeHtml(getRoomingRoomLabel(room.roomType))}</span>
+                    <span>${escapeHtml(getRoomingCategoryLabel(category))}</span>
+                  </div>
+                  <div class="hotel-name">${escapeHtml(room.hotel || hotel)}</div>
+                  <ol>${names}</ol>
+                </article>
+              `;
+            }).join("")}
+          </div>
+        </section>
+      `;
+    }).join("");
     const win = window.open("", "_blank");
     if (!win) return;
     win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
       <style>
-        @page{size:A4 landscape;margin:10mm}
-        body{font-family:Arial,sans-serif;color:#111;background:#fff}
-        h1{font-size:18px;margin:0 0 12px}
-        h2{font-size:15px;margin:18px 0 8px;border-bottom:1px solid #ddd;padding-bottom:6px}
-        h3{font-size:13px;margin:12px 0 8px;color:#555}
-        .rooms{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-        article{border:1px solid #cbd5e1;border-radius:8px;padding:10px;break-inside:avoid}
-        strong,small{display:block;margin-bottom:6px}
-        p{margin:4px 0;font-size:12px}
-      </style></head><body><h1>${escapeHtml(program.name)} - ${escapeHtml(ROOMING_CITY_LABELS[city])}</h1>${sections}<script>window.onload=()=>window.print()</script></body></html>`);
+        @page{size:A4 landscape;margin:7mm 8mm}
+        *{box-sizing:border-box}
+        html,body{background:#fff;margin:0;overflow-x:hidden}
+        body{font-family:Arial,"Tahoma",sans-serif;color:#0f172a;font-size:10.5px;line-height:1.25}
+        .page{width:100%;margin:0 auto;padding:0 4mm 2mm;overflow:hidden}
+        .hero{position:relative;text-align:center;padding:3px 60mm 3px 18mm;margin-bottom:2px;min-height:29mm}
+        .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:7px;width:58mm;text-align:start}
+        .agency-brand img{display:block;width:22mm;height:22mm;object-fit:contain;flex:0 0 auto}
+        .agency-copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
+        .agency-copy strong{display:block;color:#0f5aa6;font-size:16px;line-height:1.05;font-weight:900;white-space:nowrap}
+        .agency-copy small{display:block;color:#a9472d;font-size:8.5px;line-height:1.2;font-weight:800;white-space:nowrap;margin-top:2px}
+        h1{font-size:34px;line-height:1;margin:0 0 5px;font-weight:900;color:#0d1728;letter-spacing:.5px}
+        .program-name{font-size:14px;color:#9a7418;font-weight:900;margin:0}
+        .summary{display:grid;grid-template-columns:1fr 1.35fr 1fr 1fr;gap:7px;margin:2px 0 8px}
+        .summary-card{height:14.5mm;border:1px solid #d9dce2;border-radius:9px;background:linear-gradient(180deg,#fff,#fbfbfc);padding:4px 8px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 7px rgba(15,23,42,.04)}
+        .summary-card span{display:block;color:#464b55;font-size:9px;font-weight:800;margin-bottom:2px}
+        .summary-card b{display:block;color:#0f172a;font-size:10.5px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .summary-card .mini-icon{width:18px;height:18px;border:1px solid #c8ced8;border-radius:6px;color:#0f172a;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}
+        .hotel-section{margin:0 0 8px;break-inside:auto;page-break-inside:auto}
+        .hotel-title{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 8px;padding:3px 0;break-after:avoid;page-break-after:avoid;color:#101827;border-top:1.5px solid #c79b3c;border-bottom:1.5px solid #c79b3c}
+        .hotel-title::before,.hotel-title::after{content:"";height:1.5px;background:#c79b3c;flex:1}
+        .hotel-title::after{background:#c79b3c}
+        .hotel-title h2{font-size:19px;line-height:1;margin:0;font-weight:900;color:#101827}
+        .hotel-title h2::before,.hotel-title h2::after{content:"";display:inline-block;width:14px;height:7px;border-top:2px solid #c79b3c;margin:0 7px;transform:skewX(-28deg)}
+        .hotel-title span{display:none}
+        .rooms-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px 8px;align-items:start}
+        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:9px;padding:6px 8px 7px;background:linear-gradient(180deg,#fff,#fdfdfd);min-height:36mm;box-shadow:0 2px 9px rgba(15,23,42,.05)}
+        .room-card::before{content:"";position:absolute;inset-inline:0;top:0;height:3px;border-radius:9px 9px 0 0;background:#b99235}
+        .room-card.male_only::before{background:#2c5f93}
+        .room-card.female_only::before{background:#ad5c7a}
+        .room-card.family::before{background:#a88a2c}
+        .room-head{display:flex;align-items:flex-start;justify-content:space-between;gap:5px;padding:3px 0 5px;margin-bottom:4px}
+        .room-head strong{display:block;font-size:14px;font-weight:900;color:#0f172a}
+        .room-head small{display:block;font-size:8px;color:#a77d22;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:92px;font-weight:800}
+        .occupancy{font-size:10px;font-weight:900;color:#0f172a;border:0;background:transparent;border-radius:0;padding:0;white-space:nowrap}
+        .badges{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin:2px 0 5px}
+        .badges span{min-width:36px;text-align:center;font-size:8.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:4px;padding:2px 6px}
+        .female_only .badges span{background:#f1dfe7;border-color:#ead1dc}
+        .family .badges span{background:#eadbb4;border-color:#dfcb92}
+        .hotel-name{border-top:1px dashed #d2d6dd;border-bottom:1px solid #c7cbd2;color:#a77d22;text-align:center;font-size:9.5px;font-weight:900;padding:4px 0;margin:0 0 5px}
+        ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+        li{display:grid;grid-template-columns:13px 1fr;gap:5px;align-items:center;padding:0 2px;min-height:14px;border:0;background:transparent}
+        li span{color:#111827;font-size:9px;font-weight:900;text-align:center}
+        li b{font-size:10.5px;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        li.empty b{color:#9ca3af;font-weight:700}
+        .print-footer{position:fixed;left:0;right:0;bottom:0;color:#0f172a;font-size:9px;display:flex;justify-content:center;gap:18px;align-items:center}
+        .print-footer::before,.print-footer::after{content:"";width:38mm;height:1px;background:linear-gradient(90deg,transparent,#d5ad5a)}
+        .print-footer::after{background:linear-gradient(90deg,#d5ad5a,transparent)}
+        .print-footer .page-no::after{content:"صفحة " counter(page)}
+        @media print{
+          html,body,.page{overflow:hidden}
+          .rooms-grid{grid-template-columns:repeat(5,1fr)}
+          .room-card{break-inside:avoid;page-break-inside:avoid}
+          .hotel-title{break-after:avoid;page-break-after:avoid}
+          .report-header{break-after:avoid;page-break-after:avoid}
+        }
+      </style></head><body><main class="page">
+        <header>
+          <div class="hero">
+            <div class="agency-brand">
+              <img src="${tiznitVoyagesLogo}" alt="تيزنيت أسفار - TIZNIT VOYAGES" />
+              <div class="agency-copy">
+                <strong>تيزنيت أسفار</strong>
+                <small>تجربة أعوام منذ 1975</small>
+              </div>
+            </div>
+            <h1>ورقة التسكين</h1>
+            <p class="program-name">${escapeHtml(program.name || "—")}</p>
+          </div>
+          <div class="summary">
+            <div class="summary-card"><div><span>المدينة:</span><b>${escapeHtml(cityLabel)}</b></div><div class="mini-icon">م</div></div>
+            <div class="summary-card"><div><span>الفترة:</span><b>${escapeHtml(period)}</b></div><div class="mini-icon">ف</div></div>
+            <div class="summary-card"><div><span>عدد المعتمرين:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div><div class="mini-icon">ع</div></div>
+            <div class="summary-card"><div><span>عدد الغرف:</span><b>${escapeHtml(String(totalRooms))}</b></div><div class="mini-icon">غ</div></div>
+          </div>
+        </header>
+        ${sections || "<p>لا توجد غرف للتسكين.</p>"}
+        <footer class="print-footer"><span class="page-no"></span></footer>
+      </main><script>window.onload=()=>window.print()</script></body></html>`);
     win.document.close();
-  }, [groupedRooms, clientsById, program.name, city]);
+  }, [groupedRooms, rooms, clientsById, program, city, clients.length, agency]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
@@ -2514,7 +2769,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
               <button
                 key={key}
                 type="button"
-                onClick={() => setCity(key)}
+                onClick={() => switchCity(key)}
                 style={{
                   border: 0,
                   background: city === key ? "#e8eefc" : "transparent",
@@ -2565,7 +2820,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
             minHeight: 0,
           }}>
             {!rooms.length ? (
-              <div style={{ display: "grid", placeItems: "center", minHeight: "100%", padding: 30 }}>
+              <div
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setCanvasMenu({
+                    open: true,
+                    x: event.clientX,
+                    y: event.clientY,
+                    position: {
+                      x: Math.max(0, event.clientX - rect.left),
+                      y: Math.max(0, event.clientY - rect.top),
+                    },
+                  });
+                }}
+                style={{ display: "grid", placeItems: "center", minHeight: "100%", padding: 30 }}
+              >
                 <div style={{ textAlign: "center", maxWidth: 420 }}>
                   <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>ابدأ بتوليد الغرف</p>
                   <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>سيتم إنشاء بطاقات غرف ذكية من بيانات المعتمرين، مع إبقاء الحالات غير الآمنة في لوحة المراجعة.</p>
@@ -2573,19 +2843,89 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                 </div>
               </div>
             ) : (
-              <ReactFlowProvider>
-                <RoomingFlowSurface
-                  nodes={flowNodes}
-                  onNodesChange={onFlowNodesChange}
-                  selectedRoomId={selectedRoomId}
-                  panelOpen={panelOpen}
-                  onInit={(flow) => { flowRef.current = flow; }}
-                  onNodeClick={(_event, node) => setSelectedRoomId(node.id)}
-                  onNodeDragStart={onNodeDragStart}
-                  onNodeDrag={onNodeDrag}
-                  onNodeDragStop={onNodeDragStop}
+              <>
+                <ReactFlowProvider>
+                  <RoomingFlowSurface
+                    nodes={flowNodes}
+                    onNodesChange={onFlowNodesChange}
+                    selectedRoomId={selectedRoomId}
+                    panelOpen={panelOpen}
+                    onInit={(flow) => { flowRef.current = flow; }}
+                    onNodeClick={(_event, node) => setSelectedRoomId(node.id)}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDrag={onNodeDrag}
+                    onNodeDragStop={onNodeDragStop}
+                    onPaneContextMenu={openCanvasContextMenu}
+                    onPaneClick={closeCanvasContextMenu}
+                  />
+                </ReactFlowProvider>
+                {!visibleRooms.length && (
+                  <div style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "grid",
+                    placeItems: "center",
+                    pointerEvents: "none",
+                    zIndex: 5,
+                  }}>
+                    <div style={{
+                      background: "rgba(255,255,255,.92)",
+                      border: "1px solid rgba(148,163,184,.22)",
+                      boxShadow: "0 18px 42px rgba(15,23,42,.12)",
+                      borderRadius: 14,
+                      padding: "16px 20px",
+                      color: "#334155",
+                      fontWeight: 800,
+                      fontSize: 13,
+                    }}>
+                      لا توجد غرف مطابقة للفلاتر الحالية
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            {canvasMenu.open && (
+              <div
+                onPointerDown={(event) => event.stopPropagation()}
+                style={{
+                  position: "fixed",
+                  top: canvasMenu.y,
+                  left: canvasMenu.x,
+                  transform: "translate(-8px, 8px)",
+                  width: 170,
+                  background: "#fff",
+                  border: "1px solid rgba(148,163,184,.22)",
+                  borderRadius: 12,
+                  boxShadow: "0 18px 42px rgba(15,23,42,.16)",
+                  padding: 6,
+                  zIndex: 120,
+                }}
+              >
+                <RoomingMenuItem
+                  label="إضافة غرفة"
+                  icon={<AppIcon name="plus" size={14} />}
+                  onClick={() => {
+                    closeCanvasContextMenu();
+                    openCreateRoom(canvasMenu.position);
+                  }}
                 />
-              </ReactFlowProvider>
+                <RoomingMenuItem
+                  label="ترتيب تلقائي"
+                  icon={<LayoutGrid size={14} />}
+                  onClick={() => {
+                    closeCanvasContextMenu();
+                    autoArrangeRooms();
+                  }}
+                />
+                <RoomingMenuItem
+                  label="ملاءمة العرض"
+                  icon={<Scan size={14} />}
+                  onClick={() => {
+                    closeCanvasContextMenu();
+                    fitView();
+                  }}
+                />
+              </div>
             )}
           </div>
 
@@ -2662,14 +3002,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           )}
         </div>
 
-        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, roomId: null })} title="تعديل الغرفة" width={520}>
+        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? "إضافة غرفة" : "تعديل الغرفة"} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Select label="الفندق" value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || "غير محدد" }))} />
             <Select label="نوع الغرفة" value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
             <Select label="تصنيف الغرفة" value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={ROOMING_CATEGORY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
-            <Select label="الفندق" value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || "—"]).map((hotel) => ({ value: hotel, label: hotel }))} />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <Button variant="ghost" onClick={() => setRoomModal({ open: false, roomId: null })}>إلغاء</Button>
-              <Button onClick={saveRoomEdit}>حفظ التعديل</Button>
+              <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "edit", roomId: null })}>إلغاء</Button>
+              <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? "إضافة" : "حفظ"}</Button>
             </div>
           </div>
         </Modal>
@@ -2772,6 +3112,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
     <article
       className="rooming-flow-node"
       title={isInvalidPosition ? "لا يمكن وضع غرفة فوق غرفة أخرى" : isDropTarget ? (dropReason || "يمكن إدراج المعتمر هنا") : undefined}
+      onContextMenu={(event) => event.stopPropagation()}
       onDragOver={(event) => {
         if (!data.draggingClient) return;
         event.preventDefault();
@@ -2801,6 +3142,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         padding: 12,
         direction: "rtl",
         fontFamily: "'Cairo',sans-serif",
+        cursor: room.locked ? "default" : "grab",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 }}>
@@ -2809,6 +3151,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
+          {room.locked && <Lock size={13} color="#64748b" title="الغرفة مقفلة" />}
           <div
             className="nodrag"
             onPointerDown={(event) => event.stopPropagation()}
@@ -2845,6 +3188,22 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   icon={<UserPlus size={14} />}
                   onClick={() => {
                     data.onAdd(room.id);
+                    setMenuOpen(false);
+                  }}
+                />
+                <RoomingMenuItem
+                  label="نسخ الغرفة"
+                  icon={<Copy size={14} />}
+                  onClick={() => {
+                    data.onCopy(room.id);
+                    setMenuOpen(false);
+                  }}
+                />
+                <RoomingMenuItem
+                  label={room.locked ? "فتح الغرفة" : "قفل الغرفة"}
+                  icon={room.locked ? <Unlock size={14} /> : <Lock size={14} />}
+                  onClick={() => {
+                    data.onToggleLock(room.id);
                     setMenuOpen(false);
                   }}
                 />
@@ -2911,6 +3270,8 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.dragInvalid === next.data.dragInvalid
   && prev.data.onAdd === next.data.onAdd
   && prev.data.onEdit === next.data.onEdit
+  && prev.data.onCopy === next.data.onCopy
+  && prev.data.onToggleLock === next.data.onToggleLock
   && prev.data.onDelete === next.data.onDelete
   && prev.data.onRemoveClient === next.data.onRemoveClient
   && prev.data.onDropClient === next.data.onDropClient
@@ -2976,6 +3337,8 @@ function RoomingFlowSurface({
   onNodeDragStart,
   onNodeDrag,
   onNodeDragStop,
+  onPaneContextMenu,
+  onPaneClick,
   onInit,
   panelOpen,
 }) {
@@ -3008,6 +3371,8 @@ function RoomingFlowSurface({
       onNodeDragStart={onNodeDragStart}
       onNodeDrag={onNodeDrag}
       onNodeDragStop={onNodeDragStop}
+      onPaneContextMenu={onPaneContextMenu}
+      onPaneClick={onPaneClick}
       proOptions={{ hideAttribution: true }}
       style={{ width: "100%", height: "100%", background: "#fff" }}
     >
