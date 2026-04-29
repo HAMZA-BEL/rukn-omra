@@ -55,13 +55,16 @@ import {
   PanelTop,
   Redo2,
   Search,
+  Settings,
   Square,
   SquareSlash,
   TableCellsMerge,
   TableColumnsSplit,
   TableRowsSplit,
+  Trash2,
   Type,
   Undo2,
+  UserPlus,
   WrapText,
   Scan,
 } from "lucide-react";
@@ -92,6 +95,9 @@ const ROOMING_CATEGORY_OPTIONS = [
   { value: "family", label: "عائلة" },
 ];
 const ROOMING_BLOCK_WIDTH = 4;
+const ROOMING_NODE_WIDTH = 250;
+const ROOMING_NODE_MIN_HEIGHT = 170;
+const ROOMING_NODE_MIN_GAP = 28;
 
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
@@ -295,6 +301,62 @@ const autoLayoutRoomNodes = (rooms = []) => {
       y: 90 + localIndex * 210,
     };
   });
+};
+
+const getRoomingNodeRect = (node, position = node?.position || {}) => {
+  const width = Number(node?.measured?.width || node?.width || ROOMING_NODE_WIDTH);
+  const capacity = Number(node?.data?.room?.capacity || node?.data?.room?.occupantIds?.length || 2);
+  const fallbackHeight = Math.max(ROOMING_NODE_MIN_HEIGHT, 134 + (Math.max(1, capacity) * 24));
+  const height = Number(node?.measured?.height || node?.height || fallbackHeight);
+  return {
+    x: Number(position.x) || 0,
+    y: Number(position.y) || 0,
+    width,
+    height,
+  };
+};
+
+const doRoomingRectsOverlap = (a, b, gap = ROOMING_NODE_MIN_GAP) => {
+  return a.x < b.x + b.width + gap
+    && a.x + a.width + gap > b.x
+    && a.y < b.y + b.height + gap
+    && a.y + a.height + gap > b.y;
+};
+
+const hasRoomingNodeCollision = (node, nodes, position = node?.position) => {
+  if (!node) return false;
+  const rect = getRoomingNodeRect(node, position);
+  return nodes.some((other) => {
+    if (!other || other.id === node.id) return false;
+    return doRoomingRectsOverlap(rect, getRoomingNodeRect(other));
+  });
+};
+
+const findNearestFreeRoomingPosition = (node, nodes, preferredPosition) => {
+  if (!node) return preferredPosition || { x: 0, y: 0 };
+  const origin = preferredPosition || node.position || { x: 0, y: 0 };
+  if (!hasRoomingNodeCollision(node, nodes, origin)) return origin;
+  const rect = getRoomingNodeRect(node, origin);
+  const stepX = rect.width + ROOMING_NODE_MIN_GAP;
+  const stepY = rect.height + ROOMING_NODE_MIN_GAP;
+  const candidates = [];
+  for (let ring = 1; ring <= 8; ring += 1) {
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        candidates.push({
+          x: Math.max(0, origin.x + (dx * stepX)),
+          y: Math.max(0, origin.y + (dy * stepY)),
+        });
+      }
+    }
+  }
+  candidates.sort((a, b) => {
+    const da = Math.hypot(a.x - origin.x, a.y - origin.y);
+    const db = Math.hypot(b.x - origin.x, b.y - origin.y);
+    return da - db;
+  });
+  return candidates.find((candidate) => !hasRoomingNodeCollision(node, nodes, candidate)) || origin;
 };
 
 const cropSheetPayload = (payload, range) => {
@@ -1741,6 +1803,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const [panelRoomType, setPanelRoomType] = React.useState("all");
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const flowRef = React.useRef(null);
+  const flowNodesRef = React.useRef([]);
+  const roomDragActiveRef = React.useRef(false);
+  const dragStartPositionRef = React.useRef(new Map());
+  const lastValidPositionRef = React.useRef(new Map());
+  const dragInvalidRef = React.useRef(new Map());
 
   const storageKey = React.useMemo(() => `rukn_rooming_sheet_${program.id}_${city}`, [program.id, city]);
   const packageByLevel = React.useMemo(() => {
@@ -1955,6 +2022,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     });
   }, [normalizedUnassigned, clientsById, getClientContext, panelSearch, panelHotel, panelRoomType]);
 
+  const visibleRooms = React.useMemo(() => rooms.filter((room) => {
+    const hotelMatch = panelHotel === "all"
+      || normalizeRoomingHotel(room.hotel) === normalizeRoomingHotel(panelHotel);
+    const roomTypeMatch = panelRoomType === "all"
+      || normalizeRoomingRoomType(room.roomType) === normalizeRoomingRoomType(panelRoomType);
+    return hotelMatch && roomTypeMatch;
+  }), [rooms, panelHotel, panelRoomType]);
+
   const generateRooms = React.useCallback(() => {
     if (rooms.length && !window.confirm("سيتم استبدال التسكين الحالي بتسكين مولد من بيانات المعتمرين. هل تريد المتابعة؟")) return;
     const nextRooms = [];
@@ -2128,15 +2203,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     setPickerOpen(false);
   }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, markDirty, onToast]);
 
-  const onNodeDragStop = React.useCallback((_event, node) => {
-    setRooms((prev) => prev.map((room) => room.id === node.id ? {
-      ...room,
-      x: node.position.x,
-      y: node.position.y,
-    } : room));
-    markDirty();
-  }, [markDirty]);
-
   const autoArrangeRooms = React.useCallback(() => {
     if (rooms.length && !window.confirm("سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
     setRooms((prev) => autoLayoutRoomNodes(prev));
@@ -2155,7 +2221,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     if (room) openEditRoom(room);
   }, [rooms, openEditRoom]);
 
-  const roomFlowNodes = React.useMemo(() => rooms.map((room) => ({
+  const roomFlowNodes = React.useMemo(() => visibleRooms.map((room) => ({
     id: room.id,
     type: "room",
     position: { x: Number(room.x) || 0, y: Number(room.y) || 0 },
@@ -2164,6 +2230,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       clientsById,
       draggingClientId,
       draggingClient: draggingClientId ? clientsById[draggingClientId] : null,
+      dragInvalid: false,
       getDropReason: getCompatibilityReason,
       onDropClient: insertClientIntoRoom,
       onDragComplete: () => setDraggingClientId(null),
@@ -2173,13 +2240,79 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       onRemoveClient: removeClientFromRoom,
     },
     selected: room.id === selectedRoomId,
-  })), [rooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, deleteRoom, removeClientFromRoom, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, deleteRoom, removeClientFromRoom, selectedRoomId]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
 
   React.useEffect(() => {
+    if (roomDragActiveRef.current) return;
     setFlowNodes(roomFlowNodes);
   }, [roomFlowNodes, setFlowNodes]);
+
+  React.useEffect(() => {
+    flowNodesRef.current = flowNodes;
+  }, [flowNodes]);
+
+  React.useEffect(() => {
+    if (!selectedRoomId) return;
+    if (!visibleRooms.some((room) => room.id === selectedRoomId)) {
+      setSelectedRoomId(null);
+    }
+  }, [selectedRoomId, visibleRooms]);
+
+  const setFlowNodeDragInvalid = React.useCallback((nodeId, invalid) => {
+    if (dragInvalidRef.current.get(nodeId) === invalid) return;
+    dragInvalidRef.current.set(nodeId, invalid);
+    setFlowNodes((current) => current.map((node) => node.id === nodeId
+      ? { ...node, data: { ...node.data, dragInvalid: invalid } }
+      : node));
+  }, [setFlowNodes]);
+
+  const onNodeDragStart = React.useCallback((_event, node) => {
+    roomDragActiveRef.current = true;
+    dragStartPositionRef.current.set(node.id, { ...node.position });
+    const nodes = flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes;
+    const isValidStart = !hasRoomingNodeCollision(node, nodes, node.position);
+    if (isValidStart) lastValidPositionRef.current.set(node.id, { ...node.position });
+    setFlowNodeDragInvalid(node.id, false);
+  }, [roomFlowNodes, setFlowNodeDragInvalid]);
+
+  const onNodeDrag = React.useCallback((_event, node) => {
+    const nodes = (flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes).map((item) => (
+      item.id === node.id ? { ...item, position: node.position, measured: node.measured || item.measured } : item
+    ));
+    const currentNode = nodes.find((item) => item.id === node.id) || node;
+    const invalid = hasRoomingNodeCollision(currentNode, nodes, node.position);
+    if (!invalid) lastValidPositionRef.current.set(node.id, { ...node.position });
+    setFlowNodeDragInvalid(node.id, invalid);
+  }, [roomFlowNodes, setFlowNodeDragInvalid]);
+
+  const onNodeDragStop = React.useCallback((_event, node) => {
+    const nodes = (flowNodesRef.current.length ? flowNodesRef.current : roomFlowNodes).map((item) => (
+      item.id === node.id ? { ...item, position: node.position, measured: node.measured || item.measured } : item
+    ));
+    const currentNode = nodes.find((item) => item.id === node.id) || node;
+    const invalid = hasRoomingNodeCollision(currentNode, nodes, node.position);
+    const fallbackPosition = lastValidPositionRef.current.get(node.id)
+      || dragStartPositionRef.current.get(node.id)
+      || node.position;
+    const nextPosition = invalid
+      ? findNearestFreeRoomingPosition(currentNode, nodes, fallbackPosition)
+      : node.position;
+    roomDragActiveRef.current = false;
+    dragInvalidRef.current.set(node.id, false);
+    setFlowNodes((current) => current.map((item) => item.id === node.id
+      ? { ...item, position: nextPosition, data: { ...item.data, dragInvalid: false } }
+      : item));
+    setRooms((prev) => prev.map((room) => room.id === node.id ? {
+      ...room,
+      x: nextPosition.x,
+      y: nextPosition.y,
+    } : room));
+    lastValidPositionRef.current.set(node.id, { ...nextPosition });
+    markDirty();
+    if (invalid) onToast?.("تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
+  }, [markDirty, onToast, roomFlowNodes, setFlowNodes]);
 
   const fitView = React.useCallback(() => {
     flowRef.current?.fitView?.({ padding: 0.18, duration: 450 });
@@ -2246,7 +2379,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     win.document.close();
   }, [groupedRooms, clientsById, program.name, city]);
 
-  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) || null;
+  const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
 
   return (
@@ -2264,6 +2397,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           transition: none;
           cursor: grabbing;
           box-shadow: 0 20px 46px rgba(15,23,42,.20) !important;
+        }
+        .rooming-flow-canvas .react-flow__controls,
+        .rooming-flow-canvas .react-flow__minimap {
+          z-index: 18 !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+          pointer-events: auto !important;
+          filter: drop-shadow(0 12px 22px rgba(15,23,42,.14));
+        }
+        .rooming-flow-canvas .react-flow__controls {
+          display: flex !important;
+          flex-direction: column;
+          overflow: hidden;
+          border: 1px solid rgba(148,163,184,.28);
+          border-radius: 12px;
+          background: #fff;
+        }
+        .rooming-flow-canvas .react-flow__controls-button {
+          width: 34px;
+          height: 34px;
+          border-bottom: 1px solid rgba(148,163,184,.16);
+          background: #fff;
+          color: #0f172a;
+        }
+        .rooming-flow-canvas .react-flow__controls-button:hover {
+          background: #f8fafc;
         }
         .rooming-unassigned-card {
           transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
@@ -2344,7 +2503,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
           <div style={{
             position: "relative",
-            overflow: "auto",
+            overflow: "hidden",
             borderRadius: 14,
             border: "1px solid rgba(148,163,184,.25)",
             backgroundColor: "#fff",
@@ -2370,6 +2529,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                   panelOpen={panelOpen}
                   onInit={(flow) => { flowRef.current = flow; }}
                   onNodeClick={(_event, node) => setSelectedRoomId(node.id)}
+                  onNodeDragStart={onNodeDragStart}
+                  onNodeDrag={onNodeDrag}
                   onNodeDragStop={onNodeDragStop}
                 />
               </ReactFlowProvider>
@@ -2544,11 +2705,21 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const dropReason = data.draggingClient ? data.getDropReason(data.draggingClient, room) : "";
   const isDropTarget = Boolean(data.draggingClient);
   const canDrop = isDropTarget && !dropReason;
-  const dropBorder = canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "rgba(148,163,184,.32)";
+  const isInvalidPosition = Boolean(data.dragInvalid);
+  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "rgba(148,163,184,.32)";
+  const [menuOpen, setMenuOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!menuOpen) return undefined;
+    const handlePointerDown = () => setMenuOpen(false);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [menuOpen]);
+
   return (
     <article
       className="rooming-flow-node"
-      title={isDropTarget ? (dropReason || "يمكن إدراج المعتمر هنا") : undefined}
+      title={isInvalidPosition ? "لا يمكن وضع غرفة فوق غرفة أخرى" : isDropTarget ? (dropReason || "يمكن إدراج المعتمر هنا") : undefined}
       onDragOver={(event) => {
         if (!data.draggingClient) return;
         event.preventDefault();
@@ -2563,11 +2734,14 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       }}
       style={{
         width: 250,
-        background: canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "#fff",
+        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "#fff",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
-        boxShadow: canDrop
+        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : "none",
+        boxShadow: isInvalidPosition
+          ? "0 18px 40px rgba(239,68,68,.20)"
+          : canDrop
           ? "0 16px 36px rgba(22,163,74,.18)"
           : isDropTarget
             ? "0 16px 36px rgba(239,68,68,.16)"
@@ -2581,7 +2755,68 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         <span style={{ color: accent.text, background: accent.bg, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>
           {getRoomingCategoryLabel(room.category)}
         </span>
-        <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
+          <div
+            className="nodrag"
+            onPointerDown={(event) => event.stopPropagation()}
+            style={{ position: "relative" }}
+          >
+            <button
+              type="button"
+              title="إجراءات الغرفة"
+              aria-label="إجراءات الغرفة"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen((open) => !open);
+              }}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                border: "1px solid rgba(148,163,184,.24)",
+                background: "#fff",
+                color: "#475569",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <MoreHorizontal size={15} />
+            </button>
+            <RoomingMenu open={menuOpen} align="end" width={168}>
+              <div onPointerDown={(event) => event.stopPropagation()}>
+                <RoomingMenuItem
+                  label="إضافة معتمر"
+                  icon={<UserPlus size={14} />}
+                  onClick={() => {
+                    data.onAdd(room.id);
+                    setMenuOpen(false);
+                  }}
+                />
+                <RoomingMenuItem
+                  label="تعديل الغرفة"
+                  icon={<Settings size={14} />}
+                  onClick={() => {
+                    data.onEdit(room.id);
+                    setMenuOpen(false);
+                  }}
+                />
+                <RoomingMenuItem
+                  label="حذف الغرفة"
+                  destructive
+                  icon={<Trash2 size={14} />}
+                  onClick={() => {
+                    data.onDelete(room.id);
+                    setMenuOpen(false);
+                  }}
+                />
+              </div>
+            </RoomingMenu>
+          </div>
+        </div>
       </div>
       <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
         {getRoomingRoomLabel(room.roomType)} • غرفة {room.roomNumber}
@@ -2614,11 +2849,6 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           <span style={{ color: "#94a3b8", fontSize: 12 }}>مكان شاغر</span>
         )}
       </div>
-      <div className="nodrag" style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
-        <button type="button" onClick={(event) => { event.stopPropagation(); data.onAdd(room.id); }} style={{ border: "1px solid rgba(37,99,235,.2)", background: "#eff6ff", color: "#1d4ed8", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>إضافة معتمر</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); data.onEdit(room.id); }} style={{ border: "1px solid rgba(148,163,184,.25)", background: "#f8fafc", color: "#334155", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>تعديل</button>
-        <button type="button" onClick={(event) => { event.stopPropagation(); data.onDelete(room.id); }} style={{ border: "1px solid rgba(239,68,68,.18)", background: "#fff1f2", color: "#b91c1c", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>حذف</button>
-      </div>
     </article>
   );
 }, (prev, next) => (
@@ -2626,6 +2856,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.room === next.data.room
   && prev.data.clientsById === next.data.clientsById
   && prev.data.draggingClientId === next.data.draggingClientId
+  && prev.data.dragInvalid === next.data.dragInvalid
   && prev.data.onAdd === next.data.onAdd
   && prev.data.onEdit === next.data.onEdit
   && prev.data.onDelete === next.data.onDelete
@@ -2685,7 +2916,17 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false }) {
   );
 }
 
-function RoomingFlowSurface({ nodes, onNodesChange, selectedRoomId, onNodeClick, onNodeDragStop, onInit, panelOpen }) {
+function RoomingFlowSurface({
+  nodes,
+  onNodesChange,
+  selectedRoomId,
+  onNodeClick,
+  onNodeDragStart,
+  onNodeDrag,
+  onNodeDragStop,
+  onInit,
+  panelOpen,
+}) {
   const flow = useReactFlow();
 
   React.useEffect(() => {
@@ -2694,6 +2935,7 @@ function RoomingFlowSurface({ nodes, onNodesChange, selectedRoomId, onNodeClick,
 
   return (
     <ReactFlow
+      className="rooming-flow-canvas"
       nodes={nodes}
       edges={[]}
       nodeTypes={roomingNodeTypes}
@@ -2711,13 +2953,15 @@ function RoomingFlowSurface({ nodes, onNodesChange, selectedRoomId, onNodeClick,
       elementsSelectable
       onNodeClick={onNodeClick}
       onNodesChange={onNodesChange}
+      onNodeDragStart={onNodeDragStart}
+      onNodeDrag={onNodeDrag}
       onNodeDragStop={onNodeDragStop}
       proOptions={{ hideAttribution: true }}
       style={{ width: "100%", height: "100%", background: "#fff" }}
     >
       <Background color="#d8dee8" gap={22} size={1.2} />
       <Controls position="bottom-left" showInteractive={false} />
-      {!panelOpen && <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />}
+      <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />
     </ReactFlow>
   );
 }
