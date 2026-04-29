@@ -11,6 +11,7 @@ import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
+import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
@@ -101,7 +102,8 @@ export default function ClientsPage({ store, onToast }) {
     const ok1 = tab === "archived" || filter === "all" || status === filter;
     const ok2 = filterProg === "all" || c.programId === filterProg;
     const q   = search.toLowerCase();
-    const ok3 = !q || (c.name||"").toLowerCase().includes(q) ||
+    const displayName = getClientDisplayName(c, "");
+    const ok3 = !q || displayName.toLowerCase().includes(q) ||
       (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
       (c.ticketNo||"").toLowerCase().includes(q);
     return ok1 && ok2 && ok3;
@@ -275,7 +277,7 @@ export default function ClientsPage({ store, onToast }) {
       {/* Header */}
       <div className="page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
         <div>
-          <h1 style={{ fontSize:21, fontWeight:800, color:"#f8fafc" }}>{t.clients}</h1>
+          <h1 style={{ fontSize:21, fontWeight:800, color:tc.white }}>{t.clients}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>
             {tr("clientsTotal", { total: sourceList.length, filtered: filtered.length })}
           </p>
@@ -297,7 +299,7 @@ export default function ClientsPage({ store, onToast }) {
 
       {/* Tabs */}
       <div className="page-tabs" style={{ display:"flex", gap:4, marginBottom:18,
-        background:"rgba(255,255,255,.03)", border:"1px solid rgba(255,255,255,.07)",
+        background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-section-border)",
         borderRadius:12, padding:4, width:"fit-content" }}>
         {[
           { key:"active",   icon:"users", label:`${t.activeTab} (${activeClients.length})` },
@@ -327,8 +329,8 @@ export default function ClientsPage({ store, onToast }) {
             <FilterChip key={f.key} {...f} active={filter===f.key} onClick={() => setFilter(f.key)} />
           ))}
           <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
-            background:filterProg!=="all"?"rgba(212,175,55,.1)":"rgba(255,255,255,.04)",
-            border:`1px solid ${filterProg!=="all"?tc.gold:"rgba(255,255,255,.1)"}`,
+            background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
+            border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
             borderRadius:20, padding:"6px 14px",
             color:filterProg!=="all"?tc.gold:tc.grey,
             fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
@@ -343,8 +345,8 @@ export default function ClientsPage({ store, onToast }) {
       {tab === "archived" && (
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
           <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
-            background:filterProg!=="all"?"rgba(212,175,55,.1)":"rgba(255,255,255,.04)",
-            border:`1px solid ${filterProg!=="all"?tc.gold:"rgba(255,255,255,.1)"}`,
+            background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
+            border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
             borderRadius:20, padding:"6px 14px",
             color:filterProg!=="all"?tc.gold:tc.grey,
             fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
@@ -510,7 +512,7 @@ export default function ClientsPage({ store, onToast }) {
           >
             {isRTL ? "›" : "‹"}
           </button>
-          <span style={{ fontSize: 13, color: "rgba(248,250,252,.7)", fontFamily: "'Cairo',sans-serif", minWidth: 80, textAlign: "center" }}>
+          <span style={{ fontSize: 13, color: tc.grey, fontFamily: "'Cairo',sans-serif", minWidth: 80, textAlign: "center" }}>
             {currentPage} / {totalPages}
           </span>
           <button
@@ -626,6 +628,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   }, [menuOpen]);
 
   const reference = formatClientReference(client);
+  const displayName = getClientDisplayName(client);
   const phoneLine = client.phone ? client.phone.trim() : "";
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
@@ -657,7 +660,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
         <MenuBtn
           icon="edit" label={editLabel || t.editLabel}
           onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit(); }}
-          color="#f8fafc" hoverBg="rgba(212,175,55,.1)"
+          color={tc.white} hoverBg="rgba(212,175,55,.1)"
           isRTL={isRTL} border />
       )}
       {!isArchived && onTransfer && (
@@ -701,11 +704,11 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             <div className="client-card-mobile-main">
               <span className="client-card-mobile-index">{index + 1}</span>
               <div className="client-card-mobile-avatar">
-                {(client.name || "?")[0]}
+                {(displayName || "?")[0]}
               </div>
               <div className="client-card-mobile-texts">
-                <p className="client-card-mobile-name-text" title={client.name || "—"}>
-                  {client.name || "—"}
+                <p className="client-card-mobile-name-text" title={displayName}>
+                  {displayName}
                 </p>
                 {phoneLine && <p className="client-card-mobile-phone">{phoneLine}</p>}
               </div>
@@ -766,9 +769,10 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
       <div style={{
         display:"flex", alignItems:"center", gap:12, padding:"11px 14px",
-        background:isChecked?"rgba(212,175,55,.1)":hov?"rgba(212,175,55,.05)":"rgba(255,255,255,.02)",
-        border:`1px solid ${isChecked?"rgba(212,175,55,.4)":hov?"rgba(212,175,55,.24)":"rgba(255,255,255,.05)"}`,
+        background:isChecked?"rgba(212,175,55,.1)":hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
+        border:`1px solid ${isChecked?"rgba(212,175,55,.4)":hov?"var(--rukn-row-border-hover)":"var(--rukn-row-border)"}`,
         borderRadius:12, transition:"all .18s", position:"relative",
+        boxShadow: hov ? "0 8px 20px rgba(15,23,42,.05)" : "none",
       }}>
 
         <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
@@ -780,7 +784,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             border:"1px solid rgba(212,175,55,.2)",
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:15, fontWeight:700, color:tc.gold }}>
-            {(client.name || "?")[0]}
+            {(displayName || "?")[0]}
           </div>
           {showCheckbox && (
             <input
@@ -806,7 +810,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           style={{ display:"flex", alignItems:"center", gap:12, flex:1, cursor:"pointer", minWidth:0 }}
         >
           <div style={{ flex:1, minWidth:0 }}>
-            <p style={{ fontWeight:700, fontSize:14, color:"#f8fafc" }}>{client.name || "—"}</p>
+            <p style={{ fontWeight:700, fontSize:14, color:tc.white }}>{displayName}</p>
             <p style={{ fontSize:11, color:tc.grey, marginTop:2 }}>
               {reference} • {client.phone} • {client.city} • {program?.name||"—"}
               {isArchived && client.archivedAt && (
@@ -844,8 +848,8 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
               onClick={e => { e.stopPropagation(); setMenuOpen(o => !o); }}
               style={{
                 width:32, height:32, borderRadius:8,
-                background:menuOpen?"rgba(212,175,55,.18)":"rgba(255,255,255,.06)",
-                border:`1px solid ${menuOpen?"rgba(212,175,55,.4)":"rgba(255,255,255,.12)"}`,
+                background:menuOpen?"rgba(212,175,55,.18)":"var(--rukn-bg-soft)",
+                border:`1px solid ${menuOpen?"rgba(212,175,55,.4)":"var(--rukn-border-soft)"}`,
                 color:menuOpen?tc.gold:tc.grey,
                 cursor:"pointer", fontSize:17, fontWeight:900, letterSpacing:1,
                 display:"flex", alignItems:"center", justifyContent:"center",

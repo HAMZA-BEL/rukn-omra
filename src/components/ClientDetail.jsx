@@ -6,6 +6,7 @@ import PaymentForm from "./PaymentForm";
 import { printReceipt, printClientCard, printInvoice } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
+import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
 
@@ -27,6 +28,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
   const p           = client.passport || {};
   const docs        = client.docs || {};
+  const displayName = getClientDisplayName(client);
 
   // Passport expiry warning
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
@@ -44,11 +46,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           display:"flex", alignItems:"center", justifyContent:"center",
           fontSize:24, fontWeight:900, color:"#060d1a",
           boxShadow:"0 8px 24px rgba(212,175,55,.3)" }}>
-          {(client.name || "?")[0]}
+          {(displayName || "?")[0]}
         </div>
         <div style={{ flex:1 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4, flexWrap:"wrap" }}>
-            <h2 style={{ fontSize:18, fontWeight:800, color:"#f8fafc" }}>{client.name}</h2>
+            <h2 style={{ fontSize:18, fontWeight:800, color:tc.white }}>{displayName}</h2>
             {client.archived && (
               <span style={{
                 fontSize:11, fontWeight:700, padding:"2px 10px", borderRadius:20,

@@ -33,6 +33,7 @@ import {
   getRoomTypeLabel,
   normalizeProgramPackages,
 } from "../utils/programPackages";
+import { getClientDisplayName as resolveClientDisplayName } from "../utils/clientNames";
 import {
   AlignCenter,
   AlignLeft,
@@ -88,6 +89,7 @@ const ROOMING_ROOM_OPTIONS = [
   { value: "double", label: "ثنائية", capacity: 2 },
   { value: "triple", label: "ثلاثية", capacity: 3 },
   { value: "quad", label: "رباعية", capacity: 4 },
+  { value: "quint", label: "خماسية", capacity: 5 },
 ];
 const ROOMING_CATEGORY_OPTIONS = [
   { value: "male_only", label: "رجال فقط" },
@@ -98,6 +100,18 @@ const ROOMING_BLOCK_WIDTH = 4;
 const ROOMING_NODE_WIDTH = 250;
 const ROOMING_NODE_MIN_HEIGHT = 170;
 const ROOMING_NODE_MIN_GAP = 28;
+const PROGRAM_TYPE_OPTIONS = [
+  { value: "عمرة", label: "عمرة" },
+  { value: "حج", label: "حج" },
+];
+
+const normalizeProgramType = (value) => {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return "عمرة";
+  if (text.includes("حج") || text.includes("hajj") || text.includes("hadj")) return "حج";
+  if (text.includes("عمرة") || text.includes("umrah") || text.includes("omra") || text.includes("omrah")) return "عمرة";
+  return "عمرة";
+};
 
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
@@ -244,7 +258,7 @@ const buildRoomingGroupsFromClients = (clients, city) => {
   });
   return Array.from(grouped.values()).map((groupClients, index) => {
     const first = groupClients[0] || {};
-    const roomType = first.roomType || (groupClients.length >= 4 ? "quad" : groupClients.length === 3 ? "triple" : groupClients.length === 2 ? "double" : "single");
+    const roomType = first.roomType || (groupClients.length >= 5 ? "quint" : groupClients.length === 4 ? "quad" : groupClients.length === 3 ? "triple" : groupClients.length === 2 ? "double" : "single");
     const capacity = Math.max(getRoomingCapacity(roomType), groupClients.length || 1);
     const hotel = city === "makkah" ? (first.hotelMecca || "") : (first.hotelMadina || "");
     return {
@@ -400,12 +414,7 @@ const normalizeSheetData = (data, rows = ROOMING_ROWS, cols = ROOMING_COLS) => {
   );
 };
 
-const getClientDisplayName = (client) => (
-  client.name ||
-  `${client.firstName || ""} ${client.lastName || ""}`.trim() ||
-  [client.nom, client.prenom].filter(Boolean).join(" / ") ||
-  "معتمر"
-);
+const getClientDisplayName = (client) => resolveClientDisplayName(client, "معتمر");
 
 const slugifyFilePart = (value) => String(value || "program")
   .replace(/\s+/g, "-")
@@ -862,15 +871,15 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
         padding:22,
         transform: hov ? "translateY(-5px)" : "none",
         transition:"all .3s ease",
-        boxShadow: hov ? "0 24px 56px rgba(0,0,0,.5),0 0 40px rgba(212,175,55,.12)" : "0 4px 24px rgba(0,0,0,.3)",
+        boxShadow: hov ? "var(--rukn-shadow-card-hover)" : "var(--rukn-shadow-card)",
         border:`1px solid ${hov?"rgba(212,175,55,.45)":"rgba(212,175,55,.2)"}`,
       }}>
         {/* header */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
           <div style={{ flex:1 }}>
-            <p style={{ fontSize:16, fontWeight:800, color:"#f8fafc", marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
+            <p style={{ fontSize:16, fontWeight:800, color:tc.white, marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{program.type}</span>
+              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{normalizeProgramType(program.type)}</span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
             </div>
@@ -888,14 +897,14 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
               <p style={{ fontSize:10, color:tc.grey, display:"inline-flex", alignItems:"center", gap:5 }}>
                 <AppIcon name={ic} size={13} color={tc.gold} /> {lb}
               </p>
-              <p style={{ fontSize:12, fontWeight:600, color:"#f8fafc" }}>{vl||"—"}</p>
+              <p style={{ fontSize:12, fontWeight:600, color:tc.white }}>{vl||"—"}</p>
             </div>
           ))}
         </div>
 
         {/* mini stats */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, marginBottom:14,
-          background:"rgba(0,0,0,.2)", borderRadius:10, padding:"10px" }}>
+          background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-section-border)", borderRadius:10, padding:"10px" }}>
           {miniStats.map(({ label, value, color })=>(
             <div key={label} style={{ textAlign:"center" }}>
               <p style={{ fontSize:16, fontWeight:800, color, fontFamily:"'Amiri',serif" }}>{value}</p>
@@ -905,12 +914,12 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
         </div>
 
         {/* seats progress */}
-        <div style={{ marginBottom:14 }}>
+          <div style={{ marginBottom:14 }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:12 }}>
             <span style={{ color:tc.grey }}>{t.seatFill}</span>
             <span style={{ color:pct>80?tc.danger:tc.gold, fontWeight:700 }}>{registered}/{program.seats}</span>
           </div>
-          <div style={{ height:5, background:"rgba(255,255,255,.06)", borderRadius:3, overflow:"hidden" }}>
+          <div style={{ height:5, background:"var(--rukn-border-soft)", borderRadius:3, overflow:"hidden" }}>
             <div style={{ height:"100%", width:`${pct}%`, borderRadius:3, transition:"width 1.2s",
               background:pct>=100?"linear-gradient(90deg,#ef4444,#dc2626)":pct>70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#22c55e,#d4af37)" }} />
           </div>
@@ -952,7 +961,7 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap", marginBottom:10 }}>
         <div>
-          <strong style={{ color:"#f8fafc", fontSize:14 }}>{pkg.level}</strong>
+          <strong style={{ color:tc.white, fontSize:14 }}>{pkg.level}</strong>
           <p style={{ color:tc.grey, fontSize:11, marginTop:3 }}>
             {pkg.mealPlan || "بدون نظام وجبات محدد"}
           </p>
@@ -970,8 +979,8 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
         </span>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8, marginBottom:10 }}>
-        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:"#f8fafc" }}>{pkg.hotelMecca || "—"}</span></p>
-        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:"#f8fafc" }}>{pkg.hotelMadina || "—"}</span></p>
+        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:tc.white }}>{pkg.hotelMecca || "—"}</span></p>
+        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:tc.white }}>{pkg.hotelMadina || "—"}</span></p>
       </div>
       <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
         {PROGRAM_ROOM_PRICE_KEYS.map(key => (
@@ -1036,7 +1045,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
     const q   = search.toLowerCase();
-    const name = (c.name || "").toLowerCase();
+    const name = resolveClientDisplayName(c, "").toLowerCase();
     const phone = (c.phone || "").toLowerCase();
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
@@ -1184,7 +1193,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
           </Button>
         )}
         <div style={{ flex:"1 1 320px", minWidth:0 }}>
-          <h1 style={{ fontSize:20, fontWeight:800, color:"#f8fafc" }}>{program.name}</h1>
+          <h1 style={{ fontSize:20, fontWeight:800, color:tc.white }}>{program.name}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>
             {t.departure}: {program.departure || "—"} &nbsp;•&nbsp;
             {t.returnDate}: {program.returnDate || "—"} &nbsp;•&nbsp;
@@ -1434,7 +1443,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
                     fontFamily:"'Cairo',sans-serif",
                   }}>
                   <span style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center" }}>
-                    <strong style={{ color:"#f8fafc", fontSize:13 }}>{pkg.level}</strong>
+                    <strong style={{ color:tc.white, fontSize:13 }}>{pkg.level}</strong>
                     <span style={{ color:tc.gold, fontSize:11, fontWeight:800 }}>
                       {start ? formatCurrencyForLang(start) : "—"}
                     </span>
@@ -1599,7 +1608,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
                     border:0,
                     outline:0,
                     background:"transparent",
-                    color:"#f8fafc",
+                    color:tc.white,
                     fontSize:13,
                     fontFamily:"'Cairo',sans-serif",
                   }}
@@ -4799,11 +4808,7 @@ function InnerClientRow({
     offset: MENU_OFFSET_PX,
   });
 
-  const fallbackName = (client.name ||
-    `${client.firstName || ""} ${client.lastName || ""}`.trim() ||
-    client.nom ||
-    client.prenom ||
-    "؟").trim();
+  const fallbackName = resolveClientDisplayName(client, "؟");
   const avatarInitial = fallbackName ? fallbackName[0] : "؟";
   const phoneLabel = client.phone ? `${client.phone}` : "";
   const cityLabel = client.city ? `• ${client.city}` : "";
@@ -4919,7 +4924,7 @@ function InnerClientRow({
             </div>
           </div>
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontWeight: 700, fontSize: 13, color: "#f8fafc" }}>{fallbackName || "—"}</p>
+            <p style={{ fontWeight: 700, fontSize: 13, color: tc.white }}>{fallbackName || "—"}</p>
             <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 12 }}>
@@ -4993,7 +4998,7 @@ function InnerClientRow({
                       setMenuOpen(false);
                       onEdit();
                     }}
-                    color="#f8fafc"
+                    color={tc.white}
                     hoverBg="rgba(212,175,55,.1)"
                     isRTL={isRTL}
                     border
@@ -5098,7 +5103,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   }, [program, createPackage]);
   const [form, setForm] = React.useState({
     name:      program?.name      || "",
-    type:      program?.type      || "عمرة مفردة",
+    type:      normalizeProgramType(program?.type || "عمرة"),
     duration:  program?.duration  || "",
     departure: program?.departure || "",
     returnDate:program?.returnDate|| "",
@@ -5129,10 +5134,12 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       const value = Number(raw);
       if (Number.isFinite(value) && value >= 0) prices[key] = value;
     });
-    if (pkg.prices?.quint !== "" && pkg.prices?.quint !== null && pkg.prices?.quint !== undefined) {
-      const legacyQuint = Number(pkg.prices.quint);
-      if (Number.isFinite(legacyQuint) && legacyQuint >= 0) prices.quint = legacyQuint;
-    }
+    ["child", "infant"].forEach((legacyKey) => {
+      const raw = pkg.prices?.[legacyKey];
+      if (raw === "" || raw === null || raw === undefined) return;
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 0) prices[legacyKey] = value;
+    });
     return {
       id: pkg.id || `pkg-${index + 1}`,
       level: (pkg.level || "").trim() || `مستوى ${index + 1}`,
@@ -5165,19 +5172,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     const iso = new Date(ms).toISOString().split("T")[0];
     setForm(prev => (prev.returnDate === iso ? prev : { ...prev, returnDate: iso }));
   }, [form.departure, form.duration]);
-  const programTypeOptions = React.useMemo(() => {
-    const base = [
-      { value:"عمرة رمضان",     label:t.programTypeRamadan },
-      { value:"عمرة شعبان",     label:t.programTypeShaban },
-      { value:"عمرة شوال",      label:t.programTypeShawwal },
-      { value:"برنامج مميز",     label:t.programTypePremium },
-      { value:"عمرة رجب",       label:t.programTypeRajab },
-      { value:"عمرة ذي الحجة",  label:t.programTypeDhuAlHijjah },
-      { value:"عمرة ذي القعدة VIP", label:t.programTypeDhuAlQadah },
-    ];
-    const exists = base.some(opt => opt.value === form.type);
-    return exists ? base : [...base, { value: form.type, label: form.type }];
-  }, [t, form.type]);
+  const programTypeOptions = PROGRAM_TYPE_OPTIONS;
 
   const handleSave = () => {
     if (!form.name||!form.seats) {
@@ -5188,6 +5183,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     const data = {
       ...form,
       ...legacyFields,
+      type: normalizeProgramType(form.type),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
       priceTable,
@@ -5234,9 +5230,9 @@ function ProgramForm({ program, store, onSave, onCancel }) {
           <div style={{ gridColumn:"1/-1" }}>
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:6 }}>{t.notes}</label>
             <textarea value={form.notes} onChange={set("notes")} rows={2}
-              style={{ width:"100%", background:"rgba(255,255,255,.04)",
-                border:"1px solid rgba(255,255,255,.1)", borderRadius:10,
-                padding:"10px 14px", color:"#f8fafc", fontSize:13,
+              style={{ width:"100%", background:"var(--rukn-bg-input)",
+                border:"1px solid var(--rukn-border-input)", borderRadius:10,
+                padding:"10px 14px", color:"var(--rukn-text)", fontSize:13,
                 fontFamily:"'Cairo',sans-serif", outline:"none", resize:"vertical" }} />
           </div>
         </div>
@@ -5279,7 +5275,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
               padding:14,
             }}>
               <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", marginBottom:12 }}>
-                <strong style={{ color:"#f8fafc", fontSize:13 }}>المستوى {index + 1}</strong>
+                <strong style={{ color:tc.white, fontSize:13 }}>المستوى {index + 1}</strong>
                 {packages.length > 1 && (
                   <Button variant="ghost" size="sm" icon="trash" onClick={() => removePackage(index)}>
                     {t.delete}

@@ -152,7 +152,7 @@ export default function TrashPage({ store, onToast }) {
     <div style={{ padding: "28px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <h1 style={{ fontSize: 24, fontWeight: 800, color: tc.gold }}>{t.trash}</h1>
-        <p style={{ color: "rgba(248,250,252,.7)", fontSize: 14 }}>{t.trashSubtitle}</p>
+        <p style={{ color: tc.grey, fontSize: 14 }}>{t.trashSubtitle}</p>
       </div>
 
       <GlassCard style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -167,9 +167,9 @@ export default function TrashPage({ store, onToast }) {
                 style={{
                   padding: "6px 14px",
                   borderRadius: 999,
-                  border: active ? `1px solid ${tc.gold}` : "1px solid rgba(255,255,255,.12)",
-                  background: active ? "rgba(212,175,55,.18)" : "rgba(255,255,255,.03)",
-                  color: active ? tc.gold : "rgba(248,250,252,.8)",
+                  border: active ? `1px solid ${tc.gold}` : "1px solid var(--rukn-section-border)",
+                  background: active ? "rgba(212,175,55,.18)" : "var(--rukn-section-bg)",
+                  color: active ? tc.gold : tc.white,
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: "pointer",
@@ -181,7 +181,7 @@ export default function TrashPage({ store, onToast }) {
           })}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 10, color: "rgba(248,250,252,.8)", fontSize: 13 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, color: tc.white, fontSize: 13 }}>
             <input
               type="checkbox"
               checked={allVisibleSelected}
@@ -197,7 +197,7 @@ export default function TrashPage({ store, onToast }) {
             justifyContent: "space-between",
             alignItems: "center",
           }}>
-            <span style={{ fontSize: 13, color: "rgba(248,250,252,.7)" }}>{selectedLabel}</span>
+            <span style={{ fontSize: 13, color: tc.grey }}>{selectedLabel}</span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <Button
                 variant="success"
@@ -264,27 +264,27 @@ export default function TrashPage({ store, onToast }) {
                       }}>
                         {isProgram ? t.programs : t.clients}
                       </span>
-                      <strong style={{ fontSize: 16, color: "#f8fafc" }}>{item.name}</strong>
+                      <strong style={{ fontSize: 16, color: tc.white }}>{item.name}</strong>
                     </div>
                     {item.subtitle && (
-                      <p style={{ marginTop: 4, fontSize: 13, color: "rgba(248,250,252,.7)" }}>{item.subtitle}</p>
+                      <p style={{ marginTop: 4, fontSize: 13, color: tc.grey }}>{item.subtitle}</p>
                     )}
                     {item.programName && (
-                      <p style={{ marginTop: 2, fontSize: 12, color: "rgba(248,250,252,.6)" }}>
+                      <p style={{ marginTop: 2, fontSize: 12, color: tc.grey }}>
                         {item.programName}
                       </p>
                     )}
                     {isProgram && item.linkedCount > 0 && (
-                      <p style={{ marginTop: 2, fontSize: 12, color: "rgba(248,250,252,.6)" }}>
+                      <p style={{ marginTop: 2, fontSize: 12, color: tc.grey }}>
                         {t.trashClientsLinked.replace("{count}", item.linkedCount)}
                       </p>
                     )}
                   </div>
                   <div style={{ textAlign: dir === "rtl" ? "left" : "right", minWidth: 120 }}>
-                    <p style={{ fontSize: 12, color: "rgba(248,250,252,.55)" }}>{t.trashDeletedOn}</p>
-                    <p style={{ fontSize: 14, fontWeight: 600, color: "#f8fafc" }}>{formatDate(item.deletedAt)}</p>
+                    <p style={{ fontSize: 12, color: tc.grey }}>{t.trashDeletedOn}</p>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: tc.white }}>{formatDate(item.deletedAt)}</p>
                     {item.batchId && (
-                      <p style={{ fontSize: 11, color: "rgba(248,250,252,.45)" }}>
+                      <p style={{ fontSize: 11, color: tc.grey }}>
                         #{item.batchId.slice(0, 8)}
                       </p>
                     )}
@@ -302,7 +302,7 @@ export default function TrashPage({ store, onToast }) {
         title={t.trashConfirmDeleteTitle}
         width={520}
       >
-        <p style={{ fontSize: 15, color: "rgba(248,250,252,.85)", lineHeight: 1.6 }}>{confirmMessage}</p>
+        <p style={{ fontSize: 15, color: tc.white, lineHeight: 1.6 }}>{confirmMessage}</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 28 }}>
           <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
             {t.trashCancel || t.cancel}

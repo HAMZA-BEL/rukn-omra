@@ -32,6 +32,7 @@ import { useClientsSlice } from "./useClientsSlice";
 import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
 import { getRoomTypeLabel } from "../utils/programPackages";
+import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -68,12 +69,7 @@ const toPassportGender = (gender) => {
 };
 
 const buildDisplayName = (data) => {
-  const first = trimString(data.firstName);
-  const last  = trimString(data.lastName);
-  if (first && last) return `${first} ${last}`;
-  if (first) return first;
-  if (last)  return last;
-  return trimString(data.name) || "";
+  return getClientIdentityName(data);
 };
 
 const sanitizePassport = (passport = {}) => ({
@@ -795,15 +791,19 @@ export function useStore(agencyId, onToast) {
     const prepared = prepareClientForSave(data);
     const updated  = { ...prepared, lastModified: now };
     const previous = clients.find(c => c.id === id);
+    if (getClientIdentityName(previous) && !getClientIdentityName(updated)) {
+      notify("تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
+      return;
+    }
     updateClientLocal(id, updated);
     if (previous && previous.programId !== updated.programId) {
       const programName = programs.find(p => p.id === updated.programId)?.name || updated.programId || "";
-      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, updated.name || id);
+      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, getClientDisplayName(updated, id));
     } else {
-      logActivity("client_update", "تم تعديل ملف المعتمر", updated.name || id);
+      logActivity("client_update", "تم تعديل ملف المعتمر", getClientDisplayName(updated, id));
     }
     sync(() => saveClient({ id, ...updated }, agencyId));
-  }, [clients, programs, updateClientLocal, logActivity, sync, agencyId]);
+  }, [clients, programs, updateClientLocal, logActivity, sync, agencyId, notify]);
 
   const transferClients = useCallback((ids, programId) => {
     if (!Array.isArray(ids) || ids.length === 0 || !programId) return 0;
@@ -811,20 +811,33 @@ export function useStore(agencyId, onToast) {
     const affected = clients.filter((c) => idSet.has(c.id));
     if (!affected.length) return 0;
     const now = new Date().toISOString().split("T")[0];
+    const updatedClients = affected.map((client) => ({
+      ...client,
+      programId,
+      lastModified: now,
+    }));
+    const unsafe = updatedClients.find((updated) => {
+      const original = affected.find((client) => client.id === updated.id);
+      return getClientIdentityName(original) && !getClientIdentityName(updated);
+    });
+    if (unsafe) {
+      notify("تم إيقاف النقل لحماية بيانات المعتمر: الاسم سيصبح فارغًا بعد النقل", "error");
+      return 0;
+    }
     transferClientsLocal(ids, programId, now);
     const programName = programs.find((p) => p.id === programId)?.name || programId;
     affected.forEach((client) => {
-      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, client?.name || client.id);
+      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, getClientDisplayName(client, client.id));
     });
     sync(async () => {
       const responses = await Promise.all(
-        affected.map((client) => saveClient({ id: client.id, programId, lastModified: now }, agencyId))
+        updatedClients.map((client) => saveClient(client, agencyId))
       );
       const error = responses.find((r) => r?.error)?.error ?? null;
       return { error };
     });
     return affected.length;
-  }, [clients, programs, transferClientsLocal, logActivity, sync, agencyId]);
+  }, [clients, programs, transferClientsLocal, logActivity, sync, agencyId, notify]);
 
   const deleteClient = useCallback((id) => {
     const client = clients.find((x) => x.id === id);
@@ -908,23 +921,26 @@ export function useStore(agencyId, onToast) {
     const now = new Date().toISOString();
     archiveClientLocal([id], now);
     const c = clients.find((x) => x.id === id);
-    logActivity("client_archive", "تم أرشفة المعتمر", c?.name || id);
-    sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId));
+    logActivity("client_archive", "تم أرشفة المعتمر", getClientDisplayName(c, id));
+    if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
   }, [clients, archiveClientLocal, logActivity, sync, agencyId]);
 
   const archiveClients = useCallback((ids) => {
     if (!ids?.length) return;
     const now = new Date().toISOString();
     archiveClientLocal(ids, now);
-    ids.forEach((id) => sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId)));
+    ids.forEach((id) => {
+      const c = clients.find((x) => x.id === id);
+      if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
+    });
     logActivity("client_bulk_archive", `تمت أرشفة ${ids.length} معتمر`, "");
-  }, [archiveClientLocal, sync, agencyId, logActivity]);
+  }, [clients, archiveClientLocal, sync, agencyId, logActivity]);
 
   const restoreClient = useCallback((id) => {
     restoreArchivedClientLocal(id);
     const c = clients.find((x) => x.id === id);
-    logActivity("client_restore", "تمت استعادة المعتمر من الأرشيف", c?.name || id);
-    sync(() => saveClient({ id, archived: false, archivedAt: null }, agencyId));
+    logActivity("client_restore", "تمت استعادة المعتمر من الأرشيف", getClientDisplayName(c, id));
+    if (c) sync(() => saveClient({ ...c, archived: false, archivedAt: null }, agencyId));
   }, [clients, restoreArchivedClientLocal, logActivity, sync, agencyId]);
 
   const archiveProgram = useCallback((programId) => {
@@ -933,7 +949,7 @@ export function useStore(agencyId, onToast) {
     if (progClients.length === 0) return;
     const ids = progClients.map(c => c.id);
     archiveClientLocal(ids, now);
-    ids.forEach(id => sync(() => saveClient({ id, archived: true, archivedAt: now }, agencyId)));
+    progClients.forEach(client => sync(() => saveClient({ ...client, archived: true, archivedAt: now }, agencyId)));
     const program = programs.find(p => p.id === programId);
     logActivity("program_archive", `تم أرشفة برنامج ${program?.name || programId}`, "");
   }, [activeClients, programs, archiveClientLocal, logActivity, sync, agencyId]);

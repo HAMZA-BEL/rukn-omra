@@ -4,6 +4,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { AppIcon, IconBubble } from "./Icon";
+import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
 
@@ -344,7 +345,7 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
         transform:hov?"translateY(-3px)":"none", transition:"all .25s",
         border:`1px solid ${hov?"rgba(212,175,55,.4)":"rgba(212,175,55,.2)"}` }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:7 }}>
-          <p style={{ fontWeight:700, fontSize:13, color:"#f8fafc", lineHeight:1.4, flex:1 }}>{program.name}</p>
+          <p style={{ fontWeight:700, fontSize:13, color:theme.colors.white, lineHeight:1.4, flex:1 }}>{program.name}</p>
           <span style={{ fontSize:10, color:theme.colors.gold, background:"rgba(212,175,55,.1)",
             padding:"2px 8px", borderRadius:20, whiteSpace:"nowrap", marginRight:6 }}>
             {program.duration}
@@ -419,7 +420,7 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
         borderRadius:10 }}>
         <AppIcon name={icon} size={16} color={accent} />
         <div style={{ flex:1 }}>
-          <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{activity.description}</span>
+          <span style={{ fontSize:13, color:theme.colors.white, fontWeight:600 }}>{activity.description}</span>
           {activity.isArchived && (
             <span style={{ fontSize:10, color:theme.colors.grey, marginInlineStart:6 }}>
               {t.archivedBadge || "مؤرشف"}
@@ -440,6 +441,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const [hov, setHov] = React.useState(false);
   const paidLabel = formatCurrency(paid, lang);
   const remainingLabel = formatCurrency(remaining, lang);
+  const displayName = getClientDisplayName(client);
   return (
     <div onClick={onClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
@@ -455,10 +457,10 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           border:"1px solid rgba(212,175,55,.2)",
           display:"flex", alignItems:"center", justifyContent:"center",
           fontSize:16, fontWeight:700, color:theme.colors.gold }}>
-          {(client.name || "?")[0]}
+          {(displayName || "?")[0]}
         </div>
         <div>
-          <p style={{ fontWeight:700, fontSize:14, color:"#f8fafc" }}>{client.name}</p>
+          <p style={{ fontWeight:700, fontSize:14, color:theme.colors.white }}>{displayName}</p>
           <p style={{ fontSize:11, color:theme.colors.grey, marginTop:2 }}>
             {client.id} • {client.phone} • {program?.name||"—"}
           </p>
@@ -485,7 +487,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
 const SectionHeader = React.memo(function SectionHeader({ title, onMore, btnLabel }) {
   return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-      <h2 style={{ fontSize:14, fontWeight:700, color:"#f8fafc" }}>{title}</h2>
+      <h2 style={{ fontSize:14, fontWeight:700, color:theme.colors.white }}>{title}</h2>
       {onMore && <button onClick={onMore} style={{ background:"none", border:"none",
         color:theme.colors.gold, fontSize:12, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
         {btnLabel}

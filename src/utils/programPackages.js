@@ -1,15 +1,17 @@
-export const PROGRAM_ROOM_PRICE_KEYS = ["quad", "triple", "double", "single", "child", "infant"];
-const LEGACY_ROOM_PRICE_KEYS = ["quint"];
+export const PROGRAM_ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint"];
+const LEGACY_NON_ROOM_PRICE_KEYS = ["child", "infant"];
 const ROOM_TYPE_LABELS = {
-  quad: "رباعية",
-  triple: "ثلاثية",
-  double: "ثنائية",
   single: "فردية",
+  double: "ثنائية",
+  triple: "ثلاثية",
+  quad: "رباعية",
+  quint: "خماسية",
   child: "طفل",
   infant: "رضيع",
-  quint: "خماسية",
 };
 const LEGACY_ROOM_TYPE_KEYS = {
+  "غرفة مفردة": "single",
+  "فردية": "single",
   "غرفة رباعية": "quad",
   "رباعية": "quad",
   "غرفة ثلاثية": "triple",
@@ -17,8 +19,6 @@ const LEGACY_ROOM_TYPE_KEYS = {
   "غرفة مزدوجة": "double",
   "ثنائية": "double",
   "غرفة ثنائية": "double",
-  "غرفة مفردة": "single",
-  "فردية": "single",
   "طفل": "child",
   "رضيع": "infant",
   "غرفة خماسية": "quint",
@@ -41,7 +41,7 @@ const toPriceValue = (value) => {
 
 const collectValidPrices = (packages = []) => packages.flatMap((pkg) => {
   const prices = isPlainObject(pkg?.prices) ? pkg.prices : {};
-  return [...PROGRAM_ROOM_PRICE_KEYS, ...LEGACY_ROOM_PRICE_KEYS]
+  return PROGRAM_ROOM_PRICE_KEYS
     .map((key) => Number(prices[key]))
     .filter((value) => Number.isFinite(value) && value > 0);
 });
@@ -79,7 +79,7 @@ export const getPackageStartingPrice = (pkg) => {
 const normalizePackage = (pkg, index, program = {}) => {
   const sourcePrices = isPlainObject(pkg?.prices) ? pkg.prices : {};
   const prices = {};
-  [...PROGRAM_ROOM_PRICE_KEYS, ...LEGACY_ROOM_PRICE_KEYS].forEach((key) => {
+  [...PROGRAM_ROOM_PRICE_KEYS, ...LEGACY_NON_ROOM_PRICE_KEYS].forEach((key) => {
     const value = toPriceValue(sourcePrices[key]);
     if (value !== "") prices[key] = value;
   });

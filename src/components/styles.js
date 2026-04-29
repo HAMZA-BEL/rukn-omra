@@ -1,9 +1,9 @@
 export const theme = {
   colors: {
-    bg: "#060d1a",
-    bgCard: "rgba(10,22,45,0.85)",
-    bgGlass: "rgba(255,255,255,0.04)",
-    border: "rgba(212,175,55,0.2)",
+    bg: "var(--rukn-bg)",
+    bgCard: "var(--rukn-bg-card)",
+    bgGlass: "var(--rukn-bg-glass)",
+    border: "var(--rukn-border)",
     borderHover: "rgba(212,175,55,0.5)",
     gold: "#d4af37",
     goldLight: "#f0d060",
@@ -12,8 +12,8 @@ export const theme = {
     greenLight: "#22c55e",
     greenDim: "rgba(34,197,94,0.15)",
     greenDark: "#0f3d22",
-    white: "#f8fafc",
-    grey: "#94a3b8",
+    white: "var(--rukn-text)",
+    grey: "var(--rukn-text-muted)",
     greyDim: "rgba(148,163,184,0.1)",
     danger: "#ef4444",
     dangerDim: "rgba(239,68,68,0.15)",
@@ -26,11 +26,73 @@ export const theme = {
 
 export const globalCSS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html { font-size: 16px; }
+  html {
+    font-size: 16px;
+    color-scheme: dark;
+    --rukn-bg: #060d1a;
+    --rukn-bg-page: #060d1a;
+    --rukn-bg-card: rgba(10,22,45,0.85);
+    --rukn-bg-glass: rgba(255,255,255,0.04);
+    --rukn-bg-soft: rgba(255,255,255,0.03);
+    --rukn-bg-input: rgba(255,255,255,0.04);
+    --rukn-bg-select: #0d1f3c;
+    --rukn-bg-modal: linear-gradient(145deg,#0d1f3c,#060d1a);
+    --rukn-bg-sidebar: linear-gradient(180deg,#0d1f3c 0%,#060d1a 100%);
+    --rukn-text: #f8fafc;
+    --rukn-text-muted: #94a3b8;
+    --rukn-text-strong: #f8fafc;
+    --rukn-border: rgba(212,175,55,0.2);
+    --rukn-border-soft: rgba(255,255,255,0.07);
+    --rukn-border-input: rgba(255,255,255,0.1);
+    --rukn-shadow-card: 0 4px 24px rgba(0,0,0,.3);
+    --rukn-shadow-card-hover: 0 20px 60px rgba(0,0,0,.4), 0 0 30px rgba(212,175,55,.1);
+    --rukn-row-bg: rgba(255,255,255,.025);
+    --rukn-row-hover: rgba(212,175,55,.05);
+    --rukn-row-border: rgba(255,255,255,.06);
+    --rukn-row-border-hover: rgba(212,175,55,.24);
+    --rukn-section-bg: rgba(255,255,255,.03);
+    --rukn-section-border: rgba(255,255,255,.08);
+    --rukn-table-head-bg: rgba(212,175,55,.07);
+    --rukn-overlay: rgba(0,0,0,.75);
+    --rukn-gold: #d4af37;
+    --rukn-gold-light: #f0d060;
+    --rukn-gold-dim: rgba(212,175,55,0.15);
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --rukn-bg: #f7f3ea;
+    --rukn-bg-page: #f7f3ea;
+    --rukn-bg-card: rgba(255,255,255,0.96);
+    --rukn-bg-glass: rgba(255,255,255,0.88);
+    --rukn-bg-soft: rgba(255,255,255,0.9);
+    --rukn-bg-input: rgba(255,255,255,0.98);
+    --rukn-bg-select: #ffffff;
+    --rukn-bg-modal: linear-gradient(145deg,#ffffff,#f7f3ea);
+    --rukn-bg-sidebar: linear-gradient(180deg,#fffaf0 0%,#f0e8d8 100%);
+    --rukn-text: #142133;
+    --rukn-text-muted: #4f6175;
+    --rukn-text-strong: #0f172a;
+    --rukn-border: rgba(184,148,30,0.28);
+    --rukn-border-soft: rgba(15,23,42,0.14);
+    --rukn-border-input: rgba(15,23,42,0.16);
+    --rukn-shadow-card: 0 10px 34px rgba(15,23,42,.1);
+    --rukn-shadow-card-hover: 0 18px 52px rgba(15,23,42,.14), 0 0 0 1px rgba(212,175,55,.1);
+    --rukn-row-bg: rgba(255,255,255,.96);
+    --rukn-row-hover: rgba(184,148,30,.08);
+    --rukn-row-border: rgba(15,23,42,.11);
+    --rukn-row-border-hover: rgba(184,148,30,.28);
+    --rukn-section-bg: rgba(255,255,255,.84);
+    --rukn-section-border: rgba(15,23,42,.1);
+    --rukn-table-head-bg: rgba(184,148,30,.11);
+    --rukn-overlay: rgba(15,23,42,.42);
+    --rukn-gold: #b8941e;
+    --rukn-gold-light: #d4af37;
+    --rukn-gold-dim: rgba(184,148,30,0.12);
+  }
   body {
     font-family: 'Cairo', sans-serif;
-    background: #060d1a;
-    color: #f8fafc;
+    background: var(--rukn-bg);
+    color: var(--rukn-text);
     direction: rtl;
     min-height: 100vh;
     overflow-x: hidden;
@@ -85,7 +147,101 @@ export const globalCSS = `
     font-family: 'Cairo', sans-serif;
     direction: rtl;
   }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--rukn-text-muted);
+    opacity: .78;
+  }
   button { font-family: 'Cairo', sans-serif; cursor: pointer; }
+  .app-main {
+    background: var(--rukn-bg-page);
+    color: var(--rukn-text);
+    transition: background .2s ease, color .2s ease;
+  }
+  .page-body,
+  .programs-page {
+    color: var(--rukn-text);
+  }
+  html[data-theme="light"] .page-header h1,
+  html[data-theme="light"] .page-body h1,
+  html[data-theme="light"] .page-body h2,
+  html[data-theme="light"] .page-body h3 {
+    color: var(--rukn-text-strong) !important;
+  }
+  html[data-theme="light"] .react-flow__renderer,
+  html[data-theme="light"] .react-flow__pane {
+    background: #fff;
+  }
+  html[data-theme="light"] .filter-chip {
+    background: var(--rukn-bg-card);
+    border-color: var(--rukn-border-soft);
+    color: var(--rukn-text-muted);
+    box-shadow: 0 2px 8px rgba(15,23,42,.03);
+  }
+  html[data-theme="light"] .filter-chip.is-active {
+    background: rgba(184,148,30,.12);
+    border-color: rgba(184,148,30,.38);
+    color: var(--rukn-gold);
+    box-shadow: 0 6px 18px rgba(184,148,30,.08);
+  }
+  html[data-theme="light"] .clearance-empty-card,
+  html[data-theme="light"] .clearance-card-summary,
+  html[data-theme="light"] .clear-card,
+  html[data-theme="light"] .clear-card-info-item,
+  html[data-theme="light"] .clear-card-field,
+  html[data-theme="light"] .clear-card-status-block,
+  html[data-theme="light"] .client-card-mobile,
+  html[data-theme="light"] .client-card-mobile-finance div {
+    background: var(--rukn-bg-card);
+    border-color: var(--rukn-border-soft);
+    box-shadow: 0 8px 24px rgba(15,23,42,.06);
+  }
+  html[data-theme="light"] .clear-card-name,
+  html[data-theme="light"] .clear-card-field-value,
+  html[data-theme="light"] .client-card-mobile-name-text,
+  html[data-theme="light"] .clearance-card-summary .summary-grid strong {
+    color: var(--rukn-text-strong);
+  }
+  html[data-theme="light"] .clear-card-meta,
+  html[data-theme="light"] .clear-card-phone,
+  html[data-theme="light"] .clear-card-contact,
+  html[data-theme="light"] .clear-card-info-item span,
+  html[data-theme="light"] .clear-card-field-label,
+  html[data-theme="light"] .clearance-card-summary .summary-row,
+  html[data-theme="light"] .clearance-card-summary .summary-grid p,
+  html[data-theme="light"] .client-card-mobile-phone,
+  html[data-theme="light"] .client-card-mobile-subinfo,
+  html[data-theme="light"] .client-card-mobile-finance span,
+  html[data-theme="light"] .client-card-mobile-tags {
+    color: var(--rukn-text-muted);
+  }
+  html[data-theme="light"] .clear-card-kebab,
+  html[data-theme="light"] .client-card-mobile-kebab {
+    background: var(--rukn-bg-soft);
+    border-color: var(--rukn-border-soft);
+    color: var(--rukn-text-muted);
+  }
+  html[data-theme="light"] .clear-card-menu {
+    background: rgba(255,255,255,.98);
+    border-color: var(--rukn-border-soft);
+    box-shadow: 0 18px 40px rgba(15,23,42,.12);
+  }
+  html[data-theme="light"] .clear-card-menu button {
+    color: var(--rukn-text-strong);
+  }
+  html[data-theme="light"] .clear-card-menu button:hover {
+    background: rgba(184,148,30,.08);
+  }
+  html[data-theme="light"] .invoice-btn {
+    background: rgba(184,148,30,.1);
+    border-color: rgba(184,148,30,.3);
+    color: var(--rukn-gold);
+  }
+  html[data-theme="light"] .invoice-btn:hover,
+  html[data-theme="light"] .invoice-btn:focus-visible {
+    background: rgba(184,148,30,.16);
+    box-shadow: 0 0 0 3px rgba(184,148,30,.08);
+  }
 
   .stagger-1 { animation-delay: .05s; }
   .stagger-2 { animation-delay: .10s; }

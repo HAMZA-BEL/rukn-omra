@@ -4,6 +4,26 @@ import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
 
 const t = theme.colors;
+const v = {
+  bgCard: "var(--rukn-bg-card)",
+  bgGlass: "var(--rukn-bg-glass)",
+  bgSoft: "var(--rukn-bg-soft)",
+  bgInput: "var(--rukn-bg-input)",
+  bgSelect: "var(--rukn-bg-select)",
+  bgModal: "var(--rukn-bg-modal)",
+  border: "var(--rukn-border)",
+  borderSoft: "var(--rukn-border-soft)",
+  borderInput: "var(--rukn-border-input)",
+  gold: "var(--rukn-gold)",
+  goldLight: "var(--rukn-gold-light)",
+  goldDim: "var(--rukn-gold-dim)",
+  text: "var(--rukn-text)",
+  textMuted: "var(--rukn-text-muted)",
+  textStrong: "var(--rukn-text-strong)",
+  shadowCard: "var(--rukn-shadow-card)",
+  shadowCardHover: "var(--rukn-shadow-card-hover)",
+  overlay: "var(--rukn-overlay)",
+};
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 export function Card({ children, style, className = "", onClick, hover = false }) {
@@ -15,15 +35,15 @@ export function Card({ children, style, className = "", onClick, hover = false }
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        background: t.bgCard,
-        border: `1px solid ${hovered && hover ? t.borderHover : t.border}`,
+        background: v.bgCard,
+        border: `1px solid ${hovered && hover ? t.borderHover : v.border}`,
         borderRadius: 16,
         backdropFilter: "blur(20px)",
         transition: "all .3s ease",
         transform: hovered && hover ? "translateY(-2px)" : "none",
         boxShadow: hovered && hover
-          ? "0 20px 60px rgba(0,0,0,.4), 0 0 30px rgba(212,175,55,.1)"
-          : "0 4px 24px rgba(0,0,0,.3)",
+          ? v.shadowCardHover
+          : v.shadowCard,
         ...style,
       }}
     >
@@ -40,8 +60,8 @@ export function GlassCard({ children, style, gold = false, ...rest }) {
       style={{
         background: gold
           ? "linear-gradient(135deg,rgba(212,175,55,.12),rgba(212,175,55,.04))"
-          : "rgba(255,255,255,0.03)",
-        border: `1px solid ${gold ? "rgba(212,175,55,.3)" : "rgba(255,255,255,.07)"}`,
+          : v.bgSoft,
+        border: `1px solid ${gold ? "rgba(212,175,55,.3)" : v.borderSoft}`,
         borderRadius: 16,
         backdropFilter: "blur(20px)",
         ...style,
@@ -68,8 +88,8 @@ export function Button({ children, onClick, variant = "primary", size = "md",
     },
     secondary: {
       background: hov ? "rgba(212,175,55,.15)" : "rgba(212,175,55,.08)",
-      color: t.gold,
-      border: `1px solid ${hov ? t.gold : "rgba(212,175,55,.3)"}`,
+      color: v.gold,
+      border: `1px solid ${hov ? v.gold : "rgba(212,175,55,.3)"}`,
       boxShadow: "none",
     },
     danger: {
@@ -86,8 +106,8 @@ export function Button({ children, onClick, variant = "primary", size = "md",
     },
     ghost: {
       background: hov ? "rgba(255,255,255,.06)" : "transparent",
-      color: t.grey,
-      border: `1px solid ${hov ? "rgba(255,255,255,.15)" : "rgba(255,255,255,.07)"}`,
+      color: v.textMuted,
+      border: `1px solid ${hov ? v.border : v.borderSoft}`,
       boxShadow: "none",
     },
     warning: {
@@ -146,7 +166,7 @@ export function Input({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, ...style }}>
       {label && (
-        <label style={{ fontSize: 13, fontWeight: 600, color: focused ? t.gold : t.grey }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: focused ? v.gold : v.textMuted }}>
           {label} {required && <span style={{ color: t.danger }}>*</span>}
         </label>
       )}
@@ -159,11 +179,11 @@ export function Input({
         onBlur={() => setFocused(false)}
         {...rest}
         style={{
-          background: "rgba(255,255,255,0.04)",
-          border: `1px solid ${error ? t.danger : focused ? t.gold : "rgba(255,255,255,.1)"}`,
+          background: v.bgInput,
+          border: `1px solid ${error ? t.danger : focused ? v.gold : v.borderInput}`,
           borderRadius: 10,
           padding: "10px 14px",
-          color: t.white,
+          color: v.text,
           fontSize: 14,
           fontFamily: "'Cairo',sans-serif",
           direction: dir,
@@ -185,7 +205,7 @@ export function Select({ label, value, onChange, options, required, style, disab
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, ...style }}>
       {label && (
-        <label style={{ fontSize: 13, fontWeight: 600, color: focused ? t.gold : t.grey }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: focused ? v.gold : v.textMuted }}>
           {label} {required && <span style={{ color: t.danger }}>*</span>}
         </label>
       )}
@@ -196,11 +216,11 @@ export function Select({ label, value, onChange, options, required, style, disab
         onBlur={() => setFocused(false)}
         disabled={disabled}
         style={{
-          background: "#0d1f3c",
-          border: `1px solid ${focused ? t.gold : "rgba(255,255,255,.1)"}`,
+          background: v.bgSelect,
+          border: `1px solid ${focused ? v.gold : v.borderInput}`,
           borderRadius: 10,
           padding: "10px 14px",
-          color: value ? t.white : t.grey,
+          color: value ? v.text : v.textMuted,
           fontSize: 14,
           fontFamily: "'Cairo',sans-serif",
           direction: dir,
@@ -310,7 +330,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(0,0,0,.75)",
+          background: v.overlay,
         backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: 16,
@@ -319,7 +339,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
       <div
         className="animate-scaleIn"
         style={{
-          background: "linear-gradient(145deg,#0d1f3c,#060d1a)",
+          background: v.bgModal,
           border: "1px solid rgba(212,175,55,.3)",
           borderRadius: 20,
           width: "100%", maxWidth: width,
@@ -390,11 +410,11 @@ export function SearchBar({ value, onChange, placeholder = "ابحث...", style,
         disabled={disabled}
         style={{
           width: "100%",
-          background: "rgba(255,255,255,.04)",
-          border: "1px solid rgba(212,175,55,.2)",
+          background: v.bgInput,
+          border: `1px solid ${v.border}`,
           borderRadius: 12,
           padding: isRTL ? "12px 46px 12px 16px" : "12px 16px 12px 46px",
-          color: "#f8fafc",
+          color: v.text,
           fontSize: 14,
           fontFamily: "'Cairo',sans-serif",
           direction: dir,

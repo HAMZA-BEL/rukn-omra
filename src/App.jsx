@@ -4,7 +4,7 @@ import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
-import { Menu as MenuIcon, Home, Users, FolderKanban, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal } from "lucide-react";
+import { Menu as MenuIcon, Home, Users, FolderKanban, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
@@ -39,6 +39,25 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [previewNotification, setPreviewNotification] = React.useState(null);
+  const [themeMode, setThemeMode] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem("rukn-theme");
+      return saved === "light" || saved === "dark" ? saved : "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    try {
+      localStorage.setItem("rukn-theme", themeMode);
+    } catch {}
+  }, [themeMode]);
+
+  const toggleThemeMode = React.useCallback(() => {
+    setThemeMode((current) => current === "dark" ? "light" : "dark");
+  }, []);
 
   const navigate = React.useCallback((target) => {
     setPageHistory(h => [...h, page]);
@@ -126,9 +145,11 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
       <style>{globalCSS}</style>
       <div style={{ position:"fixed", inset:0, zIndex:-1,
         background:"radial-gradient(ellipse 80% 50% at 50% -20%,rgba(26,107,58,.3),transparent)",
+        opacity: themeMode === "light" ? 0.24 : 1,
         pointerEvents:"none" }} />
       <div style={{ position:"fixed", inset:0, zIndex:-1,
         background:"radial-gradient(ellipse 60% 40% at 80% 80%,rgba(212,175,55,.06),transparent)",
+        opacity: themeMode === "light" ? 0.7 : 1,
         pointerEvents:"none" }} />
       <div style={{ position:"fixed", inset:0, zIndex:-1,
         backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Cpath d='M30 0 L60 30 L30 60 L0 30Z' fill='none' stroke='rgba(212,175,55,0.03)' stroke-width='1'/%3E%3C/svg%3E")`,
@@ -139,6 +160,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
           syncStatus={store.syncStatus}
           notificationsCount={store.unreadNotificationsCount}
           agency={store.agency}
+          themeMode={themeMode}
+          onToggleTheme={toggleThemeMode}
           onExport={() => { store.exportData(); showToast(t.exportSuccess, "success"); }}
           onImport={async(f)=>{ try{ await store.importData(f); showToast(t.importSuccess, "success"); }catch{ showToast(t.importError, "error"); } }}
           onLogout={onLogout} />
@@ -183,6 +206,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
                   onNavigate={navigate}
                   page={page}
                   variant="compact"
+                  themeMode={themeMode}
+                  onToggleTheme={toggleThemeMode}
                   onNotificationAction={handleNotificationAction}
                 />
               }
@@ -214,6 +239,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
                     tr={tr}
                     onNavigate={navigate}
                     page={page}
+                    themeMode={themeMode}
+                    onToggleTheme={toggleThemeMode}
                     onNotificationAction={handleNotificationAction}
                   />
                 }
@@ -319,11 +346,53 @@ function LangSwitcher({ lang, dir, setLang, className = "" }) {
   );
 }
 
-function HeaderActions({ lang, dir, setLang, store, t, tr, onNavigate, page, variant = "full", onNotificationAction }) {
+function ThemeToggle({ themeMode, onToggleTheme, compact = false }) {
+  const isLight = themeMode === "light";
+  return (
+    <button
+      type="button"
+      onClick={onToggleTheme}
+      title={isLight ? "الوضع الليلي" : "الوضع النهاري"}
+      aria-label={isLight ? "الوضع الليلي" : "الوضع النهاري"}
+      aria-pressed={isLight}
+      style={{
+        width: compact ? 36 : 44,
+        height: compact ? 36 : 44,
+        borderRadius: "50%",
+        border: "1px solid var(--rukn-border-soft)",
+        background: "var(--rukn-bg-card)",
+        color: "var(--rukn-gold)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: "var(--rukn-shadow-card)",
+        transition: "transform .2s ease, border-color .2s ease, background .2s ease",
+        flexShrink: 0,
+      }}
+      onMouseEnter={(event) => {
+        event.currentTarget.style.transform = "translateY(-2px)";
+        event.currentTarget.style.borderColor = "var(--rukn-border)";
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.transform = "none";
+        event.currentTarget.style.borderColor = "var(--rukn-border-soft)";
+      }}
+    >
+      {isLight ? <Moon size={compact ? 16 : 18} /> : <Sun size={compact ? 16 : 18} />}
+    </button>
+  );
+}
+
+function HeaderActions({ lang, dir, setLang, store, t, tr, onNavigate, page, variant = "full", themeMode, onToggleTheme, onNotificationAction }) {
   const directionClass = dir === "rtl" ? "header-actions--rtl" : "header-actions--ltr";
   const classes = ["header-actions", `header-actions--${variant}`, directionClass].join(" ");
   return (
     <div className={classes}>
+      <ThemeToggle
+        themeMode={themeMode}
+        onToggleTheme={onToggleTheme}
+        compact={variant === "compact"}
+      />
       <LangSwitcher
         lang={lang}
         dir={dir}

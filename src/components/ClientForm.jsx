@@ -6,6 +6,7 @@ import { useLang } from "../hooks/useLang";
 import { calcExpiry } from "../utils/amadeus";
 import { AppIcon } from "./Icon";
 import {
+  PROGRAM_ROOM_PRICE_KEYS,
   getPackageRoomPrice,
   getRoomTypeLabel,
   getRoomTypeOptions,
@@ -55,6 +56,7 @@ const ROOM_CAPACITY = {
   double: 2,
   triple: 3,
   quad: 4,
+  quint: 5,
 };
 
 const getLocalizedValue = (value, map, t) => {
@@ -186,6 +188,8 @@ const buildFormState = (client, defaultProgramId, programs) => {
     client?.price,
     officialPrice
   );
+  const normalizedRoomType = normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, "double"));
+  const supportedRoomType = PROGRAM_ROOM_PRICE_KEYS.includes(normalizedRoomType) ? normalizedRoomType : "double";
 
   const passport = client?.passport || {};
   const docs     = client?.docs     || {};
@@ -205,8 +209,8 @@ const buildFormState = (client, defaultProgramId, programs) => {
     packageLevel,
     hotelMecca:  pickString(client?.hotelMecca, client?.hotel_mecca),
     hotelMadina: pickString(client?.hotelMadina, client?.hotel_madina),
-    roomType:    normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, "double")) || "double",
-    roomTypeLabel: pickString(client?.roomTypeLabel, client?.room_type_label),
+    roomType:    supportedRoomType,
+    roomTypeLabel: pickString(client?.roomTypeLabel, client?.room_type_label, getRoomTypeLabel(supportedRoomType)),
     officialPrice,
     salePrice,
     ticketNo: pickString(client?.ticketNo, client?.ticket_no, client?.ticketNumber, client?.ticket),
@@ -242,6 +246,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const formatLevelLabel = (value) => getLocalizedValue(value, HOTEL_LEVEL_KEYS, t);
   const formatHotelName = (value) => getLocalizedValue(value, HOTEL_NAME_KEYS, t);
   const skipProgramResetRef = React.useRef(true);
+  const salePriceManualRef = React.useRef(isEdit);
+  const previousOfficialPriceRef = React.useRef(0);
 
   const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs));
   const [entryMode, setEntryMode] = React.useState(isEdit ? ROOM_ENTRY_MODES.SINGLE : ROOM_ENTRY_MODES.SINGLE);
@@ -252,6 +258,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (client) {
       skipProgramResetRef.current = true;
       skipInitialAutoFillRef.current = true;
+      salePriceManualRef.current = true;
       setForm(buildFormState(client, defaultProgramId, programs));
       setEntryMode(ROOM_ENTRY_MODES.SINGLE);
       setGroupPeople([createGroupPerson(0)]);
@@ -263,6 +270,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
   const set     = k => e => setForm(f => ({...f, [k]: e.target.value}));
   const setSalePrice = e => {
+    salePriceManualRef.current = true;
     setAutoPriceNote("");
     setForm(f => ({ ...f, salePrice: e.target.value }));
   };
@@ -322,6 +330,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       || null,
     [programPackages, form.packageId, form.packageLevel, form.hotelLevel]
   );
+  const derivedOfficialPrice = React.useMemo(
+    () => selectedPackage ? getPackageRoomPrice(selectedPackage, form.roomType) : 0,
+    [selectedPackage, form.roomType]
+  );
+  const officialPriceMissing = Boolean(selectedPackage && form.roomType && !derivedOfficialPrice);
 
   const handlePackageChange = React.useCallback((e) => {
     const pkg = programPackages.find(item => item.id === e.target.value) || null;
@@ -345,39 +358,63 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     }));
   }, []);
 
-  // Auto-fill hotel + price when package or room changes
+  const applyOfficialPriceToSale = React.useCallback(() => {
+    if (!derivedOfficialPrice) return;
+    salePriceManualRef.current = false;
+    setForm((f) => ({ ...f, salePrice: derivedOfficialPrice }));
+    setAutoPriceNote("تم استخدام السعر الرسمي كسعر البيع");
+  }, [derivedOfficialPrice]);
+
+  // Auto-fill hotel + official price when package or room changes
   const prevLevelRef = React.useRef("");
   const prevRoomRef  = React.useRef("");
   const skipInitialAutoFillRef = React.useRef(isEdit);
 
   React.useEffect(() => {
-    if (!selectedPackage) return;
+    if (!selectedPackage) {
+      setForm((f) => (Number(f.officialPrice) === 0 ? f : { ...f, officialPrice: 0 }));
+      previousOfficialPriceRef.current = 0;
+      return;
+    }
     if (skipInitialAutoFillRef.current) {
       skipInitialAutoFillRef.current = false;
       prevLevelRef.current = selectedPackage.id;
       prevRoomRef.current = form.roomType;
-      return;
     }
-    if (
+    const changed = !(
       prevLevelRef.current === selectedPackage.id &&
       prevRoomRef.current  === form.roomType
-    ) return;
+    );
     prevLevelRef.current = selectedPackage.id;
     prevRoomRef.current  = form.roomType;
 
-    const ap = getPackageRoomPrice(selectedPackage, form.roomType);
-    setForm(f => ({
-      ...f,
-      packageId: selectedPackage.id,
-      hotelLevel: selectedPackage.level,
-      packageLevel: selectedPackage.level,
-      roomTypeLabel: getRoomTypeLabel(f.roomType),
-      hotelMecca:    selectedPackage.hotelMecca,
-      hotelMadina:   selectedPackage.hotelMadina,
-      ...(ap ? { officialPrice: ap, salePrice: ap } : {}),
-    }));
-    setAutoPriceNote(ap ? "تم تعبئة السعر تلقائيًا من المستوى ونوع الغرفة المختارين" : "");
-  }, [form.roomType, selectedPackage]);
+    setForm(f => {
+      const previousOfficial = Number(previousOfficialPriceRef.current || 0);
+      const currentSale = Number(f.salePrice || 0);
+      const shouldFillSale = Boolean(derivedOfficialPrice) && (
+        !salePriceManualRef.current ||
+        !currentSale ||
+        (previousOfficial && currentSale === previousOfficial)
+      );
+      return {
+        ...f,
+        packageId: selectedPackage.id,
+        hotelLevel: selectedPackage.level,
+        packageLevel: selectedPackage.level,
+        roomTypeLabel: getRoomTypeLabel(f.roomType),
+        hotelMecca:    selectedPackage.hotelMecca,
+        hotelMadina:   selectedPackage.hotelMadina,
+        officialPrice: derivedOfficialPrice || 0,
+        ...(shouldFillSale ? { salePrice: derivedOfficialPrice } : {}),
+      };
+    });
+    previousOfficialPriceRef.current = derivedOfficialPrice || 0;
+    if (changed) {
+      setAutoPriceNote(derivedOfficialPrice
+        ? "تم تحديث السعر الرسمي من المستوى ونوع الغرفة المختارين"
+        : "");
+    }
+  }, [form.roomType, selectedPackage, derivedOfficialPrice]);
 
   // Reset hotel when program changes
   React.useEffect(() => {
@@ -386,6 +423,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       return;
     }
     const firstPackage = programPackages[0];
+    salePriceManualRef.current = false;
     setAutoPriceNote("");
     setForm(f => ({
       ...f,
@@ -396,8 +434,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       hotelMadina: firstPackage?.hotelMadina || "",
       roomType: "double",
       roomTypeLabel: getRoomTypeLabel("double"),
-      officialPrice:0,
-      salePrice:0,
     }));
   }, [form.programId, programPackages]);
 
@@ -451,7 +487,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         hotelMadina: selectedPackage?.hotelMadina || form.hotelMadina,
         roomType: normalizeRoomTypeKey(form.roomType),
         roomTypeLabel: getRoomTypeLabel(form.roomType),
-        officialPrice: Number(form.officialPrice),
+        officialPrice: Number(derivedOfficialPrice || 0),
         salePrice: Number(form.salePrice),
         roomCategory: form.roomCategory,
         roomCategoryLabel: getRoomCategoryLabel(form.roomCategory),
@@ -509,7 +545,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       hotelMadina: selectedPackage?.hotelMadina || form.hotelMadina,
       roomType: normalizeRoomTypeKey(form.roomType),
       roomTypeLabel: getRoomTypeLabel(form.roomType),
-      officialPrice: Number(form.officialPrice),
+      officialPrice: Number(derivedOfficialPrice || 0),
       salePrice:     Number(form.salePrice),
       gender: form.gender,
       passport: {
@@ -796,8 +832,13 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
               <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMecca) || "—"}</span></p>
               <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMadina) || "—"}</span></p>
               <p style={{ fontSize:11, color:tc.grey }}>{t.mealPlan}: <span style={{ color:"#f8fafc" }}>{selectedPackage.mealPlan || "—"}</span></p>
-              <p style={{ fontSize:11, color:tc.grey }}>{t.salePrice}: <span style={{ color:tc.gold }}>{getPackageRoomPrice(selectedPackage, form.roomType) ? `${formatPrice(getPackageRoomPrice(selectedPackage, form.roomType))} ${currencyLabel}` : "—"}</span></p>
+              <p style={{ fontSize:11, color:tc.grey }}>{t.officialPrice}: <span style={{ color:tc.gold }}>{derivedOfficialPrice ? `${formatPrice(derivedOfficialPrice)} ${currencyLabel}` : "—"}</span></p>
             </div>
+            {officialPriceMissing && (
+              <p style={{ fontSize:11, color:tc.warning, marginTop:8 }}>
+                لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج
+              </p>
+            )}
             {autoPriceNote && (
               <p style={{ fontSize:11, color:tc.greenLight, marginTop:8 }}>{autoPriceNote}</p>
             )}
@@ -814,10 +855,45 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="banknote" size={14} color={tc.gold} /> {t.priceSection}</p>
         <div className="form-grid form-grid--three">
-          <Input label={`${t.officialPrice} (${currencyLabel})`} value={form.officialPrice} onChange={set("officialPrice")} type="number" />
-          <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={setSalePrice}
-            type="number" required error={errors.salePrice}
-            inputStyle={{ border:`1px solid ${tc.gold}`, color:tc.gold, fontWeight:700 }} />
+          <Input
+            label={`${t.officialPrice} (${currencyLabel})`}
+            value={derivedOfficialPrice || ""}
+            onChange={() => {}}
+            type="number"
+            readOnly
+            inputStyle={{
+              cursor:"not-allowed",
+              background:"var(--rukn-bg-soft)",
+              border:"1px solid var(--rukn-border-soft)",
+              color:"var(--rukn-text-muted)",
+              fontWeight:700,
+            }}
+          />
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={setSalePrice}
+              type="number" required error={errors.salePrice}
+              inputStyle={{ border:`1px solid ${tc.gold}`, color:tc.gold, fontWeight:700 }} />
+            <button
+              type="button"
+              onClick={applyOfficialPriceToSale}
+              disabled={!derivedOfficialPrice}
+              style={{
+                alignSelf:"flex-start",
+                border:"1px solid rgba(212,175,55,.3)",
+                background:"rgba(212,175,55,.08)",
+                color:derivedOfficialPrice ? tc.gold : tc.grey,
+                borderRadius:8,
+                padding:"5px 10px",
+                fontSize:11,
+                fontWeight:700,
+                fontFamily:"'Cairo',sans-serif",
+                cursor:derivedOfficialPrice ? "pointer" : "not-allowed",
+                opacity:derivedOfficialPrice ? 1 : 0.55,
+              }}
+            >
+              استخدام السعر الرسمي
+            </button>
+          </div>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey }}>{t.discount}</label>
             <div style={{ background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.2)",
@@ -827,6 +903,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             </div>
           </div>
         </div>
+        {officialPriceMissing && (
+          <p style={{ fontSize:11, color:tc.warning, marginTop:8 }}>
+            لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج
+          </p>
+        )}
       </GlassCard>
 
       {/* ── Passport ── */}

@@ -5,6 +5,7 @@ import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
 import { printInvoice } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
+import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -71,14 +72,15 @@ export default function ClearancePage({ store }) {
     const status    = getClientStatus(c);
     const lastPmt   = getClientLastPayment(c.id);
     const displayRef = formatFileReference(c);
+    const displayName = getClientDisplayName(c);
     const clientPayments = payments.filter(p => p.clientId === c.id);
-    return { ...c, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt, displayRef, clientPayments };
+    return { ...c, displayName, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt, displayRef, clientPayments };
   }).filter(c => {
     const ok1 = filter === "all" || c.status === filter;
     const q   = search.toLowerCase();
     const refMatch = (c.displayRef || "").toString().toLowerCase();
     const ok2 = !q
-      || (c.name || "").toLowerCase().includes(q)
+      || (c.displayName || c.name || "").toLowerCase().includes(q)
       || (c.id || "").toLowerCase().includes(q)
       || refMatch.includes(q);
     return ok1 && ok2;
@@ -115,7 +117,7 @@ export default function ClearancePage({ store }) {
     <div className="page-body clearance-page" style={{ padding:"0 32px 32px" }}>
       <div className="page-header clearance-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
         <div>
-          <h1 style={{ fontSize:21, fontWeight:800, color:"#f8fafc" }}>{t.clearanceReport}</h1>
+          <h1 style={{ fontSize:21, fontWeight:800, color:tc.white }}>{t.clearanceReport}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>{t.clearanceDesc}</p>
         </div>
         <Button variant="ghost" icon="print" onClick={() => {
@@ -185,7 +187,7 @@ export default function ClearancePage({ store }) {
         <div className="table-grid table-grid-head clearance-grid" style={{ display:"grid",
           gridTemplateColumns:tableColumns,
           gap:6, padding:"8px 14px",
-          background:"rgba(212,175,55,.07)", borderRadius:8, marginBottom:6,
+          background:"var(--rukn-table-head-bg)", border:"1px solid var(--rukn-row-border)", borderRadius:8, marginBottom:6,
           fontSize:11, fontWeight:700, color:t.grey,
           width:"100%",
           boxSizing:"border-box" }}>
@@ -212,7 +214,7 @@ export default function ClearancePage({ store }) {
           <div className="table-grid table-grid-foot clearance-grid" style={{ display:"grid",
             gridTemplateColumns:tableColumns,
             gap:6, padding:"10px 14px", marginTop:8,
-            background:"rgba(212,175,55,.08)", border:"1px solid rgba(212,175,55,.2)",
+            background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-row-border-hover)",
             borderRadius:10, fontSize:12, fontWeight:700,
             width:"100%",
             boxSizing:"border-box" }}>
@@ -289,9 +291,10 @@ function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel })
         display:"grid",
         gridTemplateColumns:gridTemplate || "repeat(9,minmax(0,1fr))",
         gap:6, padding:"10px 14px",
-        background:hov?"rgba(212,175,55,.04)":"rgba(255,255,255,.02)",
-        border:`1px solid ${hov?"rgba(212,175,55,.18)":"rgba(255,255,255,.04)"}`,
+        background:hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
+        border:`1px solid ${hov?"var(--rukn-row-border-hover)":"var(--rukn-row-border)"}`,
         borderRadius:10, transition:"all .15s", alignItems:"center",
+        boxShadow: hov ? "0 10px 24px rgba(15,23,42,.05)" : "none",
         width:"100%",
         boxSizing:"border-box",
       }}>
@@ -299,7 +302,7 @@ function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel })
           {client.displayRef || client.id || "—"}
         </span>
         <div style={{ minWidth:0, overflow:"hidden" }}>
-          <p style={{ ...TEXT_CLAMP_STYLE, fontWeight:700, fontSize:13, color:"#f8fafc" }}>{client.name}</p>
+          <p style={{ ...TEXT_CLAMP_STYLE, fontWeight:700, fontSize:13, color:theme.colors.white }}>{client.displayName || getClientDisplayName(client)}</p>
           <p style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>{contactLine || "—"}</p>
         </div>
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>{client.prog?.name||"—"}</span>
@@ -354,7 +357,7 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
     <div className="clear-card animate-fadeInUp" style={{ animationDelay:`${index*.02}s` }}>
       <div className="clear-card-header">
         <div className="clear-card-title">
-          <p className="clear-card-name" title={client.name || "—"}>{client.name || "—"}</p>
+          <p className="clear-card-name" title={client.displayName || getClientDisplayName(client)}>{client.displayName || getClientDisplayName(client)}</p>
           {phoneLine && <p className="clear-card-phone">{phoneLine}</p>}
           {cityLine && <p className="clear-card-meta">{cityLine}</p>}
         </div>

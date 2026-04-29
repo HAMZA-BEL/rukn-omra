@@ -38,7 +38,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
 
   return (
     <aside className="app-sidebar" style={{ width:collapsed?68:224, minHeight:"100vh",
-      background:"linear-gradient(180deg,#0d1f3c 0%,#060d1a 100%)",
+      background:"var(--rukn-bg-sidebar)",
       borderLeft: dir==="rtl"?"1px solid rgba(212,175,55,.15)":"none",
       borderRight:dir!=="rtl"?"1px solid rgba(212,175,55,.15)":"none",
       display:"flex", flexDirection:"column",
@@ -81,7 +81,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
                 <p style={{ fontSize:14, fontWeight:900, fontFamily:"'Amiri',serif",
                   background:"linear-gradient(135deg,#f0d060,#d4af37)",
                   WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{t.appName}</p>
-                <p style={{ fontSize:9, color:tc.grey }}>
+                <p style={{ fontSize:9, color:"var(--rukn-text-muted)" }}>
                   {agency?.nameAr || agency?.nameFr || t.agencyName}
                 </p>
               </div>
@@ -162,7 +162,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
             }}>
               {SYNC_DOT[syncStatus]?.label}
             </span>
-            <span style={{ fontSize: 9, color: "rgba(148,163,184,.35)" }}>
+              <span style={{ fontSize: 9, color: "var(--rukn-text-muted)" }}>
               {syncStatus === "synced" ? "مزامن" : syncStatus === "syncing" ? "يزامن..." : "غير متصل"}
             </span>
           </div>
@@ -194,7 +194,7 @@ function NavItem({ item, active, collapsed, onClick }) {
         borderRadius:10, marginBottom:2,
         background:active?"linear-gradient(135deg,rgba(212,175,55,.2),rgba(212,175,55,.08))":hov?"rgba(255,255,255,.05)":"transparent",
         border:`1px solid ${active?"rgba(212,175,55,.3)":"transparent"}`,
-        color:active?theme.colors.gold:hov?"#f8fafc":theme.colors.grey,
+        color:active?theme.colors.gold:hov?"var(--rukn-text-strong)":"var(--rukn-text-muted)",
         cursor:"pointer", fontFamily:"'Cairo',sans-serif",
         fontSize:12, fontWeight:active?700:400,
         transition:"all .18s", textAlign:"start" }}

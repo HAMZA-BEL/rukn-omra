@@ -224,7 +224,8 @@ function ActivityLogItem({ row, t }) {
   const timeStr = `${time.toLocaleDateString("ar-MA")} ${time.toLocaleTimeString("ar-MA", { hour:"2-digit", minute:"2-digit" })}`;
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"12px 16px",
-      borderBottom:"1px solid rgba(255,255,255,.05)" }}>
+      background:"var(--rukn-row-bg)",
+      borderBottom:"1px solid var(--rukn-row-border)" }}>
       <div style={{ display:"flex", justifyContent:"space-between", gap:12 }}>
         <span style={{ fontSize:14, fontWeight:700, color:theme.colors.white }}>{row.description}</span>
         <span style={{ fontSize:11, color:theme.colors.grey }}>{timeStr}</span>

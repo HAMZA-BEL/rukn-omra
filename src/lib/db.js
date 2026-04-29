@@ -6,6 +6,7 @@
 import { supabase } from "./supabase";
 import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
+import { getClientIdentityName } from "../utils/clientNames";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -111,7 +112,7 @@ const toClient = (c, agencyId) => {
   id:                c.id,
   agency_id:         agencyId,
   program_id:        normalizeForeignKey(c.programId),
-  name:              cleanString(c.name),
+  name:              cleanString(getClientIdentityName(c)),
   first_name:        cleanString(c.firstName),
   last_name:         cleanString(c.lastName),
   nom:               cleanString(c.nom),
