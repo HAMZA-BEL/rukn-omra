@@ -673,6 +673,44 @@ export default function ProgramsPage({ store, onToast }) {
     return programs.filter(p => (p.name || "").toLowerCase().includes(q));
   }, [programs, search]);
 
+  const openProgramDetail = React.useCallback((programId) => {
+    setActiveProgram(programId);
+    if (typeof window === "undefined") return;
+    const nextState = {
+      ...(window.history.state || {}),
+      page: "programs",
+      programId,
+    };
+    window.history.pushState(nextState, "", window.location.href);
+  }, []);
+
+  const closeProgramDetail = React.useCallback((useHistory = true) => {
+    if (!activeProgram) return;
+    if (
+      useHistory
+      && typeof window !== "undefined"
+      && window.history.state?.page === "programs"
+      && window.history.state?.programId
+    ) {
+      window.history.back();
+      return;
+    }
+    setActiveProgram(null);
+  }, [activeProgram]);
+
+  React.useEffect(() => {
+    const syncProgramFromHistory = (state) => {
+      if (state?.page !== "programs") return;
+      setActiveProgram(state?.programId || null);
+    };
+    syncProgramFromHistory(typeof window !== "undefined" ? window.history.state : null);
+    const handlePopState = (event) => {
+      syncProgramFromHistory(event.state);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const handleConfirmDeleteProgram = React.useCallback(() => {
     if (!deletePrompt) return;
     deleteProgram(deletePrompt.program.id);
@@ -687,7 +725,7 @@ export default function ProgramsPage({ store, onToast }) {
     return (
       <ProgramInner
         program={prog} store={store} onToast={onToast}
-        onBack={() => setActiveProgram(null)}
+        onBack={() => closeProgramDetail(true)}
       />
     );
   }
@@ -733,7 +771,7 @@ export default function ProgramsPage({ store, onToast }) {
                 registered={reg} pct={pct}
                 totalPaid={paid} totalRemaining={rev-paid}
                 cleared={cl} unpaid={un} delay={i*.06}
-                onClick={() => setActiveProgram(p.id)}
+                onClick={() => openProgramDetail(p.id)}
                 onEdit={e => { e.stopPropagation(); setEditing(p); }}
                 onDelete={e => {
                   e.stopPropagation();
@@ -957,7 +995,7 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
 // ═══════════════════════════════════════
 // PROGRAM INNER — full client list
 // ═══════════════════════════════════════
-function ProgramInner({ program, store, onToast }) {
+function ProgramInner({ program, store, onToast, onBack }) {
   const {
     clients,
     getClientTotalPaid,
@@ -1140,6 +1178,11 @@ function ProgramInner({ program, store, onToast }) {
 
       {/* back + title */}
       <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:24, flexWrap:"wrap" }}>
+        {typeof onBack === "function" && (
+          <Button variant="ghost" icon="chevronBack" onClick={onBack}>
+            رجوع
+          </Button>
+        )}
         <div style={{ flex:"1 1 320px", minWidth:0 }}>
           <h1 style={{ fontSize:20, fontWeight:800, color:"#f8fafc" }}>{program.name}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>

@@ -67,13 +67,57 @@ import {
   XCircle,
 } from "lucide-react";
 
+function BrandKaabaIcon({
+  size = 18,
+  color = "currentColor",
+  strokeWidth = 1.9,
+  style,
+  ...props
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ flexShrink: 0, ...style }}
+      aria-hidden="true"
+      {...props}
+    >
+      <path
+        d="M6.5 8.5L12 5.5L17.5 8.5V16L12 19L6.5 16V8.5Z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.5 8.5L12 11.5L17.5 8.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 10.25H15"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <path
+        d="M11.15 12.35H12.85V16.1H11.15V12.35Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
 export const ICONS = {
   activity: ClipboardList,
   alert: AlertCircle,
   archive: Archive,
   archivedFolder: FolderArchive,
   banknote: Banknote,
-  brand: Landmark,
+  brand: BrandKaabaIcon,
   briefcase: Briefcase,
   building: Building2,
   camera: Camera,
