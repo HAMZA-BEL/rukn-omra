@@ -91,6 +91,18 @@ const fromProgram = (row) => ({
 
 const toClient = (c, agencyId) => {
   const normalizedGender = normalizeGender(c.gender || c.passport?.gender);
+  const rooming = c.docs?.rooming || (
+    c.roomingGroupId || c.roomCategory
+      ? {
+          groupId: cleanString(c.roomingGroupId),
+          groupName: cleanString(c.roomingGroupName),
+          category: cleanString(c.roomCategory),
+          categoryLabel: cleanString(c.roomCategoryLabel),
+          groupSize: Number(c.roomingGroupSize || 0),
+          seatIndex: Number(c.roomingSeatIndex || 0),
+        }
+      : null
+  );
   const passport = {
     ...(c.passport ?? {}),
     gender: toPassportGender(normalizedGender),
@@ -114,7 +126,7 @@ const toClient = (c, agencyId) => {
   sale_price:        c.salePrice        ?? c.price ?? 0,
   ticket_no:         cleanString(c.ticketNo),
   passport:          passport,
-  docs:              c.docs             ?? {},
+  docs:              { ...(c.docs ?? {}), ...(rooming ? { rooming } : {}) },
   notes:             cleanString(c.notes),
   registration_date: c.registrationDate ?? null,
   last_modified:     c.lastModified     ?? null,
@@ -128,6 +140,7 @@ const toClient = (c, agencyId) => {
 
 const fromClient = (row) => {
   const gender = normalizeGender(row.gender || row.passport?.gender);
+  const rooming = row.docs?.rooming || {};
   return {
   id:               row.id,
   programId:        row.program_id,
@@ -144,6 +157,12 @@ const fromClient = (row) => {
   hotelMadina:      row.hotel_madina,
   roomType:         row.room_type,
   roomTypeLabel:    getRoomTypeLabel(row.room_type),
+  roomingGroupId:   rooming.groupId || "",
+  roomingGroupName: rooming.groupName || "",
+  roomCategory:     rooming.category || "",
+  roomCategoryLabel: rooming.categoryLabel || "",
+  roomingGroupSize: Number(rooming.groupSize || 0),
+  roomingSeatIndex: Number(rooming.seatIndex || 0),
   gender,
   officialPrice:    Number(row.official_price ?? 0),
   salePrice:        Number(row.sale_price ?? 0),

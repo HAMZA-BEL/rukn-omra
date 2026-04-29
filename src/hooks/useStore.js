@@ -90,7 +90,27 @@ const sanitizeDocs = (docs = {}) => ({
   photo:        Boolean(docs.photo),
   vaccine:      Boolean(docs.vaccine),
   contract:     Boolean(docs.contract),
+  ...(docs.rooming ? { rooming: docs.rooming } : {}),
 });
+
+const sanitizeRoomingMeta = (data = {}, docs = {}) => {
+  const rooming = docs?.rooming || {};
+  const roomingGroupId = trimString(data.roomingGroupId || rooming.groupId);
+  const roomingGroupName = trimString(data.roomingGroupName || rooming.groupName);
+  const roomCategory = trimString(data.roomCategory || rooming.category);
+  const roomCategoryLabel = trimString(data.roomCategoryLabel || rooming.categoryLabel);
+  const roomingGroupSize = Number(data.roomingGroupSize ?? rooming.groupSize ?? 0) || 0;
+  const roomingSeatIndex = Number(data.roomingSeatIndex ?? rooming.seatIndex ?? 0) || 0;
+  if (!roomingGroupId && !roomCategory) return null;
+  return {
+    groupId: roomingGroupId,
+    groupName: roomingGroupName,
+    category: roomCategory,
+    categoryLabel: roomCategoryLabel,
+    groupSize: roomingGroupSize,
+    seatIndex: roomingSeatIndex,
+  };
+};
 
 const getNotificationKey = (notif) => {
   if (!notif) return "ntf:none";
@@ -103,6 +123,7 @@ const getNotificationKey = (notif) => {
 const prepareClientForSave = (data) => {
   const gender = normalizeClientGender(data.gender || data.passport?.gender);
   const passport = sanitizePassport(data.passport);
+  const rooming = sanitizeRoomingMeta(data, data.docs);
   const cleaned = {
     ...data,
     firstName: trimString(data.firstName),
@@ -118,8 +139,17 @@ const prepareClientForSave = (data) => {
       ...passport,
       gender: toPassportGender(gender),
     },
-    docs:      sanitizeDocs(data.docs),
+    docs:      {
+      ...sanitizeDocs(data.docs),
+      ...(rooming ? { rooming } : {}),
+    },
   };
+  cleaned.roomingGroupId = rooming?.groupId || "";
+  cleaned.roomingGroupName = rooming?.groupName || "";
+  cleaned.roomCategory = rooming?.category || "";
+  cleaned.roomCategoryLabel = rooming?.categoryLabel || "";
+  cleaned.roomingGroupSize = rooming?.groupSize || 0;
+  cleaned.roomingSeatIndex = rooming?.seatIndex || 0;
   cleaned.name = buildDisplayName(cleaned);
   return cleaned;
 };
@@ -463,6 +493,14 @@ export function useStore(agencyId, onToast) {
       deletedBatchId: row.deleted_batch_id ?? null,
     });
     const mapClientRow = (row) => ({
+      ...(row.docs?.rooming ? {
+        roomingGroupId: row.docs.rooming.groupId || "",
+        roomingGroupName: row.docs.rooming.groupName || "",
+        roomCategory: row.docs.rooming.category || "",
+        roomCategoryLabel: row.docs.rooming.categoryLabel || "",
+        roomingGroupSize: Number(row.docs.rooming.groupSize || 0),
+        roomingSeatIndex: Number(row.docs.rooming.seatIndex || 0),
+      } : {}),
       id: row.id,
       programId: row.program_id,
       name: row.name,

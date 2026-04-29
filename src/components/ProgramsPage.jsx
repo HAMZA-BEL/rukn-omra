@@ -3,6 +3,16 @@ import { createPortal } from "react-dom";
 import jspreadsheet from "jspreadsheet-ce";
 import "jspreadsheet-ce/dist/jspreadsheet.css";
 import "jsuites/dist/jsuites.css";
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  useNodesState,
+  useReactFlow,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge } from "./UI";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
@@ -31,6 +41,7 @@ import {
   Columns3,
   FileSpreadsheet,
   Italic,
+  LayoutGrid,
   Maximize2,
   Merge,
   Minimize2,
@@ -52,6 +63,7 @@ import {
   Type,
   Undo2,
   WrapText,
+  Scan,
 } from "lucide-react";
 
 const tc = theme.colors;
@@ -80,6 +92,37 @@ const ROOMING_CATEGORY_OPTIONS = [
   { value: "family", label: "عائلة" },
 ];
 const ROOMING_BLOCK_WIDTH = 4;
+
+const normalizeRoomingText = (value) => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[ـًٌٍَُِّْ]/g, "")
+  .replace(/\s+/g, " ");
+
+const normalizeRoomingHotel = (value) => normalizeRoomingText(value);
+
+const normalizeRoomingGender = (value) => {
+  const text = normalizeRoomingText(value);
+  if (!text) return "";
+  if (["male", "m", "man", "homme", "ذكر", "رجل", "رجال"].includes(text)) return "male";
+  if (["female", "f", "woman", "femme", "أنثى", "انثى", "امرأة", "نساء"].includes(text)) return "female";
+  return text;
+};
+
+const normalizeRoomingRoomType = (...values) => {
+  for (const value of values) {
+    const text = normalizeRoomingText(value);
+    if (!text) continue;
+    if (["single", "simple", "فردية", "فردي", "غرفة مفردة", "chambre simple", "single room"].includes(text)) return "single";
+    if (["double", "twin", "ثنائية", "ثنائي", "غرفة ثنائية", "غرفة مزدوجة", "مزدوجة", "مزدوج", "chambre double", "double room"].includes(text)) return "double";
+    if (["triple", "ثلاثية", "ثلاثي", "غرفة ثلاثية", "chambre triple", "triple room"].includes(text)) return "triple";
+    if (["quad", "quadruple", "رباعية", "رباعي", "غرفة رباعية", "chambre quadruple", "quad room"].includes(text)) return "quad";
+    if (["quint", "quintuple", "خماسية", "خماسي", "غرفة خماسية", "chambre quintuple", "quint room"].includes(text)) return "quint";
+    const normalizedKey = getRoomTypeLabel(text) ? text : "";
+    if (["single", "double", "triple", "quad", "quint"].includes(normalizedKey)) return normalizedKey;
+  }
+  return "";
+};
 
 const getColumnName = (index) => {
   let name = "";
@@ -124,11 +167,13 @@ const ROOMING_BORDER = "2px solid #111827";
 const ROOMING_FAMILY_KEYS = ["familyGroup", "familyId", "familyName", "groupId", "groupName"];
 
 const getRoomingRoomLabel = (roomType) => {
-  return ROOMING_ROOM_OPTIONS.find((option) => option.value === roomType)?.label || getRoomTypeLabel(roomType) || "—";
+  const key = normalizeRoomingRoomType(roomType) || roomType;
+  return ROOMING_ROOM_OPTIONS.find((option) => option.value === key)?.label || getRoomTypeLabel(key) || "—";
 };
 
 const getRoomingCapacity = (roomType) => {
-  return ROOMING_ROOM_OPTIONS.find((option) => option.value === roomType)?.capacity || 1;
+  const key = normalizeRoomingRoomType(roomType) || roomType;
+  return ROOMING_ROOM_OPTIONS.find((option) => option.value === key)?.capacity || 1;
 };
 
 const getRoomingCategoryLabel = (category) => {
@@ -172,6 +217,84 @@ const isCoordsInsideRoom = (room, x, y) => {
   const width = Number(room.width) || ROOMING_BLOCK_WIDTH;
   const height = Number(room.height) || getRoomBlockHeight(room.capacity);
   return x >= startX && x < startX + width && y >= startY && y < startY + height;
+};
+
+const inferRoomCategoryFromClients = (clients = []) => {
+  const genders = new Set(clients.map((client) => client.gender).filter(Boolean));
+  if (genders.size <= 1) {
+    const only = Array.from(genders)[0];
+    if (only === "female") return "female_only";
+    return "male_only";
+  }
+  return "family";
+};
+
+const buildRoomingGroupsFromClients = (clients, city) => {
+  const grouped = new Map();
+  clients.forEach((client) => {
+    const key = client.roomingGroupId || `single:${client.id}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(client);
+  });
+  return Array.from(grouped.values()).map((groupClients, index) => {
+    const first = groupClients[0] || {};
+    const roomType = first.roomType || (groupClients.length >= 4 ? "quad" : groupClients.length === 3 ? "triple" : groupClients.length === 2 ? "double" : "single");
+    const capacity = Math.max(getRoomingCapacity(roomType), groupClients.length || 1);
+    const hotel = city === "makkah" ? (first.hotelMecca || "") : (first.hotelMadina || "");
+    return {
+      id: createRoomId(),
+      city,
+      roomNumber: String(index + 1).padStart(2, "0"),
+      roomType,
+      category: first.roomCategory || inferRoomCategoryFromClients(groupClients),
+      hotel,
+      capacity,
+      height: getRoomBlockHeight(capacity),
+      width: ROOMING_BLOCK_WIDTH,
+      occupantIds: groupClients.map((client) => client.id),
+      roomingGroupId: first.roomingGroupId || "",
+      roomingGroupName: first.roomingGroupName || "",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+};
+
+const getRoomingCategoryAccent = (category) => {
+  if (category === "female_only") return { border: "#db2777", bg: "#fdf2f8", text: "#9d174d" };
+  if (category === "family") return { border: "#16a34a", bg: "#f0fdf4", text: "#166534" };
+  return { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8" };
+};
+
+const autoLayoutRoomNodes = (rooms = []) => {
+  const sorted = rooms.slice().sort((a, b) => {
+    const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
+    if (hotel) return hotel;
+    const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
+    if (type) return type;
+    const category = String(a.category || "").localeCompare(String(b.category || ""), "ar");
+    if (category) return category;
+    return (a.order || 0) - (b.order || 0);
+  });
+  const sectionOffsets = new Map();
+  let currentHotel = "";
+  let sectionIndex = -1;
+  return sorted.map((room, index) => {
+    const hotel = room.hotel || "فندق غير محدد";
+    if (hotel !== currentHotel) {
+      currentHotel = hotel;
+      sectionIndex += 1;
+      sectionOffsets.set(hotel, 0);
+    }
+    const localIndex = sectionOffsets.get(hotel) || 0;
+    sectionOffsets.set(hotel, localIndex + 1);
+    return {
+      ...room,
+      order: room.order ?? index,
+      x: sectionIndex * 360,
+      y: 90 + localIndex * 210,
+    };
+  });
 };
 
 const cropSheetPayload = (payload, range) => {
@@ -411,7 +534,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
     sheet.setValueFromCoords(
       startX,
       rowY,
-      occupant ? `${getClientDisplayName(occupant)}${occupant.gender === "male" ? " — ذكر" : occupant.gender === "female" ? " — أنثى" : ""}` : "مكان شاغر",
+      occupant ? `${getClientDisplayName(occupant)}` : "مكان شاغر",
       true
     );
   }
@@ -1029,7 +1152,7 @@ function ProgramInner({ program, store, onToast }) {
       </div>
 
       {programTab === "rooming" ? (
-        <RoomingSheetWorkspace
+        <RoomingWorkflowCanvas
           program={program}
           clients={progClients}
           packages={packages}
@@ -1599,6 +1722,777 @@ function ProgramInner({ program, store, onToast }) {
   );
 }
 
+function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) {
+  const [city, setCity] = React.useState("makkah");
+  const [rooms, setRooms] = React.useState([]);
+  const [unassigned, setUnassigned] = React.useState([]);
+  const [panelOpen, setPanelOpen] = React.useState(true);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [zoom, setZoom] = React.useState(100);
+  const [dirty, setDirty] = React.useState(false);
+  const [savedAt, setSavedAt] = React.useState(null);
+  const [selectedRoomId, setSelectedRoomId] = React.useState(null);
+  const [roomModal, setRoomModal] = React.useState({ open: false, roomId: null });
+  const [roomDraft, setRoomDraft] = React.useState({ roomType: "double", category: "male_only", hotel: "" });
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
+  const [panelSearch, setPanelSearch] = React.useState("");
+  const [panelHotel, setPanelHotel] = React.useState("all");
+  const [panelRoomType, setPanelRoomType] = React.useState("all");
+  const [draggingClientId, setDraggingClientId] = React.useState(null);
+  const flowRef = React.useRef(null);
+
+  const storageKey = React.useMemo(() => `rukn_rooming_sheet_${program.id}_${city}`, [program.id, city]);
+  const packageByLevel = React.useMemo(() => {
+    const map = new Map();
+    packages.forEach((pkg) => map.set(pkg.level, pkg));
+    return map;
+  }, [packages]);
+  const packageById = React.useMemo(() => {
+    const map = new Map();
+    packages.forEach((pkg) => {
+      if (pkg.id) map.set(pkg.id, pkg);
+    });
+    return map;
+  }, [packages]);
+  const clientsById = React.useMemo(() => Object.fromEntries(clients.map((client) => [client.id, client])), [clients]);
+
+  const getClientContext = React.useCallback((client) => {
+    const level = client.packageLevel || client.hotelLevel || "";
+    const pkg = packageByLevel.get(level) || packageById.get(client.packageId || client.package_id);
+    const hotel = city === "makkah"
+      ? (client.hotelMecca || pkg?.hotelMecca || program.hotelMecca || "")
+      : (client.hotelMadina || pkg?.hotelMadina || program.hotelMadina || "");
+    const roomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room) || "";
+    const gender = normalizeRoomingGender(client.gender);
+    return {
+      name: getClientDisplayName(client),
+      gender,
+      genderLabel: gender === "male" ? "ذكر" : gender === "female" ? "أنثى" : "—",
+      hotel,
+      roomType,
+      roomTypeLabel: getRoomingRoomLabel(roomType),
+      category: client.roomCategory || "",
+      familyKey: client.roomingGroupId || getRoomingFamilyKey(client),
+    };
+  }, [city, packageById, packageByLevel, program]);
+
+  const hotelOptions = React.useMemo(() => {
+    const values = new Set(getProgramHotelsForCity(program, packages, city));
+    clients.forEach((client) => {
+      const hotel = getClientContext(client).hotel;
+      if (hotel) values.add(hotel);
+    });
+    return Array.from(values);
+  }, [program, packages, city, clients, getClientContext]);
+
+  const readCanvasState = React.useCallback(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return { rooms: [], unassigned: [], version: 4 };
+      const parsed = JSON.parse(raw);
+      if (parsed.kind === "rooming-canvas") {
+        return {
+          rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
+          unassigned: Array.isArray(parsed.unassigned) ? parsed.unassigned : [],
+          version: 4,
+        };
+      }
+      const legacyRooms = Object.values(parsed?.meta?.rooms || {});
+      const legacyInserted = new Set(Object.keys(parsed?.meta?.insertedClients || {}));
+      return {
+        rooms: legacyRooms.map((room, index) => ({
+          ...room,
+          id: room.id || createRoomId(),
+          order: index,
+          x: room.x ?? ((index % 3) * 280),
+          y: room.y ?? (Math.floor(index / 3) * 190),
+        })),
+        unassigned: clients
+          .filter((client) => !legacyInserted.has(client.id))
+          .map((client) => ({ clientId: client.id, reason: "" })),
+        version: 4,
+      };
+    } catch {
+      return { rooms: [], unassigned: [], version: 4 };
+    }
+  }, [storageKey, clients]);
+
+  React.useEffect(() => {
+    const loaded = readCanvasState();
+    setRooms(loaded.rooms);
+    setUnassigned(loaded.unassigned);
+    setDirty(false);
+    setSavedAt(null);
+    setSelectedRoomId(null);
+  }, [readCanvasState]);
+
+  React.useEffect(() => {
+    if (!fullscreen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [fullscreen]);
+
+  const saveCanvas = React.useCallback((notify = true) => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({
+        kind: "rooming-canvas",
+        version: 4,
+        city,
+        rooms,
+        unassigned,
+        updatedAt: new Date().toISOString(),
+      }));
+      setDirty(false);
+      setSavedAt(new Date());
+      if (notify) onToast?.("تم حفظ مصمم التسكين محليًا", "success");
+    } catch {
+      onToast?.("تعذر حفظ مصمم التسكين محليًا", "error");
+    }
+  }, [storageKey, city, rooms, unassigned, onToast]);
+
+  const markDirty = React.useCallback(() => setDirty(true), []);
+
+  const clientIdsInRooms = React.useMemo(() => {
+    const ids = new Set();
+    rooms.forEach((room) => (room.occupantIds || []).forEach((id) => ids.add(id)));
+    return ids;
+  }, [rooms]);
+
+  const normalizedUnassigned = React.useMemo(() => {
+    const explicit = new Map(unassigned.map((item) => [item.clientId, item]));
+    clients.forEach((client) => {
+      if (!clientIdsInRooms.has(client.id) && !explicit.has(client.id)) {
+        explicit.set(client.id, { clientId: client.id, reason: "" });
+      }
+    });
+    return Array.from(explicit.values()).filter((item) => clientsById[item.clientId] && !clientIdsInRooms.has(item.clientId));
+  }, [clients, clientsById, clientIdsInRooms, unassigned]);
+
+  const groupedRooms = React.useMemo(() => {
+    const sorted = rooms.slice().sort((a, b) => {
+      const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
+      if (hotel) return hotel;
+      const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
+      if (type) return type;
+      const category = String(a.category || "").localeCompare(String(b.category || ""), "ar");
+      if (category) return category;
+      return (a.order || 0) - (b.order || 0);
+    });
+    const hotels = new Map();
+    sorted.forEach((room) => {
+      const hotelKey = room.hotel || "فندق غير محدد";
+      const typeKey = room.roomType || "غير محدد";
+      if (!hotels.has(hotelKey)) hotels.set(hotelKey, new Map());
+      const byType = hotels.get(hotelKey);
+      if (!byType.has(typeKey)) byType.set(typeKey, []);
+      byType.get(typeKey).push(room);
+    });
+    return hotels;
+  }, [rooms]);
+
+  const getCompatibilityResult = React.useCallback((client, room) => {
+    if (!client || !room) return { ok: false, reason: "بيانات المعتمر ناقصة" };
+    const context = getClientContext(client);
+    const occupantIds = room.occupantIds || [];
+    const roomType = normalizeRoomingRoomType(room.roomType);
+    const clientRoomType = normalizeRoomingRoomType(context.roomType, client.roomTypeLabel, client.room);
+    const capacity = room.capacity || getRoomingCapacity(roomType);
+    const clientGender = normalizeRoomingGender(context.gender);
+    const roomHotel = normalizeRoomingHotel(room.hotel);
+    const clientHotel = normalizeRoomingHotel(context.hotel);
+    if (occupantIds.includes(client.id)) return { ok: false, reason: "المعتمر مدرج مسبقا" };
+    if (occupantIds.length >= capacity) return { ok: false, reason: "الغرفة ممتلئة" };
+    if (!clientGender) return { ok: false, reason: "بيانات المعتمر ناقصة" };
+    if (room.category === "male_only" && clientGender !== "male") return { ok: false, reason: "الجنس غير متوافق" };
+    if (room.category === "female_only" && clientGender !== "female") return { ok: false, reason: "الجنس غير متوافق" };
+    if (roomHotel && clientHotel && roomHotel !== clientHotel) return { ok: false, reason: "الفندق غير متوافق" };
+    if (roomType && clientRoomType && roomType !== clientRoomType) return { ok: false, reason: "نوع الغرفة غير متوافق" };
+    if (room.category === "family") {
+      const occupants = occupantIds.map((id) => clientsById[id]).filter(Boolean);
+      const mixed = occupants.some((occupant) => normalizeRoomingGender(occupant.gender) && normalizeRoomingGender(occupant.gender) !== clientGender);
+      if (mixed) {
+        const roomFamilyKeys = new Set(occupants.map((occupant) => getClientContext(occupant).familyKey).filter(Boolean));
+        if (!context.familyKey || !roomFamilyKeys.has(context.familyKey)) return { ok: false, reason: "بيانات المعتمر ناقصة" };
+      }
+    }
+    return { ok: true };
+  }, [clientsById, getClientContext]);
+
+  const getCompatibilityReason = React.useCallback((client, room) => {
+    const result = getCompatibilityResult(client, room);
+    return result.ok ? "" : result.reason;
+  }, [getCompatibilityResult]);
+
+  const compatibleUnassigned = React.useMemo(() => {
+    const room = rooms.find((item) => item.id === selectedRoomId);
+    if (!room) return [];
+    const remaining = Math.max(0, (room.capacity || getRoomingCapacity(room.roomType)) - (room.occupantIds || []).length);
+    if (!remaining) return [];
+    return normalizedUnassigned
+      .map((item) => ({ item, client: clientsById[item.clientId] }))
+      .filter(({ client }) => client && !getCompatibilityReason(client, room));
+  }, [rooms, selectedRoomId, normalizedUnassigned, clientsById, getCompatibilityReason]);
+
+  const filteredUnassigned = React.useMemo(() => {
+    const query = panelSearch.trim().toLowerCase();
+    return normalizedUnassigned.filter((item) => {
+      const client = clientsById[item.clientId];
+      if (!client) return false;
+      const context = getClientContext(client);
+      if (query && !context.name.toLowerCase().includes(query)) return false;
+      if (panelHotel !== "all" && context.hotel !== panelHotel) return false;
+      if (panelRoomType !== "all" && context.roomType !== panelRoomType) return false;
+      return true;
+    });
+  }, [normalizedUnassigned, clientsById, getClientContext, panelSearch, panelHotel, panelRoomType]);
+
+  const generateRooms = React.useCallback(() => {
+    if (rooms.length && !window.confirm("سيتم استبدال التسكين الحالي بتسكين مولد من بيانات المعتمرين. هل تريد المتابعة؟")) return;
+    const nextRooms = [];
+    const nextUnassigned = [];
+    const grouped = new Map();
+    const addUnassigned = (client, reason) => nextUnassigned.push({ clientId: client.id, reason });
+
+    clients.forEach((client) => {
+      const context = getClientContext(client);
+      if (!context.hotel) return addUnassigned(client, "فندق غير محدد");
+      if (!context.roomType) return addUnassigned(client, "نوع الغرفة غير محدد");
+      if (!context.gender) return addUnassigned(client, "الجنس غير محدد");
+      const roomType = context.roomType;
+      const capacity = getRoomingCapacity(roomType);
+      const requestedCategory = client.roomCategory || (context.gender === "female" ? "female_only" : "male_only");
+      if (requestedCategory === "family" && !context.familyKey) return addUnassigned(client, "لا توجد مجموعة عائلية");
+      const groupKey = [
+        context.hotel,
+        roomType,
+        requestedCategory,
+        client.roomingGroupId || context.familyKey || (requestedCategory === "family" ? client.id : context.gender),
+      ].join("::");
+      if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+      grouped.get(groupKey).push(client);
+      if (grouped.get(groupKey).length > capacity && client.roomingGroupId) {
+        grouped.get(groupKey).pop();
+        addUnassigned(client, "تجاوز سعة الغرفة");
+      }
+    });
+
+    let order = 0;
+    Array.from(grouped.values()).forEach((group) => {
+      if (!group.length) return;
+      const first = group[0];
+      const context = getClientContext(first);
+      const capacity = getRoomingCapacity(context.roomType);
+      for (let index = 0; index < group.length; index += capacity) {
+        const occupants = group.slice(index, index + capacity);
+        const category = first.roomCategory || inferRoomCategoryFromClients(occupants);
+        const hasUnsafeFamilyMix = category === "family" && new Set(occupants.map((client) => client.gender)).size > 1
+          && !occupants.every((client) => getClientContext(client).familyKey && getClientContext(client).familyKey === getClientContext(first).familyKey);
+        if (hasUnsafeFamilyMix) {
+          occupants.forEach((client) => addUnassigned(client, "لا توجد مجموعة عائلية"));
+          return;
+        }
+        nextRooms.push({
+          id: createRoomId(),
+          order: order,
+          roomNumber: String(order + 1).padStart(2, "0"),
+          roomType: context.roomType,
+          category,
+          hotel: context.hotel,
+          capacity,
+          occupantIds: occupants.map((client) => client.id),
+          roomingGroupId: first.roomingGroupId || "",
+          roomingGroupName: first.roomingGroupName || "",
+        });
+        order += 1;
+      }
+    });
+
+    setRooms(autoLayoutRoomNodes(nextRooms));
+    setUnassigned(nextUnassigned);
+    setSelectedRoomId(null);
+    setDirty(true);
+    onToast?.("تم توليد الغرف من بيانات المعتمرين", "success");
+  }, [rooms.length, clients, getClientContext, onToast]);
+
+  const openEditRoom = React.useCallback((room) => {
+    setSelectedRoomId(room.id);
+    setRoomDraft({
+      roomType: room.roomType || "double",
+      category: room.category || "male_only",
+      hotel: room.hotel || hotelOptions[0] || "",
+    });
+    setRoomModal({ open: true, roomId: room.id });
+  }, [hotelOptions]);
+
+  const saveRoomEdit = React.useCallback(() => {
+    const room = rooms.find((item) => item.id === roomModal.roomId);
+    if (!room) return;
+    const capacity = getRoomingCapacity(roomDraft.roomType);
+    const kept = [];
+    const removed = [];
+    (room.occupantIds || []).forEach((clientId) => {
+      const client = clientsById[clientId];
+      if (!client) return;
+      const nextRoom = { ...room, ...roomDraft, capacity, occupantIds: kept };
+      const reason = getCompatibilityReason(client, nextRoom);
+      if (reason || kept.length >= capacity) removed.push({ clientId, reason: reason || "تجاوز سعة الغرفة" });
+      else kept.push(clientId);
+    });
+    setRooms((prev) => prev.map((item) => item.id === room.id ? {
+      ...item,
+      ...roomDraft,
+      capacity,
+      occupantIds: kept,
+    } : item));
+    if (removed.length) {
+      setUnassigned((prev) => [...prev, ...removed]);
+      if (roomDraft.category === "male_only") onToast?.("تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
+      else if (roomDraft.category === "female_only") onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+      else onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+    }
+    setRoomModal({ open: false, roomId: null });
+    markDirty();
+  }, [rooms, roomModal.roomId, roomDraft, clientsById, getCompatibilityReason, markDirty, onToast]);
+
+  const deleteRoom = React.useCallback((roomId) => {
+    const room = rooms.find((item) => item.id === roomId);
+    if (!room) return;
+    setRooms((prev) => prev.filter((item) => item.id !== roomId));
+    setUnassigned((prev) => [
+      ...prev,
+      ...(room.occupantIds || []).map((clientId) => ({ clientId, reason: "" })),
+    ]);
+    setSelectedRoomId((current) => current === roomId ? null : current);
+    markDirty();
+  }, [rooms, markDirty]);
+
+  const removeClientFromRoom = React.useCallback((roomId, clientId) => {
+    setRooms((prev) => prev.map((room) => room.id === roomId
+      ? { ...room, occupantIds: (room.occupantIds || []).filter((id) => id !== clientId) }
+      : room));
+    setUnassigned((prev) => [...prev, { clientId, reason: "" }]);
+    markDirty();
+  }, [markDirty]);
+
+  const insertClientIntoRoom = React.useCallback((roomId, clientId, notify = true) => {
+    const room = rooms.find((item) => item.id === roomId);
+    const client = clientsById[clientId];
+    if (!room || !client) return false;
+    const reason = getCompatibilityReason(client, room);
+    if (reason) {
+      if (notify) onToast?.(reason, "error");
+      return false;
+    }
+    setRooms((prev) => prev.map((item) => {
+      if (item.id !== room.id) return item;
+      const occupantIds = item.occupantIds || [];
+      if (occupantIds.includes(clientId)) return item;
+      return { ...item, occupantIds: [...occupantIds, clientId] };
+    }));
+    setUnassigned((prev) => prev.filter((item) => item.clientId !== clientId));
+    setSelectedRoomId(room.id);
+    markDirty();
+    return true;
+  }, [rooms, clientsById, getCompatibilityReason, markDirty, onToast]);
+
+  const addSelectedPilgrimsToRoom = React.useCallback(() => {
+    const room = rooms.find((item) => item.id === selectedRoomId);
+    if (!room || !selectedPilgrimIds.length) return;
+    const remaining = Math.max(0, (room.capacity || getRoomingCapacity(room.roomType)) - (room.occupantIds || []).length);
+    const selected = selectedPilgrimIds
+      .filter((clientId) => {
+        const client = clientsById[clientId];
+        return client && !getCompatibilityReason(client, room);
+      })
+      .slice(0, remaining);
+    if (!selected.length) {
+      onToast?.("لا يوجد معتمرون مناسبون لهذه الغرفة", "error");
+      return;
+    }
+    setRooms((prev) => prev.map((item) => item.id === room.id
+      ? { ...item, occupantIds: [...(item.occupantIds || []), ...selected] }
+      : item));
+    setUnassigned((prev) => prev.filter((item) => !selected.includes(item.clientId)));
+    setSelectedRoomId(room.id);
+    markDirty();
+    setSelectedPilgrimIds([]);
+    setPickerOpen(false);
+  }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, markDirty, onToast]);
+
+  const onNodeDragStop = React.useCallback((_event, node) => {
+    setRooms((prev) => prev.map((room) => room.id === node.id ? {
+      ...room,
+      x: node.position.x,
+      y: node.position.y,
+    } : room));
+    markDirty();
+  }, [markDirty]);
+
+  const autoArrangeRooms = React.useCallback(() => {
+    if (rooms.length && !window.confirm("سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
+    setRooms((prev) => autoLayoutRoomNodes(prev));
+    markDirty();
+    window.requestAnimationFrame(() => flowRef.current?.fitView?.({ padding: 0.18, duration: 400 }));
+  }, [rooms.length, markDirty]);
+
+  const openPickerForRoom = React.useCallback((roomId) => {
+    setSelectedRoomId(roomId);
+    setSelectedPilgrimIds([]);
+    setPickerOpen(true);
+  }, []);
+
+  const openEditRoomById = React.useCallback((roomId) => {
+    const room = rooms.find((item) => item.id === roomId);
+    if (room) openEditRoom(room);
+  }, [rooms, openEditRoom]);
+
+  const roomFlowNodes = React.useMemo(() => rooms.map((room) => ({
+    id: room.id,
+    type: "room",
+    position: { x: Number(room.x) || 0, y: Number(room.y) || 0 },
+    data: {
+      room,
+      clientsById,
+      draggingClientId,
+      draggingClient: draggingClientId ? clientsById[draggingClientId] : null,
+      getDropReason: getCompatibilityReason,
+      onDropClient: insertClientIntoRoom,
+      onDragComplete: () => setDraggingClientId(null),
+      onAdd: openPickerForRoom,
+      onEdit: openEditRoomById,
+      onDelete: deleteRoom,
+      onRemoveClient: removeClientFromRoom,
+    },
+    selected: room.id === selectedRoomId,
+  })), [rooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, deleteRoom, removeClientFromRoom, selectedRoomId]);
+
+  const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
+
+  React.useEffect(() => {
+    setFlowNodes(roomFlowNodes);
+  }, [roomFlowNodes, setFlowNodes]);
+
+  const fitView = React.useCallback(() => {
+    flowRef.current?.fitView?.({ padding: 0.18, duration: 450 });
+  }, []);
+
+  const applyFlowZoom = React.useCallback((nextZoom) => {
+    setZoom(nextZoom);
+    flowRef.current?.zoomTo?.(nextZoom / 100, { duration: 250 });
+  }, []);
+
+  const exportExcel = React.useCallback(async () => {
+    const XLSX = await import("xlsx");
+    const rows = [["hotel", "room type", "category", "room", "client name", "gender"]];
+    rooms.forEach((room) => {
+      (room.occupantIds || []).forEach((clientId) => {
+        const client = clientsById[clientId];
+        rows.push([
+          room.hotel || "",
+          getRoomingRoomLabel(room.roomType),
+          getRoomingCategoryLabel(room.category),
+          room.roomNumber || "",
+          client ? getClientDisplayName(client) : "",
+          client?.gender === "male" ? "ذكر" : client?.gender === "female" ? "أنثى" : "",
+        ]);
+      });
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "rooming");
+    XLSX.writeFile(wb, `rooming-canvas-${city}-${slugifyFilePart(program.name)}.xlsx`);
+  }, [rooms, clientsById, city, program.name]);
+
+  const printCanvas = React.useCallback(() => {
+    const sections = Array.from(groupedRooms.entries()).map(([hotel, byType]) => `
+      <section>
+        <h2>${escapeHtml(hotel)}</h2>
+        ${Array.from(byType.entries()).map(([roomType, typeRooms]) => `
+          <h3>${escapeHtml(getRoomingRoomLabel(roomType))}</h3>
+          <div class="rooms">
+            ${typeRooms.map((room) => `
+              <article>
+                <strong>${escapeHtml(getRoomingCategoryLabel(room.category))} · ${escapeHtml(getRoomingRoomLabel(room.roomType))} · ${(room.occupantIds || []).length}/${room.capacity}</strong>
+                <small>${escapeHtml(room.hotel || "")}</small>
+                ${(room.occupantIds || []).map((clientId) => `<p>${escapeHtml(getClientDisplayName(clientsById[clientId] || {}))}</p>`).join("")}
+              </article>
+            `).join("")}
+          </div>
+        `).join("")}
+      </section>
+    `).join("");
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
+      <style>
+        @page{size:A4 landscape;margin:10mm}
+        body{font-family:Arial,sans-serif;color:#111;background:#fff}
+        h1{font-size:18px;margin:0 0 12px}
+        h2{font-size:15px;margin:18px 0 8px;border-bottom:1px solid #ddd;padding-bottom:6px}
+        h3{font-size:13px;margin:12px 0 8px;color:#555}
+        .rooms{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+        article{border:1px solid #cbd5e1;border-radius:8px;padding:10px;break-inside:avoid}
+        strong,small{display:block;margin-bottom:6px}
+        p{margin:4px 0;font-size:12px}
+      </style></head><body><h1>${escapeHtml(program.name)} - ${escapeHtml(ROOMING_CITY_LABELS[city])}</h1>${sections}<script>window.onload=()=>window.print()</script></body></html>`);
+    win.document.close();
+  }, [groupedRooms, clientsById, program.name, city]);
+
+  const selectedRoom = rooms.find((room) => room.id === selectedRoomId) || null;
+  const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
+
+  return (
+    <div style={fullscreen ? { position: "fixed", inset: 0, zIndex: 90, background: "#f3f5f8" } : undefined}>
+      <style>{`
+        .rooming-flow-node {
+          transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
+          cursor: grab;
+          will-change: box-shadow, border-color, background;
+        }
+        .rooming-flow-node:hover {
+          box-shadow: 0 16px 34px rgba(15,23,42,.16) !important;
+        }
+        .react-flow__node.dragging .rooming-flow-node {
+          transition: none;
+          cursor: grabbing;
+          box-shadow: 0 20px 46px rgba(15,23,42,.20) !important;
+        }
+        .rooming-unassigned-card {
+          transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
+          cursor: grab;
+        }
+        .rooming-unassigned-card:hover {
+          border-color: rgba(37,99,235,.32) !important;
+          background: #fff !important;
+          box-shadow: 0 10px 24px rgba(15,23,42,.10);
+          transform: translateY(-1px);
+        }
+        .rooming-unassigned-card:active {
+          cursor: grabbing;
+        }
+      `}</style>
+      <GlassCard gold style={{
+        padding: 12,
+        marginBottom: fullscreen ? 0 : 24,
+        height: fullscreen ? "100vh" : "auto",
+        width: fullscreen ? "100vw" : "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "#f3f5f8",
+        border: "1px solid rgba(203,213,225,.85)",
+        overflow: "hidden",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+          <div>
+            <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>مصمم التسكين الذكي</p>
+            <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
+              {program.name || "—"} • {ROOMING_CITY_LABELS[city]} • {clients.length} معتمر
+              {dirty ? " • تغييرات غير محفوظة" : savedAt ? ` • آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}` : ""}
+            </p>
+          </div>
+          <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "#fff", border: "1px solid rgba(148,163,184,.22)" }}>
+            {Object.entries(ROOMING_CITY_LABELS).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setCity(key)}
+                style={{
+                  border: 0,
+                  background: city === key ? "#e8eefc" : "transparent",
+                  color: city === key ? "#1d4ed8" : "#475569",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  fontFamily: "'Cairo',sans-serif",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "#fff", border: "1px solid rgba(148,163,184,.2)" }}>
+          <Button variant="primary" icon="refresh" onClick={generateRooms}>توليد الغرف</Button>
+          <RoomingToolbarButton title="ترتيب تلقائي" onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
+          <RoomingToolbarButton title="حفظ" onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
+          <RoomingToolbarButton title="طباعة" onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
+          <RoomingToolbarButton title="تصدير Excel" onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
+          <select
+            value={zoom}
+            onChange={(event) => applyFlowZoom(Number(event.target.value))}
+            title="التكبير"
+            style={{ height: 34, borderRadius: 8, border: "1px solid rgba(148,163,184,.24)", background: "#fff", color: "#334155", padding: "0 10px", fontSize: 12, fontWeight: 700, fontFamily: "'Cairo',sans-serif" }}
+          >
+            {[75, 100, 125].map((value) => <option key={value} value={value}>{value}%</option>)}
+          </select>
+          <RoomingToolbarButton title="Fit" onClick={fitView} icon={<Scan size={15} />} />
+          <RoomingToolbarButton title={panelOpen ? "إخفاء غير المسكنين" : "إظهار غير المسكنين"} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
+          <RoomingToolbarButton title={fullscreen ? "الخروج من ملء الشاشة" : "ملء الشاشة"} onClick={() => setFullscreen((open) => !open)} icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} active={fullscreen} />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
+          <div style={{
+            position: "relative",
+            overflow: "auto",
+            borderRadius: 14,
+            border: "1px solid rgba(148,163,184,.25)",
+            backgroundColor: "#fff",
+            backgroundImage: "radial-gradient(circle at 1px 1px, rgba(148,163,184,.22) 1px, transparent 0)",
+            backgroundSize: "22px 22px",
+            boxShadow: "0 12px 28px rgba(15,23,42,.08)",
+            minHeight: 0,
+          }}>
+            {!rooms.length ? (
+              <div style={{ display: "grid", placeItems: "center", minHeight: "100%", padding: 30 }}>
+                <div style={{ textAlign: "center", maxWidth: 420 }}>
+                  <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>ابدأ بتوليد الغرف</p>
+                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>سيتم إنشاء بطاقات غرف ذكية من بيانات المعتمرين، مع إبقاء الحالات غير الآمنة في لوحة المراجعة.</p>
+                  <Button variant="primary" icon="refresh" onClick={generateRooms}>توليد الغرف</Button>
+                </div>
+              </div>
+            ) : (
+              <ReactFlowProvider>
+                <RoomingFlowSurface
+                  nodes={flowNodes}
+                  onNodesChange={onFlowNodesChange}
+                  selectedRoomId={selectedRoomId}
+                  panelOpen={panelOpen}
+                  onInit={(flow) => { flowRef.current = flow; }}
+                  onNodeClick={(_event, node) => setSelectedRoomId(node.id)}
+                  onNodeDragStop={onNodeDragStop}
+                />
+              </ReactFlowProvider>
+            )}
+          </div>
+
+          {panelOpen && (
+            <aside style={{ background: "#fff", border: "1px solid rgba(148,163,184,.22)", borderRadius: 14, padding: 12, overflow: "auto", boxShadow: "0 12px 28px rgba(15,23,42,.08)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 13 }}>غير مسكنين / يحتاجون مراجعة</p>
+                <RoomingToolbarButton title="إخفاء" onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
+              </div>
+              <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
+                <Input label="" value={panelSearch} onChange={(event) => setPanelSearch(event.target.value)} placeholder="بحث" />
+                <Select label="" value={panelHotel} onChange={(event) => setPanelHotel(event.target.value)} options={[{ value: "all", label: "كل الفنادق" }, ...hotelOptions.map((hotel) => ({ value: hotel, label: hotel }))]} />
+                <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: "كل الغرف" }, ...ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))]} />
+              </div>
+              {!filteredUnassigned.length ? (
+                <p style={{ color: "#64748b", fontSize: 12 }}>لا توجد حالات غير مسكنة ضمن الفلاتر الحالية.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {filteredUnassigned.map((item) => {
+                    const client = clientsById[item.clientId];
+                    const context = client ? getClientContext(client) : {};
+                    const selectedRoomReason = client && selectedRoom ? getCompatibilityReason(client, selectedRoom) : "";
+                    const canAddToSelected = Boolean(client && selectedRoom && !selectedRoomReason);
+                    const displayReason = item.reason && item.reason !== "يحتاج مراجعة" ? item.reason : "";
+                    return (
+                      <div
+                        key={item.clientId}
+                        className="rooming-unassigned-card"
+                        draggable={Boolean(client)}
+                        onDragStart={(event) => {
+                          if (!client) return;
+                          setDraggingClientId(item.clientId);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("application/x-rukn-client-id", item.clientId);
+                          event.dataTransfer.setData("text/plain", context.name || item.clientId);
+                        }}
+                        onDragEnd={() => setDraggingClientId(null)}
+                        style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(148,163,184,.18)", background: draggingClientId === item.clientId ? "#eff6ff" : "#f8fafc", borderRadius: 10, padding: 9 }}
+                      >
+                        <strong style={{ display: "block", color: "#0f172a", fontSize: 12 }}>{context.name}</strong>
+                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ") || "بدون تفاصيل"}</span>
+                        {displayReason && <span style={{ display: "block", color: "#b45309", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
+                        {selectedRoom && (
+                          <button
+                            type="button"
+                            disabled={!canAddToSelected}
+                            onClick={() => {
+                              if (!canAddToSelected) return;
+                              insertClientIntoRoom(selectedRoom.id, item.clientId, true);
+                            }}
+                            style={{
+                              marginTop: 8,
+                              width: "100%",
+                              border: "1px solid rgba(37,99,235,.18)",
+                              background: canAddToSelected ? "#eff6ff" : "#eef2f7",
+                              color: canAddToSelected ? "#1d4ed8" : "#94a3b8",
+                              borderRadius: 8,
+                              padding: "6px 8px",
+                              fontSize: 11,
+                              fontWeight: 800,
+                              cursor: canAddToSelected ? "pointer" : "not-allowed",
+                              fontFamily: "'Cairo',sans-serif",
+                            }}
+                          >
+                            {canAddToSelected ? "إضافة إلى الغرفة المحددة" : (selectedRoomReason || "الغرفة ممتلئة")}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </aside>
+          )}
+        </div>
+
+        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, roomId: null })} title="تعديل الغرفة" width={520}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Select label="نوع الغرفة" value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
+            <Select label="تصنيف الغرفة" value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={ROOMING_CATEGORY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
+            <Select label="الفندق" value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || "—"]).map((hotel) => ({ value: hotel, label: hotel }))} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Button variant="ghost" onClick={() => setRoomModal({ open: false, roomId: null })}>إلغاء</Button>
+              <Button onClick={saveRoomEdit}>حفظ التعديل</Button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }} title="إضافة معتمر" width={560}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {!compatibleUnassigned.length ? (
+              <p style={{ color: "#64748b", fontSize: 12 }}>لا يوجد معتمرون مناسبون لهذه الغرفة</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 330, overflow: "auto" }}>
+                {compatibleUnassigned.map(({ client }) => {
+                  const context = getClientContext(client);
+                  const checked = selectedPilgrimIds.includes(client.id);
+                  return (
+                    <label key={client.id} style={{ display: "flex", gap: 10, padding: 10, borderRadius: 10, border: "1px solid rgba(148,163,184,.18)", background: checked ? "rgba(37,99,235,.07)" : "#f8fafc", cursor: "pointer" }}>
+                      <input type="checkbox" checked={checked} onChange={(event) => setSelectedPilgrimIds((prev) => event.target.checked ? [...prev, client.id] : prev.filter((id) => id !== client.id))} />
+                      <span>
+                        <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{context.name}</strong>
+                        <small style={{ color: "#64748b" }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ")}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Button variant="ghost" onClick={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }}>إلغاء</Button>
+              <Button disabled={!selectedPilgrimIds.length} onClick={addSelectedPilgrimsToRoom}>إدراج المحدد</Button>
+            </div>
+          </div>
+        </Modal>
+      </GlassCard>
+    </div>
+  );
+}
+
 function RoomingToolbarButton({
   title,
   icon,
@@ -1642,6 +2536,104 @@ function RoomingToolbarButton({
     </button>
   );
 }
+
+const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) {
+  const room = data.room;
+  const accent = getRoomingCategoryAccent(room.category);
+  const occupantIds = room.occupantIds || [];
+  const dropReason = data.draggingClient ? data.getDropReason(data.draggingClient, room) : "";
+  const isDropTarget = Boolean(data.draggingClient);
+  const canDrop = isDropTarget && !dropReason;
+  const dropBorder = canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "rgba(148,163,184,.32)";
+  return (
+    <article
+      className="rooming-flow-node"
+      title={isDropTarget ? (dropReason || "يمكن إدراج المعتمر هنا") : undefined}
+      onDragOver={(event) => {
+        if (!data.draggingClient) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const clientId = event.dataTransfer.getData("application/x-rukn-client-id");
+        if (clientId) data.onDropClient(room.id, clientId, true);
+        data.onDragComplete?.();
+      }}
+      style={{
+        width: 250,
+        background: canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "#fff",
+        border: `1px solid ${dropBorder}`,
+        borderRight: `4px solid ${accent.border}`,
+        borderRadius: 10,
+        boxShadow: canDrop
+          ? "0 16px 36px rgba(22,163,74,.18)"
+          : isDropTarget
+            ? "0 16px 36px rgba(239,68,68,.16)"
+            : selected ? "0 14px 30px rgba(37,99,235,.18)" : "0 8px 22px rgba(15,23,42,.10)",
+        padding: 12,
+        direction: "rtl",
+        fontFamily: "'Cairo',sans-serif",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 }}>
+        <span style={{ color: accent.text, background: accent.bg, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>
+          {getRoomingCategoryLabel(room.category)}
+        </span>
+        <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
+      </div>
+      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
+        {getRoomingRoomLabel(room.roomType)} • غرفة {room.roomNumber}
+      </p>
+      <p style={{ color: "#64748b", fontSize: 11, marginBottom: 10 }}>{room.hotel || "فندق غير محدد"}</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
+        {occupantIds.map((clientId) => {
+          const client = data.clientsById[clientId];
+          return (
+            <div key={clientId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#111827", fontSize: 12, fontWeight: 700 }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {client ? getClientDisplayName(client) : "—"}
+              </span>
+              <button
+                type="button"
+                title="إزالة"
+                className="nodrag"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onRemoveClient(room.id, clientId);
+                }}
+                style={{ border: 0, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 12, flexShrink: 0 }}
+              >
+                إزالة
+              </button>
+            </div>
+          );
+        })}
+        {occupantIds.length < room.capacity && (
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>مكان شاغر</span>
+        )}
+      </div>
+      <div className="nodrag" style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+        <button type="button" onClick={(event) => { event.stopPropagation(); data.onAdd(room.id); }} style={{ border: "1px solid rgba(37,99,235,.2)", background: "#eff6ff", color: "#1d4ed8", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>إضافة معتمر</button>
+        <button type="button" onClick={(event) => { event.stopPropagation(); data.onEdit(room.id); }} style={{ border: "1px solid rgba(148,163,184,.25)", background: "#f8fafc", color: "#334155", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>تعديل</button>
+        <button type="button" onClick={(event) => { event.stopPropagation(); data.onDelete(room.id); }} style={{ border: "1px solid rgba(239,68,68,.18)", background: "#fff1f2", color: "#b91c1c", borderRadius: 8, padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>حذف</button>
+      </div>
+    </article>
+  );
+}, (prev, next) => (
+  prev.selected === next.selected
+  && prev.data.room === next.data.room
+  && prev.data.clientsById === next.data.clientsById
+  && prev.data.draggingClientId === next.data.draggingClientId
+  && prev.data.onAdd === next.data.onAdd
+  && prev.data.onEdit === next.data.onEdit
+  && prev.data.onDelete === next.data.onDelete
+  && prev.data.onRemoveClient === next.data.onRemoveClient
+  && prev.data.onDropClient === next.data.onDropClient
+));
+
+const roomingNodeTypes = { room: RoomingFlowNode };
 
 function RoomingMenu({ open, children, align = "start", width = 220 }) {
   if (!open) return null;
@@ -1690,6 +2682,43 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false }) {
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+function RoomingFlowSurface({ nodes, onNodesChange, selectedRoomId, onNodeClick, onNodeDragStop, onInit, panelOpen }) {
+  const flow = useReactFlow();
+
+  React.useEffect(() => {
+    onInit?.(flow);
+  }, [flow, onInit]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={[]}
+      nodeTypes={roomingNodeTypes}
+      fitView
+      fitViewOptions={{ padding: 0.18 }}
+      minZoom={0.35}
+      maxZoom={1.6}
+      panOnDrag
+      zoomOnScroll
+      zoomOnPinch
+      nodesDraggable
+      onlyRenderVisibleElements
+      nodeDragThreshold={2}
+      nodesConnectable={false}
+      elementsSelectable
+      onNodeClick={onNodeClick}
+      onNodesChange={onNodesChange}
+      onNodeDragStop={onNodeDragStop}
+      proOptions={{ hideAttribution: true }}
+      style={{ width: "100%", height: "100%", background: "#fff" }}
+    >
+      <Background color="#d8dee8" gap={22} size={1.2} />
+      <Controls position="bottom-left" showInteractive={false} />
+      {!panelOpen && <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />}
+    </ReactFlow>
   );
 }
 
@@ -2534,22 +3563,49 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
   }, [roomPickerState.roomId, selectedPilgrimIds, getRoomById, clientsById, getClientContext, city, renderRoom, scheduleSave, onToast]);
 
   const generateTemplateBlocks = React.useCallback(() => {
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-    if (!window.confirm("سيتم إنشاء بلوكات غرف ابتداءً من الخلية المحددة بدون مسح الورقة. قد يتم استبدال محتوى الخلايا داخل هذه المساحة فقط. هل تريد المتابعة؟")) return;
+    if (!window.confirm("سيتم إعادة توليد التسكين من بيانات المعتمرين الحالية مع مسح الغرف الحالية داخل هذه الورقة. هل تريد المتابعة؟")) return;
     const activeCell = getActiveCell();
-    const starts = [
-      [activeCell.x, activeCell.y],
-      [activeCell.x + 4, activeCell.y],
-      [activeCell.x + 8, activeCell.y],
-      [activeCell.x, activeCell.y + 7],
-      [activeCell.x + 4, activeCell.y + 7],
-      [activeCell.x + 8, activeCell.y + 7],
-    ];
-    starts.forEach(([x, y], index) => writeRoomBlock(sheet, x, y, String(index + 1).padStart(2, "0")));
-    scheduleSave();
-    onToast?.("تم توليد نموذج تسكين في مساحة الورقة المحددة", "success");
-  }, [getActiveCell, scheduleSave, onToast]);
+    const groupedRooms = buildRoomingGroupsFromClients(clients, city);
+    const payload = createRoomingHeaderSheet({ program, clients, city, agency });
+    const rooms = {};
+    const insertedClients = {};
+    groupedRooms.forEach((room, index) => {
+      const colOffset = index % 3;
+      const rowOffset = Math.floor(index / 3);
+      const startX = activeCell.x + (colOffset * (ROOMING_BLOCK_WIDTH + 1));
+      const startY = activeCell.y + (rowOffset * 8);
+      const nextRoom = {
+        ...room,
+        startX,
+        startY,
+      };
+      rooms[nextRoom.id] = nextRoom;
+      (nextRoom.occupantIds || []).forEach((clientId) => {
+        const client = clientsById[clientId];
+        insertedClients[clientId] = {
+          roomId: nextRoom.id,
+          city,
+          name: client ? getClientDisplayName(client) : clientId,
+          packageLevel: client?.packageLevel || client?.hotelLevel || "",
+          roomType: client?.roomTypeLabel || getRoomTypeLabel(client?.roomType) || "",
+          hotel: city === "makkah" ? client?.hotelMecca || "" : client?.hotelMadina || "",
+          insertedAt: new Date().toISOString(),
+        };
+      });
+    });
+    payload.meta = normalizeRoomingMeta({
+      ...payload.meta,
+      rooms,
+      insertedClients,
+    });
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+    } catch {}
+    metaRef.current = payload.meta;
+    setMetaTick((value) => value + 1);
+    setRefreshKey((value) => value + 1);
+    onToast?.("تم توليد التسكين من مجموعات المعتمرين الحالية", "success");
+  }, [getActiveCell, clients, city, program, agency, storageKey, onToast, clientsById]);
 
   const resetSheet = React.useCallback(() => {
     if (!window.confirm("سيتم حذف ورقة التسكين المحلية لهذا الفندق. هل أنت متأكد؟")) return;
