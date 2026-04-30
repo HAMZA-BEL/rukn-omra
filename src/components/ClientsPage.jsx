@@ -556,8 +556,8 @@ export default function ClientsPage({ store, onToast }) {
           onSave={() => { setShowAdd(false); setMrzPrefill(null); onToast(t.addSuccess,"success"); }}
           onCancel={() => { setShowAdd(false); setMrzPrefill(null); }} />
       </Modal>
-      <Modal open={showMRZ} onClose={() => setShowMRZ(false)} title={t.mrzModalTitle} width={600}>
-        <MRZReader onResult={handleMRZResult} onClose={() => setShowMRZ(false)} />
+      <Modal open={showMRZ} onClose={() => setShowMRZ(false)} title={t.mrzModalTitle} width={1040}>
+        <MRZReader store={store} onToast={onToast} onResult={handleMRZResult} onClose={() => setShowMRZ(false)} />
       </Modal>
       <Modal open={showImport} onClose={() => setShowImport(false)} title={t.importModalTitle} width={720}>
         {showImport && (

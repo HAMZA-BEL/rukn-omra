@@ -207,6 +207,7 @@ export default function ClearancePage({ store }) {
               gridTemplate={tableColumns}
               invoiceLabel={invoiceLabel}
               onPrintInvoice={handlePrintInvoice}
+              money={money}
             />
           ))}
         </div>
@@ -243,6 +244,7 @@ export default function ClearancePage({ store }) {
             onPrintInvoice={handlePrintInvoice}
             t={t}
             lang={lang}
+            money={money}
           />
         ))}
 
@@ -283,7 +285,7 @@ export default function ClearancePage({ store }) {
   );
 }
 
-function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel }) {
+function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel, money }) {
   const [hov, setHov] = React.useState(false);
   const contactLine = [client.phone ? `${client.phone}` : "", client.city ? `• ${client.city}` : ""].filter(Boolean).join(" ");
   return (
@@ -336,7 +338,7 @@ function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel })
   );
 }
 
-function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
+function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang, money }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const menuRef = React.useRef(null);
   React.useEffect(() => {

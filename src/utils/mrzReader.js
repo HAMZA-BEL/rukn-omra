@@ -7,14 +7,52 @@
  * MRZ Line 2 example: MN67682049MAR7107216F2101218<<<<<<<<<<<<6
  */
 
-// Parse MRZ TD3 format (standard passport — 2 lines of 44 chars)
-export function parseMRZ(line1, line2) {
-  if (!line1 || !line2) return null;
+const cleanMRZLine = (value = "") => String(value).toUpperCase().replace(/[^A-Z0-9<]/g, "");
 
-  const l1 = line1.trim().padEnd(44, "<");
-  const l2 = line2.trim().padEnd(44, "<");
+const MRZ_WEIGHTS = [7, 3, 1];
+const charValue = (char) => {
+  if (char === "<") return 0;
+  if (/[0-9]/.test(char)) return Number(char);
+  if (/[A-Z]/.test(char)) return char.charCodeAt(0) - 55;
+  return 0;
+};
 
-  if (l1.length < 44 || l2.length < 44) return null;
+const checkDigit = (value = "") => String(value)
+  .split("")
+  .reduce((sum, char, index) => sum + charValue(char) * MRZ_WEIGHTS[index % 3], 0) % 10;
+
+const isValidDatePart = (value = "") => {
+  if (!/^\d{6}$/.test(value)) return false;
+  const month = Number(value.slice(2, 4));
+  const day = Number(value.slice(4, 6));
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+};
+
+const parseDate = (yymmdd, isBirth = false) => {
+  if (!isValidDatePart(yymmdd)) return "";
+  const yy = parseInt(yymmdd.substring(0, 2), 10);
+  const mm = yymmdd.substring(2, 4);
+  const dd = yymmdd.substring(4, 6);
+  const fullYear = isBirth ? (yy > 30 ? 1900 + yy : 2000 + yy) : 2000 + yy;
+  return `${fullYear}-${mm}-${dd}`;
+};
+
+export function parseMRZDetailed(line1, line2) {
+  if (!line1 || !line2) return { ok: false, data: null, issues: ["MRZ_MISSING"] };
+
+  const raw1 = String(line1).trim().toUpperCase();
+  const raw2 = String(line2).trim().toUpperCase();
+  const l1 = cleanMRZLine(line1);
+  const l2 = cleanMRZLine(line2);
+  const issues = [];
+
+  if (/[^A-Z0-9<]/.test(raw1)) issues.push("LINE1_INVALID_CHARS");
+  if (/[^A-Z0-9<]/.test(raw2)) issues.push("LINE2_INVALID_CHARS");
+  if (l1.length !== 44) issues.push("LINE1_LENGTH");
+  if (l2.length !== 44) issues.push("LINE2_LENGTH");
+  if (!l1.startsWith("P<")) issues.push("NOT_TD3_PASSPORT");
+
+  if (l1.length < 44 || l2.length < 44) return { ok: false, data: null, issues, raw: { line1: l1, line2: l2 } };
 
   try {
     // ── Line 1 parsing ─────────────────────────────────────────────────────
@@ -41,33 +79,30 @@ export function parseMRZ(line1, line2) {
     // [20]   = gender (M/F/<)
     // [21-26]= expiry date (YYMMDD)
     // [27]   = check digit
-    const passportNo  = l2.substring(0, 9).replace(/<+$/, "");
+    const passportField = l2.substring(0, 9);
+    const passportNo  = passportField.replace(/<+$/, "");
+    const passportCheck = l2[9];
     const nationality = l2.substring(10, 13).replace(/<+$/, "");
     const birthRaw    = l2.substring(13, 19);
+    const birthCheck  = l2[19];
     const gender      = l2[20] === "F" ? "F" : "M";
     const expiryRaw   = l2.substring(21, 27);
+    const expiryCheck = l2[27];
 
-    // Convert YYMMDD → YYYY-MM-DD
-    const parseDate = (yymmdd, isBirth = false) => {
-      if (!yymmdd || yymmdd.includes("<")) return "";
-      const yy = parseInt(yymmdd.substring(0, 2));
-      const mm = yymmdd.substring(2, 4);
-      const dd = yymmdd.substring(4, 6);
-      // Birth: yy > 30 → 19xx, else 20xx
-      // Expiry: always 20xx
-      const fullYear = isBirth
-        ? (yy > 30 ? 1900 + yy : 2000 + yy)
-        : 2000 + yy;
-      return `${fullYear}-${mm}-${dd}`;
-    };
+    if (String(checkDigit(passportField)) !== passportCheck) issues.push("PASSPORT_CHECK");
+    if (!isValidDatePart(birthRaw) || String(checkDigit(birthRaw)) !== birthCheck) issues.push("BIRTH_CHECK");
+    if (!isValidDatePart(expiryRaw) || String(checkDigit(expiryRaw)) !== expiryCheck) issues.push("EXPIRY_CHECK");
+    if (!passportNo) issues.push("PASSPORT_MISSING");
 
     const birthDate  = parseDate(birthRaw, true);
     const expiryDate = parseDate(expiryRaw, false);
 
-    return {
+    const data = {
       documentType:  docType,
       passportNo:    passportNo.toUpperCase(),
       nationality:   nationality.toUpperCase(),
+      latinLastName:  lastName.toUpperCase(),
+      latinFirstName: firstName.toUpperCase(),
       lastName:      lastName.toUpperCase(),
       firstName:     firstName.toUpperCase(),
       nameLatin:     fullNameLatin.toUpperCase(),
@@ -77,34 +112,35 @@ export function parseMRZ(line1, line2) {
       issuer:        issuer.toUpperCase(),
       raw:           { line1: l1, line2: l2 },
     };
+    return { ok: issues.length === 0, data, issues, raw: data.raw };
   } catch (e) {
     console.error("MRZ parse error:", e);
-    return null;
+    return { ok: false, data: null, issues: ["PARSE_ERROR"], raw: { line1: l1, line2: l2 } };
   }
+}
+
+// Parse MRZ TD3 format (standard passport — 2 lines of 44 chars)
+export function parseMRZ(line1, line2) {
+  const result = parseMRZDetailed(line1, line2);
+  return result.data && result.issues.length === 0 ? result.data : result.data;
 }
 
 // Extract MRZ lines from text (OCR output often has extra text)
 export function extractMRZFromText(text) {
   if (!text) return null;
 
-  // MRZ lines are 44 chars, contain only A-Z, 0-9, <
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const lines = extractMRZLinesFromText(text);
+  return lines ? parseMRZ(lines[0], lines[1]) : null;
+}
 
-  const mrzLines = lines.filter(l => {
-    const cleaned = l.replace(/[^A-Z0-9<]/g, "");
-    return cleaned.length >= 40 && /^[A-Z0-9<]+$/.test(cleaned);
-  }).map(l => l.replace(/[^A-Z0-9<]/g, "").padEnd(44, "<").substring(0, 44));
-
-  if (mrzLines.length >= 2) {
-    // Try to find the passport line (starts with P)
-    const passportIdx = mrzLines.findIndex(l => l[0] === "P");
-    if (passportIdx >= 0 && mrzLines[passportIdx + 1]) {
-      return parseMRZ(mrzLines[passportIdx], mrzLines[passportIdx + 1]);
-    }
-    // Try last two lines
-    return parseMRZ(mrzLines[mrzLines.length - 2], mrzLines[mrzLines.length - 1]);
-  }
-
+export function extractMRZLinesFromText(text) {
+  if (!text) return null;
+  const lines = text
+    .split(/\n/)
+    .map((line) => cleanMRZLine(line))
+    .filter((line) => line.length === 44 && /^[A-Z0-9<]{44}$/.test(line));
+  const passportIdx = lines.findIndex((line) => line.startsWith("P<"));
+  if (passportIdx >= 0 && lines[passportIdx + 1]) return [lines[passportIdx], lines[passportIdx + 1]];
   return null;
 }
 
