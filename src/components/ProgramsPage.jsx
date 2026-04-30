@@ -36,6 +36,13 @@ import {
 } from "../utils/programPackages";
 import { getClientDisplayName as resolveClientDisplayName } from "../utils/clientNames";
 import {
+  translateHotelLevel,
+  translateProgramType,
+  translateRoomCategory,
+  translateRoomType,
+  trKey,
+} from "../utils/i18nValues";
+import {
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -419,7 +426,7 @@ const normalizeSheetData = (data, rows = ROOMING_ROWS, cols = ROOMING_COLS) => {
   );
 };
 
-const getClientDisplayName = (client) => resolveClientDisplayName(client, "معتمر");
+const getClientDisplayName = (client) => resolveClientDisplayName(client, trKey("pilgrimFallback") || "معتمر");
 
 const slugifyFilePart = (value) => String(value || "program")
   .replace(/\s+/g, "-")
@@ -663,7 +670,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 export default function ProgramsPage({ store, onToast }) {
   const { programs, clients, addProgram, updateProgram, deleteProgram,
           getClientTotalPaid, getClientStatus } = store;
-  const { t, tr, lang } = useLang();
+  const { t, lang } = useLang();
   const formatCurrencyForLang = React.useCallback(
     (value) => formatCurrency(value, lang),
     [lang]
@@ -751,7 +758,7 @@ export default function ProgramsPage({ store, onToast }) {
           <div>
             <h1 style={{ fontSize:22, fontWeight:800, color:tc.white }}>{t.availablePrograms}</h1>
             <p style={{ fontSize:13, color:tc.grey, marginTop:4 }}>
-              {tr("programsSubtitle", { count: programs.length })}
+              {t.programsSubtitle || `${programs.length} programmes disponibles`}
             </p>
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
@@ -854,8 +861,8 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   const packageCount = getProgramPackageCount(program);
   const startingPriceValue = getProgramStartingPrice(program);
   const startingPrice = startingPriceValue ? formatCurrencyForLang(startingPriceValue) : "—";
-  const packageLabel = `${packageCount} ${packageCount === 1 ? "مستوى" : "مستويات"}`;
-  const hotelSummary = packageCount > 1 ? "عدة فنادق حسب المستوى" : "";
+  const packageLabel = `${packageCount} ${packageCount === 1 ? (t.level || "مستوى") : (t.levels || "مستويات")}`;
+  const hotelSummary = packageCount > 1 ? (t.multipleHotelsByLevel || "عدة فنادق حسب المستوى") : "";
   const remainingLabel = formatCurrencyForLang(totalRemaining);
   const infoRows = [
     ["hotel", t.hotelMecca, hotelSummary || packages[0]?.hotelMecca || program.hotelMecca],
@@ -884,7 +891,7 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
           <div style={{ flex:1 }}>
             <p style={{ fontSize:16, fontWeight:800, color:tc.white, marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{normalizeProgramType(program.type)}</span>
+              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{translateProgramType(program.type, lang)}</span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
             </div>
@@ -966,9 +973,9 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap", marginBottom:10 }}>
         <div>
-          <strong style={{ color:tc.white, fontSize:14 }}>{pkg.level}</strong>
+          <strong style={{ color:tc.white, fontSize:14 }}>{translateHotelLevel(pkg.level) || pkg.level}</strong>
           <p style={{ color:tc.grey, fontSize:11, marginTop:3 }}>
-            {pkg.mealPlan || "بدون نظام وجبات محدد"}
+            {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
           </p>
         </div>
         <span style={{
@@ -980,7 +987,7 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
           fontSize:12,
           fontWeight:800,
         }}>
-          {start ? `ابتداءً من ${formatCurrencyForLang(start)}` : "بدون سعر"}
+          {start ? ((t.fromPrice || "ابتداءً من {price}").replace("{price}", formatCurrencyForLang(start))) : (t.noPrice || "بدون سعر")}
         </span>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8, marginBottom:10 }}>
@@ -998,7 +1005,7 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
             fontSize:11,
             fontWeight:700,
           }}>
-            {getRoomTypeLabel(key)}: {pkg.prices?.[key] ? formatCurrencyForLang(pkg.prices[key]) : "—"}
+            {translateRoomType(key)}: {pkg.prices?.[key] ? formatCurrencyForLang(pkg.prices[key]) : "—"}
           </span>
         ))}
       </div>
@@ -1172,11 +1179,11 @@ function ProgramInner({ program, store, onToast, onBack }) {
     const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
     const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
     return [
-      { key: "all", label: "الكل", count: progClients.length },
-      ...packages.map(pkg => ({ key: pkg.level, label: pkg.level, count: countForLevel(pkg.level) })),
-      ...(unassignedCount ? [{ key: "__unassigned", label: "غير محدد", count: unassignedCount }] : []),
+      { key: "all", label: t.all, count: progClients.length },
+      ...packages.map(pkg => ({ key: pkg.level, label: translateHotelLevel(pkg.level, lang) || pkg.level, count: countForLevel(pkg.level) })),
+      ...(unassignedCount ? [{ key: "__unassigned", label: t.noHotel || "غير محدد", count: unassignedCount }] : []),
     ];
-  }, [packages, progClients]);
+  }, [packages, progClients, t, lang]);
   const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned"
     ? null
     : packages.find(pkg => pkg.level === packageFilter) || null;
@@ -1317,9 +1324,9 @@ function ProgramInner({ program, store, onToast, onBack }) {
       <GlassCard gold style={{ padding:"14px 16px", marginBottom:18 }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:10 }}>
           <div>
-            <p style={{ fontSize:14, fontWeight:800, color:tc.gold }}>مستويات البرنامج</p>
+            <p style={{ fontSize:14, fontWeight:800, color:tc.gold }}>{t.programLevelsTitle || "مستويات البرنامج"}</p>
             <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>
-              اختر مستوى لعرض تفاصيله وتصفية المعتمرين المرتبطين به.
+              {t.programLevelsHint || "اختر مستوى لعرض تفاصيله وتصفية المعتمرين المرتبطين به."}
             </p>
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
@@ -1331,7 +1338,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
               borderRadius:999,
               padding:"4px 10px",
               fontWeight:800,
-            }}>{packages.length} مستويات</span>
+            }}>{packages.length} {t.levels || "مستويات"}</span>
             <div style={{ position:"relative" }}>
               <button type="button" onClick={() => setPackageFilterOpen(open => !open)}
                 style={{
@@ -1426,7 +1433,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
             color:tc.grey,
             fontSize:12,
           }}>
-            يعرض هذا الخيار المعتمرين القدامى الذين لم يتم ربطهم بمستوى بعد.
+            {t.unassignedPackageHint || "يعرض هذا الخيار المعتمرين القدامى الذين لم يتم ربطهم بمستوى بعد."}
           </div>
         ) : selectedPackageDetail ? (
           <PackageDetailCard pkg={selectedPackageDetail} formatCurrencyForLang={formatCurrencyForLang} t={t} />
@@ -1448,7 +1455,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
                     fontFamily:"'Cairo',sans-serif",
                   }}>
                   <span style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center" }}>
-                    <strong style={{ color:tc.white, fontSize:13 }}>{pkg.level}</strong>
+                    <strong style={{ color:tc.white, fontSize:13 }}>{translateHotelLevel(pkg.level, lang) || pkg.level}</strong>
                     <span style={{ color:tc.gold, fontSize:11, fontWeight:800 }}>
                       {start ? formatCurrencyForLang(start) : "—"}
                     </span>
@@ -1457,7 +1464,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
                     {pkg.hotelMecca || "—"} / {pkg.hotelMadina || "—"}
                   </span>
                   <span style={{ color:tc.grey, fontSize:11 }}>
-                    {pkg.mealPlan || "بدون نظام وجبات محدد"}
+                    {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
                   </span>
                 </button>
               );
@@ -1842,6 +1849,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
 }
 
 function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) {
+  const { t, tr, lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
   const [unassigned, setUnassigned] = React.useState([]);
@@ -1882,6 +1890,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     return map;
   }, [packages]);
   const clientsById = React.useMemo(() => Object.fromEntries(clients.map((client) => [client.id, client])), [clients]);
+  const roomingCityLabels = React.useMemo(() => ({
+    makkah: t.roomingMakkah || ROOMING_CITY_LABELS.makkah,
+    madinah: t.roomingMadinah || ROOMING_CITY_LABELS.madinah,
+  }), [t]);
+  const roomingRoomOptions = React.useMemo(() => ROOMING_ROOM_OPTIONS.map((option) => ({
+    ...option,
+    label: option.value === "single" ? (t.roomSingleShort || option.label)
+      : option.value === "double" ? (t.roomDoubleShort || option.label)
+        : option.value === "triple" ? (t.roomTripleShort || option.label)
+          : option.value === "quad" ? (t.roomQuadShort || option.label)
+            : option.value === "quint" ? (t.roomQuintShort || option.label)
+              : option.label,
+  })), [t]);
+  const roomingCategoryOptions = React.useMemo(() => ROOMING_CATEGORY_OPTIONS.map((option) => ({
+    ...option,
+    label: option.value === "male_only" ? (t.roomCategoryMaleOnly || option.label)
+      : option.value === "female_only" ? (t.roomCategoryFemaleOnly || option.label)
+        : (t.roomCategoryFamily || option.label),
+  })), [t]);
+  const getLocalizedRoomTypeLabel = React.useCallback((roomType) => {
+    const key = normalizeRoomingRoomType(roomType) || roomType;
+    return roomingRoomOptions.find((option) => option.value === key)?.label || getRoomingRoomLabel(key);
+  }, [roomingRoomOptions]);
+  const getLocalizedCategoryLabel = React.useCallback((category) => {
+    return roomingCategoryOptions.find((option) => option.value === category)?.label || getRoomingCategoryLabel(category);
+  }, [roomingCategoryOptions]);
 
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
@@ -1894,14 +1928,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     return {
       name: getClientDisplayName(client),
       gender,
-      genderLabel: gender === "male" ? "ذكر" : gender === "female" ? "أنثى" : "—",
+      genderLabel: gender === "male" ? t.male : gender === "female" ? t.female : "—",
       hotel,
       roomType,
-      roomTypeLabel: getRoomingRoomLabel(roomType),
+      roomTypeLabel: getLocalizedRoomTypeLabel(roomType),
       category: client.roomCategory || "",
       familyKey: client.roomingGroupId || getRoomingFamilyKey(client),
     };
-  }, [city, packageById, packageByLevel, program]);
+  }, [city, packageById, packageByLevel, program, t, getLocalizedRoomTypeLabel]);
 
   const hotelOptions = React.useMemo(() => {
     const values = new Set(getProgramHotelsForCity(program, packages, city));
@@ -1979,11 +2013,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       }));
       setDirty(false);
       setSavedAt(new Date());
-      if (notify) onToast?.("تم حفظ مصمم التسكين محليًا", "success");
+      if (notify) onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
     } catch {
-      onToast?.("تعذر حفظ مصمم التسكين محليًا", "error");
+      onToast?.(t.roomingSaveFailedLocal || "تعذر حفظ مصمم التسكين محليًا", "error");
     }
-  }, [storageKey, city, rooms, unassigned, onToast]);
+  }, [storageKey, city, rooms, unassigned, onToast, t]);
 
   const markDirty = React.useCallback(() => setDirty(true), []);
 
@@ -2041,8 +2075,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     });
     const hotels = new Map();
     sorted.forEach((room) => {
-      const hotelKey = room.hotel || "فندق غير محدد";
-      const typeKey = room.roomType || "غير محدد";
+      const hotelKey = room.hotel || (t.roomingMissingHotel || "فندق غير محدد");
+      const typeKey = room.roomType || (t.noHotel || "غير محدد");
       if (!hotels.has(hotelKey)) hotels.set(hotelKey, new Map());
       const byType = hotels.get(hotelKey);
       if (!byType.has(typeKey)) byType.set(typeKey, []);
@@ -2052,7 +2086,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }, [rooms]);
 
   const getCompatibilityResult = React.useCallback((client, room) => {
-    if (!client || !room) return { ok: false, reason: "بيانات المعتمر ناقصة" };
+    if (!client || !room) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
     const context = getClientContext(client);
     const occupantIds = room.occupantIds || [];
     const roomType = normalizeRoomingRoomType(room.roomType);
@@ -2061,23 +2095,23 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     const clientGender = normalizeRoomingGender(context.gender);
     const roomHotel = normalizeRoomingHotel(room.hotel);
     const clientHotel = normalizeRoomingHotel(context.hotel);
-    if (occupantIds.includes(client.id)) return { ok: false, reason: "المعتمر مدرج مسبقا" };
-    if (occupantIds.length >= capacity) return { ok: false, reason: "الغرفة ممتلئة" };
-    if (!clientGender) return { ok: false, reason: "بيانات المعتمر ناقصة" };
-    if (room.category === "male_only" && clientGender !== "male") return { ok: false, reason: "الجنس غير متوافق" };
-    if (room.category === "female_only" && clientGender !== "female") return { ok: false, reason: "الجنس غير متوافق" };
-    if (roomHotel && clientHotel && roomHotel !== clientHotel) return { ok: false, reason: "الفندق غير متوافق" };
-    if (roomType && clientRoomType && roomType !== clientRoomType) return { ok: false, reason: "نوع الغرفة غير متوافق" };
+    if (occupantIds.includes(client.id)) return { ok: false, reason: t.roomingAlreadyInserted || "المعتمر مدرج مسبقا" };
+    if (occupantIds.length >= capacity) return { ok: false, reason: t.roomFull || "الغرفة ممتلئة" };
+    if (!clientGender) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
+    if (room.category === "male_only" && clientGender !== "male") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
+    if (room.category === "female_only" && clientGender !== "female") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
+    if (roomHotel && clientHotel && roomHotel !== clientHotel) return { ok: false, reason: t.roomingHotelMismatch || "الفندق غير متوافق" };
+    if (roomType && clientRoomType && roomType !== clientRoomType) return { ok: false, reason: t.roomingRoomTypeMismatch || "نوع الغرفة غير متوافق" };
     if (room.category === "family") {
       const occupants = occupantIds.map((id) => clientsById[id]).filter(Boolean);
       const mixed = occupants.some((occupant) => normalizeRoomingGender(occupant.gender) && normalizeRoomingGender(occupant.gender) !== clientGender);
       if (mixed) {
         const roomFamilyKeys = new Set(occupants.map((occupant) => getClientContext(occupant).familyKey).filter(Boolean));
-        if (!context.familyKey || !roomFamilyKeys.has(context.familyKey)) return { ok: false, reason: "بيانات المعتمر ناقصة" };
+        if (!context.familyKey || !roomFamilyKeys.has(context.familyKey)) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
       }
     }
     return { ok: true };
-  }, [clientsById, getClientContext]);
+  }, [clientsById, getClientContext, t]);
 
   const getCompatibilityReason = React.useCallback((client, room) => {
     const result = getCompatibilityResult(client, room);
@@ -2144,7 +2178,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }, [allCollisionNodes, roomToCollisionNode]);
 
   const generateRooms = React.useCallback(() => {
-    if (rooms.length && !window.confirm("يوجد تسكين محفوظ لهذه المدينة، هل تريد إعادة التوليد واستبدال الحالي؟")) return;
+    if (rooms.length && !window.confirm(t.roomingRegenerateConfirm || "يوجد تسكين محفوظ لهذه المدينة، هل تريد إعادة التوليد واستبدال الحالي؟")) return;
     const nextRooms = [];
     const nextUnassigned = [];
     const grouped = new Map();
@@ -2152,13 +2186,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
 
     clients.forEach((client) => {
       const context = getClientContext(client);
-      if (!context.hotel) return addUnassigned(client, "فندق غير محدد");
-      if (!context.roomType) return addUnassigned(client, "نوع الغرفة غير محدد");
-      if (!context.gender) return addUnassigned(client, "الجنس غير محدد");
+      if (!context.hotel) return addUnassigned(client, t.roomingMissingHotel || "فندق غير محدد");
+      if (!context.roomType) return addUnassigned(client, t.roomingMissingRoomType || "نوع الغرفة غير محدد");
+      if (!context.gender) return addUnassigned(client, t.roomingMissingGender || "الجنس غير محدد");
       const roomType = context.roomType;
       const capacity = getRoomingCapacity(roomType);
       const requestedCategory = client.roomCategory || (context.gender === "female" ? "female_only" : "male_only");
-      if (requestedCategory === "family" && !context.familyKey) return addUnassigned(client, "لا توجد مجموعة عائلية");
+      if (requestedCategory === "family" && !context.familyKey) return addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية");
       const groupKey = [
         context.hotel,
         roomType,
@@ -2169,7 +2203,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       grouped.get(groupKey).push(client);
       if (grouped.get(groupKey).length > capacity && client.roomingGroupId) {
         grouped.get(groupKey).pop();
-        addUnassigned(client, "تجاوز سعة الغرفة");
+        addUnassigned(client, t.roomingCapacityExceeded || "تجاوز سعة الغرفة");
       }
     });
 
@@ -2185,7 +2219,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         const hasUnsafeFamilyMix = category === "family" && new Set(occupants.map((client) => client.gender)).size > 1
           && !occupants.every((client) => getClientContext(client).familyKey && getClientContext(client).familyKey === getClientContext(first).familyKey);
         if (hasUnsafeFamilyMix) {
-          occupants.forEach((client) => addUnassigned(client, "لا توجد مجموعة عائلية"));
+          occupants.forEach((client) => addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية"));
           return;
         }
         nextRooms.push({
@@ -2208,8 +2242,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     setUnassigned(nextUnassigned);
     setSelectedRoomId(null);
     setDirty(true);
-    onToast?.("تم توليد الغرف من بيانات المعتمرين", "success");
-  }, [rooms.length, clients, getClientContext, onToast]);
+    onToast?.(t.roomingGenerated || "تم توليد الغرف من بيانات المعتمرين", "success");
+  }, [rooms.length, clients, getClientContext, onToast, t]);
 
   const openCreateRoom = React.useCallback((position = { x: 0, y: 0 }) => {
     setRoomDraft({
@@ -2252,7 +2286,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       setSelectedRoomId(draftRoom.id);
       setRoomModal({ open: false, mode: "edit", roomId: null });
       markDirty();
-      onToast?.("تمت إضافة الغرفة", "success");
+      onToast?.(t.roomingRoomAdded || "تمت إضافة الغرفة", "success");
       return;
     }
 
@@ -2265,7 +2299,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       if (!client) return;
       const nextRoom = { ...room, ...roomDraft, capacity, occupantIds: kept };
       const reason = getCompatibilityReason(client, nextRoom);
-      if (reason || kept.length >= capacity) removed.push({ clientId, reason: reason || "تجاوز سعة الغرفة" });
+      if (reason || kept.length >= capacity) removed.push({ clientId, reason: reason || t.roomingCapacityExceeded || "تجاوز سعة الغرفة" });
       else kept.push(clientId);
     });
     setRooms((prev) => prev.map((item) => item.id === room.id ? {
@@ -2276,9 +2310,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     } : item));
     if (removed.length) {
       setUnassigned((prev) => [...prev, ...removed]);
-      if (roomDraft.category === "male_only") onToast?.("تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
-      else if (roomDraft.category === "female_only") onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
-      else onToast?.("تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+      if (roomDraft.category === "male_only") onToast?.(t.roomingMovedIncompatibleWomen || "تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
+      else if (roomDraft.category === "female_only") onToast?.(t.roomingMovedIncompatibleMen || "تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+      else onToast?.(t.roomingMovedIncompatible || "تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
     }
     setRoomModal({ open: false, mode: "edit", roomId: null });
     markDirty();
@@ -2317,7 +2351,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     setRooms((prev) => [...prev, { ...draftRoom, x: position.x, y: position.y }]);
     setSelectedRoomId(draftRoom.id);
     markDirty();
-    onToast?.("تم نسخ الغرفة بدون المعتمرين", "success");
+    onToast?.(t.roomingRoomCopied || "تم نسخ الغرفة بدون المعتمرين", "success");
   }, [rooms, getNextRoomNumber, findFreePositionForRoom, markDirty, onToast]);
 
   const toggleRoomLock = React.useCallback((roomId) => {
@@ -2367,7 +2401,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       })
       .slice(0, remaining);
     if (!selected.length) {
-      onToast?.("لا يوجد معتمرون مناسبون لهذه الغرفة", "error");
+      onToast?.(t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة", "error");
       return;
     }
     setRooms((prev) => prev.map((item) => item.id === room.id
@@ -2381,7 +2415,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, markDirty, onToast]);
 
   const autoArrangeRooms = React.useCallback(() => {
-    if (rooms.length && !window.confirm("سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
+    if (rooms.length && !window.confirm(t.roomingAutoArrangeConfirm || "سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
     setRooms((prev) => autoLayoutRoomNodes(prev));
     markDirty();
     window.requestAnimationFrame(() => flowRef.current?.fitView?.({ padding: 0.18, duration: 400 }));
@@ -2492,8 +2526,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     } : room));
     lastValidPositionRef.current.set(node.id, { ...nextPosition });
     markDirty();
-    if (invalid) onToast?.("تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
-  }, [allCollisionNodes, markDirty, onToast, setFlowNodes]);
+    if (invalid) onToast?.(t.roomingOverlapFixed || "تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
+  }, [allCollisionNodes, markDirty, onToast, setFlowNodes, t]);
 
   const openCanvasContextMenu = React.useCallback((event) => {
     event.preventDefault();
@@ -2530,23 +2564,23 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         const client = clientsById[clientId];
         rows.push([
           room.hotel || "",
-          getRoomingRoomLabel(room.roomType),
-          getRoomingCategoryLabel(room.category),
+          getLocalizedRoomTypeLabel(room.roomType),
+          getLocalizedCategoryLabel(room.category),
           room.roomNumber || "",
           client ? getClientDisplayName(client) : "",
-          client?.gender === "male" ? "ذكر" : client?.gender === "female" ? "أنثى" : "",
+          client?.gender === "male" ? t.male : client?.gender === "female" ? t.female : "",
         ]);
       });
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "rooming");
     XLSX.writeFile(wb, `rooming-canvas-${city}-${slugifyFilePart(program.name)}.xlsx`);
-  }, [rooms, clientsById, city, program.name]);
+  }, [rooms, clientsById, city, program.name, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel, t]);
 
   const printCanvas = React.useCallback(() => {
     const totalRooms = rooms.length;
     const totalAssigned = rooms.reduce((sum, room) => sum + (room.occupantIds || []).length, 0);
-    const cityLabel = city === "makkah" ? "مكة" : "المدينة";
+    const cityLabel = city === "makkah" ? (t.makkah || "مكة") : (t.madinah || "المدينة");
     const period = [program.departure, program.returnDate].filter(Boolean).join(" - ") || "—";
     const sortedRooms = rooms.slice().sort((a, b) => {
       const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
@@ -2556,7 +2590,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       return String(a.roomNumber || "").localeCompare(String(b.roomNumber || ""), "ar", { numeric: true });
     });
     const roomsByHotel = sortedRooms.reduce((map, room) => {
-      const hotel = room.hotel || "فندق غير محدد";
+      const hotel = room.hotel || (t.roomingMissingHotel || "فندق غير محدد");
       if (!map.has(hotel)) map.set(hotel, []);
       map.get(hotel).push(room);
       return map;
@@ -2567,7 +2601,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         <section class="hotel-section">
           <div class="hotel-title">
             <h2>${escapeHtml(hotel)}</h2>
-            <span>${hotelRooms.length} غرف · ${assigned} معتمر</span>
+            <span>${hotelRooms.length} ${t.roomingRoomsUnit || "غرف"} · ${assigned} ${t.pilgrimUnit || "معتمر"}</span>
           </div>
           <div class="rooms-grid">
             ${hotelRooms.map((room) => {
@@ -2577,19 +2611,19 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
               const names = occupants.map((clientId, index) => {
                 const client = clientsById[clientId];
                 return `<li><span>${index + 1}</span><b>${client ? escapeHtml(getClientDisplayName(client)) : "—"}</b></li>`;
-              }).join("") || `<li class="empty"><span>0</span><b>بدون معتمرين</b></li>`;
+              }).join("") || `<li class="empty"><span>0</span><b>${escapeHtml(t.noPilgrims || "بدون معتمرين")}</b></li>`;
               return `
                 <article class="room-card ${escapeHtml(category)}">
                   <div class="room-head">
                     <div>
-                      <strong>${escapeHtml(getRoomingRoomLabel(room.roomType))}</strong>
+                      <strong>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</strong>
                       <small>${escapeHtml(room.hotel || hotel)}</small>
                     </div>
                     <span class="occupancy">${occupants.length}/${capacity}</span>
                   </div>
                   <div class="badges">
-                    <span>${escapeHtml(getRoomingRoomLabel(room.roomType))}</span>
-                    <span>${escapeHtml(getRoomingCategoryLabel(category))}</span>
+                    <span>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</span>
+                    <span>${escapeHtml(getLocalizedCategoryLabel(category))}</span>
                   </div>
                   <div class="hotel-name">${escapeHtml(room.hotel || hotel)}</div>
                   <ol>${names}</ol>
@@ -2602,7 +2636,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     }).join("");
     const win = window.open("", "_blank");
     if (!win) return;
-    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
+    const printDir = lang === "ar" ? "rtl" : "ltr";
+    win.document.write(`<!doctype html><html dir="${printDir}"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
       <style>
         @page{size:A4 landscape;margin:7mm 8mm}
         *{box-sizing:border-box}
@@ -2652,7 +2687,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         .print-footer{position:fixed;left:0;right:0;bottom:0;color:#0f172a;font-size:9px;display:flex;justify-content:center;gap:18px;align-items:center}
         .print-footer::before,.print-footer::after{content:"";width:38mm;height:1px;background:linear-gradient(90deg,transparent,#d5ad5a)}
         .print-footer::after{background:linear-gradient(90deg,#d5ad5a,transparent)}
-        .print-footer .page-no::after{content:"صفحة " counter(page)}
+        .print-footer .page-no::after{content:"${escapeHtml(t.page || "صفحة")} " counter(page)}
         @media print{
           html,body,.page{overflow:hidden}
           .rooms-grid{grid-template-columns:repeat(5,1fr)}
@@ -2670,21 +2705,21 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                 <small>تجربة أعوام منذ 1975</small>
               </div>
             </div>
-            <h1>ورقة التسكين</h1>
+            <h1>${escapeHtml(t.roomingPrintTitle || "ورقة التسكين")}</h1>
             <p class="program-name">${escapeHtml(program.name || "—")}</p>
           </div>
           <div class="summary">
-            <div class="summary-card"><div><span>المدينة:</span><b>${escapeHtml(cityLabel)}</b></div><div class="mini-icon">م</div></div>
-            <div class="summary-card"><div><span>الفترة:</span><b>${escapeHtml(period)}</b></div><div class="mini-icon">ف</div></div>
-            <div class="summary-card"><div><span>عدد المعتمرين:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div><div class="mini-icon">ع</div></div>
-            <div class="summary-card"><div><span>عدد الغرف:</span><b>${escapeHtml(String(totalRooms))}</b></div><div class="mini-icon">غ</div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.city)}:</span><b>${escapeHtml(cityLabel)}</b></div><div class="mini-icon">م</div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.period || "الفترة")}:</span><b>${escapeHtml(period)}</b></div><div class="mini-icon">ف</div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.totalClients)}:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div><div class="mini-icon">ع</div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.roomingRoomsCount || "عدد الغرف")}:</span><b>${escapeHtml(String(totalRooms))}</b></div><div class="mini-icon">غ</div></div>
           </div>
         </header>
-        ${sections || "<p>لا توجد غرف للتسكين.</p>"}
+        ${sections || `<p>${escapeHtml(t.noRoomingRooms || "لا توجد غرف للتسكين.")}</p>`}
         <footer class="print-footer"><span class="page-no"></span></footer>
       </main><script>window.onload=()=>window.print()</script></body></html>`);
     win.document.close();
-  }, [groupedRooms, rooms, clientsById, program, city, clients.length, agency]);
+  }, [groupedRooms, rooms, clientsById, program, city, clients.length, agency, lang, t, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
@@ -2758,14 +2793,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
           <div>
-            <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>مصمم التسكين الذكي</p>
+            <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
             <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
-              {program.name || "—"} • {ROOMING_CITY_LABELS[city]} • {clients.length} معتمر
-              {dirty ? " • تغييرات غير محفوظة" : savedAt ? ` • آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}` : ""}
+              {program.name || "—"} • {roomingCityLabels[city]} • {clients.length} {t.pilgrimUnit || "معتمر"}
+              {dirty ? ` • ${t.unsavedChanges || "تغييرات غير محفوظة"}` : savedAt ? ` • ${tr("lastSaved", { time: savedAt.toLocaleTimeString("ar-MA") }) || `آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}`}` : ""}
             </p>
           </div>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "#fff", border: "1px solid rgba(148,163,184,.22)" }}>
-            {Object.entries(ROOMING_CITY_LABELS).map(([key, label]) => (
+            {Object.entries(roomingCityLabels).map(([key, label]) => (
               <button
                 key={key}
                 type="button"
@@ -2789,22 +2824,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "#fff", border: "1px solid rgba(148,163,184,.2)" }}>
-          <Button variant="primary" icon="refresh" onClick={generateRooms}>توليد الغرف</Button>
-          <RoomingToolbarButton title="ترتيب تلقائي" onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
-          <RoomingToolbarButton title="حفظ" onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
-          <RoomingToolbarButton title="طباعة" onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
-          <RoomingToolbarButton title="تصدير Excel" onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
+          <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
+          <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
+          <RoomingToolbarButton title={t.roomingSave || "حفظ"} onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
+          <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
+          <RoomingToolbarButton title={t.roomingExportExcel || "تصدير Excel"} onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
           <select
             value={zoom}
             onChange={(event) => applyFlowZoom(Number(event.target.value))}
-            title="التكبير"
+            title={t.roomingZoom || "التكبير"}
             style={{ height: 34, borderRadius: 8, border: "1px solid rgba(148,163,184,.24)", background: "#fff", color: "#334155", padding: "0 10px", fontSize: 12, fontWeight: 700, fontFamily: "'Cairo',sans-serif" }}
           >
             {[75, 100, 125].map((value) => <option key={value} value={value}>{value}%</option>)}
           </select>
-          <RoomingToolbarButton title="Fit" onClick={fitView} icon={<Scan size={15} />} />
-          <RoomingToolbarButton title={panelOpen ? "إخفاء غير المسكنين" : "إظهار غير المسكنين"} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
-          <RoomingToolbarButton title={fullscreen ? "الخروج من ملء الشاشة" : "ملء الشاشة"} onClick={() => setFullscreen((open) => !open)} icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} active={fullscreen} />
+          <RoomingToolbarButton title={t.roomingFit || "Fit"} onClick={fitView} icon={<Scan size={15} />} />
+          <RoomingToolbarButton title={panelOpen ? (t.roomingHideUnassigned || "إخفاء غير المسكنين") : (t.roomingShowUnassigned || "إظهار غير المسكنين")} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
+          <RoomingToolbarButton title={fullscreen ? (t.roomingExitFullscreen || "الخروج من ملء الشاشة") : (t.roomingFullscreen || "ملء الشاشة")} onClick={() => setFullscreen((open) => !open)} icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} active={fullscreen} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
@@ -2837,9 +2872,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                 style={{ display: "grid", placeItems: "center", minHeight: "100%", padding: 30 }}
               >
                 <div style={{ textAlign: "center", maxWidth: 420 }}>
-                  <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>ابدأ بتوليد الغرف</p>
-                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>سيتم إنشاء بطاقات غرف ذكية من بيانات المعتمرين، مع إبقاء الحالات غير الآمنة في لوحة المراجعة.</p>
-                  <Button variant="primary" icon="refresh" onClick={generateRooms}>توليد الغرف</Button>
+                  <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>{t.roomingStartTitle || "ابدأ بتوليد الغرف"}</p>
+                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t.roomingStartDesc || "سيتم إنشاء بطاقات غرف ذكية من بيانات المعتمرين، مع إبقاء الحالات غير الآمنة في لوحة المراجعة."}</p>
+                  <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
                 </div>
               </div>
             ) : (
@@ -2878,7 +2913,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                       fontWeight: 800,
                       fontSize: 13,
                     }}>
-                      لا توجد غرف مطابقة للفلاتر الحالية
+                      {t.roomingNoRoomsForFilters || "لا توجد غرف مطابقة للفلاتر الحالية"}
                     </div>
                   </div>
                 )}
@@ -2902,7 +2937,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                 }}
               >
                 <RoomingMenuItem
-                  label="إضافة غرفة"
+                  label={t.addRoom || "إضافة غرفة"}
                   icon={<AppIcon name="plus" size={14} />}
                   onClick={() => {
                     closeCanvasContextMenu();
@@ -2910,7 +2945,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label="ترتيب تلقائي"
+                  label={t.roomingAutoArrange || "ترتيب تلقائي"}
                   icon={<LayoutGrid size={14} />}
                   onClick={() => {
                     closeCanvasContextMenu();
@@ -2918,7 +2953,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label="ملاءمة العرض"
+                  label={t.roomingFit || "ملاءمة العرض"}
                   icon={<Scan size={14} />}
                   onClick={() => {
                     closeCanvasContextMenu();
@@ -2932,16 +2967,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           {panelOpen && (
             <aside style={{ background: "#fff", border: "1px solid rgba(148,163,184,.22)", borderRadius: 14, padding: 12, overflow: "auto", boxShadow: "0 12px 28px rgba(15,23,42,.08)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 13 }}>غير مسكنين / يحتاجون مراجعة</p>
-                <RoomingToolbarButton title="إخفاء" onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
+                <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 13 }}>{t.unassignedReview || "غير مسكنين / يحتاجون مراجعة"}</p>
+                <RoomingToolbarButton title={t.roomingHideUnassigned || "إخفاء"} onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
               </div>
               <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
-                <Input label="" value={panelSearch} onChange={(event) => setPanelSearch(event.target.value)} placeholder="بحث" />
-                <Select label="" value={panelHotel} onChange={(event) => setPanelHotel(event.target.value)} options={[{ value: "all", label: "كل الفنادق" }, ...hotelOptions.map((hotel) => ({ value: hotel, label: hotel }))]} />
-                <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: "كل الغرف" }, ...ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))]} />
+                <Input label="" value={panelSearch} onChange={(event) => setPanelSearch(event.target.value)} placeholder={t.searchGeneral || "بحث"} />
+                <Select label="" value={panelHotel} onChange={(event) => setPanelHotel(event.target.value)} options={[{ value: "all", label: t.allHotels || "كل الفنادق" }, ...hotelOptions.map((hotel) => ({ value: hotel, label: hotel }))]} />
+                <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: t.allRooms || "كل الغرف" }, ...roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))]} />
               </div>
               {!filteredUnassigned.length ? (
-                <p style={{ color: "#64748b", fontSize: 12 }}>لا توجد حالات غير مسكنة ضمن الفلاتر الحالية.</p>
+                <p style={{ color: "#64748b", fontSize: 12 }}>{t.noUnassignedForFilters || "لا توجد حالات غير مسكنة ضمن الفلاتر الحالية."}</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {filteredUnassigned.map((item) => {
@@ -2966,7 +3001,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                         style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(148,163,184,.18)", background: draggingClientId === item.clientId ? "#eff6ff" : "#f8fafc", borderRadius: 10, padding: 9 }}
                       >
                         <strong style={{ display: "block", color: "#0f172a", fontSize: 12 }}>{context.name}</strong>
-                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ") || "بدون تفاصيل"}</span>
+                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}</span>
                         {displayReason && <span style={{ display: "block", color: "#b45309", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
                         {selectedRoom && (
                           <button
@@ -2990,7 +3025,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                               fontFamily: "'Cairo',sans-serif",
                             }}
                           >
-                            {canAddToSelected ? "إضافة إلى الغرفة المحددة" : (selectedRoomReason || "الغرفة ممتلئة")}
+                            {canAddToSelected ? (t.addToSelectedRoom || "إضافة إلى الغرفة المحددة") : (selectedRoomReason || t.roomFull || "الغرفة ممتلئة")}
                           </button>
                         )}
                       </div>
@@ -3002,22 +3037,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           )}
         </div>
 
-        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? "إضافة غرفة" : "تعديل الغرفة"} width={420}>
+        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRoom || "إضافة غرفة") : (t.editRoom || "تعديل الغرفة")} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Select label="الفندق" value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || "غير محدد" }))} />
-            <Select label="نوع الغرفة" value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={ROOMING_ROOM_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
-            <Select label="تصنيف الغرفة" value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={ROOMING_CATEGORY_OPTIONS.map((option) => ({ value: option.value, label: option.label }))} />
+            <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} />
+            <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} />
+            <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "edit", roomId: null })}>إلغاء</Button>
-              <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? "إضافة" : "حفظ"}</Button>
+              <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "edit", roomId: null })}>{t.cancel}</Button>
+              <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? (t.add || "إضافة") : t.save}</Button>
             </div>
           </div>
         </Modal>
 
-        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }} title="إضافة معتمر" width={560}>
+        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }} title={t.addPilgrim || "إضافة معتمر"} width={560}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {!compatibleUnassigned.length ? (
-              <p style={{ color: "#64748b", fontSize: 12 }}>لا يوجد معتمرون مناسبون لهذه الغرفة</p>
+              <p style={{ color: "#64748b", fontSize: 12 }}>{t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة"}</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 330, overflow: "auto" }}>
                 {compatibleUnassigned.map(({ client }) => {
@@ -3036,8 +3071,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
               </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <Button variant="ghost" onClick={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }}>إلغاء</Button>
-              <Button disabled={!selectedPilgrimIds.length} onClick={addSelectedPilgrimsToRoom}>إدراج المحدد</Button>
+              <Button variant="ghost" onClick={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }}>{t.cancel}</Button>
+              <Button disabled={!selectedPilgrimIds.length} onClick={addSelectedPilgrimsToRoom}>{t.insertSelected || "إدراج المحدد"}</Button>
             </div>
           </div>
         </Modal>
@@ -3091,6 +3126,7 @@ function RoomingToolbarButton({
 }
 
 const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) {
+  const { t, lang } = useLang();
   const room = data.room;
   const accent = getRoomingCategoryAccent(room.category);
   const occupantIds = room.occupantIds || [];
@@ -3111,7 +3147,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   return (
     <article
       className="rooming-flow-node"
-      title={isInvalidPosition ? "لا يمكن وضع غرفة فوق غرفة أخرى" : isDropTarget ? (dropReason || "يمكن إدراج المعتمر هنا") : undefined}
+      title={isInvalidPosition ? (t.invalidRoomOverlap || "لا يمكن وضع غرفة فوق غرفة أخرى") : isDropTarget ? (dropReason || t.canInsertPilgrimHere || "يمكن إدراج المعتمر هنا") : undefined}
       onContextMenu={(event) => event.stopPropagation()}
       onDragOver={(event) => {
         if (!data.draggingClient) return;
@@ -3147,11 +3183,11 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 }}>
         <span style={{ color: accent.text, background: accent.bg, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>
-          {getRoomingCategoryLabel(room.category)}
+          {translateRoomCategory(room.category, lang) || getRoomingCategoryLabel(room.category)}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
-          {room.locked && <Lock size={13} color="#64748b" title="الغرفة مقفلة" />}
+          {room.locked && <Lock size={13} color="#64748b" title={t.roomLocked || "الغرفة مقفلة"} />}
           <div
             className="nodrag"
             onPointerDown={(event) => event.stopPropagation()}
@@ -3159,8 +3195,8 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           >
             <button
               type="button"
-              title="إجراءات الغرفة"
-              aria-label="إجراءات الغرفة"
+              title={t.roomActions || "إجراءات الغرفة"}
+              aria-label={t.roomActions || "إجراءات الغرفة"}
               onClick={(event) => {
                 event.stopPropagation();
                 setMenuOpen((open) => !open);
@@ -3184,7 +3220,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
             <RoomingMenu open={menuOpen} align="end" width={168}>
               <div onPointerDown={(event) => event.stopPropagation()}>
                 <RoomingMenuItem
-                  label="إضافة معتمر"
+                  label={t.addPilgrim || "إضافة معتمر"}
                   icon={<UserPlus size={14} />}
                   onClick={() => {
                     data.onAdd(room.id);
@@ -3192,7 +3228,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label="نسخ الغرفة"
+                  label={t.copyRoom || "نسخ الغرفة"}
                   icon={<Copy size={14} />}
                   onClick={() => {
                     data.onCopy(room.id);
@@ -3200,7 +3236,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label={room.locked ? "فتح الغرفة" : "قفل الغرفة"}
+                  label={room.locked ? (t.unlockRoom || "فتح الغرفة") : (t.lockRoom || "قفل الغرفة")}
                   icon={room.locked ? <Unlock size={14} /> : <Lock size={14} />}
                   onClick={() => {
                     data.onToggleLock(room.id);
@@ -3208,7 +3244,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label="تعديل الغرفة"
+                  label={t.editRoom || "تعديل الغرفة"}
                   icon={<Settings size={14} />}
                   onClick={() => {
                     data.onEdit(room.id);
@@ -3216,7 +3252,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   }}
                 />
                 <RoomingMenuItem
-                  label="حذف الغرفة"
+                  label={t.deleteRoom || "حذف الغرفة"}
                   destructive
                   icon={<Trash2 size={14} />}
                   onClick={() => {
@@ -3230,9 +3266,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         </div>
       </div>
       <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
-        {getRoomingRoomLabel(room.roomType)} • غرفة {room.roomNumber}
+        {translateRoomType(room.roomType, lang) || getRoomingRoomLabel(room.roomType)} • {t.room || "غرفة"} {room.roomNumber}
       </p>
-      <p style={{ color: "#64748b", fontSize: 11, marginBottom: 10 }}>{room.hotel || "فندق غير محدد"}</p>
+      <p style={{ color: "#64748b", fontSize: 11, marginBottom: 10 }}>{room.hotel || t.roomingMissingHotel || "فندق غير محدد"}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
         {occupantIds.map((clientId) => {
           const client = data.clientsById[clientId];
@@ -3243,7 +3279,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
               </span>
               <button
                 type="button"
-                title="إزالة"
+                title={t.remove || "إزالة"}
                 className="nodrag"
                 onClick={(event) => {
                   event.stopPropagation();
@@ -3251,13 +3287,13 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                 }}
                 style={{ border: 0, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 12, flexShrink: 0 }}
               >
-                إزالة
+                {t.remove || "إزالة"}
               </button>
             </div>
           );
         })}
         {occupantIds.length < room.capacity && (
-          <span style={{ color: "#94a3b8", fontSize: 12 }}>مكان شاغر</span>
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>{t.emptySlot || "مكان شاغر"}</span>
         )}
       </div>
     </article>
@@ -5177,8 +5213,8 @@ function InnerClientRow({
   const avatarInitial = fallbackName ? fallbackName[0] : "؟";
   const phoneLabel = client.phone ? `${client.phone}` : "";
   const cityLabel = client.city ? `• ${client.city}` : "";
-  const packageLabel = client.packageLevel || client.hotelLevel || "";
-  const roomLabel = client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "";
+  const packageLabel = translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "";
+  const roomLabel = translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "";
   const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
   const infoLine = [phoneLabel, cityLabel, bookingLabel ? `• ${bookingLabel}` : ""].filter(Boolean).join(" ");
 
@@ -5293,7 +5329,7 @@ function InnerClientRow({
             <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 12 }}>
-            {client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "—"}
+            {roomLabel || "—"}
           </span>
           <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 12 }}>
             {client.ticketNo || "—"}
@@ -5451,7 +5487,7 @@ function SmallBtn({ icon, onClick, color }) {
 // ═══════════════════════════════════════
 function ProgramForm({ program, store, onSave, onCancel }) {
   const { addProgram, updateProgram } = store;
-  const { t } = useLang();
+  const { t, tr, lang } = useLang();
   const isEdit = !!program;
   const createPackage = React.useCallback((level = "اقتصادي") => ({
     id: `pkg-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
@@ -5537,11 +5573,14 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     const iso = new Date(ms).toISOString().split("T")[0];
     setForm(prev => (prev.returnDate === iso ? prev : { ...prev, returnDate: iso }));
   }, [form.departure, form.duration]);
-  const programTypeOptions = PROGRAM_TYPE_OPTIONS;
+  const programTypeOptions = PROGRAM_TYPE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: translateProgramType(option.value, lang),
+  }));
 
   const handleSave = () => {
     if (!form.name||!form.seats) {
-      alert("يرجى إدخال اسم البرنامج وعدد المقاعد"); return;
+      alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد"); return;
     }
     const priceTable = cleanPackages();
     const legacyFields = getLegacyFieldsFromPackages(priceTable, program || form);
@@ -5559,14 +5598,16 @@ function ProgramForm({ program, store, onSave, onCancel }) {
 
   const packageCount = packages.length;
   const startingPrice = getProgramStartingPrice({ ...form, priceTable: cleanPackages() });
-  const summaryPrice = startingPrice ? `${startingPrice.toLocaleString("ar-MA")} د.م` : "—";
+  const summaryPrice = startingPrice ? formatCurrency(startingPrice, lang) : "—";
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <GlassCard gold style={{ padding:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:14 }}>
-          <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>معلومات البرنامج</p>
-          <span style={{ fontSize:12, color:tc.grey }}>{packageCount} مستويات • ابتداءً من {summaryPrice}</span>
+          <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>{t.programInfo || "معلومات البرنامج"}</p>
+          <span style={{ fontSize:12, color:tc.grey }}>
+            {packageCount} {t.levels || "مستويات"} • {(t.fromPrice || "ابتداءً من {price}").replace("{price}", summaryPrice)}
+          </span>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
           <Input label={t.program} value={form.name} onChange={set("name")} required style={{gridColumn:"1/-1"}}/>
@@ -5606,10 +5647,10 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       <GlassCard style={{ padding:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:14 }}>
           <div>
-            <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>المستويات والباقات</p>
-            <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>أضف الفنادق ونظام الوجبات وأسعار الغرف لكل مستوى.</p>
+            <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>{t.programPackagesTitle || "المستويات والباقات"}</p>
+            <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>{t.programPackagesHint || "أضف الفنادق ونظام الوجبات وأسعار الغرف لكل مستوى."}</p>
           </div>
-          <Button variant="primary" size="sm" icon="plus" onClick={() => addPackage("اقتصادي")}>إضافة مستوى</Button>
+          <Button variant="primary" size="sm" icon="plus" onClick={() => addPackage("اقتصادي")}>{t.addLevel || "إضافة مستوى"}</Button>
         </div>
 
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
@@ -5626,7 +5667,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
                 cursor:"pointer",
                 fontFamily:"'Cairo',sans-serif",
               }}>
-              {level}
+              {translateHotelLevel(level, lang) || level}
             </button>
           ))}
         </div>
@@ -5640,7 +5681,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
               padding:14,
             }}>
               <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", marginBottom:12 }}>
-                <strong style={{ color:tc.white, fontSize:13 }}>المستوى {index + 1}</strong>
+                <strong style={{ color:tc.white, fontSize:13 }}>{t.level || "المستوى"} {index + 1}</strong>
                 {packages.length > 1 && (
                   <Button variant="ghost" size="sm" icon="trash" onClick={() => removePackage(index)}>
                     {t.delete}
@@ -5648,19 +5689,19 @@ function ProgramForm({ program, store, onSave, onCancel }) {
                 )}
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                <Input label="اسم المستوى" value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
+                <Input label={t.levelName || "اسم المستوى"} value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
                 <Input label={t.mealPlan} value={pkg.mealPlan || ""} onChange={e => setPackageField(index, "mealPlan", e.target.value)} />
                 <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />
                 <Input label={t.hotelMadina} value={pkg.hotelMadina || ""} onChange={e => setPackageField(index, "hotelMadina", e.target.value)} />
                 <Input label={t.notes} value={pkg.notes || ""} onChange={e => setPackageField(index, "notes", e.target.value)} style={{ gridColumn:"1/-1" }} />
               </div>
               <div style={{ marginTop:12 }}>
-                <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:8 }}>أسعار الغرف</p>
+                <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:8 }}>{t.roomPrices || "أسعار الغرف"}</p>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10 }}>
                   {PROGRAM_ROOM_PRICE_KEYS.map(key => (
                     <Input
                       key={key}
-                      label={getRoomTypeLabel(key)}
+                      label={translateRoomType(key, lang) || getRoomTypeLabel(key)}
                       value={pkg.prices?.[key] ?? ""}
                       onChange={e => setPackagePrice(index, key, e.target.value)}
                       type="number"

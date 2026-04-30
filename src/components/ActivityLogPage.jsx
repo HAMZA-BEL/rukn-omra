@@ -2,6 +2,7 @@ import React from "react";
 import { GlassCard, Button, SearchBar } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
+import { translateActivityDescription } from "../utils/i18nValues";
 
 const PAGE_SIZE = 20;
 const CATEGORY_GROUPS = {
@@ -26,7 +27,7 @@ const PERIOD_OPTIONS = [
 ];
 
 export default function ActivityLogPage({ store }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [category, setCategory] = React.useState("all");
   const [period, setPeriod] = React.useState("30");
   const [page, setPage] = React.useState(0);
@@ -196,7 +197,7 @@ export default function ActivityLogPage({ store }) {
           <div style={{ padding:20, textAlign:"center", color:theme.colors.grey }}>{t.activityEmpty || "لا توجد أنشطة"}</div>
         )}
         {rows.map((row, idx) => (
-          <ActivityLogItem key={row.id || idx} row={row} t={t} />
+          <ActivityLogItem key={row.id || idx} row={row} t={t} lang={lang} />
         ))}
       </GlassCard>
 
@@ -219,15 +220,17 @@ export default function ActivityLogPage({ store }) {
   );
 }
 
-function ActivityLogItem({ row, t }) {
+function ActivityLogItem({ row, t, lang }) {
   const time = new Date(row.time || row.created_at);
-  const timeStr = `${time.toLocaleDateString("ar-MA")} ${time.toLocaleTimeString("ar-MA", { hour:"2-digit", minute:"2-digit" })}`;
+  const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
+  const timeStr = `${time.toLocaleDateString(locale)} ${time.toLocaleTimeString(locale, { hour:"2-digit", minute:"2-digit" })}`;
+  const description = translateActivityDescription(row.description, lang);
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"12px 16px",
       background:"var(--rukn-row-bg)",
       borderBottom:"1px solid var(--rukn-row-border)" }}>
       <div style={{ display:"flex", justifyContent:"space-between", gap:12 }}>
-        <span style={{ fontSize:14, fontWeight:700, color:theme.colors.white }}>{row.description}</span>
+        <span style={{ fontSize:14, fontWeight:700, color:theme.colors.white }}>{description}</span>
         <span style={{ fontSize:11, color:theme.colors.grey }}>{timeStr}</span>
       </div>
       {row.clientName && (

@@ -6,6 +6,7 @@ import { printClearancePDF } from "../utils/exportPdf";
 import { printInvoice } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
+import { formatCurrency } from "../utils/currency";
 
 const tc = theme.colors;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -61,6 +62,7 @@ export default function ClearancePage({ store }) {
   const [search, setSearch] = React.useState("");
   const invoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة فاتورة");
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
+  const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
   const data = React.useMemo(() => clients.map(c => {
     const prog      = programs.find(p => p.id === c.programId);
@@ -142,9 +144,9 @@ export default function ClearancePage({ store }) {
           ["success", t.clearedFilter, clients.filter(c => getClientStatus(c) === "cleared").length, t.greenLight],
           ["partial", t.partialFilter, clients.filter(c => getClientStatus(c) === "partial").length, t.warning],
           ["unpaid", t.unpaidFilter, clients.filter(c => getClientStatus(c) === "unpaid").length, t.danger],
-          ["banknote", t.collected, clients.reduce((s,c) => s + getClientTotalPaid(c.id), 0).toLocaleString("ar-MA") + " د.م", t.gold],
-          ["hourglass", t.remaining, clients.reduce((s,c) => s + Math.max(0, (c.salePrice||c.price||0) - getClientTotalPaid(c.id)), 0).toLocaleString("ar-MA") + " د.م", t.warning],
-          ["discount", t.discounts, clients.reduce((s,c) => s + Math.max(0, (c.officialPrice||0) - (c.salePrice||c.officialPrice||0)), 0).toLocaleString("ar-MA") + " د.م", t.danger],
+          ["banknote", t.collected, money(clients.reduce((s,c) => s + getClientTotalPaid(c.id), 0)), t.gold],
+          ["hourglass", t.remaining, money(clients.reduce((s,c) => s + Math.max(0, (c.salePrice||c.price||0) - getClientTotalPaid(c.id)), 0)), t.warning],
+          ["discount", t.discounts, money(clients.reduce((s,c) => s + Math.max(0, (c.officialPrice||0) - (c.salePrice||c.officialPrice||0)), 0)), t.danger],
         ].map(([ic,lb,vl,cl])=>(
           <GlassCard gold key={lb} style={{ padding:"13px 14px", textAlign:"center" }}>
             <AppIcon name={ic} size={19} color={cl} style={{ marginBottom:5 }} />
@@ -221,9 +223,9 @@ export default function ClearancePage({ store }) {
             <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{t.totalLabel}</span>
             <span style={{ ...TEXT_CLAMP_STYLE, color:t.grey }}>{data.length} {t.clients}</span>
             <span />
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{totals.rev.toLocaleString("ar-MA")} د.م</span>
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.greenLight }}>{totals.paid.toLocaleString("ar-MA")} د.م</span>
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.warning }}>{totals.rem.toLocaleString("ar-MA")} د.م</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{money(totals.rev)}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.greenLight }}>{money(totals.paid)}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.warning }}>{money(totals.rem)}</span>
             <span />
             <span style={{ ...TEXT_CLAMP_STYLE, color:t.danger }}>{t.discount}: {totals.disc.toLocaleString("ar-MA")}</span>
             <span />
@@ -259,19 +261,19 @@ export default function ClearancePage({ store }) {
             <div className="summary-grid">
               <div>
                 <p>{t.salePrice}</p>
-                <strong>{totals.rev.toLocaleString("ar-MA")} د.م</strong>
+                <strong>{money(totals.rev)}</strong>
               </div>
               <div>
                 <p>{t.paid}</p>
-                <strong className="is-success">{totals.paid.toLocaleString("ar-MA")} د.م</strong>
+                <strong className="is-success">{money(totals.paid)}</strong>
               </div>
               <div>
                 <p>{t.remaining}</p>
-                <strong className="is-warning">{totals.rem.toLocaleString("ar-MA")} د.م</strong>
+                <strong className="is-warning">{money(totals.rem)}</strong>
               </div>
               <div>
                 <p>{t.discount}</p>
-                <strong className="is-danger">{totals.disc.toLocaleString("ar-MA")} د.م</strong>
+                <strong className="is-danger">{money(totals.disc)}</strong>
               </div>
             </div>
           </div>
@@ -307,14 +309,14 @@ function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel })
         </div>
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>{client.prog?.name||"—"}</span>
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700, color:theme.colors.gold }}>
-          {client.salePrice.toLocaleString("ar-MA")} د.م
+          {money(client.salePrice)}
         </span>
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700, color:theme.colors.greenLight }}>
-          {client.paid.toLocaleString("ar-MA")} د.م
+          {money(client.paid)}
         </span>
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:12, fontWeight:700,
           color:client.remaining>0?theme.colors.warning:theme.colors.greenLight }}>
-          {client.remaining.toLocaleString("ar-MA")} د.م
+          {money(client.remaining)}
         </span>
         <StatusBadge status={client.status} />
         <span style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:theme.colors.grey }}>
@@ -392,8 +394,8 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
       </div>
 
       <div className="clear-card-finance">
-        <ClearCardField label={t.paid} value={`${client.paid.toLocaleString("ar-MA")} د.م`} highlight="success" />
-        <ClearCardField label={t.remaining} value={`${client.remaining.toLocaleString("ar-MA")} د.م`} highlight={remainingColor} />
+        <ClearCardField label={t.paid} value={money(client.paid)} highlight="success" />
+        <ClearCardField label={t.remaining} value={money(client.remaining)} highlight={remainingColor} />
         <div className="clear-card-status-block">
           <p className="clear-card-field-label">{t.status}</p>
           <div className="clear-card-status-badge">
@@ -405,7 +407,7 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang }) {
       <div className="clear-card-info-row">
         <div className="clear-card-info-item">
           <span>{t.salePrice}</span>
-          <strong>{client.salePrice.toLocaleString("ar-MA")} د.م</strong>
+          <strong>{money(client.salePrice)}</strong>
         </div>
         <div className="clear-card-info-item">
           <span>{t.lastReceipt}</span>

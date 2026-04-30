@@ -13,6 +13,7 @@ import {
   normalizeProgramPackages,
   normalizeRoomTypeKey,
 } from "../utils/programPackages";
+import { translateRoomType } from "../utils/i18nValues";
 
 const tc = theme.colors;
 
@@ -41,7 +42,7 @@ const HOTEL_NAME_KEYS = {
 };
 
 const LOCALE_BY_LANG = { ar: "ar-MA", fr: "fr-FR", en: "en-US" };
-const CURRENCY_BY_LANG = { ar: "د.م", fr: "د.م", en: "MAD" };
+const CURRENCY_BY_LANG = { ar: "د.م", fr: "MAD", en: "MAD" };
 const ROOM_ENTRY_MODES = {
   SINGLE: "single",
   GROUP: "group",
@@ -237,12 +238,16 @@ const buildFormState = (client, defaultProgramId, programs) => {
 };
 
 export default function ClientForm({ client, store, onSave, onCancel, defaultProgramId }) {
-  const { t, dir, lang } = useLang();
+  const { t, tr, dir, lang } = useLang();
   const { programs, addClient, updateClient } = store;
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
   const currencyLabel = CURRENCY_BY_LANG[lang] || "د.م";
   const formatPrice = (value) => (typeof value === "number" ? value.toLocaleString(numberLocale) : (value ?? "—"));
+  const localizedRoomTypeOptions = React.useMemo(
+    () => getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
+    [lang]
+  );
   const formatLevelLabel = (value) => getLocalizedValue(value, HOTEL_LEVEL_KEYS, t);
   const formatHotelName = (value) => getLocalizedValue(value, HOTEL_NAME_KEYS, t);
   const skipProgramResetRef = React.useRef(true);
@@ -267,6 +272,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
   const [errors,  setErrors]  = React.useState({});
   const [autoPriceNote, setAutoPriceNote] = React.useState("");
+  const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
+    ...option,
+    label: option.value === "male_only"
+      ? (t.roomCategoryMaleOnly || option.label)
+      : option.value === "female_only"
+        ? (t.roomCategoryFemaleOnly || option.label)
+        : (t.roomCategoryFamily || option.label),
+  })), [t]);
 
   const set     = k => e => setForm(f => ({...f, [k]: e.target.value}));
   const setSalePrice = e => {
@@ -300,18 +313,18 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       if (category === "female_only" && person.gender === "male") return { ...person, gender: "" };
       return person;
     }));
-    if (category === "male_only") setAutoPriceNote("تمت إزالة الأجناس غير المتوافقة. راجع صفوف الغرفة قبل الحفظ.");
-    if (category === "female_only") setAutoPriceNote("تمت إزالة الأجناس غير المتوافقة. راجع صفوف الغرفة قبل الحفظ.");
-  }, []);
+    if (category === "male_only") setAutoPriceNote(t.incompatibleGenderRemoved || "تمت إزالة الأجناس غير المتوافقة. راجع صفوف الغرفة قبل الحفظ.");
+    if (category === "female_only") setAutoPriceNote(t.incompatibleGenderRemoved || "تمت إزالة الأجناس غير المتوافقة. راجع صفوف الغرفة قبل الحفظ.");
+  }, [t]);
   const updateGroupPerson = React.useCallback((personId, patch) => {
     setGroupPeople((prev) => prev.map((person) => person.id === personId ? { ...person, ...patch } : person));
   }, []);
   const addGroupPerson = React.useCallback(() => {
     if (groupPeople.length >= roomCapacity) {
-      if (!window.confirm("عدد الأشخاص تجاوز سعة الغرفة. هل تريد إضافة شخص إضافي؟")) return;
+      if (!window.confirm(t.confirmExtraPerson || "عدد الأشخاص تجاوز سعة الغرفة. هل تريد إضافة شخص إضافي؟")) return;
     }
     setGroupPeople((prev) => [...prev, createGroupPerson(prev.length)]);
-  }, [groupPeople.length, roomCapacity]);
+  }, [groupPeople.length, roomCapacity, t]);
   const removeGroupPerson = React.useCallback((personId) => {
     setGroupPeople((prev) => prev.length <= 1 ? prev : prev.filter((person) => person.id !== personId));
   }, []);
@@ -362,8 +375,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (!derivedOfficialPrice) return;
     salePriceManualRef.current = false;
     setForm((f) => ({ ...f, salePrice: derivedOfficialPrice }));
-    setAutoPriceNote("تم استخدام السعر الرسمي كسعر البيع");
-  }, [derivedOfficialPrice]);
+    setAutoPriceNote(t.officialPriceApplied || "تم استخدام السعر الرسمي كسعر البيع");
+  }, [derivedOfficialPrice, t]);
 
   // Auto-fill hotel + official price when package or room changes
   const prevLevelRef = React.useRef("");
@@ -411,10 +424,10 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     previousOfficialPriceRef.current = derivedOfficialPrice || 0;
     if (changed) {
       setAutoPriceNote(derivedOfficialPrice
-        ? "تم تحديث السعر الرسمي من المستوى ونوع الغرفة المختارين"
+        ? (t.officialPriceUpdated || "تم تحديث السعر الرسمي من المستوى ونوع الغرفة المختارين")
         : "");
     }
-  }, [form.roomType, selectedPackage, derivedOfficialPrice]);
+  }, [form.roomType, selectedPackage, derivedOfficialPrice, t]);
 
   // Reset hotel when program changes
   React.useEffect(() => {
@@ -453,10 +466,10 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
       const peopleErrors = groupPeople.map((person) => {
         const rowErrors = {};
-        if (!pickString(person.fullName)) rowErrors.fullName = "يرجى إدخال الاسم الكامل";
-        if (!person.gender) rowErrors.gender = "يرجى تحديد الجنس";
-        if (form.roomCategory === "male_only" && person.gender && person.gender !== "male") rowErrors.gender = "هذه الغرفة مخصصة للرجال فقط";
-        if (form.roomCategory === "female_only" && person.gender && person.gender !== "female") rowErrors.gender = "هذه الغرفة مخصصة للنساء فقط";
+        if (!pickString(person.fullName)) rowErrors.fullName = t.fullNameRequired || "يرجى إدخال الاسم الكامل";
+        if (!person.gender) rowErrors.gender = t.genderRequired || "يرجى تحديد الجنس";
+        if (form.roomCategory === "male_only" && person.gender && person.gender !== "male") rowErrors.gender = t.maleOnlyRoomError || "هذه الغرفة مخصصة للرجال فقط";
+        if (form.roomCategory === "female_only" && person.gender && person.gender !== "female") rowErrors.gender = t.femaleOnlyRoomError || "هذه الغرفة مخصصة للنساء فقط";
         return rowErrors;
       });
       if (peopleErrors.some((row) => Object.keys(row).length)) e.groupPeople = peopleErrors;
@@ -465,7 +478,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (!form.firstName.trim() && !form.lastName.trim()) e.firstName = t.firstNameError;
     if (!form.phone.trim())    e.phone    = t.phoneError;
     if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
-    if (!form.gender) e.gender = "يرجى تحديد الجنس";
+    if (!form.gender) e.gender = t.genderRequired || "يرجى تحديد الجنس";
     return e;
   };
 
@@ -473,7 +486,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     const e = validate();
     if (Object.keys(e).length) { setErrors(e); return; }
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
-      if (groupPeople.length > roomCapacity && !window.confirm("عدد الأشخاص أكبر من سعة نوع الغرفة المحدد. هل تريد المتابعة؟")) {
+      if (groupPeople.length > roomCapacity && !window.confirm(t.confirmOverCapacity || "عدد الأشخاص أكبر من سعة نوع الغرفة المحدد. هل تريد المتابعة؟")) {
         return;
       }
       const roomingGroupId = `rg-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
@@ -563,11 +576,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     <div>
       {!isEdit && (
         <GlassCard gold style={{ padding:16, marginBottom:14 }}>
-          <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>طريقة الإدخال</p>
+          <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>{t.entryModeTitle || "طريقة الإدخال"}</p>
           <div style={{ display:"inline-flex", gap:8, flexWrap:"wrap" }}>
             {[
-              { value: ROOM_ENTRY_MODES.SINGLE, label: "إضافة شخص واحد" },
-              { value: ROOM_ENTRY_MODES.GROUP, label: "إضافة غرفة" },
+              { value: ROOM_ENTRY_MODES.SINGLE, label: t.entrySingle || "إضافة شخص واحد" },
+              { value: ROOM_ENTRY_MODES.GROUP, label: t.entryRoomGroup || "إضافة غرفة" },
             ].map((option) => {
               const active = entryMode === option.value;
               return (
@@ -623,9 +636,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <GlassCard gold style={{ padding:16, marginBottom:14 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, marginBottom:12, flexWrap:"wrap" }}>
             <p style={{ fontSize:12, fontWeight:700, color:tc.gold }}>
-              <AppIcon name="users" size={14} color={tc.gold} /> الأشخاص داخل الغرفة
+              <AppIcon name="users" size={14} color={tc.gold} /> {t.roomPeopleTitle || "الأشخاص داخل الغرفة"}
             </p>
-            <Button variant="ghost" icon="plus" onClick={addGroupPerson}>إضافة شخص داخل الغرفة</Button>
+            <Button variant="ghost" icon="plus" onClick={addGroupPerson}>{t.addPersonInsideRoom || "إضافة شخص داخل الغرفة"}</Button>
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
             {groupPeople.map((person, index) => {
@@ -638,14 +651,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                   background:"rgba(255,255,255,.03)",
                 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:10 }}>
-                    <p style={{ fontSize:12, fontWeight:700, color:"#f8fafc" }}>الشخص {index + 1}</p>
+                    <p style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text-strong)" }}>{tr("personLabel", { n: index + 1 }) || `الشخص ${index + 1}`}</p>
                     <Button variant="ghost" icon="trash" onClick={() => removeGroupPerson(person.id)} disabled={groupPeople.length <= 1}>
                       حذف
                     </Button>
                   </div>
                   <div className="form-grid form-grid--two">
                     <Input
-                      label="الاسم الكامل"
+                      label={t.fullName}
                       value={person.fullName}
                       onChange={(e) => updateGroupPerson(person.id, { fullName: e.target.value })}
                       error={rowErrors.fullName}
@@ -659,12 +672,12 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                   </div>
                   <div style={{ marginTop:12 }}>
                     <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:8 }}>
-                      الجنس *
+                      {t.gender} *
                     </label>
                     <div style={{ display:"inline-flex", gap:8, flexWrap:"wrap" }}>
                       {[
-                        { value: "male", label: "ذكر" },
-                        { value: "female", label: "أنثى" },
+                        { value: "male", label: t.male },
+                        { value: "female", label: t.female },
                       ].map((option) => {
                         const active = person.gender === option.value;
                         return (
@@ -741,7 +754,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="phone" size={14} color={tc.gold} /> {t.contactInfo}</p>
         <div className="form-grid form-grid--two">
-          <Input label={entryMode === ROOM_ENTRY_MODES.GROUP ? "هاتف مشترك اختياري" : t.phone} value={form.phone} onChange={set("phone")}
+          <Input label={entryMode === ROOM_ENTRY_MODES.GROUP ? (t.sharedPhoneOptional || "هاتف مشترك اختياري") : t.phone} value={form.phone} onChange={set("phone")}
             placeholder={t.phonePlaceholder} required={entryMode === ROOM_ENTRY_MODES.SINGLE} error={entryMode === ROOM_ENTRY_MODES.SINGLE ? errors.phone : ""} />
           <Select label={t.city} value={form.city} onChange={set("city")}
             options={["", ...CITIES].map(c => ({ value:c, label:c || t.selectCityPlaceholder }))} />
@@ -749,12 +762,12 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         {entryMode === ROOM_ENTRY_MODES.SINGLE && (
         <div style={{ marginTop:12 }}>
           <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:8 }}>
-            الجنس *
+            {t.gender} *
           </label>
           <div style={{ display:"inline-flex", gap:8, flexWrap:"wrap" }}>
             {[
-              { value: "male", label: "ذكر" },
-              { value: "female", label: "أنثى" },
+              { value: "male", label: t.male },
+              { value: "female", label: t.female },
             ].map((option) => {
               const active = form.gender === option.value;
               return (
@@ -790,14 +803,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
       {/* ── Program + Booking ── */}
       <GlassCard gold style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> بيانات البرنامج والحجز</p>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> {t.programBookingSection || "بيانات البرنامج والحجز"}</p>
         <div className="form-grid form-grid--two">
           <Select label={t.program} value={form.programId} onChange={set("programId")}
             options={programs.map(p => ({ value:p.id, label:p.name }))}
             style={{ gridColumn:"1/-1" }} />
           {programPackages.length > 0 && (
             <Select
-              label="المستوى"
+              label={t.level || "المستوى"}
               value={selectedPackage?.id || ""}
               onChange={handlePackageChange}
               options={[
@@ -810,13 +823,13 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             label={t.roomType}
             value={form.roomType}
             onChange={handleRoomTypeChange}
-            options={getRoomTypeOptions()}
+            options={localizedRoomTypeOptions}
           />
           <Select
-            label="تصنيف الغرفة"
+            label={t.roomCategory || "تصنيف الغرفة"}
             value={form.roomCategory}
             onChange={(e) => setRoomCategory(e.target.value)}
-            options={ROOM_CATEGORY_OPTIONS}
+            options={localizedRoomCategoryOptions}
           />
           <Input  label={t.ticketNo} value={form.ticketNo} onChange={set("ticketNo")} placeholder={t.ticketPlaceholder} />
         </div>
@@ -836,7 +849,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             </div>
             {officialPriceMissing && (
               <p style={{ fontSize:11, color:tc.warning, marginTop:8 }}>
-                لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج
+                {t.officialPriceMissing || "لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج"}
               </p>
             )}
             {autoPriceNote && (
@@ -846,7 +859,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         )}
         {entryMode === ROOM_ENTRY_MODES.GROUP && (
           <p style={{ fontSize:11, color:tc.grey, marginTop:10 }}>
-            السعة الحالية: {groupPeople.length}/{roomCapacity} • سيتم حفظ كل شخص كمعتمر مستقل داخل البرنامج.
+            {tr("currentRoomCapacity", { count: groupPeople.length, capacity: roomCapacity }) || `السعة الحالية: ${groupPeople.length}/${roomCapacity} • سيتم حفظ كل شخص كمعتمر مستقل داخل البرنامج.`}
           </p>
         )}
       </GlassCard>
@@ -891,7 +904,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                 opacity:derivedOfficialPrice ? 1 : 0.55,
               }}
             >
-              استخدام السعر الرسمي
+              {t.useOfficialPrice || "استخدام السعر الرسمي"}
             </button>
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -905,7 +918,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         </div>
         {officialPriceMissing && (
           <p style={{ fontSize:11, color:tc.warning, marginTop:8 }}>
-            لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج
+            {t.officialPriceMissing || "لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج"}
           </p>
         )}
       </GlassCard>
@@ -968,7 +981,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
         <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave}>
-          {isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? "حفظ الغرفة" : t.addClient}
+          {isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? (t.saveRoom || "حفظ الغرفة") : t.addClient}
         </Button>
       </div>
     </div>

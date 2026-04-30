@@ -4,10 +4,10 @@ export const theme = {
     bgCard: "var(--rukn-bg-card)",
     bgGlass: "var(--rukn-bg-glass)",
     border: "var(--rukn-border)",
-    borderHover: "rgba(212,175,55,0.5)",
-    gold: "#d4af37",
-    goldLight: "#f0d060",
-    goldDim: "rgba(212,175,55,0.15)",
+    borderHover: "var(--rukn-border-hover)",
+    gold: "var(--rukn-gold)",
+    goldLight: "var(--rukn-gold-light)",
+    goldDim: "var(--rukn-gold-dim)",
     green: "#1a6b3a",
     greenLight: "#22c55e",
     greenDim: "rgba(34,197,94,0.15)",
@@ -15,10 +15,10 @@ export const theme = {
     white: "var(--rukn-text)",
     grey: "var(--rukn-text-muted)",
     greyDim: "rgba(148,163,184,0.1)",
-    danger: "#ef4444",
-    dangerDim: "rgba(239,68,68,0.15)",
-    warning: "#f59e0b",
-    warningDim: "rgba(245,158,11,0.15)",
+    danger: "var(--rukn-danger)",
+    dangerDim: "var(--rukn-danger-dim)",
+    warning: "var(--rukn-warning)",
+    warningDim: "var(--rukn-warning-dim)",
     success: "#22c55e",
     successDim: "rgba(34,197,94,0.15)",
   },
@@ -42,6 +42,7 @@ export const globalCSS = `
     --rukn-text-muted: #94a3b8;
     --rukn-text-strong: #f8fafc;
     --rukn-border: rgba(212,175,55,0.2);
+    --rukn-border-hover: rgba(212,175,55,0.5);
     --rukn-border-soft: rgba(255,255,255,0.07);
     --rukn-border-input: rgba(255,255,255,0.1);
     --rukn-shadow-card: 0 4px 24px rgba(0,0,0,.3);
@@ -57,6 +58,10 @@ export const globalCSS = `
     --rukn-gold: #d4af37;
     --rukn-gold-light: #f0d060;
     --rukn-gold-dim: rgba(212,175,55,0.15);
+    --rukn-danger: #ef4444;
+    --rukn-danger-dim: rgba(239,68,68,0.15);
+    --rukn-warning: #f59e0b;
+    --rukn-warning-dim: rgba(245,158,11,0.15);
   }
   html[data-theme="light"] {
     color-scheme: light;
@@ -72,7 +77,8 @@ export const globalCSS = `
     --rukn-text: #142133;
     --rukn-text-muted: #4f6175;
     --rukn-text-strong: #0f172a;
-    --rukn-border: rgba(184,148,30,0.28);
+    --rukn-border: rgba(156,111,14,0.34);
+    --rukn-border-hover: rgba(138,100,16,0.48);
     --rukn-border-soft: rgba(15,23,42,0.14);
     --rukn-border-input: rgba(15,23,42,0.16);
     --rukn-shadow-card: 0 10px 34px rgba(15,23,42,.1);
@@ -85,9 +91,13 @@ export const globalCSS = `
     --rukn-section-border: rgba(15,23,42,.1);
     --rukn-table-head-bg: rgba(184,148,30,.11);
     --rukn-overlay: rgba(15,23,42,.42);
-    --rukn-gold: #b8941e;
-    --rukn-gold-light: #d4af37;
-    --rukn-gold-dim: rgba(184,148,30,0.12);
+    --rukn-gold: #805b0b;
+    --rukn-gold-light: #9f7414;
+    --rukn-gold-dim: rgba(128,91,11,0.13);
+    --rukn-danger: #b91c1c;
+    --rukn-danger-dim: rgba(220,38,38,0.13);
+    --rukn-warning: #8a4f00;
+    --rukn-warning-dim: rgba(138,79,0,0.13);
   }
   body {
     font-family: 'Cairo', sans-serif;
@@ -663,7 +673,7 @@ export const globalCSS = `
     color: #f8fafc;
     word-break: break-word;
   }
-  .clear-card-field-value.is-gold { color: #d4af37; }
+  .clear-card-field-value.is-gold { color: var(--rukn-gold); }
   .clear-card-field-value.is-success { color: #22c55e; }
   .clear-card-field-value.is-warning { color: #f59e0b; }
   .clear-card-field-value.is-danger { color: #ef4444; }

@@ -3,10 +3,11 @@ import { Input, Select, Button, GlassCard } from "./UI";
 import { PAYMENT_METHODS } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { formatCurrency } from "../utils/currency";
 
 export default function PaymentForm({ clientId, clientName, store, onSave, onCancel }) {
   const { getClientTotalPaid, clients, payments } = store;
-  const { t, tr } = useLang();
+  const { t, tr, lang } = useLang();
   const client    = clients.find(c => c.id === clientId);
   const salePrice = client ? (client.salePrice || client.price || 0) : 0;
   const totalPaid = getClientTotalPaid(clientId);
@@ -30,7 +31,7 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
     if (!form.amount || isNaN(form.amount) || Number(form.amount) <= 0)
       e.amount = t.amountError;
     if (Number(form.amount) > remaining + 1)
-      e.amount = tr(t.amountExceedsError, { remaining: remaining.toLocaleString("ar-MA") });
+      e.amount = (t.amountExceedsError || "").replace("{remaining}", formatCurrency(remaining, lang));
     if (!form.date)      e.date = t.dateError;
     if (!form.receiptNo) e.receiptNo = t.receiptError;
     if (Object.keys(e).length) { setErrors(e); return; }
@@ -45,11 +46,11 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   return (
     <GlassCard style={{ padding: 16, marginBottom: 14 }}>
       <p style={{ fontSize: 13, fontWeight: 700, color: theme.colors.gold, marginBottom: 10 }}>
-        {tr(t.addPaymentTitle, { clientName })}
+        {tr("addPaymentTitle", { clientName }) || `${t.addPayment} — ${clientName}`}
       </p>
       <p style={{ fontSize: 12, color: theme.colors.grey, marginBottom: 14 }}>
         {t.remainingLabel} <strong style={{ color: theme.colors.warning }}>
-          {remaining.toLocaleString("ar-MA")} د.م
+          {formatCurrency(remaining, lang)}
         </strong>
       </p>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>

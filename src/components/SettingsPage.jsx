@@ -22,9 +22,9 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     setIsSyncing(true);
     try {
       await forceSync();
-      onToast("تمت المزامنة بنجاح", "success");
+      onToast(t.syncSuccess || "تمت المزامنة بنجاح", "success");
     } catch {
-      onToast("فشلت المزامنة — تحقق من الاتصال", "error");
+      onToast(t.syncFailed || "فشلت المزامنة — تحقق من الاتصال", "error");
     } finally {
       setIsSyncing(false);
     }

@@ -479,9 +479,9 @@ export function Toast({ message, type = "success", onClose }) {
   }, [onClose]);
 
   const colors = {
-    success: { bg: "rgba(34,197,94,.15)", border: "#22c55e", icon: "success" },
-    error:   { bg: "rgba(239,68,68,.15)",  border: "#ef4444", icon: "error" },
-    info:    { bg: "rgba(212,175,55,.15)", border: "#d4af37", icon: "alert" },
+    success: { bg: "rgba(34,197,94,.15)", border: "#22c55e", icon: "success", text: "var(--rukn-text-strong)", close: "var(--rukn-text-muted)" },
+    error:   { bg: "rgba(254,226,226,.96)", border: "#dc2626", icon: "error", text: "#111827", close: "#111827" },
+    info:    { bg: "rgba(212,175,55,.15)", border: "var(--rukn-gold)", icon: "alert", text: "var(--rukn-text-strong)", close: "var(--rukn-text-muted)" },
   };
   const c = colors[type] || colors.info;
 
@@ -501,8 +501,8 @@ export function Toast({ message, type = "success", onClose }) {
       }}
     >
       <AppIcon name={c.icon} size={18} color={c.border} />
-      <span style={{ fontSize: 14, fontWeight: 600, color: "#f8fafc", flex: 1 }}>{message}</span>
-      <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+      <span style={{ fontSize: 14, fontWeight: 700, color: c.text, flex: 1 }}>{message}</span>
+      <button onClick={onClose} style={{ background: "none", border: "none", color: c.close, cursor: "pointer", display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
         <AppIcon name="x" size={16} color="currentColor" />
       </button>
     </div>

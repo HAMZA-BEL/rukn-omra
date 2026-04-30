@@ -7,6 +7,8 @@ import { printReceipt, printClientCard, printInvoice } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
+import { formatCurrency } from "../utils/currency";
+import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 
 const tc = theme.colors;
 
@@ -29,6 +31,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const p           = client.passport || {};
   const docs        = client.docs || {};
   const displayName = getClientDisplayName(client);
+  const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
   // Passport expiry warning
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
@@ -100,10 +103,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {[
               [t.program,     program.name],
-              ["المستوى",  client.packageLevel || client.hotelLevel || "—"],
+              [t.level || "المستوى",  translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "—"],
               [t.hotelMecca,  client.hotelMecca||"—"],
               [t.hotelMadina, client.hotelMadina||"—"],
-              [t.roomType,    client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "—"],
+              [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "—"],
               [t.transport,   program.transport||"—"],
               [t.departure,   program.departure||"—"],
               [t.returnDate,  program.returnDate||"—"],
@@ -130,9 +133,8 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             borderRadius:10, padding:"10px 12px", textAlign:"center" }}>
             <p style={{ fontSize:10, color:tc.grey, marginBottom:4 }}>{label}</p>
             <p style={{ fontSize:15, fontWeight:800, color, fontFamily:"'Amiri',serif" }}>
-              {val.toLocaleString("ar-MA")}
+              {money(val)}
             </p>
-            <p style={{ fontSize:10, color:tc.grey }}>د.م</p>
           </div>
         ))}
       </div>
@@ -143,7 +145,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           display:"flex", alignItems:"center", gap:8 }}>
           <AppIcon name="discount" size={16} color={tc.danger} />
           <span style={{ fontSize:13, color:tc.danger, fontWeight:600 }}>
-            {t.discount}: {discount.toLocaleString("ar-MA")} د.م ({Math.round((discount/offPrice)*100)}%)
+            {t.discount}: {money(discount)} ({Math.round((discount/offPrice)*100)}%)
           </span>
         </div>
       )}
@@ -294,7 +296,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 }
 
 function PaymentRow({ payment, onPrint, onDelete }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","بطاقة بنكية":"payment","وقفة بنك":"bank"};
   return (
@@ -307,10 +309,10 @@ function PaymentRow({ payment, onPrint, onDelete }) {
         <AppIcon name={icons[payment.method] || "payment"} size={18} color={theme.colors.gold} />
         <div>
           <p style={{ fontWeight:700, color:theme.colors.greenLight, fontSize:14 }}>
-            {payment.amount.toLocaleString("ar-MA")} د.م
+            {formatCurrency(payment.amount, lang)}
           </p>
           <p style={{ fontSize:11, color:theme.colors.grey }}>
-            {payment.method} • {payment.date} • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong>
+            {translatePaymentMethod(payment.method, lang)} • {payment.date} • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong>
           </p>
           {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>{payment.note}</p>}
         </div>

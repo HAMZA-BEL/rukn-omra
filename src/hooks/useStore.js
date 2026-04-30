@@ -33,6 +33,8 @@ import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
+import { formatCurrency } from "../utils/currency";
+import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -436,7 +438,7 @@ export function useStore(agencyId, onToast) {
     }).catch((err) => {
       console.error("[Store] Initial Supabase fetch failed:", err);
       setSyncStatus("offline");
-      notify("يعمل النظام بالوضع المحلي — تعذّر الاتصال بالسحابة");
+      notify(trKey("storeLocalMode") || "يعمل النظام بالوضع المحلي — تعذّر الاتصال بالسحابة");
     }).finally(() => {
       setDbLoading(false);
       setStoreHydrated(true);
@@ -781,7 +783,7 @@ export function useStore(agencyId, onToast) {
       archivedAt:       null,
     };
     addClientLocal(newClient);
-    logActivity("client_add", "تم تسجيل معتمر جديد", newClient.name);
+    logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     sync(() => saveClient(newClient, agencyId));
     return id;
   }, [addClientLocal, logActivity, sync, agencyId]);
@@ -792,15 +794,15 @@ export function useStore(agencyId, onToast) {
     const updated  = { ...prepared, lastModified: now };
     const previous = clients.find(c => c.id === id);
     if (getClientIdentityName(previous) && !getClientIdentityName(updated)) {
-      notify("تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
+      notify(trKey("nameEmptyGuard") || "تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
       return;
     }
     updateClientLocal(id, updated);
     if (previous && previous.programId !== updated.programId) {
       const programName = programs.find(p => p.id === updated.programId)?.name || updated.programId || "";
-      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, getClientDisplayName(updated, id));
+      logActivity("client_transfer", translateActivityDescription(`تم نقل المعتمر إلى ${programName}`), getClientDisplayName(updated, id));
     } else {
-      logActivity("client_update", "تم تعديل ملف المعتمر", getClientDisplayName(updated, id));
+      logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
     }
     sync(() => saveClient({ id, ...updated }, agencyId));
   }, [clients, programs, updateClientLocal, logActivity, sync, agencyId, notify]);
@@ -821,13 +823,13 @@ export function useStore(agencyId, onToast) {
       return getClientIdentityName(original) && !getClientIdentityName(updated);
     });
     if (unsafe) {
-      notify("تم إيقاف النقل لحماية بيانات المعتمر: الاسم سيصبح فارغًا بعد النقل", "error");
+      notify(trKey("transferNameEmptyGuard") || "تم إيقاف النقل لحماية بيانات المعتمر: الاسم سيصبح فارغًا بعد النقل", "error");
       return 0;
     }
     transferClientsLocal(ids, programId, now);
     const programName = programs.find((p) => p.id === programId)?.name || programId;
     affected.forEach((client) => {
-      logActivity("client_transfer", `تم نقل المعتمر إلى ${programName}`, getClientDisplayName(client, client.id));
+      logActivity("client_transfer", translateActivityDescription(`تم نقل المعتمر إلى ${programName}`), getClientDisplayName(client, client.id));
     });
     sync(async () => {
       const responses = await Promise.all(
@@ -846,7 +848,7 @@ export function useStore(agencyId, onToast) {
     const deletedAt = new Date().toISOString();
     softDeleteClientsLocal([client], deletedAt, batchId);
     removePaymentsByClient(id);
-    logActivity("client_delete", "تم حذف معتمر", client?.name || id);
+    logActivity("client_delete", translateActivityDescription("تم حذف معتمر"), getClientDisplayName(client, id));
     sync(() => markClientsDeleted([id], agencyId, batchId));
   }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
 
@@ -861,7 +863,7 @@ export function useStore(agencyId, onToast) {
     removePaymentsByClient(ids);
     logActivity(
       "client_bulk_delete",
-      `تم حذف ${entries.length} معتمر`,
+      translateActivityDescription(`تم حذف ${entries.length} معتمر`),
       ""
     );
     sync(() => markClientsDeleted(ids, agencyId, batchId));
@@ -921,7 +923,7 @@ export function useStore(agencyId, onToast) {
     const now = new Date().toISOString();
     archiveClientLocal([id], now);
     const c = clients.find((x) => x.id === id);
-    logActivity("client_archive", "تم أرشفة المعتمر", getClientDisplayName(c, id));
+    logActivity("client_archive", translateActivityDescription("تم أرشفة المعتمر"), getClientDisplayName(c, id));
     if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
   }, [clients, archiveClientLocal, logActivity, sync, agencyId]);
 
@@ -933,13 +935,13 @@ export function useStore(agencyId, onToast) {
       const c = clients.find((x) => x.id === id);
       if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
     });
-    logActivity("client_bulk_archive", `تمت أرشفة ${ids.length} معتمر`, "");
+    logActivity("client_bulk_archive", translateActivityDescription(`تمت أرشفة ${ids.length} معتمر`), "");
   }, [clients, archiveClientLocal, sync, agencyId, logActivity]);
 
   const restoreClient = useCallback((id) => {
     restoreArchivedClientLocal(id);
     const c = clients.find((x) => x.id === id);
-    logActivity("client_restore", "تمت استعادة المعتمر من الأرشيف", getClientDisplayName(c, id));
+    logActivity("client_restore", translateActivityDescription("تمت استعادة المعتمر من الأرشيف"), getClientDisplayName(c, id));
     if (c) sync(() => saveClient({ ...c, archived: false, archivedAt: null }, agencyId));
   }, [clients, restoreArchivedClientLocal, logActivity, sync, agencyId]);
 
@@ -951,7 +953,7 @@ export function useStore(agencyId, onToast) {
     archiveClientLocal(ids, now);
     progClients.forEach(client => sync(() => saveClient({ ...client, archived: true, archivedAt: now }, agencyId)));
     const program = programs.find(p => p.id === programId);
-    logActivity("program_archive", `تم أرشفة برنامج ${program?.name || programId}`, "");
+    logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${program?.name || programId}`), "");
   }, [activeClients, programs, archiveClientLocal, logActivity, sync, agencyId]);
 
   const addPayment = useCallback((data) => {
@@ -968,7 +970,7 @@ export function useStore(agencyId, onToast) {
     setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
     logActivity(
       "payment_add",
-      `دفعة ${data.amount.toLocaleString("ar-MA")} د.م — ${pmt.receiptNo}`,
+      translateActivityDescription(`دفعة ${formatCurrency(data.amount, getUiLang())} — ${pmt.receiptNo}`),
       c?.name || data.clientId,
       { skipRemote: isSupabaseEnabled }
     );
@@ -981,7 +983,7 @@ export function useStore(agencyId, onToast) {
     removePaymentLocal(id);
     logActivity(
       "payment_delete",
-      `تم حذف دفعة ${p?.receiptNo || ""}`,
+      translateActivityDescription(`تم حذف دفعة ${p?.receiptNo || ""}`),
       "",
       { skipRemote: isSupabaseEnabled }
     );
@@ -992,13 +994,13 @@ export function useStore(agencyId, onToast) {
     const id  = genId("PRG");
     const prg = { ...data, id, priceTable: data.priceTable || [] };
     setPrograms(prev => [...prev, prg]);
-    logActivity("program_add", `تم إضافة برنامج جديد: ${data.name}`, "");
+    logActivity("program_add", translateActivityDescription(`تم إضافة برنامج جديد: ${data.name}`), "");
     sync(() => saveProgram(prg, agencyId));
   }, [setPrograms, logActivity, sync, agencyId]);
 
   const updateProgram = useCallback((id, data) => {
     setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
-    logActivity("program_update", `تم تعديل برنامج ${data.name || id}`, "");
+    logActivity("program_update", translateActivityDescription(`تم تعديل برنامج ${data.name || id}`), "");
     sync(() => saveProgram({ id, ...data }, agencyId));
   }, [setPrograms, logActivity, sync, agencyId]);
 
@@ -1024,7 +1026,7 @@ export function useStore(agencyId, onToast) {
       softDeleteClientsLocal(relatedClients, deletedAt, batchId);
       removePaymentsByClient(clientIds);
     }
-    logActivity("program_delete", `تم حذف برنامج ${prog?.name || id}`, "");
+    logActivity("program_delete", translateActivityDescription(`تم حذف برنامج ${prog?.name || id}`), "");
     sync(async () => {
       const responses = [];
       responses.push(await markProgramDeleted(id, agencyId, batchId));
@@ -1062,8 +1064,8 @@ export function useStore(agencyId, onToast) {
       });
       setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       const label = programsToRestore.length === 1
-        ? `تمت استعادة برنامج ${programsToRestore[0].name || programsToRestore[0].id}`
-        : `تمت استعادة ${programsToRestore.length} برامج من سلة المحذوفات`;
+        ? translateActivityDescription(`تمت استعادة برنامج ${programsToRestore[0].name || programsToRestore[0].id}`)
+        : translateActivityDescription(`تمت استعادة ${programsToRestore.length} برامج من سلة المحذوفات`);
       logActivity("program_restore", label, "");
     }
 
@@ -1082,8 +1084,8 @@ export function useStore(agencyId, onToast) {
       });
       setDeletedClients(prev => prev.filter(c => !combinedClientIds.includes(c.id)));
       const label = combinedClientIds.length === 1
-        ? `تمت استعادة معتمر من السلة`
-        : `تمت استعادة ${combinedClientIds.length} معتمرين من السلة`;
+        ? translateActivityDescription("تمت استعادة معتمر من السلة")
+        : translateActivityDescription(`تمت استعادة ${combinedClientIds.length} معتمرين من السلة`);
       logActivity("client_restore", label, "");
     }
 
@@ -1181,7 +1183,7 @@ export function useStore(agencyId, onToast) {
         setDeletedClients([]);
         replacePayments(parsed.payments);
         if (parsed.agency) setAgency(parsed.agency);
-        logActivity("import_excel", "تم استيراد بيانات من ملف", "");
+        logActivity("import_excel", translateActivityDescription("تم استيراد بيانات من ملف"), "");
         res();
       } catch(err) { rej(err); }
     };

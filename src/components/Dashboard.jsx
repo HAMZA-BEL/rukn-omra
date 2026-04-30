@@ -5,6 +5,7 @@ import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { AppIcon, IconBubble } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
+import { translateActivityDescription } from "../utils/i18nValues";
 
 const tc = theme.colors;
 
@@ -371,7 +372,7 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
 });
 
 const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const icons = {
     client_add:"user",
     client_update:"edit",
@@ -412,7 +413,9 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
   const icon = icons[type] || "status";
   const accent = colors[type] || theme.colors.gold;
   const time = new Date(activity.time);
-  const timeStr = `${time.toLocaleDateString("ar-MA")} ${time.toLocaleTimeString("ar-MA",{hour:"2-digit",minute:"2-digit"})}`;
+  const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
+  const timeStr = `${time.toLocaleDateString(locale)} ${time.toLocaleTimeString(locale,{hour:"2-digit",minute:"2-digit"})}`;
+  const description = translateActivityDescription(activity.description, lang);
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.02}s` }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px",
@@ -420,7 +423,7 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
         borderRadius:10 }}>
         <AppIcon name={icon} size={16} color={accent} />
         <div style={{ flex:1 }}>
-          <span style={{ fontSize:13, color:theme.colors.white, fontWeight:600 }}>{activity.description}</span>
+          <span style={{ fontSize:13, color:theme.colors.white, fontWeight:600 }}>{description}</span>
           {activity.isArchived && (
             <span style={{ fontSize:10, color:theme.colors.grey, marginInlineStart:6 }}>
               {t.archivedBadge || "مؤرشف"}
