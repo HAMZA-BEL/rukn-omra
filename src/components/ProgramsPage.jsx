@@ -2614,16 +2614,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
               }).join("") || `<li class="empty"><span>0</span><b>${escapeHtml(t.noPilgrims || "بدون معتمرين")}</b></li>`;
               return `
                 <article class="room-card ${escapeHtml(category)}">
-                  <div class="room-head">
-                    <div>
-                      <strong>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</strong>
-                      <small>${escapeHtml(room.hotel || hotel)}</small>
-                    </div>
-                    <span class="occupancy">${occupants.length}/${capacity}</span>
+                  <div class="category-line">
+                    <span class="category-badge">${escapeHtml(getLocalizedCategoryLabel(category))}</span>
                   </div>
-                  <div class="badges">
-                    <span>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</span>
-                    <span>${escapeHtml(getLocalizedCategoryLabel(category))}</span>
+                  <div class="room-meta">
+                    <strong>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</strong>
+                    <span class="occupancy">${occupants.length}/${capacity}</span>
                   </div>
                   <div class="hotel-name">${escapeHtml(room.hotel || hotel)}</div>
                   <ol>${names}</ol>
@@ -2641,9 +2637,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
       <style>
         @page{size:A4 landscape;margin:7mm 8mm}
         *{box-sizing:border-box}
-        html,body{background:#fff;margin:0;overflow-x:hidden}
+        html,body{background:#fff !important;background-color:#fff !important;margin:0;overflow-x:hidden}
         body{font-family:Arial,"Tahoma",sans-serif;color:#0f172a;font-size:10.5px;line-height:1.25}
-        .page{width:100%;margin:0 auto;padding:0 4mm 2mm;overflow:hidden}
+        .page{width:100%;margin:0 auto;padding:0 4mm 2mm;overflow:hidden;background:transparent !important;border:0 !important;outline:0 !important;box-shadow:none !important}
         .hero{position:relative;text-align:center;padding:3px 60mm 3px 18mm;margin-bottom:2px;min-height:29mm}
         .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:7px;width:58mm;text-align:start}
         .agency-brand img{display:block;width:22mm;height:22mm;object-fit:contain;flex:0 0 auto}
@@ -2653,31 +2649,31 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         h1{font-size:34px;line-height:1;margin:0 0 5px;font-weight:900;color:#0d1728;letter-spacing:.5px}
         .program-name{font-size:14px;color:#9a7418;font-weight:900;margin:0}
         .summary{display:grid;grid-template-columns:1fr 1.35fr 1fr 1fr;gap:7px;margin:2px 0 8px}
-        .summary-card{height:14.5mm;border:1px solid #d9dce2;border-radius:9px;background:linear-gradient(180deg,#fff,#fbfbfc);padding:4px 8px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 7px rgba(15,23,42,.04)}
+        .summary-card{height:14.5mm;border:1px solid #d9dce2;border-radius:9px;background:#fff;padding:4px 8px;display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:none}
         .summary-card span{display:block;color:#464b55;font-size:9px;font-weight:800;margin-bottom:2px}
         .summary-card b{display:block;color:#0f172a;font-size:10.5px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .summary-card .mini-icon{width:18px;height:18px;border:1px solid #c8ced8;border-radius:6px;color:#0f172a;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900}
-        .hotel-section{margin:0 0 8px;break-inside:auto;page-break-inside:auto}
+        .hotel-section{margin:0 0 8px;break-inside:auto;page-break-inside:auto;background:transparent;border:0;outline:0;box-shadow:none}
+        .hotel-section::before,.hotel-section::after{content:none !important;display:none !important}
         .hotel-title{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 8px;padding:3px 0;break-after:avoid;page-break-after:avoid;color:#101827;border-top:1.5px solid #c79b3c;border-bottom:1.5px solid #c79b3c}
         .hotel-title::before,.hotel-title::after{content:"";height:1.5px;background:#c79b3c;flex:1}
         .hotel-title::after{background:#c79b3c}
         .hotel-title h2{font-size:19px;line-height:1;margin:0;font-weight:900;color:#101827}
         .hotel-title h2::before,.hotel-title h2::after{content:"";display:inline-block;width:14px;height:7px;border-top:2px solid #c79b3c;margin:0 7px;transform:skewX(-28deg)}
         .hotel-title span{display:none}
-        .rooms-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px 8px;align-items:start}
-        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:9px;padding:6px 8px 7px;background:linear-gradient(180deg,#fff,#fdfdfd);min-height:36mm;box-shadow:0 2px 9px rgba(15,23,42,.05)}
+        .rooms-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px 8px;align-items:start;background:transparent;border:0;outline:0;box-shadow:none;padding:0}
+        .rooms-grid::before,.rooms-grid::after{content:none !important;display:none !important}
+        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:9px;padding:7px 8px;background:#fff;min-height:36mm;box-shadow:none}
         .room-card::before{content:"";position:absolute;inset-inline:0;top:0;height:3px;border-radius:9px 9px 0 0;background:#b99235}
         .room-card.male_only::before{background:#2c5f93}
         .room-card.female_only::before{background:#ad5c7a}
         .room-card.family::before{background:#a88a2c}
-        .room-head{display:flex;align-items:flex-start;justify-content:space-between;gap:5px;padding:3px 0 5px;margin-bottom:4px}
-        .room-head strong{display:block;font-size:14px;font-weight:900;color:#0f172a}
-        .room-head small{display:block;font-size:8px;color:#a77d22;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:92px;font-weight:800}
+        .category-line{display:flex;justify-content:center;margin:1px 0 5px}
+        .category-badge{display:inline-flex;align-items:center;justify-content:center;min-width:48px;text-align:center;font-size:8.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:5px;padding:2px 8px}
+        .female_only .category-badge{background:#f1dfe7;border-color:#ead1dc}
+        .family .category-badge{background:#eadbb4;border-color:#dfcb92}
+        .room-meta{display:flex;align-items:center;justify-content:center;gap:10px;padding:0 0 5px;margin-bottom:3px}
+        .room-meta strong{display:block;font-size:14px;font-weight:900;color:#0f172a}
         .occupancy{font-size:10px;font-weight:900;color:#0f172a;border:0;background:transparent;border-radius:0;padding:0;white-space:nowrap}
-        .badges{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin:2px 0 5px}
-        .badges span{min-width:36px;text-align:center;font-size:8.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:4px;padding:2px 6px}
-        .female_only .badges span{background:#f1dfe7;border-color:#ead1dc}
-        .family .badges span{background:#eadbb4;border-color:#dfcb92}
         .hotel-name{border-top:1px dashed #d2d6dd;border-bottom:1px solid #c7cbd2;color:#a77d22;text-align:center;font-size:9.5px;font-weight:900;padding:4px 0;margin:0 0 5px}
         ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
         li{display:grid;grid-template-columns:13px 1fr;gap:5px;align-items:center;padding:0 2px;min-height:14px;border:0;background:transparent}
@@ -2689,7 +2685,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         .print-footer::after{background:linear-gradient(90deg,#d5ad5a,transparent)}
         .print-footer .page-no::after{content:"${escapeHtml(t.page || "صفحة")} " counter(page)}
         @media print{
-          html,body,.page{overflow:hidden}
+          html,body,.page{overflow:hidden;background:#fff !important;background-color:#fff !important}
+          .hero,.summary,.hotel-section,.rooms-grid,.print-footer{background:transparent !important;background-color:transparent !important;box-shadow:none !important;border-image:none !important;outline:none !important}
+          .hotel-section,.rooms-grid{border:none !important}
+          .summary-card,.room-card{box-shadow:none !important;filter:none !important}
           .rooms-grid{grid-template-columns:repeat(5,1fr)}
           .room-card{break-inside:avoid;page-break-inside:avoid}
           .hotel-title{break-after:avoid;page-break-after:avoid}
@@ -2709,10 +2708,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
             <p class="program-name">${escapeHtml(program.name || "—")}</p>
           </div>
           <div class="summary">
-            <div class="summary-card"><div><span>${escapeHtml(t.city)}:</span><b>${escapeHtml(cityLabel)}</b></div><div class="mini-icon">م</div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.period || "الفترة")}:</span><b>${escapeHtml(period)}</b></div><div class="mini-icon">ف</div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.totalClients)}:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div><div class="mini-icon">ع</div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.roomingRoomsCount || "عدد الغرف")}:</span><b>${escapeHtml(String(totalRooms))}</b></div><div class="mini-icon">غ</div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.city)}:</span><b>${escapeHtml(cityLabel)}</b></div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.period || "الفترة")}:</span><b>${escapeHtml(period)}</b></div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.totalClients)}:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div></div>
+            <div class="summary-card"><div><span>${escapeHtml(t.roomingRoomsCount || "عدد الغرف")}:</span><b>${escapeHtml(String(totalRooms))}</b></div></div>
           </div>
         </header>
         ${sections || `<p>${escapeHtml(t.noRoomingRooms || "لا توجد غرف للتسكين.")}</p>`}
