@@ -2,7 +2,7 @@ import React from "react";
 import { Button } from "./UI";
 import { theme } from "./styles";
 import { parseMRZDetailed } from "../utils/mrzReader";
-import { extractMRZFromImage } from "../utils/ocrPassport";
+import { extractMRZFromImage, extractMRZFromImageRegion } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
 import { AppIcon } from "./Icon";
 
@@ -40,6 +40,11 @@ const LABELS = {
     mrzLine1: "MRZ 1",
     mrzLine2: "MRZ 2",
     recheck: "إعادة التحقق",
+    selectMRZ: "تحديد MRZ",
+    cropTitle: "تصحيح من صورة الجواز",
+    cropHint: "حدد سطرَي MRZ أسفل الجواز ثم أعد القراءة.",
+    readCrop: "إعادة القراءة من المنطقة المحددة",
+    cropFailed: "تعذر استخراج MRZ بشكل صحيح من المنطقة المحددة",
     trimTo44: "قص إلى 44",
     lineTooLong: "السطر أطول من 44 حرفًا، احذف الحروف الزائدة",
     lineTooShort: "السطر ناقص",
@@ -88,6 +93,11 @@ const LABELS = {
     mrzLine1: "MRZ 1",
     mrzLine2: "MRZ 2",
     recheck: "Revalider",
+    selectMRZ: "Sélectionner MRZ",
+    cropTitle: "Corriger depuis l'image",
+    cropHint: "Sélectionnez les deux lignes MRZ en bas du passeport puis relancez la lecture.",
+    readCrop: "Relire la zone sélectionnée",
+    cropFailed: "Impossible d'extraire une MRZ valide depuis la zone sélectionnée",
     trimTo44: "Couper à 44",
     lineTooLong: "La ligne dépasse 44 caractères, supprimez les caractères en trop",
     lineTooShort: "Ligne incomplète",
@@ -136,6 +146,11 @@ const LABELS = {
     mrzLine1: "MRZ 1",
     mrzLine2: "MRZ 2",
     recheck: "Recheck",
+    selectMRZ: "Select MRZ",
+    cropTitle: "Correct from passport image",
+    cropHint: "Select the two MRZ lines at the bottom of the passport, then read the selected area again.",
+    readCrop: "Read selected area again",
+    cropFailed: "Could not extract a valid MRZ from the selected area",
     trimTo44: "Trim to 44",
     lineTooLong: "Line is longer than 44 characters, remove the extra characters",
     lineTooShort: "Line is incomplete",
@@ -168,10 +183,7 @@ const fieldStyle = {
   outline: "none",
 };
 
-const cleanMRZLine = (value = "") => String(value).toUpperCase().replace(/[^A-Z0-9<]/g, "");
-const hasOnlyMRZChars = (value = "") => /^[A-Z0-9<]*$/.test(String(value).toUpperCase());
 const mrzCount = (value = "") => String(value || "").length;
-const mrzLineOk = (value = "") => mrzCount(value) === 44 && hasOnlyMRZChars(value);
 const formatMessage = (template, vars) => Object.entries(vars).reduce((text, [key, value]) => text.replace(`{${key}}`, value), template);
 const normalizePassportNo = (value = "") => String(value).trim().toUpperCase().replace(/\s+/g, "");
 const normalizeGender = (value) => value === "F" || value === "female" ? "female" : value === "M" || value === "male" ? "male" : "";
@@ -232,47 +244,8 @@ const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOv
   };
 };
 
-function ReviewRow({ row, index, labels, onChange, onRemove, onRecheck }) {
+function ReviewRow({ row, index, labels, onChange, onRemove, onSelectMRZ }) {
   const statusColor = row.status === "success" ? "#22c55e" : row.status === "failed" ? "#ef4444" : "#f59e0b";
-  const renderMRZInput = (key) => {
-    const value = row[key] || "";
-    const count = mrzCount(value);
-    const ok = mrzLineOk(value);
-    const tooLong = count > 44;
-    const tooShort = count > 0 && count < 44;
-    const warning = tooLong ? labels.lineTooLong : tooShort ? labels.lineTooShort : "";
-    return (
-      <div style={{ minWidth: 240 }}>
-        <input
-          value={value}
-          onChange={(event) => onChange(row.id, { [key]: cleanMRZLine(event.target.value) })}
-          style={{
-            ...fieldStyle,
-            minWidth: 240,
-            direction: "ltr",
-            fontFamily: "monospace",
-            borderColor: ok ? "rgba(34,197,94,.55)" : "rgba(245,158,11,.42)",
-          }}
-        />
-        <div style={{ marginTop: 3, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ color: ok ? "#22c55e" : "#f59e0b", fontSize: 10, fontWeight: 800, direction: "ltr", textAlign: "left" }}>
-            {count}/44
-          </span>
-          {tooLong && (
-            <button
-              type="button"
-              onClick={() => onChange(row.id, { [key]: value.slice(0, 44) })}
-              style={{ border: 0, background: "rgba(245,158,11,.16)", color: "#fde68a", borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 800, cursor: "pointer" }}
-            >
-              {labels.trimTo44}
-            </button>
-          )}
-        </div>
-        {warning && <div style={{ marginTop: 2, color: "#fbbf24", fontSize: 10, lineHeight: 1.35 }}>{warning}</div>}
-      </div>
-    );
-  };
-  const canRecheck = mrzLineOk(row.mrzLine1 || "") && mrzLineOk(row.mrzLine2 || "");
   return (
     <tr style={{ borderTop: "1px solid rgba(255,255,255,.08)" }}>
       <td style={{ padding: 8, color: "#94a3b8", fontWeight: 800 }}>{index + 1}</td>
@@ -281,21 +254,6 @@ function ReviewRow({ row, index, labels, onChange, onRemove, onRecheck }) {
         <span style={{ color: statusColor, fontSize: 11, fontWeight: 900 }}>
           {labels[row.status] || labels.review}
         </span>
-      </td>
-      {["mrzLine1", "mrzLine2"].map((key) => (
-        <td key={key} style={{ padding: 6 }}>
-          {renderMRZInput(key)}
-        </td>
-      ))}
-      <td style={{ padding: 6 }}>
-        <button
-          type="button"
-          disabled={!canRecheck}
-          onClick={() => onRecheck(row.id)}
-          style={{ border: 0, background: canRecheck ? "rgba(37,99,235,.14)" : "rgba(148,163,184,.12)", color: canRecheck ? "#bfdbfe" : "#64748b", borderRadius: 8, padding: "7px 10px", fontSize: 11, fontWeight: 800, cursor: canRecheck ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
-        >
-          {labels.recheck}
-        </button>
       </td>
       {["latinLastName", "latinFirstName", "arabicLastName", "arabicFirstName", "passportNo", "nationality", "birthDate", "passportExpiry"].map((key) => (
         <td key={key} style={{ padding: 6 }}>
@@ -314,6 +272,19 @@ function ReviewRow({ row, index, labels, onChange, onRemove, onRecheck }) {
         </select>
       </td>
       <td style={{ padding: 6, minWidth: 150, color: "#cbd5e1", fontSize: 11 }}>{row.note || "—"}</td>
+      <td style={{ padding: 6 }}>
+        {row.hasImage && row.status !== "success" ? (
+          <button
+            type="button"
+            onClick={() => onSelectMRZ(row.id)}
+            style={{ border: "1px solid rgba(212,175,55,.3)", background: "rgba(212,175,55,.14)", color: "#fde68a", borderRadius: 8, padding: "7px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            {labels.selectMRZ}
+          </button>
+        ) : (
+          <span style={{ color: "#64748b", fontSize: 11 }}>—</span>
+        )}
+      </td>
       <td style={{ padding: 6 }}>
         {row.existingClientId ? (
           <select
@@ -348,8 +319,14 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
   const [progress, setProgress] = React.useState({ done: 0, total: 0, active: false });
+  const [cropModal, setCropModal] = React.useState({ open: false, rowId: "", url: "", fileName: "" });
+  const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
+  const [cropReading, setCropReading] = React.useState(false);
   const fileRef = React.useRef(null);
   const bulkRef = React.useRef(null);
+  const rowFilesRef = React.useRef(new Map());
+  const cropBoxRef = React.useRef(null);
+  const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
   const clientByPassport = React.useMemo(() => {
     const map = new Map();
@@ -371,24 +348,45 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
 
   const processImageFile = React.useCallback(async (file, index = 0) => {
     const outcome = await extractMRZFromImage(file, () => {});
+    let row;
     if (outcome.success) {
       const parsed = parseMRZDetailed(outcome.raw?.line1 || outcome.data?.raw?.line1, outcome.raw?.line2 || outcome.data?.raw?.line2);
-      addParsedRow(parsed, file.name || `image-${index + 1}`, { hasImage: true });
+      row = addParsedRow(parsed, file.name || `image-${index + 1}`, { hasImage: true });
     } else if (outcome.raw?.line1 || outcome.raw?.line2) {
       const parsed = parseMRZDetailed(outcome.raw?.line1 || "", outcome.raw?.line2 || "");
-      addParsedRow(parsed, file.name || `image-${index + 1}`, {
+      row = addParsedRow(parsed, file.name || `image-${index + 1}`, {
         statusOverride: "review",
         noteOverride: issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw),
         hasImage: true,
       });
     } else {
-      addParsedRow({ ok: false, data: null, issues: [outcome.error || "OCR_FAILED"] }, file.name || `image-${index + 1}`, {
+      row = addParsedRow({ ok: false, data: null, issues: [outcome.error || "OCR_FAILED"] }, file.name || `image-${index + 1}`, {
         statusOverride: "review",
         noteOverride: outcome.error === "MRZ_NOT_FOUND" ? l.ocrNotFound : l.ocrFailed,
         hasImage: true,
       });
     }
+    if (row?.id) rowFilesRef.current.set(row.id, file);
+    return row;
   }, [addParsedRow, l]);
+
+  const openCropModal = React.useCallback((id) => {
+    const file = rowFilesRef.current.get(id);
+    if (!file) {
+      onToast?.(l.ocrFailed, "error");
+      return;
+    }
+    setCropModal((current) => {
+      if (current.url) URL.revokeObjectURL(current.url);
+      return {
+        open: true,
+        rowId: id,
+        url: URL.createObjectURL(file),
+        fileName: file.name || "",
+      };
+    });
+    setCropRect({ x: 4, y: 68, width: 92, height: 24 });
+  }, [l.ocrFailed, onToast]);
 
   const processFilesSequentially = React.useCallback(async (fileList) => {
     const files = Array.from(fileList || []).slice(0, MAX_BULK_FILES);
@@ -396,44 +394,155 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     setProgress({ done: 0, total: files.length, active: true });
     for (let index = 0; index < files.length; index += 1) {
       setProgress({ done: index, total: files.length, active: true });
-      await processImageFile(files[index], index);
+      const row = await processImageFile(files[index], index);
+      if (files.length === 1 && mode === "image" && row?.status !== "success") {
+        openCropModal(row.id);
+      }
       await new Promise((resolve) => setTimeout(resolve, 40));
       setProgress({ done: index + 1, total: files.length, active: index + 1 < files.length });
     }
-  }, [processImageFile]);
+  }, [mode, openCropModal, processImageFile]);
 
   const updateRow = React.useCallback((id, patch) => {
     setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   }, []);
 
-  const recheckRow = React.useCallback((id) => {
+  const removeRow = React.useCallback((id) => {
+    rowFilesRef.current.delete(id);
+    setRows((current) => current.filter((row) => row.id !== id));
+  }, []);
+
+  const closeCropModal = React.useCallback(() => {
+    setCropModal((current) => {
+      if (current.url) URL.revokeObjectURL(current.url);
+      return { open: false, rowId: "", url: "", fileName: "" };
+    });
+    setCropReading(false);
+  }, []);
+
+  React.useEffect(() => () => {
+    if (cropModal.url) URL.revokeObjectURL(cropModal.url);
+  }, [cropModal.url]);
+
+  const getCropPoint = React.useCallback((event) => {
+    const rect = cropBoxRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
+      y: Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)),
+    };
+  }, []);
+
+  const startCropInteraction = React.useCallback((event, type = "draw") => {
+    if (cropReading) return;
+    const point = getCropPoint(event);
+    if (!point) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cropDragRef.current = {
+      type,
+      start: point,
+      rect: cropRect,
+    };
+    if (type === "draw") {
+      setCropRect({ x: point.x, y: point.y, width: 1, height: 1 });
+    }
+  }, [cropReading, cropRect, getCropPoint]);
+
+  React.useEffect(() => {
+    const handleMove = (event) => {
+      const drag = cropDragRef.current;
+      if (!drag) return;
+      const point = getCropPoint(event);
+      if (!point) return;
+      const minSize = 5;
+      if (drag.type === "draw") {
+        const x = Math.min(drag.start.x, point.x);
+        const y = Math.min(drag.start.y, point.y);
+        setCropRect({
+          x,
+          y,
+          width: Math.max(minSize, Math.min(Math.abs(point.x - drag.start.x), 100 - x)),
+          height: Math.max(minSize, Math.min(Math.abs(point.y - drag.start.y), 100 - y)),
+        });
+        return;
+      }
+      if (drag.type === "move") {
+        const dx = point.x - drag.start.x;
+        const dy = point.y - drag.start.y;
+        setCropRect({
+          ...drag.rect,
+          x: Math.max(0, Math.min(100 - drag.rect.width, drag.rect.x + dx)),
+          y: Math.max(0, Math.min(100 - drag.rect.height, drag.rect.y + dy)),
+        });
+        return;
+      }
+      const next = { ...drag.rect };
+      if (drag.type.includes("e")) next.width = Math.max(minSize, Math.min(100 - next.x, drag.rect.width + (point.x - drag.start.x)));
+      if (drag.type.includes("s")) next.height = Math.max(minSize, Math.min(100 - next.y, drag.rect.height + (point.y - drag.start.y)));
+      if (drag.type.includes("w")) {
+        const newX = Math.max(0, Math.min(drag.rect.x + drag.rect.width - minSize, drag.rect.x + (point.x - drag.start.x)));
+        next.width = drag.rect.width + (drag.rect.x - newX);
+        next.x = newX;
+      }
+      if (drag.type.includes("n")) {
+        const newY = Math.max(0, Math.min(drag.rect.y + drag.rect.height - minSize, drag.rect.y + (point.y - drag.start.y)));
+        next.height = drag.rect.height + (drag.rect.y - newY);
+        next.y = newY;
+      }
+      setCropRect(next);
+    };
+    const handleUp = () => {
+      cropDragRef.current = null;
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [getCropPoint]);
+
+  const readSelectedCrop = React.useCallback(async () => {
+    const file = rowFilesRef.current.get(cropModal.rowId);
+    if (!file || cropRect.width < 5 || cropRect.height < 5) return;
+    setCropReading(true);
+    const outcome = await extractMRZFromImageRegion(file, cropRect, () => {});
+    const raw = outcome.raw || {};
+    const parsed = outcome.success
+      ? parseMRZDetailed(raw.line1 || outcome.data?.raw?.line1, raw.line2 || outcome.data?.raw?.line2)
+      : parseMRZDetailed(raw.line1 || "", raw.line2 || "");
+    const succeeded = Boolean(parsed.ok && parsed.data);
+    const existing = parsed?.data?.passportNo ? findExisting(parsed.data.passportNo) : null;
     setRows((current) => current.map((row) => {
-      if (row.id !== id) return row;
-      const parsed = parseMRZDetailed(row.mrzLine1 || "", row.mrzLine2 || "");
-      const existing = parsed?.data?.passportNo ? findExisting(parsed.data.passportNo) : null;
+      if (row.id !== cropModal.rowId) return row;
       const next = makeRowFromParsed({
         parsed,
         source: row.source,
         existing,
         l,
-        statusOverride: parsed.ok && parsed.data ? undefined : "review",
-        noteOverride: parsed.ok && parsed.data ? undefined : issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw || { line1: row.mrzLine1, line2: row.mrzLine2 }),
+        statusOverride: succeeded ? undefined : "review",
+        noteOverride: succeeded ? undefined : (outcome.error === "MRZ_NOT_FOUND" && !raw.line1 && !raw.line2 ? l.cropFailed : issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw || raw)),
+        hasImage: true,
       });
       return {
         ...row,
         ...next,
         id: row.id,
         source: row.source,
-        hasImage: row.hasImage,
+        hasImage: true,
         arabicLastName: row.arabicLastName || next.arabicLastName,
         arabicFirstName: row.arabicFirstName || next.arabicFirstName,
       };
     }));
-  }, [findExisting, l]);
-
-  const removeRow = React.useCallback((id) => {
-    setRows((current) => current.filter((row) => row.id !== id));
-  }, []);
+    setCropReading(false);
+    if (succeeded) {
+      onToast?.(l.success, "success");
+      closeCropModal();
+    } else {
+      onToast?.(l.cropFailed, "error");
+    }
+  }, [closeCropModal, cropModal.rowId, cropRect, findExisting, l, onToast]);
 
   const toClientPayload = React.useCallback((row) => ({
     firstName: row.arabicFirstName || "",
@@ -561,19 +670,19 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
         {error && <div style={{ color: "#fecaca", border: "1px solid rgba(239,68,68,.28)", background: "rgba(239,68,68,.12)", borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 12 }}>{error}</div>}
 
         <div style={{ border: "1px solid rgba(255,255,255,.09)", borderRadius: 12, overflow: "auto", maxHeight: 360 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1420 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1280 }}>
             <thead style={{ position: "sticky", top: 0, background: "#111827", zIndex: 1 }}>
               <tr>
-                {["#", l.source, l.status, l.mrzLine1, l.mrzLine2, "", l.latinLast, l.latinFirst, l.arabicLast, l.arabicFirst, l.passportNo, l.nationality, l.birthDate, l.expiry, l.gender, l.notes, l.duplicateAction, ""].map((head, idx) => (
+                {["#", l.source, l.status, l.latinLast, l.latinFirst, l.arabicLast, l.arabicFirst, l.passportNo, l.nationality, l.birthDate, l.expiry, l.gender, l.notes, l.selectMRZ, l.duplicateAction, ""].map((head, idx) => (
                   <th key={`${idx}-${head || "blank"}`} style={{ padding: 8, color: "#94a3b8", fontSize: 11, textAlign: "start", whiteSpace: "nowrap" }}>{head}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.length ? rows.map((row, index) => (
-                <ReviewRow key={row.id} row={row} index={index} labels={l} onChange={updateRow} onRemove={removeRow} onRecheck={recheckRow} />
+                <ReviewRow key={row.id} row={row} index={index} labels={l} onChange={updateRow} onRemove={removeRow} onSelectMRZ={openCropModal} />
               )) : (
-                <tr><td colSpan={18} style={{ padding: 22, textAlign: "center", color: "#64748b", fontWeight: 800 }}>{l.noRows}</td></tr>
+                <tr><td colSpan={16} style={{ padding: 22, textAlign: "center", color: "#64748b", fontWeight: 800 }}>{l.noRows}</td></tr>
               )}
             </tbody>
           </table>
@@ -585,6 +694,119 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
           <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active}>{l.saveAccepted}</Button>
         </div>
       </div>
+      {cropModal.open && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "grid",
+            placeItems: "center",
+            padding: 18,
+            background: "rgba(2,6,23,.72)",
+            backdropFilter: "blur(8px)",
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeCropModal();
+          }}
+        >
+          <div style={{
+            width: "min(940px, 96vw)",
+            maxHeight: "92vh",
+            overflow: "auto",
+            borderRadius: 16,
+            border: "1px solid rgba(212,175,55,.2)",
+            background: "linear-gradient(135deg, rgba(15,23,42,.98), rgba(30,41,59,.96))",
+            boxShadow: "0 24px 80px rgba(0,0,0,.45)",
+            padding: 16,
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, color: tc.gold, fontSize: 17, fontWeight: 900 }}>{l.cropTitle}</h3>
+                <p style={{ margin: "5px 0 0", color: "#94a3b8", fontSize: 12, lineHeight: 1.6 }}>{l.cropHint}</p>
+                {cropModal.fileName && <div style={{ marginTop: 4, color: "#cbd5e1", fontSize: 11 }}>{cropModal.fileName}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={closeCropModal}
+                style={{ border: 0, borderRadius: 10, width: 34, height: 34, cursor: "pointer", background: "rgba(255,255,255,.08)", color: "#e2e8f0" }}
+              >
+                <AppIcon name="x" size={16} />
+              </button>
+            </div>
+
+            <div
+              ref={cropBoxRef}
+              onMouseDown={(event) => startCropInteraction(event, "draw")}
+              style={{
+                position: "relative",
+                width: "100%",
+                maxHeight: "68vh",
+                overflow: "hidden",
+                borderRadius: 14,
+                border: "1px solid rgba(255,255,255,.12)",
+                background: "#020617",
+                cursor: cropReading ? "wait" : "crosshair",
+                userSelect: "none",
+              }}
+            >
+              <img
+                src={cropModal.url}
+                alt=""
+                draggable={false}
+                style={{ display: "block", width: "100%", height: "auto", maxHeight: "68vh", objectFit: "contain", pointerEvents: "none" }}
+              />
+              <div
+                onMouseDown={(event) => startCropInteraction(event, "move")}
+                style={{
+                  position: "absolute",
+                  left: `${cropRect.x}%`,
+                  top: `${cropRect.y}%`,
+                  width: `${cropRect.width}%`,
+                  height: `${cropRect.height}%`,
+                  border: "2px solid #d4af37",
+                  boxShadow: "0 0 0 9999px rgba(2,6,23,.42), 0 0 18px rgba(212,175,55,.42)",
+                  borderRadius: 8,
+                  cursor: cropReading ? "wait" : "move",
+                  boxSizing: "border-box",
+                }}
+              >
+                {["nw", "ne", "sw", "se"].map((handle) => (
+                  <span
+                    key={handle}
+                    onMouseDown={(event) => startCropInteraction(event, handle)}
+                    style={{
+                      position: "absolute",
+                      width: 12,
+                      height: 12,
+                      borderRadius: 999,
+                      background: "#d4af37",
+                      border: "2px solid #0f172a",
+                      left: handle.includes("w") ? -7 : undefined,
+                      right: handle.includes("e") ? -7 : undefined,
+                      top: handle.includes("n") ? -7 : undefined,
+                      bottom: handle.includes("s") ? -7 : undefined,
+                      cursor: handle === "nw" || handle === "se" ? "nwse-resize" : "nesw-resize",
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+              <Button variant="ghost" onClick={closeCropModal}>{t.cancel}</Button>
+              <Button
+                variant="primary"
+                icon="scan"
+                onClick={readSelectedCrop}
+                disabled={cropReading || cropRect.width < 5 || cropRect.height < 5}
+              >
+                {cropReading ? l.processing : l.readCrop}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
