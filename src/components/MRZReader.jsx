@@ -15,10 +15,12 @@ const LABELS = {
     desc: "ارفع صورة جواز أو عدة صور جوازات، وسيتم استخراج بيانات MRZ تلقائيًا. كل نتيجة تمر عبر المراجعة قبل الحفظ.",
     image: "صورة الجواز",
     bulk: "استيراد من الجوازات",
-    line1: "السطر الأول MRZ",
-    line2: "السطر الثاني MRZ",
     uploadOne: "رفع صورة جواز",
     uploadBulk: "اختر صور الجوازات",
+    readPassport: "قراءة الجواز",
+    readPassports: "قراءة الجوازات",
+    selectedFiles: "الصور المختارة",
+    noImageSelected: "اختر صورة جواز أولًا",
     processing: "قيد القراءة",
     success: "تم بنجاح",
     review: "يحتاج مراجعة",
@@ -37,17 +39,11 @@ const LABELS = {
     birthDate: "تاريخ الميلاد",
     gender: "الجنس",
     expiry: "تاريخ انتهاء الجواز",
-    mrzLine1: "MRZ 1",
-    mrzLine2: "MRZ 2",
-    recheck: "إعادة التحقق",
     selectMRZ: "تحديد MRZ",
     cropTitle: "تصحيح من صورة الجواز",
     cropHint: "حدد سطرَي MRZ أسفل الجواز ثم أعد القراءة.",
     readCrop: "إعادة القراءة من المنطقة المحددة",
     cropFailed: "تعذر استخراج MRZ بشكل صحيح من المنطقة المحددة",
-    trimTo44: "قص إلى 44",
-    lineTooLong: "السطر أطول من 44 حرفًا، احذف الحروف الزائدة",
-    lineTooShort: "السطر ناقص",
     notes: "ملاحظات",
     accept: "قبول",
     duplicateAction: "التكرار",
@@ -59,6 +55,11 @@ const LABELS = {
     nothingToSave: "لا توجد نتائج مقبولة للحفظ",
     invalidMRZ: "MRZ غير مكتمل أو يحتاج مراجعة",
     ocrNotFound: "لم يتم العثور على MRZ في الصورة",
+    ocrNoText: "OCR لم ينتج نصًا من منطقة MRZ",
+    mrzLine1NotFound: "لم يتم العثور على السطر الأول من MRZ",
+    mrzLine2NotFound: "لم يتم العثور على السطر الثاني من MRZ",
+    mrzLengthError: "طول سطور MRZ غير صحيح",
+    mrzParseFailed: "تم العثور على مرشح MRZ لكنه لم يمر التحقق",
     ocrFailed: "تعذرت قراءة الصورة",
     male: "ذكر",
     female: "أنثى",
@@ -68,10 +69,12 @@ const LABELS = {
     desc: "Importez une photo de passeport ou plusieurs photos, puis les données MRZ seront extraites automatiquement. Chaque résultat passe par une revue avant l'enregistrement.",
     image: "Photo passeport",
     bulk: "Import depuis les passeports",
-    line1: "Ligne MRZ 1",
-    line2: "Ligne MRZ 2",
     uploadOne: "Importer une photo",
     uploadBulk: "Choisir les photos des passeports",
+    readPassport: "Lire le passeport",
+    readPassports: "Lire les passeports",
+    selectedFiles: "Photos sélectionnées",
+    noImageSelected: "Choisissez d'abord une photo de passeport",
     processing: "Lecture en cours",
     success: "Réussi",
     review: "À vérifier",
@@ -90,17 +93,11 @@ const LABELS = {
     birthDate: "Naissance",
     gender: "Sexe",
     expiry: "Expiration",
-    mrzLine1: "MRZ 1",
-    mrzLine2: "MRZ 2",
-    recheck: "Revalider",
     selectMRZ: "Sélectionner MRZ",
     cropTitle: "Corriger depuis l'image",
     cropHint: "Sélectionnez les deux lignes MRZ en bas du passeport puis relancez la lecture.",
     readCrop: "Relire la zone sélectionnée",
     cropFailed: "Impossible d'extraire une MRZ valide depuis la zone sélectionnée",
-    trimTo44: "Couper à 44",
-    lineTooLong: "La ligne dépasse 44 caractères, supprimez les caractères en trop",
-    lineTooShort: "Ligne incomplète",
     notes: "Notes",
     accept: "Accepter",
     duplicateAction: "Doublon",
@@ -112,6 +109,11 @@ const LABELS = {
     nothingToSave: "Aucun résultat accepté à enregistrer",
     invalidMRZ: "MRZ incomplète ou à vérifier",
     ocrNotFound: "MRZ introuvable dans l'image",
+    ocrNoText: "L'OCR n'a produit aucun texte depuis la zone MRZ",
+    mrzLine1NotFound: "Première ligne MRZ introuvable",
+    mrzLine2NotFound: "Deuxième ligne MRZ introuvable",
+    mrzLengthError: "Longueur des lignes MRZ incorrecte",
+    mrzParseFailed: "Une MRZ candidate a été trouvée mais n'a pas validé les contrôles",
     ocrFailed: "Lecture de l'image impossible",
     male: "Masculin",
     female: "Féminin",
@@ -121,10 +123,12 @@ const LABELS = {
     desc: "Upload one passport image or several passport images and the MRZ data will be extracted automatically. Every result is reviewed before saving.",
     image: "Passport photo",
     bulk: "Import from passports",
-    line1: "MRZ line 1",
-    line2: "MRZ line 2",
     uploadOne: "Upload passport photo",
     uploadBulk: "Choose passport images",
+    readPassport: "Read passport",
+    readPassports: "Read passports",
+    selectedFiles: "Selected images",
+    noImageSelected: "Choose a passport image first",
     processing: "Reading",
     success: "Success",
     review: "Needs review",
@@ -143,17 +147,11 @@ const LABELS = {
     birthDate: "Birth Date",
     gender: "Gender",
     expiry: "Passport Expiry",
-    mrzLine1: "MRZ 1",
-    mrzLine2: "MRZ 2",
-    recheck: "Recheck",
     selectMRZ: "Select MRZ",
     cropTitle: "Correct from passport image",
     cropHint: "Select the two MRZ lines at the bottom of the passport, then read the selected area again.",
     readCrop: "Read selected area again",
     cropFailed: "Could not extract a valid MRZ from the selected area",
-    trimTo44: "Trim to 44",
-    lineTooLong: "Line is longer than 44 characters, remove the extra characters",
-    lineTooShort: "Line is incomplete",
     notes: "Notes",
     accept: "Accept",
     duplicateAction: "Duplicate",
@@ -165,6 +163,11 @@ const LABELS = {
     nothingToSave: "No accepted results to save",
     invalidMRZ: "MRZ is incomplete or needs review",
     ocrNotFound: "MRZ not found in image",
+    ocrNoText: "OCR produced no text from the MRZ area",
+    mrzLine1NotFound: "MRZ first line was not found",
+    mrzLine2NotFound: "MRZ second line was not found",
+    mrzLengthError: "MRZ line length is not valid",
+    mrzParseFailed: "An MRZ candidate was found but failed validation",
     ocrFailed: "Could not read image",
     male: "Male",
     female: "Female",
@@ -205,9 +208,25 @@ const issueText = (issues = [], l, raw = {}) => {
     if (issue === "BIRTH_CHECK") return "تاريخ الميلاد غير متوافق";
     if (issue === "EXPIRY_CHECK") return "تاريخ الانتهاء غير متوافق";
     if (issue === "NOT_TD3_PASSPORT") return "السطر الأول لا يبدأ بـ P<";
+    if (issue === "LAST_NAME_MISSING") return "تعذر استخراج الاسم العائلي من MRZ";
+    if (issue === "FIRST_NAME_MISSING") return "تعذر استخراج الاسم الشخصي من MRZ";
+    if (issue === "NAME_FILLER_NOISE") return "الاسم يحتوي على ضجيج filler من OCR";
+    if (issue === "NATIONALITY_MISSING") return "تعذر استخراج الجنسية من MRZ";
+    if (issue === "GENDER_MISSING") return "تعذر استخراج الجنس من MRZ";
+    if (issue === "PASSPORT_MISSING") return "تعذر استخراج رقم الجواز من MRZ";
     if (issue === "PARSE_ERROR") return "فشل OCR أو فشل التحليل";
     return `MRZ: ${issue}`;
   }).join(" · ");
+};
+
+const ocrFailureText = (error, l) => {
+  if (error === "OCR_NO_TEXT") return l.ocrNoText;
+  if (error === "MRZ_LINE1_NOT_FOUND") return l.mrzLine1NotFound;
+  if (error === "MRZ_LINE2_NOT_FOUND") return l.mrzLine2NotFound;
+  if (error === "MRZ_LENGTH") return l.mrzLengthError;
+  if (error === "PARSE_FAILED") return l.mrzParseFailed;
+  if (error === "MRZ_NOT_FOUND") return l.ocrNotFound;
+  return l.ocrFailed;
 };
 
 const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOverride, hasImage = false }) => {
@@ -319,6 +338,9 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
   const [progress, setProgress] = React.useState({ done: 0, total: 0, active: false });
+  const [singleFile, setSingleFile] = React.useState(null);
+  const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
+  const [bulkFiles, setBulkFiles] = React.useState([]);
   const [cropModal, setCropModal] = React.useState({ open: false, rowId: "", url: "", fileName: "" });
   const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
   const [cropReading, setCropReading] = React.useState(false);
@@ -326,6 +348,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const bulkRef = React.useRef(null);
   const rowFilesRef = React.useRef(new Map());
   const cropBoxRef = React.useRef(null);
+  const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
   const clientByPassport = React.useMemo(() => {
@@ -346,6 +369,23 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     return row;
   }, [findExisting, l]);
 
+  const selectSingleFile = React.useCallback((fileList) => {
+    const file = Array.from(fileList || [])[0];
+    setSingleFile(file || null);
+    setSinglePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return file ? URL.createObjectURL(file) : "";
+    });
+  }, []);
+
+  const selectBulkFiles = React.useCallback((fileList) => {
+    setBulkFiles(Array.from(fileList || []).slice(0, MAX_BULK_FILES));
+  }, []);
+
+  React.useEffect(() => () => {
+    if (singlePreviewUrl) URL.revokeObjectURL(singlePreviewUrl);
+  }, [singlePreviewUrl]);
+
   const processImageFile = React.useCallback(async (file, index = 0) => {
     const outcome = await extractMRZFromImage(file, () => {});
     let row;
@@ -362,7 +402,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     } else {
       row = addParsedRow({ ok: false, data: null, issues: [outcome.error || "OCR_FAILED"] }, file.name || `image-${index + 1}`, {
         statusOverride: "review",
-        noteOverride: outcome.error === "MRZ_NOT_FOUND" ? l.ocrNotFound : l.ocrFailed,
+        noteOverride: ocrFailureText(outcome.error, l),
         hasImage: true,
       });
     }
@@ -391,17 +431,33 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const processFilesSequentially = React.useCallback(async (fileList) => {
     const files = Array.from(fileList || []).slice(0, MAX_BULK_FILES);
     if (!files.length) return;
+    setError("");
+    setRows([]);
+    rowFilesRef.current.clear();
     setProgress({ done: 0, total: files.length, active: true });
     for (let index = 0; index < files.length; index += 1) {
       setProgress({ done: index, total: files.length, active: true });
-      const row = await processImageFile(files[index], index);
-      if (files.length === 1 && mode === "image" && row?.status !== "success") {
-        openCropModal(row.id);
-      }
+      await processImageFile(files[index], index);
       await new Promise((resolve) => setTimeout(resolve, 40));
       setProgress({ done: index + 1, total: files.length, active: index + 1 < files.length });
     }
-  }, [mode, openCropModal, processImageFile]);
+  }, [processImageFile]);
+
+  const readSinglePassport = React.useCallback(() => {
+    if (!singleFile) {
+      setError(l.noImageSelected);
+      return;
+    }
+    processFilesSequentially([singleFile]);
+  }, [l.noImageSelected, processFilesSequentially, singleFile]);
+
+  const readBulkPassports = React.useCallback(() => {
+    if (!bulkFiles.length) {
+      setError(l.noImageSelected);
+      return;
+    }
+    processFilesSequentially(bulkFiles);
+  }, [bulkFiles, l.noImageSelected, processFilesSequentially]);
 
   const updateRow = React.useCallback((id, patch) => {
     setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
@@ -425,7 +481,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   }, [cropModal.url]);
 
   const getCropPoint = React.useCallback((event) => {
-    const rect = cropBoxRef.current?.getBoundingClientRect();
+    const rect = cropImageRef.current?.getBoundingClientRect() || cropBoxRef.current?.getBoundingClientRect();
     if (!rect) return null;
     return {
       x: Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)),
@@ -522,7 +578,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
         existing,
         l,
         statusOverride: succeeded ? undefined : "review",
-        noteOverride: succeeded ? undefined : (outcome.error === "MRZ_NOT_FOUND" && !raw.line1 && !raw.line2 ? l.cropFailed : issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw || raw)),
+        noteOverride: succeeded ? undefined : (!raw.line1 && !raw.line2 ? ocrFailureText(outcome.error, l) : issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw || raw)),
         hasImage: true,
       });
       return {
@@ -648,16 +704,39 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
         </div>
 
         {mode === "image" && (
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-            <Button variant="secondary" icon="camera" onClick={() => fileRef.current?.click()} disabled={progress.active}>{l.uploadOne}</Button>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(event) => processFilesSequentially(event.target.files).finally(() => { event.target.value = ""; })} />
+          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Button variant="secondary" icon="camera" onClick={() => fileRef.current?.click()} disabled={progress.active}>{l.uploadOne}</Button>
+              <Button variant="primary" icon="scan" onClick={readSinglePassport} disabled={progress.active || !singleFile}>{l.readPassport}</Button>
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(event) => { selectSingleFile(event.target.files); event.target.value = ""; }} />
+            </div>
+            {singlePreviewUrl && (
+              <div style={{ border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,.035)", maxHeight: 260 }}>
+                <img src={singlePreviewUrl} alt="" style={{ display: "block", width: "100%", maxHeight: 260, objectFit: "contain" }} />
+              </div>
+            )}
           </div>
         )}
 
         {mode === "bulk" && (
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-            <Button variant="secondary" icon="upload" onClick={() => bulkRef.current?.click()} disabled={progress.active}>{l.uploadBulk}</Button>
-            <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(event) => processFilesSequentially(event.target.files).finally(() => { event.target.value = ""; })} />
+          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <Button variant="secondary" icon="upload" onClick={() => bulkRef.current?.click()} disabled={progress.active}>{l.uploadBulk}</Button>
+              <Button variant="primary" icon="scan" onClick={readBulkPassports} disabled={progress.active || !bulkFiles.length}>{l.readPassports}</Button>
+              <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(event) => { selectBulkFiles(event.target.files); event.target.value = ""; }} />
+            </div>
+            {bulkFiles.length > 0 && (
+              <div style={{ border: "1px solid rgba(255,255,255,.09)", borderRadius: 10, padding: 10, background: "rgba(255,255,255,.035)" }}>
+                <p style={{ margin: "0 0 6px", color: "#cbd5e1", fontSize: 12, fontWeight: 800 }}>{l.selectedFiles}: {bulkFiles.length}</p>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {bulkFiles.map((file, index) => (
+                    <span key={`${file.name}-${index}`} style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", border: "1px solid rgba(255,255,255,.08)", borderRadius: 999, padding: "4px 8px", color: "#94a3b8", fontSize: 11 }}>
+                      {file.name || `image-${index + 1}`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -735,61 +814,70 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
               </button>
             </div>
 
-            <div
-              ref={cropBoxRef}
-              onMouseDown={(event) => startCropInteraction(event, "draw")}
-              style={{
-                position: "relative",
-                width: "100%",
-                maxHeight: "68vh",
-                overflow: "hidden",
-                borderRadius: 14,
-                border: "1px solid rgba(255,255,255,.12)",
-                background: "#020617",
-                cursor: cropReading ? "wait" : "crosshair",
-                userSelect: "none",
-              }}
-            >
-              <img
-                src={cropModal.url}
-                alt=""
-                draggable={false}
-                style={{ display: "block", width: "100%", height: "auto", maxHeight: "68vh", objectFit: "contain", pointerEvents: "none" }}
-              />
+            <div style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              maxHeight: "68vh",
+              overflow: "auto",
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,.12)",
+              background: "#020617",
+              padding: 8,
+            }}>
               <div
-                onMouseDown={(event) => startCropInteraction(event, "move")}
+                ref={cropBoxRef}
+                onMouseDown={(event) => startCropInteraction(event, "draw")}
                 style={{
-                  position: "absolute",
-                  left: `${cropRect.x}%`,
-                  top: `${cropRect.y}%`,
-                  width: `${cropRect.width}%`,
-                  height: `${cropRect.height}%`,
-                  border: "2px solid #d4af37",
-                  boxShadow: "0 0 0 9999px rgba(2,6,23,.42), 0 0 18px rgba(212,175,55,.42)",
-                  borderRadius: 8,
-                  cursor: cropReading ? "wait" : "move",
-                  boxSizing: "border-box",
+                  position: "relative",
+                  display: "inline-block",
+                  lineHeight: 0,
+                  cursor: cropReading ? "wait" : "crosshair",
+                  userSelect: "none",
                 }}
               >
-                {["nw", "ne", "sw", "se"].map((handle) => (
-                  <span
-                    key={handle}
-                    onMouseDown={(event) => startCropInteraction(event, handle)}
-                    style={{
-                      position: "absolute",
-                      width: 12,
-                      height: 12,
-                      borderRadius: 999,
-                      background: "#d4af37",
-                      border: "2px solid #0f172a",
-                      left: handle.includes("w") ? -7 : undefined,
-                      right: handle.includes("e") ? -7 : undefined,
-                      top: handle.includes("n") ? -7 : undefined,
-                      bottom: handle.includes("s") ? -7 : undefined,
-                      cursor: handle === "nw" || handle === "se" ? "nwse-resize" : "nesw-resize",
-                    }}
-                  />
-                ))}
+                <img
+                  ref={cropImageRef}
+                  src={cropModal.url}
+                  alt=""
+                  draggable={false}
+                  style={{ display: "block", maxWidth: "100%", maxHeight: "66vh", width: "auto", height: "auto", pointerEvents: "none" }}
+                />
+                <div
+                  onMouseDown={(event) => startCropInteraction(event, "move")}
+                  style={{
+                    position: "absolute",
+                    left: `${cropRect.x}%`,
+                    top: `${cropRect.y}%`,
+                    width: `${cropRect.width}%`,
+                    height: `${cropRect.height}%`,
+                    border: "2px solid #d4af37",
+                    boxShadow: "0 0 0 9999px rgba(2,6,23,.42), 0 0 18px rgba(212,175,55,.42)",
+                    borderRadius: 8,
+                    cursor: cropReading ? "wait" : "move",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {["nw", "ne", "sw", "se"].map((handle) => (
+                    <span
+                      key={handle}
+                      onMouseDown={(event) => startCropInteraction(event, handle)}
+                      style={{
+                        position: "absolute",
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        background: "#d4af37",
+                        border: "2px solid #0f172a",
+                        left: handle.includes("w") ? -7 : undefined,
+                        right: handle.includes("e") ? -7 : undefined,
+                        top: handle.includes("n") ? -7 : undefined,
+                        bottom: handle.includes("s") ? -7 : undefined,
+                        cursor: handle === "nw" || handle === "se" ? "nwse-resize" : "nesw-resize",
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
 

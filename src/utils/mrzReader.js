@@ -28,6 +28,12 @@ const isValidDatePart = (value = "") => {
   return month >= 1 && month <= 12 && day >= 1 && day <= 31;
 };
 
+const cleanNamePart = (value = "") => String(value || "")
+  .replace(/[<LI1]{3,}$/g, "")
+  .replace(/</g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
 const parseDate = (yymmdd, isBirth = false) => {
   if (!isValidDatePart(yymmdd)) return "";
   const yy = parseInt(yymmdd.substring(0, 2), 10);
@@ -63,11 +69,15 @@ export function parseMRZDetailed(line1, line2) {
     // [5-43] = name field
     const docType   = l1[0];
     const issuer    = l1.substring(2, 5).replace(/<+$/, "");
-    const namePart  = l1.substring(5, 44);
+    let namePart  = l1.substring(5, 44);
+    namePart = namePart.replace(/[<LI1]{4,}/g, (match) => "<".repeat(match.length));
     const nameSplit = namePart.split("<<");
-    const lastName  = (nameSplit[0] || "").replace(/</g, " ").trim();
-    const firstName = (nameSplit[1] || "").replace(/</g, " ").trim();
+    const lastName  = cleanNamePart(nameSplit[0]);
+    const firstName = cleanNamePart(nameSplit[1]);
     const fullNameLatin = `${lastName} ${firstName}`.trim();
+    if (!lastName) issues.push("LAST_NAME_MISSING");
+    if (!firstName) issues.push("FIRST_NAME_MISSING");
+    if (/[<]|(?:^|\s)[LI1]{3,}(?:\s|$)/.test(fullNameLatin)) issues.push("NAME_FILLER_NOISE");
 
     // ── Line 2 parsing ─────────────────────────────────────────────────────
     // MN67682049MAR7107216F2101218<<<<<<<<<<<<6
@@ -85,7 +95,7 @@ export function parseMRZDetailed(line1, line2) {
     const nationality = l2.substring(10, 13).replace(/<+$/, "");
     const birthRaw    = l2.substring(13, 19);
     const birthCheck  = l2[19];
-    const gender      = l2[20] === "F" ? "F" : "M";
+    const gender      = l2[20] === "F" ? "F" : l2[20] === "M" ? "M" : "";
     const expiryRaw   = l2.substring(21, 27);
     const expiryCheck = l2[27];
 
@@ -93,6 +103,8 @@ export function parseMRZDetailed(line1, line2) {
     if (!isValidDatePart(birthRaw) || String(checkDigit(birthRaw)) !== birthCheck) issues.push("BIRTH_CHECK");
     if (!isValidDatePart(expiryRaw) || String(checkDigit(expiryRaw)) !== expiryCheck) issues.push("EXPIRY_CHECK");
     if (!passportNo) issues.push("PASSPORT_MISSING");
+    if (!nationality || !/^[A-Z]{3}$/.test(nationality)) issues.push("NATIONALITY_MISSING");
+    if (!gender) issues.push("GENDER_MISSING");
 
     const birthDate  = parseDate(birthRaw, true);
     const expiryDate = parseDate(expiryRaw, false);

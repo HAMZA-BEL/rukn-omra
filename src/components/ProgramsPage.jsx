@@ -117,6 +117,15 @@ const PROGRAM_TYPE_OPTIONS = [
   { value: "حج", label: "حج" },
 ];
 
+const getProgramDepartureYear = (program) => {
+  const departure = String(program?.departure || "").trim();
+  if (!departure) return null;
+  const match = departure.match(/(\d{4})/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isFinite(year) ? year : null;
+};
+
 const normalizeProgramType = (value) => {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return "عمرة";
@@ -670,7 +679,8 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 export default function ProgramsPage({ store, onToast }) {
   const { programs, clients, addProgram, updateProgram, deleteProgram,
           getClientTotalPaid, getClientStatus } = store;
-  const { t, lang } = useLang();
+  const { t, lang, dir } = useLang();
+  const isRTL = dir === "rtl";
   const formatCurrencyForLang = React.useCallback(
     (value) => formatCurrency(value, lang),
     [lang]
@@ -680,6 +690,9 @@ export default function ProgramsPage({ store, onToast }) {
   const [editing,       setEditing]       = React.useState(null);
   const [activeProgram, setActiveProgram] = React.useState(null);
   const [search,        setSearch]        = React.useState("");
+  const currentYear = React.useMemo(() => new Date().getFullYear(), []);
+  const nextYear = currentYear + 1;
+  const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
 
   const searchPlaceholder = React.useMemo(() => {
@@ -688,11 +701,34 @@ export default function ProgramsPage({ store, onToast }) {
     return "ابحث عن اسم البرنامج...";
   }, [lang]);
 
+  const yearLabel = React.useMemo(() => {
+    if (lang === "fr") return "Année";
+    if (lang === "en") return "Year";
+    return "السنة";
+  }, [lang]);
+
+  const allYearsLabel = React.useMemo(() => {
+    if (lang === "fr") return "Toutes les années";
+    if (lang === "en") return "All years";
+    return "كل السنوات";
+  }, [lang]);
+
+  const yearOptions = React.useMemo(() => ([
+    { value: "all", label: allYearsLabel },
+    { value: String(currentYear), label: String(currentYear) },
+    { value: String(nextYear), label: String(nextYear) },
+  ]), [allYearsLabel, currentYear, nextYear]);
+
   const filteredPrograms = React.useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return programs;
-    return programs.filter(p => (p.name || "").toLowerCase().includes(q));
-  }, [programs, search]);
+    return programs.filter((program) => {
+      const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+      if (selectedYear === "all") return true;
+      const departureYear = getProgramDepartureYear(program);
+      return departureYear === Number(selectedYear);
+    });
+  }, [programs, search, selectedYear]);
 
   const openProgramDetail = React.useCallback((programId) => {
     setActiveProgram(programId);
@@ -763,13 +799,81 @@ export default function ProgramsPage({ store, onToast }) {
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
         </div>
-        <SearchBar
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder={searchPlaceholder}
-          style={{ width:"100%", maxWidth: 380 }}
-          disabled={!programs.length}
-        />
+        <div style={{ display:"flex", gap:10, alignItems:"stretch", flexWrap:"wrap" }}>
+          <SearchBar
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={searchPlaceholder}
+            style={{ flex:"1 1 360px", minWidth:280, maxWidth:420 }}
+            disabled={!programs.length}
+          />
+          <div style={{ position:"relative", flex:"0 0 198px", minWidth:180, maxWidth:220 }}>
+            <select
+              aria-label={yearLabel}
+              value={selectedYear}
+              onChange={(event) => setSelectedYear(event.target.value)}
+              disabled={!programs.length}
+              style={{
+                width:"100%",
+                height:46,
+                appearance:"none",
+                background:"var(--rukn-bg-input)",
+                border:"1px solid var(--rukn-border)",
+                borderRadius:12,
+                padding: isRTL ? "12px 40px 12px 88px" : "12px 88px 12px 40px",
+                color:"var(--rukn-text)",
+                fontSize:14,
+                fontWeight:500,
+                fontFamily:"'Cairo',sans-serif",
+                direction: dir,
+                outline:"none",
+                transition:"border-color .2s, box-shadow .2s",
+                opacity: programs.length ? 1 : 0.55,
+                cursor: programs.length ? "pointer" : "not-allowed",
+              }}
+              onFocus={(e) => {
+                e.target.style.borderColor = "rgba(212,175,55,.6)";
+                e.target.style.boxShadow = "0 0 0 3px rgba(212,175,55,.1)";
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = "rgba(212,175,55,.2)";
+                e.target.style.boxShadow = "none";
+              }}
+            >
+              {yearOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span style={{
+              position:"absolute",
+              top:"50%",
+              transform:"translateY(-50%)",
+              insetInlineEnd:34,
+              color:"rgba(212,175,55,.72)",
+              fontSize:12,
+              fontWeight:700,
+              pointerEvents:"none",
+              whiteSpace:"nowrap",
+            }}>
+              {yearLabel}
+            </span>
+            <span style={{
+              position:"absolute",
+              top:"50%",
+              transform:"translateY(-50%) rotate(-90deg)",
+              insetInlineEnd:14,
+              color:"rgba(212,175,55,.72)",
+              fontSize:13,
+              fontWeight:700,
+              pointerEvents:"none",
+              lineHeight:1,
+            }}>
+              ‹
+            </span>
+          </div>
+        </div>
       </div>
 
       {programs.length === 0 ? (
