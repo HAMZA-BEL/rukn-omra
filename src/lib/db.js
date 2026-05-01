@@ -106,6 +106,7 @@ const toClient = (c, agencyId) => {
   );
   const passport = {
     ...(c.passport ?? {}),
+    cin: cleanString(c.cin ?? c.nationalId ?? c.passport?.cin ?? c.passport?.nationalId),
     gender: toPassportGender(normalizedGender),
   };
   return {
@@ -151,6 +152,7 @@ const fromClient = (row) => {
   nom:              row.nom,
   prenom:           row.prenom,
   phone:            row.phone,
+  cin:              row.passport?.cin || row.passport?.nationalId || "",
   city:             row.city,
   hotelLevel:       row.hotel_level,
   packageLevel:     row.hotel_level,

@@ -1515,7 +1515,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
         const cin = pickFirstText(client, [
           "cin", "CIN", "cinNumber", "cin_number", "nationalId", "national_id",
           "identityNumber", "identity_number", "idCardNumber", "id_card_number",
-        ]);
+        ]) || pickFirstText(client.passport || {}, ["cin", "CIN", "nationalId", "national_id"]);
         const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(program, ["hotelMadina", "hotel_madina"]);
         const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(program, ["hotelMecca", "hotel_mecca"]);
         const stayDates = calculateHotelStayDates({

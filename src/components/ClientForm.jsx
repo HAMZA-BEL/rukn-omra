@@ -206,6 +206,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
     phone:       pickString(client?.phone, client?.phoneNumber, client?.mobile),
     registrationSource: pickString(client?.registrationSource, client?.registration_source, client?.sourceRegistration, client?.source),
     address:     pickString(client?.address, client?.adress, client?.addressLine, client?.homeAddress),
+    cin:         pickString(client?.cin, client?.CIN, client?.nationalId, client?.national_id, passport.cin, passport.nationalId),
     city:        pickString(client?.city, client?.ville, client?.addressCity),
     programId:   programId || "",
     packageId,
@@ -225,6 +226,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
     roomingGroupName: pickString(client?.roomingGroupName, rooming.groupName),
     passport: {
       number:      pickString(passport.number, client?.passportNumber, client?.passport_no),
+      cin:         pickString(passport.cin, passport.nationalId, client?.cin, client?.nationalId, client?.national_id),
       nationality: pickString(passport.nationality, client?.passportNationality, client?.nationality, "MAR") || "MAR",
       birthDate:   pickString(passport.birthDate, client?.birthDate, client?.dateOfBirth),
       expiry:      pickString(passport.expiry, client?.passportExpiry, client?.expiryDate),
@@ -580,6 +582,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       gender: form.gender,
       passport: {
         ...form.passport,
+        cin: pickString(form.cin, form.passport.cin),
         gender: genderToPassportValue(form.gender),
       },
     };
@@ -970,6 +973,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <div className="form-grid form-grid--three">
           <Input label={t.passportNo} value={form.passport.number} onChange={setPass("number")}
             placeholder={t.passportPlaceholder} inputStyle={{ textTransform:"uppercase" }} />
+          <Input label={t.cin || "رقم البطاقة الوطنية"} value={form.cin} onChange={set("cin")}
+            placeholder={lang === "fr" ? "N° CIN" : lang === "en" ? "National ID / CIN" : "رقم البطاقة الوطنية"} />
           <Select label={t.nationality} value={form.passport.nationality} onChange={setPass("nationality")}
             options={NATIONALITIES} />
           <Select

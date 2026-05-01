@@ -31,6 +31,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const p           = client.passport || {};
   const docs        = client.docs || {};
   const displayName = getClientDisplayName(client);
+  const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
@@ -194,6 +195,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
           {[
             [t.passportNo,    p.number||"—"],
+            [t.cin || "رقم البطاقة الوطنية", cin||"—"],
             [t.nationality,   p.nationality||"—"],
             [t.gender,        p.gender==="M"?t.male:p.gender==="F"?t.female:"—"],
             [t.birthDate,     p.birthDate||"—"],

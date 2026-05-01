@@ -10,6 +10,7 @@ import {
   upsertNotification,
 } from "../services/notificationsService";
 import { buildNotificationStateHash } from "../utils/notifications";
+import { hasNotificationKey } from "../utils/notificationRules";
 
 export function useNotificationsSlice({
   agencyId,
@@ -196,9 +197,14 @@ export function useNotificationsSlice({
       normalized.stateHash = buildNotificationStateHash(normalized);
       const key = getNotificationKey(normalized);
       const shouldPersistKey = Boolean(normalized.persistKey || normalized.meta?.persistKey);
-      if (shouldPersistKey && (dismissedNotificationKeys.has(key) || generatedNotificationKeys.has(key))) return;
-      const hasAny = notifications.some((n) => getNotificationKey(n) === key);
-      if (hasAny) return;
+      if (shouldPersistKey && hasNotificationKey(
+        key,
+        notifications,
+        generatedNotificationKeys,
+        dismissedNotificationKeys,
+        getNotificationKey
+      )) return;
+      if (!shouldPersistKey && notifications.some((n) => getNotificationKey(n) === key)) return;
       const payload = {
         ...normalized,
         programId: normalized.programId ?? (normalized.targetType === "program" ? normalized.targetId : null),
