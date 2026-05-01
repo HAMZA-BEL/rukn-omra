@@ -5,6 +5,14 @@ import { parseMRZDetailed } from "../utils/mrzReader";
 import { extractMRZFromImage, extractMRZFromImageRegion } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
 import { AppIcon } from "./Icon";
+import {
+  getPackageRoomPrice,
+  getRoomTypeLabel,
+  getRoomTypeOptions,
+  normalizeProgramPackages,
+  normalizeRoomTypeKey,
+} from "../utils/programPackages";
+import { translateHotelLevel, translateRoomCategory, translateRoomType } from "../utils/i18nValues";
 
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
@@ -63,6 +71,21 @@ const LABELS = {
     ocrFailed: "تعذرت قراءة الصورة",
     male: "ذكر",
     female: "أنثى",
+    programContext: "سيتم إضافة المعتمرين إلى برنامج: {program}",
+    packageLabel: "المستوى",
+    roomType: "نوع الغرفة",
+    phone: "الهاتف",
+    applyToAll: "تطبيق على الكل",
+    selectPackage: "اختر المستوى",
+    selectRoomType: "اختر نوع الغرفة",
+    groupInRoom: "جمع في غرفة واحدة",
+    groupHint: "اختر معتمرين من جدول المراجعة ثم اجمعهم في غرفة واحدة.",
+    selectedRows: "المحددون",
+    programRequired: "لا يمكن حفظ استيراد الجوازات بدون برنامج محدد",
+    packageRequired: "يرجى تحديد المستوى قبل الحفظ",
+    roomTypeRequired: "يرجى تحديد نوع الغرفة قبل الحفظ",
+    grouped: "تم إنشاء مجموعة غرفة واحدة للمعتمرين المحددين",
+    family: "عائلة",
   },
   fr: {
     title: "Import des données passeport",
@@ -117,6 +140,21 @@ const LABELS = {
     ocrFailed: "Lecture de l'image impossible",
     male: "Masculin",
     female: "Féminin",
+    programContext: "Les pèlerins seront ajoutés au programme : {program}",
+    packageLabel: "Niveau",
+    roomType: "Type chambre",
+    phone: "Téléphone",
+    applyToAll: "Appliquer à tous",
+    selectPackage: "Choisir le niveau",
+    selectRoomType: "Choisir le type",
+    groupInRoom: "Grouper dans la même chambre",
+    groupHint: "Sélectionnez des pèlerins dans la revue puis groupez-les dans la même chambre.",
+    selectedRows: "Sélectionnés",
+    programRequired: "Impossible d'enregistrer l'import sans programme défini",
+    packageRequired: "Veuillez choisir le niveau avant l'enregistrement",
+    roomTypeRequired: "Veuillez choisir le type de chambre avant l'enregistrement",
+    grouped: "Groupe même chambre créé pour les pèlerins sélectionnés",
+    family: "Famille",
   },
   en: {
     title: "Import Passport Data",
@@ -171,6 +209,21 @@ const LABELS = {
     ocrFailed: "Could not read image",
     male: "Male",
     female: "Female",
+    programContext: "Pilgrims will be added to program: {program}",
+    packageLabel: "Package",
+    roomType: "Room type",
+    phone: "Phone",
+    applyToAll: "Apply to all",
+    selectPackage: "Select package",
+    selectRoomType: "Select room type",
+    groupInRoom: "Group in one room",
+    groupHint: "Select pilgrims in the review table, then group them in one room.",
+    selectedRows: "Selected",
+    programRequired: "Passport imports cannot be saved without a selected program",
+    packageRequired: "Select a package before saving",
+    roomTypeRequired: "Select a room type before saving",
+    grouped: "One-room group created for the selected pilgrims",
+    family: "Family",
   },
 };
 
@@ -263,10 +316,32 @@ const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOv
   };
 };
 
-function ReviewRow({ row, index, labels, onChange, onRemove, onSelectMRZ }) {
+function ReviewRow({
+  row,
+  index,
+  labels,
+  onChange,
+  onRemove,
+  onSelectMRZ,
+  programMode = false,
+  packages = [],
+  roomTypeOptions = [],
+  selected = false,
+  onToggleSelected,
+}) {
   const statusColor = row.status === "success" ? "#22c55e" : row.status === "failed" ? "#ef4444" : "#f59e0b";
   return (
     <tr style={{ borderTop: "1px solid rgba(255,255,255,.08)" }}>
+      {programMode && (
+        <td style={{ padding: 8 }}>
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(event) => onToggleSelected?.(row.id, event.target.checked)}
+            aria-label={labels.groupInRoom}
+          />
+        </td>
+      )}
       <td style={{ padding: 8, color: "#94a3b8", fontWeight: 800 }}>{index + 1}</td>
       <td style={{ padding: 8, color: "#cbd5e1", fontSize: 11, maxWidth: 140, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.source || "—"}</td>
       <td style={{ padding: 8 }}>
@@ -274,6 +349,47 @@ function ReviewRow({ row, index, labels, onChange, onRemove, onSelectMRZ }) {
           {labels[row.status] || labels.review}
         </span>
       </td>
+      {programMode && (
+        <>
+          {packages.length > 0 && (
+            <td style={{ padding: 6 }}>
+              <select
+                value={row.packageId || ""}
+                onChange={(event) => onChange(row.id, { packageId: event.target.value })}
+                style={{ ...fieldStyle, minWidth: 130 }}
+              >
+                <option value="" style={{ color: "#111827" }}>{labels.selectPackage}</option>
+                {packages.map((pkg) => (
+                  <option key={pkg.id} value={pkg.id} style={{ color: "#111827" }}>
+                    {pkg.displayLabel || pkg.level || pkg.id}
+                  </option>
+                ))}
+              </select>
+            </td>
+          )}
+          <td style={{ padding: 6 }}>
+            <select
+              value={row.roomType || ""}
+              onChange={(event) => onChange(row.id, { roomType: event.target.value })}
+              style={{ ...fieldStyle, minWidth: 120 }}
+            >
+              <option value="" style={{ color: "#111827" }}>{labels.selectRoomType}</option>
+              {roomTypeOptions.map((option) => (
+                <option key={option.value} value={option.value} style={{ color: "#111827" }}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </td>
+          <td style={{ padding: 6 }}>
+            <input
+              value={row.phone || ""}
+              onChange={(event) => onChange(row.id, { phone: event.target.value })}
+              style={{ ...fieldStyle, minWidth: 110, direction: "ltr" }}
+            />
+          </td>
+        </>
+      )}
       {["latinLastName", "latinFirstName", "arabicLastName", "arabicFirstName", "passportNo", "nationality", "birthDate", "passportExpiry"].map((key) => (
         <td key={key} style={{ padding: 6 }}>
           <input
@@ -331,9 +447,25 @@ function ReviewRow({ row, index, labels, onChange, onRemove, onSelectMRZ }) {
   );
 }
 
-export default function MRZReader({ store, onToast, onResult, onClose }) {
+export default function MRZReader({ store, onToast, onResult, onClose, programContext = null }) {
   const { t, lang } = useLang();
   const l = LABELS[lang] || LABELS.ar;
+  const importProgram = programContext?.program || programContext || null;
+  const importProgramId = importProgram?.id || "";
+  const importProgramName = importProgram?.name || "";
+  const importPackages = React.useMemo(() => {
+    if (!importProgramId) return [];
+    if (Array.isArray(programContext?.packages)) return programContext.packages;
+    return normalizeProgramPackages(importProgram);
+  }, [importProgram, importProgramId, programContext?.packages]);
+  const packageOptions = React.useMemo(() => importPackages.map((pkg) => ({
+    ...pkg,
+    displayLabel: translateHotelLevel(pkg.level, lang) || pkg.level || pkg.id,
+  })), [importPackages, lang]);
+  const roomTypeOptions = React.useMemo(
+    () => getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
+    [lang],
+  );
   const [mode, setMode] = React.useState("image");
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
@@ -341,6 +473,10 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const [singleFile, setSingleFile] = React.useState(null);
   const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
   const [bulkFiles, setBulkFiles] = React.useState([]);
+  const [defaultPackageId, setDefaultPackageId] = React.useState("");
+  const [defaultRoomType, setDefaultRoomType] = React.useState("double");
+  const [defaultPhone, setDefaultPhone] = React.useState("");
+  const [selectedRowIds, setSelectedRowIds] = React.useState(() => new Set());
   const [cropModal, setCropModal] = React.useState({ open: false, rowId: "", url: "", fileName: "" });
   const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
   const [cropReading, setCropReading] = React.useState(false);
@@ -351,6 +487,18 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
+  React.useEffect(() => {
+    if (!importProgramId) return;
+    setDefaultPackageId((current) => current || packageOptions[0]?.id || "");
+  }, [importProgramId, packageOptions]);
+
+  const rowProgramDefaults = React.useCallback(() => importProgramId ? ({
+    programId: importProgramId,
+    packageId: defaultPackageId || packageOptions[0]?.id || "",
+    roomType: normalizeRoomTypeKey(defaultRoomType) || "double",
+    phone: defaultPhone || "",
+  }) : {}, [defaultPackageId, defaultPhone, defaultRoomType, importProgramId, packageOptions]);
+
   const clientByPassport = React.useMemo(() => {
     const map = new Map();
     clients.forEach((client) => {
@@ -364,10 +512,10 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
   const addParsedRow = React.useCallback((parsed, source, override = {}) => {
     const passportNo = parsed?.data?.passportNo || "";
     const existing = passportNo ? findExisting(passportNo) : null;
-    const row = makeRowFromParsed({ parsed, source, existing, l, ...override });
+    const row = { ...makeRowFromParsed({ parsed, source, existing, l, ...override }), ...rowProgramDefaults() };
     setRows((current) => [row, ...current]);
     return row;
-  }, [findExisting, l]);
+  }, [findExisting, l, rowProgramDefaults]);
 
   const selectSingleFile = React.useCallback((fileList) => {
     const file = Array.from(fileList || [])[0];
@@ -433,6 +581,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     if (!files.length) return;
     setError("");
     setRows([]);
+    setSelectedRowIds(new Set());
     rowFilesRef.current.clear();
     setProgress({ done: 0, total: files.length, active: true });
     for (let index = 0; index < files.length; index += 1) {
@@ -463,9 +612,60 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   }, []);
 
+  const toggleReviewSelection = React.useCallback((id, checked) => {
+    setSelectedRowIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const applyProgramDefaultsToRows = React.useCallback(() => {
+    if (!importProgramId) return;
+    setRows((current) => current.map((row) => ({
+      ...row,
+      programId: importProgramId,
+      packageId: defaultPackageId || row.packageId || packageOptions[0]?.id || "",
+      roomType: normalizeRoomTypeKey(defaultRoomType || row.roomType) || row.roomType || "double",
+      phone: defaultPhone || row.phone || "",
+    })));
+  }, [defaultPackageId, defaultPhone, defaultRoomType, importProgramId, packageOptions]);
+
+  const groupSelectedRows = React.useCallback(() => {
+    if (selectedRowIds.size < 2) return;
+    const selectedIds = Array.from(selectedRowIds);
+    const groupId = `import-room-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
+    setRows((current) => {
+      let seat = 0;
+      return current.map((row) => {
+        if (!selectedRowIds.has(row.id)) return row;
+        seat += 1;
+        return {
+          ...row,
+          roomingGroupId: groupId,
+          familyGroupId: groupId,
+          importGroupId: groupId,
+          roomingGroupName: l.groupInRoom,
+          roomingGroupSize: selectedIds.length,
+          roomingSeatIndex: seat,
+          roomCategory: "family",
+          roomCategoryLabel: translateRoomCategory("family", lang) || l.family,
+        };
+      });
+    });
+    onToast?.(l.grouped, "success");
+  }, [l, lang, onToast, selectedRowIds]);
+
   const removeRow = React.useCallback((id) => {
     rowFilesRef.current.delete(id);
     setRows((current) => current.filter((row) => row.id !== id));
+    setSelectedRowIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   }, []);
 
   const closeCropModal = React.useCallback(() => {
@@ -600,31 +800,77 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     }
   }, [closeCropModal, cropModal.rowId, cropRect, findExisting, l, onToast]);
 
-  const toClientPayload = React.useCallback((row) => ({
-    firstName: row.arabicFirstName || "",
-    lastName: row.arabicLastName || "",
-    arabicFirstName: row.arabicFirstName || "",
-    arabicLastName: row.arabicLastName || "",
-    prenom: row.latinFirstName || "",
-    nom: row.latinLastName || "",
-    latinFirstName: row.latinFirstName || "",
-    latinLastName: row.latinLastName || "",
-    nameLatin: [row.latinLastName, row.latinFirstName].filter(Boolean).join(" "),
-    gender: row.gender || "",
-    passport: {
-      number: normalizePassportNo(row.passportNo),
-      nationality: row.nationality || "MAR",
-      birthDate: row.birthDate || "",
-      expiry: row.passportExpiry || "",
-      gender: row.gender === "female" ? "F" : row.gender === "male" ? "M" : "",
-    },
-    notes: row.note || "",
-  }), []);
+  const toClientPayload = React.useCallback((row) => {
+    const selectedPackage = packageOptions.find((pkg) => pkg.id === row.packageId) || null;
+    const roomType = normalizeRoomTypeKey(row.roomType || defaultRoomType) || "";
+    const officialPrice = selectedPackage ? getPackageRoomPrice(selectedPackage, roomType) : 0;
+    const roomingData = row.roomingGroupId ? {
+      groupId: row.roomingGroupId,
+      groupName: row.roomingGroupName || l.groupInRoom,
+      category: row.roomCategory || "family",
+      categoryLabel: row.roomCategoryLabel || translateRoomCategory("family", lang) || l.family,
+      size: row.roomingGroupSize || 0,
+      seatIndex: row.roomingSeatIndex || 0,
+    } : null;
+    return {
+      firstName: row.arabicFirstName || "",
+      lastName: row.arabicLastName || "",
+      arabicFirstName: row.arabicFirstName || "",
+      arabicLastName: row.arabicLastName || "",
+      prenom: row.latinFirstName || "",
+      nom: row.latinLastName || "",
+      latinFirstName: row.latinFirstName || "",
+      latinLastName: row.latinLastName || "",
+      nameLatin: [row.latinLastName, row.latinFirstName].filter(Boolean).join(" "),
+      phone: row.phone || "",
+      gender: row.gender || "",
+      programId: importProgramId || row.programId || "",
+      packageId: row.packageId || "",
+      packageLevel: selectedPackage?.level || row.packageLevel || "",
+      hotelLevel: selectedPackage?.level || row.hotelLevel || "",
+      hotelMecca: selectedPackage?.hotelMecca || row.hotelMecca || "",
+      hotelMadina: selectedPackage?.hotelMadina || row.hotelMadina || "",
+      roomType,
+      roomTypeLabel: getRoomTypeLabel(roomType),
+      officialPrice,
+      salePrice: officialPrice || 0,
+      price: officialPrice || 0,
+      roomingGroupId: row.roomingGroupId || "",
+      familyGroupId: row.familyGroupId || "",
+      importGroupId: row.importGroupId || "",
+      roomingGroupName: row.roomingGroupName || "",
+      roomingGroupSize: row.roomingGroupSize || 0,
+      roomingSeatIndex: row.roomingSeatIndex || 0,
+      roomCategory: row.roomCategory || "",
+      roomCategoryLabel: row.roomCategoryLabel || "",
+      passport: {
+        number: normalizePassportNo(row.passportNo),
+        nationality: row.nationality || "MAR",
+        birthDate: row.birthDate || "",
+        expiry: row.passportExpiry || "",
+        gender: row.gender === "female" ? "F" : row.gender === "male" ? "M" : "",
+      },
+      docs: roomingData ? { rooming: roomingData } : {},
+      notes: row.note || "",
+    };
+  }, [defaultRoomType, importProgramId, l, lang, packageOptions]);
 
   const saveAccepted = React.useCallback(() => {
+    if (!importProgramId) {
+      onToast?.(l.programRequired, "error");
+      return;
+    }
     const accepted = rows.filter((row) => row.status === "success" && (row.accepted || row.duplicateAction === "update"));
     if (!accepted.length) {
       onToast?.(l.nothingToSave, "info");
+      return;
+    }
+    if (packageOptions.length && accepted.some((row) => !row.packageId)) {
+      onToast?.(l.packageRequired, "error");
+      return;
+    }
+    if (accepted.some((row) => !normalizeRoomTypeKey(row.roomType))) {
+      onToast?.(l.roomTypeRequired, "error");
       return;
     }
     accepted.forEach((row) => {
@@ -638,7 +884,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
     });
     onToast?.(l.saved, "success");
     onClose?.();
-  }, [rows, toClientPayload, clients, store, onToast, onClose, l]);
+  }, [clients, importProgramId, l, onClose, onToast, packageOptions.length, rows, store, toClientPayload]);
 
   const firstAccepted = rows.find((row) => row.accepted && !row.existingClientId);
   const applySingleToForm = React.useCallback(() => {
@@ -679,6 +925,25 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
             </div>
           )}
         </div>
+
+        {importProgramId && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 12,
+            padding: "9px 11px",
+            borderRadius: 12,
+            border: "1px solid rgba(212,175,55,.22)",
+            background: "rgba(212,175,55,.08)",
+            color: "#fde68a",
+            fontSize: 12,
+            fontWeight: 800,
+          }}>
+            <AppIcon name="programs" size={15} color="#fde68a" />
+            {formatMessage(l.programContext, { program: importProgramName || "—" })}
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
           {modeButtons.map(([key, label]) => (
@@ -748,20 +1013,104 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
 
         {error && <div style={{ color: "#fecaca", border: "1px solid rgba(239,68,68,.28)", background: "rgba(239,68,68,.12)", borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 12 }}>{error}</div>}
 
+        {importProgramId && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr)) auto auto",
+            gap: 8,
+            alignItems: "end",
+            marginBottom: 12,
+            padding: 10,
+            border: "1px solid rgba(255,255,255,.1)",
+            borderRadius: 12,
+            background: "rgba(255,255,255,.035)",
+          }}>
+            {packageOptions.length > 0 && (
+              <label style={{ display: "grid", gap: 5, color: "#94a3b8", fontSize: 11, fontWeight: 800 }}>
+                {l.packageLabel}
+                <select value={defaultPackageId} onChange={(event) => setDefaultPackageId(event.target.value)} style={fieldStyle}>
+                  <option value="" style={{ color: "#111827" }}>{l.selectPackage}</option>
+                  {packageOptions.map((pkg) => (
+                    <option key={pkg.id} value={pkg.id} style={{ color: "#111827" }}>
+                      {pkg.displayLabel || pkg.level || pkg.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label style={{ display: "grid", gap: 5, color: "#94a3b8", fontSize: 11, fontWeight: 800 }}>
+              {l.roomType}
+              <select value={defaultRoomType} onChange={(event) => setDefaultRoomType(event.target.value)} style={fieldStyle}>
+                {roomTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value} style={{ color: "#111827" }}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 5, color: "#94a3b8", fontSize: 11, fontWeight: 800 }}>
+              {l.phone}
+              <input value={defaultPhone} onChange={(event) => setDefaultPhone(event.target.value)} style={{ ...fieldStyle, direction: "ltr" }} />
+            </label>
+            <button type="button" onClick={applyProgramDefaultsToRows} style={{ border: "1px solid rgba(212,175,55,.28)", background: "rgba(212,175,55,.12)", color: "#fde68a", borderRadius: 10, padding: "8px 11px", fontSize: 11, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {l.applyToAll}
+            </button>
+            <button type="button" onClick={groupSelectedRows} disabled={selectedRowIds.size < 2} title={l.groupHint} style={{ border: "1px solid rgba(59,130,246,.24)", background: "rgba(59,130,246,.12)", color: selectedRowIds.size < 2 ? "#64748b" : "#bfdbfe", borderRadius: 10, padding: "8px 11px", fontSize: 11, fontWeight: 900, cursor: selectedRowIds.size < 2 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+              {l.groupInRoom} · {selectedRowIds.size}
+            </button>
+          </div>
+        )}
+
         <div style={{ border: "1px solid rgba(255,255,255,.09)", borderRadius: 12, overflow: "auto", maxHeight: 360 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1280 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: importProgramId ? 1680 : 1280 }}>
             <thead style={{ position: "sticky", top: 0, background: "#111827", zIndex: 1 }}>
               <tr>
-                {["#", l.source, l.status, l.latinLast, l.latinFirst, l.arabicLast, l.arabicFirst, l.passportNo, l.nationality, l.birthDate, l.expiry, l.gender, l.notes, l.selectMRZ, l.duplicateAction, ""].map((head, idx) => (
+                {[
+                  ...(importProgramId ? [""] : []),
+                  "#",
+                  l.source,
+                  l.status,
+                  ...(importProgramId ? [
+                    ...(packageOptions.length ? [l.packageLabel] : []),
+                    l.roomType,
+                    l.phone,
+                  ] : []),
+                  l.latinLast,
+                  l.latinFirst,
+                  l.arabicLast,
+                  l.arabicFirst,
+                  l.passportNo,
+                  l.nationality,
+                  l.birthDate,
+                  l.expiry,
+                  l.gender,
+                  l.notes,
+                  l.selectMRZ,
+                  l.duplicateAction,
+                  "",
+                ].map((head, idx) => (
                   <th key={`${idx}-${head || "blank"}`} style={{ padding: 8, color: "#94a3b8", fontSize: 11, textAlign: "start", whiteSpace: "nowrap" }}>{head}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.length ? rows.map((row, index) => (
-                <ReviewRow key={row.id} row={row} index={index} labels={l} onChange={updateRow} onRemove={removeRow} onSelectMRZ={openCropModal} />
+                <ReviewRow
+                  key={row.id}
+                  row={row}
+                  index={index}
+                  labels={l}
+                  onChange={updateRow}
+                  onRemove={removeRow}
+                  onSelectMRZ={openCropModal}
+                  programMode={Boolean(importProgramId)}
+                  packages={packageOptions}
+                  roomTypeOptions={roomTypeOptions}
+                  selected={selectedRowIds.has(row.id)}
+                  onToggleSelected={toggleReviewSelection}
+                />
               )) : (
-                <tr><td colSpan={16} style={{ padding: 22, textAlign: "center", color: "#64748b", fontWeight: 800 }}>{l.noRows}</td></tr>
+                <tr><td colSpan={importProgramId ? 20 : 16} style={{ padding: 22, textAlign: "center", color: "#64748b", fontWeight: 800 }}>{l.noRows}</td></tr>
               )}
             </tbody>
           </table>
@@ -770,7 +1119,7 @@ export default function MRZReader({ store, onToast, onResult, onClose }) {
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
           <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
           {onResult && firstAccepted && <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>}
-          <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active}>{l.saveAccepted}</Button>
+          <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || !importProgramId}>{l.saveAccepted}</Button>
         </div>
       </div>
       {cropModal.open && (

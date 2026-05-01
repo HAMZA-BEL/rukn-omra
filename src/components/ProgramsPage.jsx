@@ -16,6 +16,7 @@ import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge } from "./UI";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
+import MRZReader from "./MRZReader";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
@@ -34,7 +35,11 @@ import {
   getRoomTypeLabel,
   normalizeProgramPackages,
 } from "../utils/programPackages";
-import { getClientDisplayName as resolveClientDisplayName } from "../utils/clientNames";
+import {
+  getClientArabicName,
+  getClientDisplayName as resolveClientDisplayName,
+  getClientLatinName,
+} from "../utils/clientNames";
 import {
   translateHotelLevel,
   translateProgramType,
@@ -442,6 +447,53 @@ const slugifyFilePart = (value) => String(value || "program")
   .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, "")
   .slice(0, 80);
 
+const CONTRACT_EXPORT_HEADERS = [
+  "nom complet",
+  "N de pass",
+  "N CIN",
+  "hotel a medine",
+  "entree hotel med",
+  "sortie hotel med",
+  "hotel a la mecque",
+  "entree hotel mec",
+  "sortie hotel mec",
+  "type de chambre",
+  "adress",
+  "compagnie",
+  "depart",
+  "retour",
+];
+
+const pickFirstText = (source, keys = []) => {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
+const toIsoDateString = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    return "";
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  return "";
+};
+
+const safeCellValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return "";
+};
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -693,7 +745,11 @@ export default function ProgramsPage({ store, onToast }) {
   const currentYear = React.useMemo(() => new Date().getFullYear(), []);
   const nextYear = currentYear + 1;
   const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
+  const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
+  const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
+  const yearMenuRef = React.useRef(null);
+  const yearButtonRef = React.useRef(null);
 
   const searchPlaceholder = React.useMemo(() => {
     if (lang === "fr") return "Rechercher un programme...";
@@ -718,6 +774,11 @@ export default function ProgramsPage({ store, onToast }) {
     { value: String(currentYear), label: String(currentYear) },
     { value: String(nextYear), label: String(nextYear) },
   ]), [allYearsLabel, currentYear, nextYear]);
+
+  const selectedYearOption = React.useMemo(
+    () => yearOptions.find((option) => option.value === selectedYear) || yearOptions[0],
+    [yearOptions, selectedYear]
+  );
 
   const filteredPrograms = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -768,6 +829,19 @@ export default function ProgramsPage({ store, onToast }) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  React.useEffect(() => {
+    if (!yearMenuOpen) return;
+    const handlePointerDown = (event) => {
+      const menuNode = yearMenuRef.current;
+      const buttonNode = yearButtonRef.current;
+      if (menuNode?.contains(event.target) || buttonNode?.contains(event.target)) return;
+      setYearMenuOpen(false);
+      setHoveredYearOption(null);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [yearMenuOpen]);
+
   const handleConfirmDeleteProgram = React.useCallback(() => {
     if (!deletePrompt) return;
     deleteProgram(deletePrompt.program.id);
@@ -808,19 +882,21 @@ export default function ProgramsPage({ store, onToast }) {
             disabled={!programs.length}
           />
           <div style={{ position:"relative", flex:"0 0 198px", minWidth:180, maxWidth:220 }}>
-            <select
+            <button
+              ref={yearButtonRef}
+              type="button"
               aria-label={yearLabel}
-              value={selectedYear}
-              onChange={(event) => setSelectedYear(event.target.value)}
+              aria-haspopup="listbox"
+              aria-expanded={yearMenuOpen}
               disabled={!programs.length}
+              onClick={() => programs.length && setYearMenuOpen((open) => !open)}
               style={{
                 width:"100%",
                 height:46,
-                appearance:"none",
                 background:"var(--rukn-bg-input)",
                 border:"1px solid var(--rukn-border)",
                 borderRadius:12,
-                padding: isRTL ? "12px 40px 12px 88px" : "12px 88px 12px 40px",
+                padding: isRTL ? "12px 20px 12px 88px" : "12px 88px 12px 20px",
                 color:"var(--rukn-text)",
                 fontSize:14,
                 fontWeight:500,
@@ -830,22 +906,14 @@ export default function ProgramsPage({ store, onToast }) {
                 transition:"border-color .2s, box-shadow .2s",
                 opacity: programs.length ? 1 : 0.55,
                 cursor: programs.length ? "pointer" : "not-allowed",
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = "rgba(212,175,55,.6)";
-                e.target.style.boxShadow = "0 0 0 3px rgba(212,175,55,.1)";
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = "rgba(212,175,55,.2)";
-                e.target.style.boxShadow = "none";
+                display:"flex",
+                alignItems:"center",
+                justifyContent: isRTL ? "flex-end" : "flex-start",
+                textAlign: isRTL ? "right" : "left",
               }}
             >
-              {yearOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <span>{selectedYearOption?.label}</span>
+            </button>
             <span style={{
               position:"absolute",
               top:"50%",
@@ -872,6 +940,69 @@ export default function ProgramsPage({ store, onToast }) {
             }}>
               ‹
             </span>
+            {yearMenuOpen ? (
+              <div
+                ref={yearMenuRef}
+                role="listbox"
+                aria-label={yearLabel}
+                style={{
+                  position:"absolute",
+                  top:"calc(100% + 8px)",
+                  insetInlineStart:0,
+                  width:"100%",
+                  background:"var(--rukn-bg-select)",
+                  border:"1px solid var(--rukn-border-soft)",
+                  borderRadius:14,
+                  boxShadow:"var(--rukn-shadow-card)",
+                  overflow:"hidden",
+                  zIndex:30,
+                  backdropFilter:"blur(12px)",
+                }}
+              >
+                {yearOptions.map((option) => {
+                  const active = option.value === selectedYear;
+                  const hovered = hoveredYearOption === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onMouseEnter={() => setHoveredYearOption(option.value)}
+                      onMouseLeave={() => setHoveredYearOption((current) => current === option.value ? null : current)}
+                      onClick={() => {
+                        setSelectedYear(option.value);
+                        setYearMenuOpen(false);
+                        setHoveredYearOption(null);
+                      }}
+                      style={{
+                        width:"100%",
+                        border:"none",
+                        background: active
+                          ? "var(--rukn-gold-dim)"
+                          : hovered
+                            ? "var(--rukn-row-hover)"
+                            : "transparent",
+                        color: active ? "var(--rukn-gold)" : "var(--rukn-text-strong)",
+                        padding:"12px 14px",
+                        fontSize:14,
+                        fontWeight:active ? 700 : 500,
+                        fontFamily:"'Cairo',sans-serif",
+                        textAlign:isRTL ? "right" : "left",
+                        direction:dir,
+                        cursor:"pointer",
+                        transition:"background-color .16s ease, color .16s ease",
+                        borderBottom: option.value !== yearOptions[yearOptions.length - 1].value
+                          ? "1px solid var(--rukn-border-soft)"
+                          : "none",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1137,6 +1268,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const [search,         setSearch]         = React.useState("");
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [showAddClient,  setShowAddClient]  = React.useState(false);
+  const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [selectMode,     setSelectMode]     = React.useState(false);
   const [checkedIds,     setCheckedIds]     = React.useState(new Set());
@@ -1147,7 +1279,10 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
+  const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
+  const headerActionsRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
 
   const progClients = React.useMemo(() =>
@@ -1171,6 +1306,27 @@ function ProgramInner({ program, store, onToast, onBack }) {
   React.useEffect(() => {
     setPackageFilter("all");
   }, [program.id]);
+
+  React.useEffect(() => {
+    if (!headerActionsOpen) return undefined;
+    const handleOutside = (event) => {
+      if (headerActionsRef.current?.contains(event.target)) return;
+      setHeaderActionsOpen(false);
+      setHoveredHeaderAction("");
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setHeaderActionsOpen(false);
+        setHoveredHeaderAction("");
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [headerActionsOpen]);
 
   const toggleCheck = React.useCallback((id) => {
     setCheckedIds(prev => {
@@ -1297,6 +1453,134 @@ function ProgramInner({ program, store, onToast, onBack }) {
     ? "38px 46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)"
     : "46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)";
   const totalsGridColumn = selectMode ? "1 / span 3" : "1 / span 2";
+  const packageById = React.useMemo(() => new Map(packages.map((pkg) => [pkg.id, pkg])), [packages]);
+  const packageByLevel = React.useMemo(() => new Map(packages.map((pkg) => [pkg.level, pkg])), [packages]);
+  const headerActionsLabel = lang === "fr" ? "Actions" : lang === "en" ? "Actions" : "إجراءات";
+  const closeHeaderActions = React.useCallback(() => {
+    setHeaderActionsOpen(false);
+    setHoveredHeaderAction("");
+  }, []);
+  const handleProgramPdfExport = React.useCallback(() => {
+    closeHeaderActions();
+    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    printProgramPDF({
+      program,
+      clients: progClients,
+      getClientStatus,
+      getClientTotalPaid,
+      lang,
+      t,
+      agency,
+    });
+  }, [agency, closeHeaderActions, getClientStatus, getClientTotalPaid, lang, onToast, progClients, program, t]);
+  const handleAmadeusExport = React.useCallback(() => {
+    closeHeaderActions();
+    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    const missing = progClients.filter(c => !c.passport?.number);
+    if (missing.length > 0) {
+      onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
+    }
+    downloadAmadeusExcel(progClients, program);
+    onToast(`تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
+  }, [closeHeaderActions, onToast, progClients, program]);
+  const handlePassportImportOpen = React.useCallback(() => {
+    closeHeaderActions();
+    setShowPassportImport(true);
+  }, [closeHeaderActions]);
+  const handleContractsExcelExport = React.useCallback(async () => {
+    closeHeaderActions();
+    const XLSX = await import("xlsx");
+    const rows = [
+      CONTRACT_EXPORT_HEADERS,
+      ...progClients.map((client) => {
+        const pkgLevel = client.packageLevel || client.hotelLevel || "";
+        const pkg = packageById.get(client.packageId || client.package_id) || packageByLevel.get(pkgLevel) || null;
+        const fullName = getClientArabicName(client) || getClientLatinName(client) || resolveClientDisplayName(client, "");
+        const passportNumber = pickFirstText(client.passport || {}, ["number"]) || pickFirstText(client, ["passportNumber", "passport_no", "passportNo"]);
+        const cin = pickFirstText(client, [
+          "cin", "CIN", "cinNumber", "cin_number", "nationalId", "national_id",
+          "identityNumber", "identity_number", "idCardNumber", "id_card_number",
+        ]);
+        const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(program, ["hotelMadina", "hotel_madina"]);
+        const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(program, ["hotelMecca", "hotel_mecca"]);
+        const medinaCheckIn = toIsoDateString(
+          pickFirstText(client, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed", "hotelMadinaEntry"])
+          || pickFirstText(pkg, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed"])
+          || pickFirstText(program, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed"])
+        );
+        const medinaCheckOut = toIsoDateString(
+          pickFirstText(client, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed", "hotelMadinaExit"])
+          || pickFirstText(pkg, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed"])
+          || pickFirstText(program, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed"])
+        );
+        const makkahCheckIn = toIsoDateString(
+          pickFirstText(client, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec", "hotelMeccaEntry"])
+          || pickFirstText(pkg, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec"])
+          || pickFirstText(program, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec"])
+        );
+        const makkahCheckOut = toIsoDateString(
+          pickFirstText(client, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec", "hotelMeccaExit"])
+          || pickFirstText(pkg, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec"])
+          || pickFirstText(program, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec"])
+        );
+        const roomType = safeCellValue(client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "");
+        const address = pickFirstText(client, ["address", "adress", "addressLine", "address_line", "homeAddress", "home_address"]);
+        const company = pickFirstText(program, ["company", "compagnie", "airline", "carrier", "transport"]);
+        return [
+          safeCellValue(fullName),
+          safeCellValue(passportNumber),
+          safeCellValue(cin),
+          safeCellValue(medinaHotel),
+          safeCellValue(medinaCheckIn),
+          safeCellValue(medinaCheckOut),
+          safeCellValue(makkahHotel),
+          safeCellValue(makkahCheckIn),
+          safeCellValue(makkahCheckOut),
+          safeCellValue(roomType),
+          safeCellValue(address),
+          safeCellValue(company),
+          safeCellValue(toIsoDateString(program.departure)),
+          safeCellValue(toIsoDateString(program.returnDate)),
+        ];
+      }),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [
+      { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 15 }, { wch: 15 },
+      { wch: 22 }, { wch: 15 }, { wch: 15 }, { wch: 16 }, { wch: 24 }, { wch: 18 },
+      { wch: 14 }, { wch: 14 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "contracts");
+    XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
+    onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
+  }, [closeHeaderActions, lang, onToast, packageById, packageByLevel, progClients, program]);
+  const headerActions = React.useMemo(() => ([
+    {
+      key: "passport",
+      icon: "passport",
+      label: lang === "fr" ? "Importer depuis les passeports" : lang === "en" ? "Import from passports" : "استيراد من الجوازات",
+      onClick: handlePassportImportOpen,
+    },
+    {
+      key: "pdf",
+      icon: "print",
+      label: lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF",
+      onClick: handleProgramPdfExport,
+    },
+    {
+      key: "amadeus",
+      icon: "clearance",
+      label: "Amadeus Excel",
+      onClick: handleAmadeusExport,
+    },
+    {
+      key: "contracts",
+      icon: "download",
+      label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
+      onClick: handleContractsExcelExport,
+    },
+  ]), [handleAmadeusExport, handleContractsExcelExport, handlePassportImportOpen, handleProgramPdfExport, lang]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -1317,34 +1601,68 @@ function ProgramInner({ program, store, onToast, onBack }) {
             {t.hotelMadina}: {program.hotelMadina || "—"}
           </p>
         </div>
-        <Button variant="ghost" icon="print" onClick={() => {
-          if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
-          printProgramPDF({
-            program,
-            clients: progClients,
-            getClientStatus,
-            getClientTotalPaid,
-            lang,
-            t,
-            agency,
-          });
-        }}>
-          {lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF"}
-        </Button>
-        <Button variant="secondary" icon="clearance" onClick={() => {
-          if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
-          const missing = progClients.filter(c => !c.passport?.number);
-          if (missing.length > 0) {
-            onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
-          }
-          downloadAmadeusExcel(progClients, program);
-          onToast(`تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
-        }}>
-          Amadeus Excel
-        </Button>
-        <Button variant="primary" icon="plus" onClick={() => setShowAddClient(true)}>
-          {t.addClient}
-        </Button>
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", direction:"ltr" }}>
+          <div ref={headerActionsRef} style={{ position:"relative", direction: lang === "ar" ? "rtl" : "ltr" }}>
+            <Button
+              variant="secondary"
+              icon="settings"
+              onClick={() => setHeaderActionsOpen(open => !open)}
+            >
+              {headerActionsLabel}
+            </Button>
+            {headerActionsOpen && (
+              <div style={{
+                position:"absolute",
+                top:"calc(100% + 8px)",
+                insetInlineEnd:0,
+                minWidth:230,
+                zIndex:40,
+                padding:6,
+                borderRadius:14,
+                border:"1px solid rgba(212,175,55,.2)",
+                background:"linear-gradient(135deg, rgba(15,23,42,.98), rgba(17,24,39,.96))",
+                boxShadow:"0 22px 55px rgba(0,0,0,.38)",
+                backdropFilter:"blur(12px)",
+              }}>
+                {headerActions.map((action) => {
+                  const hovered = hoveredHeaderAction === action.key;
+                  return (
+                    <button
+                      key={action.key}
+                      type="button"
+                      onMouseEnter={() => setHoveredHeaderAction(action.key)}
+                      onMouseLeave={() => setHoveredHeaderAction(current => current === action.key ? "" : current)}
+                      onClick={action.onClick}
+                      style={{
+                        width:"100%",
+                        border:0,
+                        borderRadius:10,
+                        background:hovered ? "rgba(212,175,55,.13)" : "transparent",
+                        color:hovered ? tc.gold : "#d1d5db",
+                        display:"flex",
+                        alignItems:"center",
+                        gap:9,
+                        padding:"10px 11px",
+                        fontSize:12,
+                        fontWeight:800,
+                        cursor:"pointer",
+                        textAlign:"start",
+                        fontFamily:"'Cairo',sans-serif",
+                        transition:"background .16s ease, color .16s ease",
+                      }}
+                    >
+                      <AppIcon name={action.icon} size={15} color={hovered ? tc.gold : tc.grey} />
+                      <span>{action.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <Button variant="primary" icon="plus" onClick={() => setShowAddClient(true)}>
+            {t.addClient}
+          </Button>
+        </div>
       </div>
 
       <div style={{
@@ -1932,6 +2250,25 @@ function ProgramInner({ program, store, onToast, onBack }) {
         <ClientForm store={store} defaultProgramId={program.id}
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
+      </Modal>
+      <Modal
+        open={showPassportImport}
+        onClose={() => setShowPassportImport(false)}
+        title={lang === "fr" ? "Importer depuis les passeports" : lang === "en" ? "Import from passports" : "استيراد من الجوازات"}
+        width={1040}
+      >
+        {showPassportImport && (
+          <MRZReader
+            store={store}
+            onToast={onToast}
+            onClose={() => setShowPassportImport(false)}
+            programContext={{
+              id: program.id,
+              name: program.name,
+              packages,
+            }}
+          />
+        )}
       </Modal>
       <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={`${t.edit} — ${t.clientFile}`} width={600}>
         {editingClient && (

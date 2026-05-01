@@ -46,6 +46,188 @@ const formatFileReference = (client = {}) => {
   return fallback;
 };
 
+const CLEARANCE_PROGRAM_STORAGE_KEY = "rukn-clearance-selected-program";
+
+const getProgramDateValue = (program = {}) => {
+  const raw = program.departure || program.startDate || program.date || program.departureDate || "";
+  const time = raw ? new Date(raw).getTime() : NaN;
+  return Number.isFinite(time) ? time : null;
+};
+
+const pickDefaultProgramId = (programs = []) => {
+  if (!programs.length) return "";
+  const now = Date.now();
+  const withDates = programs
+    .map((program) => ({ program, time: getProgramDateValue(program) }))
+    .filter((item) => item.time !== null);
+  const upcoming = withDates
+    .filter((item) => item.time >= now)
+    .sort((a, b) => a.time - b.time)[0];
+  if (upcoming) return upcoming.program.id;
+  const latest = withDates.sort((a, b) => b.time - a.time)[0];
+  return latest?.program?.id || programs[0]?.id || "";
+};
+
+const getLocalizedClearanceLabels = (lang) => {
+  if (lang === "fr") {
+    return {
+      program: "Programme",
+      pageSize: "Lignes",
+      exportExcel: "Exporter Excel",
+      selectProgram: "Sélectionnez un programme",
+      emptyProgram: "Aucun client dans ce programme",
+      reportTitle: "État de règlement",
+      exportDate: "Date d'export",
+      agencyName: "Tiznit Voyages",
+      currency: "Devise",
+      clientCount: "Nombre de clients",
+      period: "Période",
+      departure: "Départ",
+      returnDate: "Retour",
+      summary: "Résumé financier",
+      totalSale: "Total ventes",
+      totalPaid: "Total payé",
+      totalRemaining: "Reste à payer",
+      totalDiscount: "Remises",
+      fullyPaid: "Soldés",
+      partialPaid: "Partiels",
+      unpaid: "Non payés",
+      index: "#",
+      fileRef: "Référence",
+      name: "Nom",
+      phone: "Téléphone",
+      package: "Niveau",
+      roomType: "Type chambre",
+      salePrice: "Prix vente",
+      paidAmount: "Montant payé",
+      remainingAmount: "Reste",
+      discount: "Remise",
+      status: "Statut",
+      lastPaymentDate: "Dernier paiement",
+      receiptNumber: "Reçu",
+      notes: "Notes",
+      total: "Total",
+      paid: "Soldé",
+      partial: "Partiel",
+      unpaidStatus: "Non payé",
+      allStatuses: "Tous",
+    };
+  }
+  if (lang === "en") {
+    return {
+      program: "Program",
+      pageSize: "Rows",
+      exportExcel: "Export Excel",
+      selectProgram: "Select a program",
+      emptyProgram: "No clients in this program",
+      reportTitle: "Clearance Report",
+      exportDate: "Export date",
+      agencyName: "Tiznit Voyages",
+      currency: "Currency",
+      clientCount: "Number of clients",
+      period: "Period",
+      departure: "Departure",
+      returnDate: "Return",
+      summary: "Financial summary",
+      totalSale: "Total sale",
+      totalPaid: "Total paid",
+      totalRemaining: "Total remaining",
+      totalDiscount: "Total discount",
+      fullyPaid: "Paid",
+      partialPaid: "Partial",
+      unpaid: "Unpaid",
+      index: "#",
+      fileRef: "Reference",
+      name: "Name",
+      phone: "Phone",
+      package: "Package",
+      roomType: "Room type",
+      salePrice: "Sale price",
+      paidAmount: "Paid amount",
+      remainingAmount: "Remaining",
+      discount: "Discount",
+      status: "Status",
+      lastPaymentDate: "Last payment",
+      receiptNumber: "Receipt",
+      notes: "Notes",
+      total: "Total",
+      paid: "Paid",
+      partial: "Partial",
+      unpaidStatus: "Unpaid",
+      allStatuses: "All",
+    };
+  }
+  return {
+    program: "البرنامج",
+    pageSize: "عدد الصفوف",
+    exportExcel: "تصدير Excel",
+    selectProgram: "اختر برنامجًا",
+    emptyProgram: "لا يوجد معتمرون في هذا البرنامج",
+    reportTitle: "كشف التصفية",
+    exportDate: "تاريخ التصدير",
+    agencyName: "تيزنيت أسفار",
+    currency: "العملة",
+    clientCount: "عدد المعتمرين",
+    period: "الفترة",
+    departure: "الذهاب",
+    returnDate: "العودة",
+    summary: "الملخص المالي",
+    totalSale: "إجمالي البيع",
+    totalPaid: "إجمالي المدفوع",
+    totalRemaining: "إجمالي المتبقي",
+    totalDiscount: "إجمالي الخصم",
+    fullyPaid: "مصفّون",
+    partialPaid: "دفع جزئي",
+    unpaid: "لم يدفعوا",
+    index: "#",
+    fileRef: "رقم الملف",
+    name: "الاسم",
+    phone: "الهاتف",
+    package: "المستوى",
+    roomType: "نوع الغرفة",
+    salePrice: "سعر البيع",
+    paidAmount: "المدفوع",
+    remainingAmount: "المتبقي",
+    discount: "الخصم",
+    status: "الحالة",
+    lastPaymentDate: "آخر دفعة",
+    receiptNumber: "رقم الوصل",
+    notes: "ملاحظات",
+    total: "المجموع",
+    paid: "مصفّى",
+    partial: "دفع جزئي",
+    unpaidStatus: "لم يدفع",
+    allStatuses: "الكل",
+  };
+};
+
+const sanitizeFileName = (value = "") => {
+  const safe = String(value)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 90);
+  return safe || "program";
+};
+
+const getAgencyName = (agency = {}, lang = "ar", labels = {}) => {
+  if (lang === "ar") return agency?.nameAr || agency?.agencyNameAr || agency?.nameFr || labels.agencyName;
+  return agency?.nameFr || agency?.agencyNameFr || agency?.nameAr || labels.agencyName;
+};
+
+const getClientPackageLabel = (client = {}) => (
+  client.packageLevel || client.hotelLevel || client.packageName || client.levelName || client.level || "—"
+);
+
+const getClientNotes = (client = {}) => client.note || client.notes || client.remark || client.remarks || "";
+
+const getStatusLabel = (status, labels) => {
+  if (status === "cleared") return labels.paid;
+  if (status === "partial") return labels.partial;
+  return labels.unpaidStatus;
+};
+
 export default function ClearancePage({ store }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -60,12 +242,54 @@ export default function ClearancePage({ store }) {
   } = store;
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const [selectedProgramId, setSelectedProgramId] = React.useState(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem(CLEARANCE_PROGRAM_STORAGE_KEY) || "";
+  });
+  const [pageSize, setPageSize] = React.useState(10);
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة فاتورة");
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
-  const data = React.useMemo(() => clients.map(c => {
-    const prog      = programs.find(p => p.id === c.programId);
+  React.useEffect(() => {
+    if (!programs.length) {
+      if (selectedProgramId) setSelectedProgramId("");
+      return;
+    }
+    const hasSelected = selectedProgramId && programs.some((program) => program.id === selectedProgramId);
+    if (hasSelected) return;
+    const saved = typeof window !== "undefined"
+      ? localStorage.getItem(CLEARANCE_PROGRAM_STORAGE_KEY)
+      : "";
+    const next = saved && programs.some((program) => program.id === saved)
+      ? saved
+      : pickDefaultProgramId(programs);
+    setSelectedProgramId(next);
+  }, [programs, selectedProgramId]);
+
+  React.useEffect(() => {
+    if (!selectedProgramId || typeof window === "undefined") return;
+    localStorage.setItem(CLEARANCE_PROGRAM_STORAGE_KEY, selectedProgramId);
+  }, [selectedProgramId]);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedProgramId, filter, search, pageSize]);
+
+  const selectedProgram = React.useMemo(
+    () => programs.find((program) => program.id === selectedProgramId) || null,
+    [programs, selectedProgramId]
+  );
+
+  const selectedProgramClients = React.useMemo(
+    () => selectedProgramId ? clients.filter((client) => client.programId === selectedProgramId) : [],
+    [clients, selectedProgramId]
+  );
+
+  const programData = React.useMemo(() => selectedProgramClients.map(c => {
+    const prog      = selectedProgram || programs.find(p => p.id === c.programId);
     const paid      = getClientTotalPaid(c.id);
     const salePrice = c.salePrice || c.price || 0;
     const officialPrice = c.officialPrice || salePrice;
@@ -74,10 +298,12 @@ export default function ClearancePage({ store }) {
     const status    = getClientStatus(c);
     const lastPmt   = getClientLastPayment(c.id);
     const displayRef = formatFileReference(c);
-    const displayName = getClientDisplayName(c);
+    const displayName = getClientDisplayName(c, "—", lang);
     const clientPayments = payments.filter(p => p.clientId === c.id);
     return { ...c, displayName, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt, displayRef, clientPayments };
-  }).filter(c => {
+  }), [selectedProgramClients, selectedProgram, programs, payments, lang, getClientStatus, getClientTotalPaid, getClientLastPayment]);
+
+  const data = React.useMemo(() => programData.filter(c => {
     const ok1 = filter === "all" || c.status === filter;
     const q   = search.toLowerCase();
     const refMatch = (c.displayRef || "").toString().toLowerCase();
@@ -86,14 +312,37 @@ export default function ClearancePage({ store }) {
       || (c.id || "").toLowerCase().includes(q)
       || refMatch.includes(q);
     return ok1 && ok2;
-  }), [clients, programs, payments, filter, search, getClientStatus, getClientTotalPaid, getClientLastPayment]);
+  }), [programData, filter, search]);
 
-  const totals = {
+  const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+  const pageData = React.useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return data.slice(start, start + pageSize);
+  }, [data, currentPage, pageSize]);
+
+  React.useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const totals = React.useMemo(() => ({
+    rev:  programData.reduce((s,c)=>s+c.salePrice,0),
+    paid: programData.reduce((s,c)=>s+c.paid,0),
+    rem:  programData.reduce((s,c)=>s+c.remaining,0),
+    disc: programData.reduce((s,c)=>s+c.discount,0),
+  }), [programData]);
+
+  const tableTotals = React.useMemo(() => ({
     rev:  data.reduce((s,c)=>s+c.salePrice,0),
     paid: data.reduce((s,c)=>s+c.paid,0),
     rem:  data.reduce((s,c)=>s+c.remaining,0),
     disc: data.reduce((s,c)=>s+c.discount,0),
-  };
+  }), [data]);
+
+  const statusCounts = React.useMemo(() => ({
+    cleared: programData.filter((c) => c.status === "cleared").length,
+    partial: programData.filter((c) => c.status === "partial").length,
+    unpaid: programData.filter((c) => c.status === "unpaid").length,
+  }), [programData]);
 
   const FILTER_LABELS = {
     all:     t.all     || (lang === "fr" ? "Tous" : "الكل"),
@@ -115,6 +364,121 @@ export default function ClearancePage({ store }) {
     });
   }, [agency, lang, payments, programs]);
 
+  const handleExportExcel = React.useCallback(async () => {
+    if (!selectedProgram) return;
+    const XLSX = await import("xlsx");
+    const agencyName = getAgencyName(agency, lang, labels);
+    const exportDate = new Intl.DateTimeFormat(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US").format(new Date());
+    const period = [selectedProgram.departure, selectedProgram.returnDate].filter(Boolean).join(" - ") || "—";
+    const summaryRows = [
+      [labels.totalSale, totals.rev, labels.totalPaid, totals.paid],
+      [labels.totalRemaining, totals.rem, labels.totalDiscount, totals.disc],
+      [labels.fullyPaid, statusCounts.cleared, labels.partialPaid, statusCounts.partial],
+      [labels.unpaid, statusCounts.unpaid, labels.clientCount, programData.length],
+    ];
+    const tableHeader = [
+      labels.index,
+      labels.fileRef,
+      labels.name,
+      labels.phone,
+      labels.package,
+      labels.roomType,
+      labels.salePrice,
+      labels.paidAmount,
+      labels.remainingAmount,
+      labels.discount,
+      labels.status,
+      labels.lastPaymentDate,
+      labels.receiptNumber,
+      labels.notes,
+    ];
+    const detailRows = programData.map((client, index) => [
+      index + 1,
+      client.displayRef || "",
+      client.displayName || getClientDisplayName(client, "—", lang),
+      client.phone || "",
+      getClientPackageLabel(client),
+      client.roomType || client.room_type || "",
+      client.salePrice,
+      client.paid,
+      client.remaining,
+      client.discount,
+      getStatusLabel(client.status, labels),
+      client.lastPmt?.date || "",
+      client.lastPmt?.receiptNo || "",
+      getClientNotes(client) || client.lastPmt?.note || "",
+    ]);
+    const totalRow = [
+      "",
+      "",
+      labels.total,
+      "",
+      "",
+      "",
+      totals.rev,
+      totals.paid,
+      totals.rem,
+      totals.disc,
+      "",
+      "",
+      "",
+      "",
+    ];
+    const rows = [
+      [agencyName],
+      [labels.reportTitle],
+      [],
+      [labels.program, selectedProgram.name || "—", labels.period, period],
+      [labels.currency, "MAD", labels.exportDate, exportDate],
+      [labels.clientCount, programData.length],
+      [],
+      [labels.summary],
+      ...summaryRows,
+      [],
+      tableHeader,
+      ...detailRows,
+      totalRow,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const headerRowIndex = 13;
+    const totalRowIndex = rows.length;
+    ws["!cols"] = [
+      { wch: 6 }, { wch: 16 }, { wch: 30 }, { wch: 16 },
+      { wch: 16 }, { wch: 14 }, { wch: 15 }, { wch: 15 },
+      { wch: 15 }, { wch: 13 }, { wch: 14 }, { wch: 16 },
+      { wch: 16 }, { wch: 32 },
+    ];
+    ws["!merges"] = [
+      { s:{ r:0, c:0 }, e:{ r:0, c:5 } },
+      { s:{ r:1, c:0 }, e:{ r:1, c:5 } },
+    ];
+    ws["!autofilter"] = {
+      ref: XLSX.utils.encode_range({
+        s:{ r:headerRowIndex - 1, c:0 },
+        e:{ r:Math.max(headerRowIndex - 1, totalRowIndex - 2), c:tableHeader.length - 1 },
+      }),
+    };
+    const moneyFormat = '#,##0 "MAD"';
+    for (let row = 9; row <= totalRowIndex; row += 1) {
+      [1, 3, 6, 7, 8, 9].forEach((col) => {
+        const address = XLSX.utils.encode_cell({ r: row - 1, c: col });
+        if (ws[address] && typeof ws[address].v === "number") ws[address].z = moneyFormat;
+      });
+    }
+    const wb = XLSX.utils.book_new();
+    wb.Props = {
+      Title: labels.reportTitle,
+      Subject: selectedProgram.name || labels.reportTitle,
+      Author: agencyName,
+      CreatedDate: new Date(),
+    };
+    if (isRTL) wb.Workbook = { Views: [{ RTL: true }] };
+    const sheetName = lang === "ar" ? "كشف التصفية" : lang === "fr" ? "Règlement" : "Clearance";
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    const prefix = lang === "ar" ? "كشف-تصفية" : "Clearance";
+    XLSX.writeFile(wb, `${prefix}-${sanitizeFileName(selectedProgram.name)}.xlsx`, { bookType:"xlsx", compression:true });
+  }, [agency, isRTL, labels, lang, programData, selectedProgram, statusCounts, totals]);
+
   return (
     <div className="page-body clearance-page" style={{ padding:"0 32px 32px" }}>
       <div className="page-header clearance-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
@@ -122,31 +486,99 @@ export default function ClearancePage({ store }) {
           <h1 style={{ fontSize:21, fontWeight:800, color:tc.white }}>{t.clearanceReport}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>{t.clearanceDesc}</p>
         </div>
-        <Button variant="ghost" icon="print" onClick={() => {
-          if (data.length === 0) return;
-          printClearancePDF({
-            data,
-            totals,
-            filterLabel: FILTER_LABELS[filter],
-            lang,
-            t,
-            agency,
-          });
-        }}>
-          {lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF"}
-        </Button>
       </div>
+
+      <GlassCard style={{ padding:14, marginBottom:18 }}>
+        <div style={{
+          display:"flex",
+          flexWrap:"wrap",
+          gap:12,
+          alignItems:"end",
+        }}>
+          <label style={{ display:"flex", flexDirection:"column", gap:6, flex:"1 1 260px", minWidth:220 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:tc.grey }}>{labels.program}</span>
+            <select
+              value={selectedProgramId}
+              onChange={(event) => setSelectedProgramId(event.target.value)}
+              disabled={!programs.length}
+              style={{
+                width:"100%",
+                height:42,
+                background:"var(--rukn-bg-select)",
+                border:"1px solid var(--rukn-border-input)",
+                borderRadius:10,
+                color:"var(--rukn-text)",
+                padding:"9px 12px",
+                fontSize:13,
+                fontFamily:"'Cairo',sans-serif",
+                direction:dir,
+                outline:"none",
+              }}
+            >
+              {!programs.length && <option value="">{labels.selectProgram}</option>}
+              {programs.map((program) => (
+                <option key={program.id} value={program.id}>{program.name}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display:"flex", flexDirection:"column", gap:6, flex:"0 0 140px" }}>
+            <span style={{ fontSize:12, fontWeight:700, color:tc.grey }}>{labels.pageSize}</span>
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              disabled={!selectedProgram}
+              style={{
+                width:"100%",
+                height:42,
+                background:"var(--rukn-bg-select)",
+                border:"1px solid var(--rukn-border-input)",
+                borderRadius:10,
+                color:"var(--rukn-text)",
+                padding:"9px 12px",
+                fontSize:13,
+                fontFamily:"'Cairo',sans-serif",
+                direction:dir,
+                outline:"none",
+              }}
+            >
+              {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <Button
+            variant="primary"
+            icon="download"
+            disabled={!selectedProgram}
+            onClick={handleExportExcel}
+          >
+            {labels.exportExcel}
+          </Button>
+          <Button variant="ghost" icon="print" disabled={!data.length} onClick={() => {
+            if (data.length === 0) return;
+            printClearancePDF({
+              data,
+              totals: tableTotals,
+              filterLabel: FILTER_LABELS[filter],
+              lang,
+              t,
+              agency,
+            });
+          }}>
+            {lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF"}
+          </Button>
+        </div>
+      </GlassCard>
 
       {/* KPIs */}
       <div className="kpi-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:24 }}>
         {[
-          ["users", t.clients, clients.length, t.gold],
-          ["success", t.clearedFilter, clients.filter(c => getClientStatus(c) === "cleared").length, t.greenLight],
-          ["partial", t.partialFilter, clients.filter(c => getClientStatus(c) === "partial").length, t.warning],
-          ["unpaid", t.unpaidFilter, clients.filter(c => getClientStatus(c) === "unpaid").length, t.danger],
-          ["banknote", t.collected, money(clients.reduce((s,c) => s + getClientTotalPaid(c.id), 0)), t.gold],
-          ["hourglass", t.remaining, money(clients.reduce((s,c) => s + Math.max(0, (c.salePrice||c.price||0) - getClientTotalPaid(c.id)), 0)), t.warning],
-          ["discount", t.discounts, money(clients.reduce((s,c) => s + Math.max(0, (c.officialPrice||0) - (c.salePrice||c.officialPrice||0)), 0)), t.danger],
+          ["users", t.clients, programData.length, t.gold],
+          ["coins", t.salePrice, money(totals.rev), t.gold],
+          ["success", t.clearedFilter, statusCounts.cleared, t.greenLight],
+          ["partial", t.partialFilter, statusCounts.partial, t.warning],
+          ["unpaid", t.unpaidFilter, statusCounts.unpaid, t.danger],
+          ["banknote", t.collected, money(totals.paid), t.gold],
+          ["hourglass", t.remaining, money(totals.rem), t.warning],
+          ["discount", t.discounts, money(totals.disc), t.danger],
         ].map(([ic,lb,vl,cl])=>(
           <GlassCard gold key={lb} style={{ padding:"13px 14px", textAlign:"center" }}>
             <AppIcon name={ic} size={19} color={cl} style={{ marginBottom:5 }} />
@@ -199,17 +631,30 @@ export default function ClearancePage({ store }) {
         </div>
 
         <div className="table-grid-body" style={{ display:"flex", flexDirection:"column", gap:3, width:"100%" }}>
-          {data.map((c,i) => (
+          {pageData.map((c,i) => (
             <ClearRow
               key={c.id}
               client={c}
-              index={i}
+              index={(currentPage - 1) * pageSize + i}
               gridTemplate={tableColumns}
               invoiceLabel={invoiceLabel}
               onPrintInvoice={handlePrintInvoice}
               money={money}
             />
           ))}
+          {!data.length && (
+            <div style={{
+              padding:18,
+              border:"1px solid var(--rukn-row-border)",
+              borderRadius:10,
+              background:"var(--rukn-row-bg)",
+              color:tc.grey,
+              textAlign:"center",
+              fontSize:13,
+            }}>
+              {!selectedProgram ? labels.selectProgram : labels.emptyProgram}
+            </div>
+          )}
         </div>
 
         {/* Totals */}
@@ -224,22 +669,59 @@ export default function ClearancePage({ store }) {
             <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{t.totalLabel}</span>
             <span style={{ ...TEXT_CLAMP_STYLE, color:t.grey }}>{data.length} {t.clients}</span>
             <span />
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{money(totals.rev)}</span>
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.greenLight }}>{money(totals.paid)}</span>
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.warning }}>{money(totals.rem)}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.gold }}>{money(tableTotals.rev)}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.greenLight }}>{money(tableTotals.paid)}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.warning }}>{money(tableTotals.rem)}</span>
             <span />
-            <span style={{ ...TEXT_CLAMP_STYLE, color:t.danger }}>{t.discount}: {totals.disc.toLocaleString("ar-MA")}</span>
+            <span style={{ ...TEXT_CLAMP_STYLE, color:t.danger }}>{t.discount}: {money(tableTotals.disc)}</span>
             <span />
           </div>
         )}
       </div>
 
+      {data.length > 0 && (
+        <div style={{
+          display:"flex",
+          justifyContent:"space-between",
+          alignItems:"center",
+          gap:12,
+          flexWrap:"wrap",
+          marginTop:12,
+          marginBottom:10,
+          color:tc.grey,
+          fontSize:12,
+        }}>
+          <span>
+            {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, data.length)} / {data.length}
+          </span>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            >
+              {lang === "fr" ? "Précédent" : lang === "en" ? "Previous" : "السابق"}
+            </Button>
+            <span style={{ color:tc.white, fontWeight:700 }}>{currentPage} / {totalPages}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            >
+              {lang === "fr" ? "Suivant" : lang === "en" ? "Next" : "التالي"}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="clearance-card-list">
-        {data.map((client, index) => (
+        {pageData.map((client, index) => (
           <ClearCard
             key={`card-${client.id}`}
             client={client}
-            index={index}
+            index={(currentPage - 1) * pageSize + index}
             invoiceLabel={invoiceLabel}
             onPrintInvoice={handlePrintInvoice}
             t={t}
@@ -263,19 +745,19 @@ export default function ClearancePage({ store }) {
             <div className="summary-grid">
               <div>
                 <p>{t.salePrice}</p>
-                <strong>{money(totals.rev)}</strong>
+                <strong>{money(tableTotals.rev)}</strong>
               </div>
               <div>
                 <p>{t.paid}</p>
-                <strong className="is-success">{money(totals.paid)}</strong>
+                <strong className="is-success">{money(tableTotals.paid)}</strong>
               </div>
               <div>
                 <p>{t.remaining}</p>
-                <strong className="is-warning">{money(totals.rem)}</strong>
+                <strong className="is-warning">{money(tableTotals.rem)}</strong>
               </div>
               <div>
                 <p>{t.discount}</p>
-                <strong className="is-danger">{money(totals.disc)}</strong>
+                <strong className="is-danger">{money(tableTotals.disc)}</strong>
               </div>
             </div>
           </div>

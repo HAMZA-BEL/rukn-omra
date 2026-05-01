@@ -4,7 +4,6 @@ import { SearchBar, Button, StatusBadge, EmptyState, Modal, GlassCard } from "./
 import TransferSheet from "./TransferSheet";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
-import MRZReader from "./MRZReader";
 import ImportClientsModal from "./ImportClientsModal";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
@@ -71,8 +70,6 @@ export default function ClientsPage({ store, onToast }) {
   const [showAdd,    setShowAdd]    = React.useState(false);
   const [checkedIds,  setCheckedIds]  = React.useState(new Set());
   const [selectMode,  setSelectMode]  = React.useState(false);
-  const [showMRZ,     setShowMRZ]     = React.useState(false);
-  const [mrzPrefill,  setMrzPrefill]  = React.useState(null);
   const [showImport,  setShowImport]  = React.useState(false);
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
@@ -185,22 +182,6 @@ export default function ClientsPage({ store, onToast }) {
   const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
   const hasSelection = checkedIds.size > 0;
 
-  const handleMRZResult = (mrzData) => {
-    setMrzPrefill({
-      nom:    mrzData.lastName  || "",
-      prenom: mrzData.firstName || "",
-      passport: {
-        number:      mrzData.passportNo  || "",
-        nationality: mrzData.nationality || "",
-        birthDate:   mrzData.birthDate   || "",
-        expiry:      mrzData.expiryDate  || "",
-        gender:      mrzData.gender      || "",
-      },
-    });
-    setShowMRZ(false);
-    setShowAdd(true);
-  };
-
   const programOccupancy = React.useMemo(() => {
     const counts = new Map();
     activeClients.forEach(c => {
@@ -284,9 +265,6 @@ export default function ClientsPage({ store, onToast }) {
         </div>
         {tab === "active" && (
           <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Button variant="primary" icon="passport" onClick={() => setShowMRZ(true)}>
-              {t.mrzScan}
-            </Button>
             <Button variant="ghost" icon="import" onClick={() => setShowImport(true)}>
               {t.importExcel}
             </Button>
@@ -551,13 +529,10 @@ export default function ClientsPage({ store, onToast }) {
             onCancel={() => setEditing(null)} />
         )}
       </Modal>
-      <Modal open={showAdd} onClose={() => { setShowAdd(false); setMrzPrefill(null); }} title={t.addClient} width={660}>
-        <ClientForm store={store} client={mrzPrefill}
-          onSave={() => { setShowAdd(false); setMrzPrefill(null); onToast(t.addSuccess,"success"); }}
-          onCancel={() => { setShowAdd(false); setMrzPrefill(null); }} />
-      </Modal>
-      <Modal open={showMRZ} onClose={() => setShowMRZ(false)} title={t.mrzModalTitle} width={1040}>
-        <MRZReader store={store} onToast={onToast} onResult={handleMRZResult} onClose={() => setShowMRZ(false)} />
+      <Modal open={showAdd} onClose={() => setShowAdd(false)} title={t.addClient} width={660}>
+        <ClientForm store={store}
+          onSave={() => { setShowAdd(false); onToast(t.addSuccess,"success"); }}
+          onCancel={() => setShowAdd(false)} />
       </Modal>
       <Modal open={showImport} onClose={() => setShowImport(false)} title={t.importModalTitle} width={720}>
         {showImport && (
