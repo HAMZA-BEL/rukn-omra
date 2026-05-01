@@ -34,6 +34,12 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
+  const template = React.useCallback((text, vars = {}) => {
+    return Object.entries(vars).reduce(
+      (result, [key, value]) => String(result).replaceAll(`{${key}}`, String(value ?? "")),
+      String(text || "")
+    );
+  }, []);
 
   // Passport expiry warning
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
@@ -125,7 +131,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             ].map(([k,v]) => (
               <div key={k}>
                 <p style={{ fontSize:10, color:tc.grey }}>{k}</p>
-                <p style={{ fontSize:12, fontWeight:600, color:"#f8fafc" }}>{v}</p>
+                <p style={{ fontSize:12, fontWeight:600, color:"var(--rukn-text-strong)" }}>{v}</p>
               </div>
             ))}
           </div>
@@ -140,8 +146,8 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           { label:t.paid,          val:totalPaid,  color:tc.greenLight },
           { label:t.remaining,     val:remaining,  color:remaining>0?tc.warning:tc.greenLight },
         ].map(({label,val,color}) => (
-          <div key={label} style={{ background:"rgba(255,255,255,.03)",
-            border:"1px solid rgba(255,255,255,.07)",
+          <div key={label} style={{ background:"var(--rukn-bg-soft)",
+            border:"1px solid var(--rukn-border-soft)",
             borderRadius:10, padding:"10px 12px", textAlign:"center" }}>
             <p style={{ fontSize:10, color:tc.grey, marginBottom:4 }}>{label}</p>
             <p style={{ fontSize:15, fontWeight:800, color, fontFamily:"'Amiri',serif" }}>
@@ -168,7 +174,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           <span style={{ color:tc.grey }}>{t.paymentProgress}</span>
           <span style={{ color:tc.gold, fontWeight:700 }}>{Math.round(pct)}%</span>
         </div>
-        <div style={{ height:7, background:"rgba(255,255,255,.06)", borderRadius:4, overflow:"hidden" }}>
+        <div style={{ height:7, background:"var(--rukn-border-soft)", borderRadius:4, overflow:"hidden" }}>
           <div style={{ height:"100%", width:`${pct}%`, borderRadius:4, transition:"width 1.2s",
             background:pct>=100?"linear-gradient(90deg,#22c55e,#16a34a)":pct>50?"linear-gradient(90deg,#f59e0b,#d4af37)":"linear-gradient(90deg,#ef4444,#f97316)" }} />
         </div>
@@ -182,7 +188,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             border:`1px solid ${daysToExp<90?tc.danger:tc.warning}`,
             borderRadius:8, padding:"6px 12px", marginBottom:10, fontSize:12,
             color:daysToExp<90?tc.danger:tc.warning, fontWeight:600 }}>
-            {tr(t.passportExpiryWarning, { days: daysToExp, expiry: p.expiry })}
+            {template(t.passportExpiryWarning, { days: daysToExp, expiry: p.expiry })}
           </div>
         )}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
@@ -196,7 +202,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           ].map(([k,v]) => (
             <div key={k}>
               <p style={{ fontSize:10, color:tc.grey }}>{k}</p>
-              <p style={{ fontSize:12, fontWeight:600, color:"#f8fafc" }}>{v}</p>
+              <p style={{ fontSize:12, fontWeight:600, color:"var(--rukn-text-strong)" }}>{v}</p>
             </div>
           ))}
         </div>
@@ -229,7 +235,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         <div style={{ background:"rgba(212,175,55,.06)", border:"1px solid rgba(212,175,55,.15)",
           borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
           <p style={{ fontSize:11, color:tc.grey, marginBottom:3, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="notes" size={13} color={tc.gold} /> {t.notes}</p>
-          <p style={{ fontSize:13, color:"#f8fafc" }}>{client.notes}</p>
+          <p style={{ fontSize:13, color:"var(--rukn-text-strong)" }}>{client.notes}</p>
         </div>
       )}
 
@@ -270,9 +276,9 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {lastPmt && (
         <div style={{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap" }}>
-          <span style={{ fontSize:12, color:tc.grey }}>{t.lastPayment}: <strong style={{color:"#f8fafc"}}>{lastPmt.date}</strong></span>
+          <span style={{ fontSize:12, color:tc.grey }}>{t.lastPayment}: <strong style={{color:"var(--rukn-text-strong)"}}>{lastPmt.date}</strong></span>
           <span style={{ fontSize:12, color:tc.grey }}>{t.lastReceipt}: <strong style={{color:tc.gold}}>{lastPmt.receiptNo}</strong></span>
-          <span style={{ fontSize:12, color:tc.grey }}>{t.paymentCount}: <strong style={{color:"#f8fafc"}}>{payments.length}</strong></span>
+          <span style={{ fontSize:12, color:tc.grey }}>{t.paymentCount}: <strong style={{color:"var(--rukn-text-strong)"}}>{payments.length}</strong></span>
         </div>
       )}
 
@@ -315,8 +321,8 @@ function PaymentRow({ payment, onPrint, onDelete }) {
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:"10px 14px",
-        background:hov?"rgba(255,255,255,.04)":"rgba(255,255,255,.02)",
-        border:"1px solid rgba(255,255,255,.06)", borderRadius:10, transition:"all .2s" }}>
+        background:hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
+        border:"1px solid var(--rukn-row-border)", borderRadius:10, transition:"all .2s" }}>
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>
         <AppIcon name={icons[payment.method] || "payment"} size={18} color={theme.colors.gold} />
         <div>

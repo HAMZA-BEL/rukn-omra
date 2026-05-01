@@ -550,7 +550,7 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
         >
           <div className="notification-dropdown__list">
             {latestNotifications.length === 0 ? (
-              <p style={{ fontSize: 13, color: "rgba(248,250,252,.65)", margin: 0 }}>
+              <p style={{ fontSize: 13, color: "var(--rukn-text-muted)", margin: 0 }}>
                 {t.noNotifications || "لا توجد إشعارات"}
               </p>
             ) : (
@@ -768,20 +768,20 @@ function BackBar({ onBack, label, pageName, dir, actions }) {
   const separator = dir === "rtl" ? "‹" : "›";
   return (
     <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"10px 28px",
-      background:"rgba(6,13,26,.85)", borderBottom:"1px solid rgba(212,175,55,.1)",
+      background:"var(--rukn-topbar-bg, rgba(6,13,26,.85))", borderBottom:"1px solid var(--rukn-topbar-border, rgba(212,175,55,.1))",
       backdropFilter:"blur(10px)", position:"sticky", top:0, zIndex:40 }}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
         <button onClick={onBack} style={{ display:"flex", alignItems:"center", gap:6,
-          background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
-          borderRadius:10, padding:"6px 14px", color:"#d4af37",
+          background:"var(--rukn-topbar-button-bg, rgba(212,175,55,.1))", border:"1px solid var(--rukn-topbar-button-border, rgba(212,175,55,.25))",
+          borderRadius:10, padding:"6px 14px", color:"var(--rukn-topbar-accent, #d4af37)",
           fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif",
           transition:"all .2s" }}
-          onMouseEnter={e=>e.currentTarget.style.background="rgba(212,175,55,.2)"}
-          onMouseLeave={e=>e.currentTarget.style.background="rgba(212,175,55,.1)"}>
+          onMouseEnter={e=>e.currentTarget.style.background="var(--rukn-topbar-button-bg-hover, rgba(212,175,55,.2))"}
+          onMouseLeave={e=>e.currentTarget.style.background="var(--rukn-topbar-button-bg, rgba(212,175,55,.1))"}>
           {label}
         </button>
-        <span style={{ fontSize:12, color:"rgba(148,163,184,.4)" }}>{separator}</span>
-        <span style={{ fontSize:13, color:"#f8fafc", fontWeight:600 }}>{pageName}</span>
+        <span style={{ fontSize:12, color:"var(--rukn-topbar-muted, rgba(148,163,184,.4))" }}>{separator}</span>
+        <span style={{ fontSize:13, color:"var(--rukn-topbar-title, #f8fafc)", fontWeight:600 }}>{pageName}</span>
       </div>
       {actions && (
         <div style={{ flexShrink:0 }}>

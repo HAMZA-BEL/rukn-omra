@@ -39,6 +39,12 @@ const toPriceValue = (value) => {
   return Number.isFinite(number) && number >= 0 ? number : "";
 };
 
+const toNonNegativeInteger = (value) => {
+  if (value === "" || value === null || value === undefined) return 0;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+};
+
 const collectValidPrices = (packages = []) => packages.flatMap((pkg) => {
   const prices = isPlainObject(pkg?.prices) ? pkg.prices : {};
   return PROGRAM_ROOM_PRICE_KEYS
@@ -89,6 +95,7 @@ const normalizePackage = (pkg, index, program = {}) => {
     level: cleanText(pkg?.level || pkg?.name, program.type || "أساسي"),
     hotelMecca: cleanText(pkg?.hotelMecca, program.hotelMecca || ""),
     hotelMadina: cleanText(pkg?.hotelMadina, program.hotelMadina || ""),
+    madinahNights: toNonNegativeInteger(pkg?.madinahNights ?? pkg?.madinah_nights),
     mealPlan: cleanText(pkg?.mealPlan, program.mealPlan || ""),
     notes: cleanText(pkg?.notes, ""),
     prices,

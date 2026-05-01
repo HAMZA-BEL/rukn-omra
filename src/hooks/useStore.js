@@ -57,6 +57,48 @@ const isUUID = (value) => typeof value === "string" && UUID_REGEX.test(value);
 
 const trimString = (value) => (typeof value === "string" ? value.trim() : "");
 
+const parseLocalDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+};
+
+const todayLocal = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+const daysUntilLocal = (value) => {
+  const parsed = parseLocalDate(value);
+  if (!parsed) return null;
+  return Math.ceil((parsed.getTime() - todayLocal().getTime()) / (1000 * 60 * 60 * 24));
+};
+
+const getClientPassportExpiry = (client = {}) => {
+  const passport = client.passport || {};
+  return trimString(
+    passport.expiry
+    || passport.expiryDate
+    || client.passportExpiry
+    || client.passport_expiry
+    || client.passportExpiryDate
+    || client.expiryDate
+    || ""
+  );
+};
+
 const normalizeClientGender = (value) => {
   const normalized = trimString(value).toLowerCase();
   if (normalized === "male" || normalized === "m" || normalized === "ذكر") return "male";
@@ -112,6 +154,8 @@ const sanitizeRoomingMeta = (data = {}, docs = {}) => {
 
 const getNotificationKey = (notif) => {
   if (!notif) return "ntf:none";
+  const persistKey = notif.persistKey || notif.meta?.persistKey;
+  if (persistKey) return `persist:${persistKey}`;
   const type = notif.type || "system";
   const target = notif.targetId || notif.programId || "none";
   const state = notif.stateHash || (notif.meta && notif.meta.stateHash) || "default";
@@ -289,7 +333,13 @@ export function useStore(agencyId, onToast) {
     deleteNotification,
     deleteNotifications,
     deleteAllArchived,
-  } = useNotificationsSlice({ agencyId, isSupabaseEnabled, generateUUID, getNotificationKey });
+  } = useNotificationsSlice({
+    agencyId,
+    isSupabaseEnabled,
+    generateUUID,
+    getNotificationKey,
+    storageKeyPrefix: `rukn_notifications_${ns}`,
+  });
   const {
     payments,
     setInitialPayments,
@@ -662,9 +712,9 @@ export function useStore(agencyId, onToast) {
   }, [programs, activeClients]);
 
   useEffect(() => {
-    if (!storeHydrated || !isSupabaseEnabled || !agencyId) return;
+    if (!storeHydrated) return;
     const activeKeys = new Set();
-    const today = new Date();
+    const programsById = new Map(programs.map((program) => [program.id, program]));
     const track = (notif) => {
       const key = getNotificationKey(notif);
       activeKeys.add(key);
@@ -708,28 +758,96 @@ export function useStore(agencyId, onToast) {
         });
       }
       if (program.departure) {
-        const depDate = new Date(program.departure);
-        if (!Number.isNaN(depDate.getTime())) {
-          const daysLeft = Math.ceil((depDate - today) / (1000 * 60 * 60 * 24));
-          if (daysLeft > 0 && daysLeft <= 7) {
-            const unsettled = assigned.filter(c => getClientStatus(c) !== "cleared");
-            if (unsettled.length > 0) {
-              track({
-                type: "system:unsettled",
-                title: program.name,
-                message: `${unsettled.length} clients not cleared before departure`,
-                severity: "critical",
-                programId: program.id,
-                targetType: "program",
-                targetId: program.id,
-                actionRoute: "programs",
-                stateHash: `unsettled:${daysLeft}:${unsettled.length}`,
-                meta: { daysLeft, unsettled: unsettled.length },
-              });
-            }
+        const daysLeft = daysUntilLocal(program.departure);
+        if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 11) {
+          const persistKey = `program-departure-11days-${program.id}-${program.departure}`;
+          track({
+            type: "system:departure_11days",
+            title: program.name || trKey("notificationsDefaultTitle", getUiLang()),
+            message: "",
+            severity: "info",
+            persistKey,
+            programId: program.id,
+            targetType: "program",
+            targetId: program.id,
+            actionRoute: "programs",
+            stateHash: `departure_11days:${program.departure}`,
+            meta: {
+              persistKey,
+              programName: program.name || "",
+              departureDate: program.departure,
+              daysLeft,
+            },
+          });
+        }
+        if (daysLeft !== null && daysLeft >= 0 && daysLeft < 3) {
+          const persistKey = `program-departure-3days-${program.id}-${program.departure}`;
+          track({
+            type: "system:departure_3days",
+            title: program.name || trKey("notificationsDefaultTitle", getUiLang()),
+            message: "",
+            severity: "warn",
+            persistKey,
+            programId: program.id,
+            targetType: "program",
+            targetId: program.id,
+            actionRoute: "programs",
+            stateHash: `departure_3days:${program.departure}`,
+            meta: {
+              persistKey,
+              programName: program.name || "",
+              departureDate: program.departure,
+              daysLeft,
+            },
+          });
+        }
+        if (daysLeft !== null && daysLeft > 0 && daysLeft <= 7) {
+          const unsettled = assigned.filter(c => getClientStatus(c) !== "cleared");
+          if (unsettled.length > 0) {
+            track({
+              type: "system:unsettled",
+              title: program.name,
+              message: `${unsettled.length} clients not cleared before departure`,
+              severity: "critical",
+              programId: program.id,
+              targetType: "program",
+              targetId: program.id,
+              actionRoute: "programs",
+              stateHash: `unsettled:${daysLeft}:${unsettled.length}`,
+              meta: { daysLeft, unsettled: unsettled.length },
+            });
           }
         }
       }
+    });
+
+    activeClients.forEach((client) => {
+      const expiryDate = getClientPassportExpiry(client);
+      const daysLeft = daysUntilLocal(expiryDate);
+      if (daysLeft === null || daysLeft < 0 || daysLeft > 213) return;
+      const program = programsById.get(client.programId);
+      const clientName = getClientDisplayName(client) || client.name || client.id || "";
+      const programName = program?.name || trKey("noHotel", getUiLang()) || "";
+      const persistKey = `passport-expiry-7months-${client.id}-${expiryDate}`;
+      track({
+        type: "system:passport_expiry",
+        title: clientName || trKey("notificationsDefaultTitle", getUiLang()),
+        message: "",
+        severity: "warn",
+        persistKey,
+        programId: client.programId || null,
+        targetType: "client",
+        targetId: client.id,
+        actionRoute: "clients",
+        stateHash: `passport_expiry:${expiryDate}`,
+        meta: {
+          persistKey,
+          clientName,
+          programName,
+          expiryDate,
+          daysLeft,
+        },
+      });
     });
 
     getArchiveSuggestions().forEach(({ program, daysAgo, count }) => {
@@ -765,7 +883,6 @@ export function useStore(agencyId, onToast) {
     ensureNotificationExists,
     archiveNotification,
     storeHydrated,
-    isSupabaseEnabled,
   ]);
 
   // ── CRUD ──────────────────────────────────────────────────────────────────

@@ -22,6 +22,12 @@ import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
 import { printProgramPDF } from "../utils/exportPdf";
+import {
+  calculateHotelStayDates,
+  formatDateForExcel,
+  normalizeMadinahNights,
+  normalizeVisitOrder,
+} from "../utils/hotelDates";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
@@ -91,7 +97,7 @@ import {
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
-const PACKAGE_TEMPLATES = ["اقتصادي", "سياحي", "سياحي بالإفطار", "VIP"];
+const PACKAGE_TEMPLATES = ["اقتصادي", "سياحي", "سياحي بالإفطار"];
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
 const ROOMING_BASE_CELL_WIDTH = 132;
@@ -478,20 +484,6 @@ const pickFirstText = (source, keys = []) => {
     const value = source?.[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
-  return "";
-};
-
-const toIsoDateString = (value) => {
-  if (!value) return "";
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-    const parsed = new Date(trimmed);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-    return "";
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
   return "";
 };
 
@@ -1526,26 +1518,12 @@ function ProgramInner({ program, store, onToast, onBack }) {
         ]);
         const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(program, ["hotelMadina", "hotel_madina"]);
         const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(program, ["hotelMecca", "hotel_mecca"]);
-        const medinaCheckIn = toIsoDateString(
-          pickFirstText(client, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed", "hotelMadinaEntry"])
-          || pickFirstText(pkg, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed"])
-          || pickFirstText(program, ["hotelMadinaCheckIn", "madinaCheckIn", "entryHotelMed"])
-        );
-        const medinaCheckOut = toIsoDateString(
-          pickFirstText(client, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed", "hotelMadinaExit"])
-          || pickFirstText(pkg, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed"])
-          || pickFirstText(program, ["hotelMadinaCheckOut", "madinaCheckOut", "sortieHotelMed"])
-        );
-        const makkahCheckIn = toIsoDateString(
-          pickFirstText(client, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec", "hotelMeccaEntry"])
-          || pickFirstText(pkg, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec"])
-          || pickFirstText(program, ["hotelMeccaCheckIn", "meccaCheckIn", "entryHotelMec"])
-        );
-        const makkahCheckOut = toIsoDateString(
-          pickFirstText(client, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec", "hotelMeccaExit"])
-          || pickFirstText(pkg, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec"])
-          || pickFirstText(program, ["hotelMeccaCheckOut", "meccaCheckOut", "sortieHotelMec"])
-        );
+        const stayDates = calculateHotelStayDates({
+          departureDate: program.departure,
+          returnDate: program.returnDate,
+          visitOrder: program.visitOrder || program.visit_order,
+          madinahNights: pkg?.madinahNights,
+        });
         const roomType = safeCellValue(client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "");
         const address = pickFirstText(client, ["address", "adress", "addressLine", "address_line", "homeAddress", "home_address"]);
         const company = pickFirstText(program, ["company", "compagnie", "airline", "carrier", "transport"]);
@@ -1554,16 +1532,16 @@ function ProgramInner({ program, store, onToast, onBack }) {
           safeCellValue(passportNumber),
           safeCellValue(cin),
           safeCellValue(medinaHotel),
-          safeCellValue(medinaCheckIn),
-          safeCellValue(medinaCheckOut),
+          safeCellValue(stayDates.medinaCheckIn),
+          safeCellValue(stayDates.medinaCheckOut),
           safeCellValue(makkahHotel),
-          safeCellValue(makkahCheckIn),
-          safeCellValue(makkahCheckOut),
+          safeCellValue(stayDates.makkahCheckIn),
+          safeCellValue(stayDates.makkahCheckOut),
           safeCellValue(roomType),
           safeCellValue(address),
           safeCellValue(company),
-          safeCellValue(toIsoDateString(program.departure)),
-          safeCellValue(toIsoDateString(program.returnDate)),
+          safeCellValue(formatDateForExcel(program.departure)),
+          safeCellValue(formatDateForExcel(program.returnDate)),
         ];
       }),
     ];
@@ -6203,6 +6181,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     level,
     hotelMecca: "",
     hotelMadina: "",
+    madinahNights: "",
     mealPlan: "",
     notes: "",
     prices: {},
@@ -6217,6 +6196,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     duration:  program?.duration  || "",
     departure: program?.departure || "",
     returnDate:program?.returnDate|| "",
+    visitOrder: normalizeVisitOrder(program?.visitOrder || program?.visit_order),
     price:     program?.price     || "",
     seats:     program?.seats     || "",
     transport: program?.transport || "",
@@ -6224,6 +6204,18 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   });
   const [errors, setErrors] = React.useState({});
   const [packages, setPackages] = React.useState(initialPackages);
+  const [levelMenuOpen, setLevelMenuOpen] = React.useState(false);
+  const levelMenuRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!levelMenuOpen) return;
+    const handler = (event) => {
+      if (levelMenuRef.current && !levelMenuRef.current.contains(event.target)) {
+        setLevelMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [levelMenuOpen]);
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const setPackageField = (index, key, value) => {
     setPackages(prev => prev.map((pkg, i) => i === index ? { ...pkg, [key]: value } : pkg));
@@ -6234,7 +6226,10 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       return { ...pkg, prices: { ...(pkg.prices || {}), [key]: value } };
     }));
   };
-  const addPackage = (level = "اقتصادي") => setPackages(prev => [...prev, createPackage(level)]);
+  const addPackage = (level = "اقتصادي") => {
+    setPackages(prev => [createPackage(level), ...prev]);
+    setLevelMenuOpen(false);
+  };
   const removePackage = (index) => setPackages(prev => prev.length <= 1 ? prev : prev.filter((_, i) => i !== index));
 
   const cleanPackages = React.useCallback(() => packages.map((pkg, index) => {
@@ -6256,6 +6251,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       level: (pkg.level || "").trim() || `مستوى ${index + 1}`,
       hotelMecca: (pkg.hotelMecca || "").trim(),
       hotelMadina: (pkg.hotelMadina || "").trim(),
+      madinahNights: normalizeMadinahNights(pkg.madinahNights),
       mealPlan: (pkg.mealPlan || "").trim(),
       notes: (pkg.notes || "").trim(),
       prices,
@@ -6305,6 +6301,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       ...form,
       ...legacyFields,
       type: normalizeProgramType(form.type),
+      visitOrder: normalizeVisitOrder(form.visitOrder),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
       transport: String(form.transport || "").trim(),
@@ -6349,6 +6346,15 @@ function ProgramForm({ program, store, onSave, onCancel }) {
             disabled
             inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
           />
+          <Select
+            label={t.visitOrder || "ترتيب الزيارة"}
+            value={form.visitOrder}
+            onChange={set("visitOrder")}
+            options={[
+              { value: "madinah_first", label: t.visitOrderMadinahFirst || "المدينة ثم مكة" },
+              { value: "makkah_first", label: t.visitOrderMakkahFirst || "مكة ثم المدينة" },
+            ]}
+          />
           <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
           <Input
             label={t.transport}
@@ -6377,26 +6383,46 @@ function ProgramForm({ program, store, onSave, onCancel }) {
             <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>{t.programPackagesTitle || "المستويات والباقات"}</p>
             <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>{t.programPackagesHint || "أضف الفنادق ونظام الوجبات وأسعار الغرف لكل مستوى."}</p>
           </div>
-          <Button variant="primary" size="sm" icon="plus" onClick={() => addPackage("اقتصادي")}>{t.addLevel || "إضافة مستوى"}</Button>
-        </div>
-
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-          {PACKAGE_TEMPLATES.map(level => (
-            <button key={level} type="button" onClick={() => addPackage(level)}
-              style={{
-                border:"1px solid rgba(212,175,55,.25)",
-                background:"rgba(212,175,55,.08)",
-                color:tc.gold,
-                borderRadius:20,
-                padding:"6px 12px",
-                fontSize:12,
-                fontWeight:700,
-                cursor:"pointer",
-                fontFamily:"'Cairo',sans-serif",
+          <div ref={levelMenuRef} style={{ position:"relative" }}>
+            <Button variant="primary" size="sm" icon="plus" onClick={() => setLevelMenuOpen(prev => !prev)}>
+              {t.addLevel || "إضافة مستوى"}
+            </Button>
+            {levelMenuOpen && (
+              <div style={{
+                position:"absolute",
+                top:"calc(100% + 8px)",
+                insetInlineEnd:0,
+                minWidth:210,
+                background:"var(--rukn-menu-bg, rgba(20,30,50,.96))",
+                border:"1px solid var(--rukn-menu-border, rgba(212,175,55,.28))",
+                boxShadow:"var(--rukn-menu-shadow, 0 18px 40px rgba(0,0,0,.32))",
+                borderRadius:12,
+                padding:6,
+                zIndex:20,
               }}>
-              {translateHotelLevel(level, lang) || level}
-            </button>
-          ))}
+                {PACKAGE_TEMPLATES.map(level => (
+                  <button key={level} type="button" onClick={() => addPackage(level)}
+                    style={{
+                      width:"100%",
+                      border:"none",
+                      background:"transparent",
+                      color:"var(--rukn-text)",
+                      borderRadius:10,
+                      padding:"9px 12px",
+                      fontSize:12,
+                      fontWeight:700,
+                      cursor:"pointer",
+                      fontFamily:"'Cairo',sans-serif",
+                      textAlign:"start",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "var(--rukn-row-hover)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                    {translateHotelLevel(level, lang) || level}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -6420,6 +6446,14 @@ function ProgramForm({ program, store, onSave, onCancel }) {
                 <Input label={t.mealPlan} value={pkg.mealPlan || ""} onChange={e => setPackageField(index, "mealPlan", e.target.value)} />
                 <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />
                 <Input label={t.hotelMadina} value={pkg.hotelMadina || ""} onChange={e => setPackageField(index, "hotelMadina", e.target.value)} />
+                <Input
+                  label={t.madinahNights || "عدد ليالي المدينة"}
+                  value={pkg.madinahNights ?? ""}
+                  onChange={e => setPackageField(index, "madinahNights", e.target.value)}
+                  type="number"
+                  min={0}
+                  step={1}
+                />
                 <Input label={t.notes} value={pkg.notes || ""} onChange={e => setPackageField(index, "notes", e.target.value)} style={{ gridColumn:"1/-1" }} />
               </div>
               <div style={{ marginTop:12 }}>

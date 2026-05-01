@@ -619,16 +619,17 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const menuNode = (!showCheckbox && menuOpen) ? createPortal(
     <div
       ref={menuRef}
+      className="client-actions-menu"
       style={{
         position:"fixed",
         top: menuPos.top,
         left: menuPos.left,
         visibility: menuPos.visibility,
         zIndex:9999,
-        background:"rgba(20,30,50,0.96)",
-        border:"1px solid rgba(212,175,55,.3)",
+        background:"var(--rukn-menu-bg, rgba(20,30,50,0.96))",
+        border:"1px solid var(--rukn-menu-border, rgba(212,175,55,.3))",
         borderRadius:12,
-        boxShadow:"0 10px 25px rgba(0,0,0,0.35)",
+        boxShadow:"var(--rukn-menu-shadow, 0 10px 25px rgba(0,0,0,0.35))",
         minWidth:160,
         overflow:"hidden",
       }}>
@@ -873,7 +874,7 @@ function MenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
         width:"100%", padding:"11px 16px",
         background: hov ? hoverBg : "transparent",
         border:"none",
-        borderBottom: border ? "1px solid rgba(255,255,255,.06)" : "none",
+        borderBottom: border ? "1px solid var(--rukn-menu-divider, rgba(255,255,255,.06))" : "none",
         color, fontSize:13, fontWeight:600,
         cursor:"pointer", fontFamily:"'Cairo',sans-serif",
         textAlign: isRTL ? "right" : "left",

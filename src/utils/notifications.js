@@ -70,6 +70,12 @@ export function formatNotificationMessage(notification, { programs = [], activeC
         return `${vars.program}: ${vars.count} clients unpaid, departure in ${vars.days} day(s)`;
       case "notificationsArchive":
         return `${vars.program}: ended ${vars.days} day(s) ago — please archive`;
+      case "notificationsDepartureSoon":
+        return `Trip is approaching: ${vars.program}\nDeparture: ${vars.date}\nRemaining: ${vars.days} day(s)`;
+      case "notificationsDepartureUrgent":
+        return `Urgent alert: ${vars.program} departure is very close\nDeparture: ${vars.date}\nRemaining: ${vars.days} day(s)`;
+      case "notificationsPassportExpiry":
+        return `Passport for ${vars.client} will expire soon\nProgram: ${vars.program}\nExpiry date: ${vars.date}`;
       default:
         return "";
     }
@@ -111,6 +117,31 @@ export function formatNotificationMessage(notification, { programs = [], activeC
         }
       }
       return translate("notificationsArchive", { program: programName, days: daysAgo });
+    }
+    case "system:departure_11days": {
+      const meta = notification.meta || {};
+      return translate("notificationsDepartureSoon", {
+        program: meta.programName || programName,
+        date: meta.departureDate || "",
+        days: meta.daysLeft ?? 0,
+      });
+    }
+    case "system:departure_3days": {
+      const meta = notification.meta || {};
+      return translate("notificationsDepartureUrgent", {
+        program: meta.programName || programName,
+        date: meta.departureDate || "",
+        days: meta.daysLeft ?? 0,
+      });
+    }
+    case "system:passport_expiry": {
+      const meta = notification.meta || {};
+      return translate("notificationsPassportExpiry", {
+        client: meta.clientName || notification.title || "",
+        program: meta.programName || "",
+        date: meta.expiryDate || "",
+        days: meta.daysLeft ?? "",
+      });
     }
     default:
       return notification.message || "";
