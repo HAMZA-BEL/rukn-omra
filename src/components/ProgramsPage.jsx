@@ -733,6 +733,13 @@ export default function ProgramsPage({ store, onToast }) {
           getClientTotalPaid, getClientStatus } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
+  const tr = React.useCallback((key, vars = {}) => {
+    const template = t?.[key] ?? key;
+    if (typeof template === "function") return template(vars);
+    return Object.entries(vars).reduce((text, [name, value]) => (
+      String(text).replaceAll(`{${name}}`, String(value ?? ""))
+    ), String(template));
+  }, [t]);
   const formatCurrencyForLang = React.useCallback(
     (value) => formatCurrency(value, lang),
     [lang]
@@ -1261,7 +1268,14 @@ function ProgramInner({ program, store, onToast, onBack }) {
     activeClients = [],
     transferClients,
   } = store;
-  const { t, tr, lang } = useLang();
+  const { t, lang } = useLang();
+  const tr = React.useCallback((key, vars = {}) => {
+    const template = t?.[key] ?? key;
+    if (typeof template === "function") return template(vars);
+    return Object.entries(vars).reduce((text, [name, value]) => (
+      String(text).replaceAll(`{${name}}`, String(value ?? ""))
+    ), String(template));
+  }, [t]);
   const formatCurrencyForLang = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
   const [filter,         setFilter]         = React.useState("all");
