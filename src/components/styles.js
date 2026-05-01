@@ -182,6 +182,25 @@ export const globalCSS = `
   html[data-theme="light"] .react-flow__pane {
     background: #fff;
   }
+  html[data-theme="light"] .dashboard-search-hero {
+    background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(247,243,234,.98)) !important;
+    border-bottom: 1px solid rgba(15,23,42,.10) !important;
+    box-shadow: inset 0 -1px 0 rgba(255,255,255,.7);
+  }
+  html[data-theme="light"] .dashboard-search-hero input {
+    background: #fff !important;
+    border-color: rgba(15,23,42,.18) !important;
+    color: var(--rukn-text-strong) !important;
+    box-shadow: 0 8px 22px rgba(15,23,42,.05) !important;
+  }
+  html[data-theme="light"] .dashboard-search-hero input:focus {
+    border-color: rgba(128,91,11,.46) !important;
+    box-shadow: 0 0 0 3px rgba(128,91,11,.11), 0 8px 22px rgba(15,23,42,.05) !important;
+  }
+  html[data-theme="light"] .dashboard-search-hero input::placeholder {
+    color: #64748b !important;
+    opacity: .9;
+  }
   html[data-theme="light"] .filter-chip {
     background: var(--rukn-bg-card);
     border-color: var(--rukn-border-soft);

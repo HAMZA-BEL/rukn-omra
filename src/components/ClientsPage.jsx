@@ -607,6 +607,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const phoneLine = client.phone ? client.phone.trim() : "";
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
+  const registrationSource = (client.registrationSource || client.registration_source || "").trim();
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
       onCheck();
@@ -731,6 +732,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           </div>
           <div className="client-card-mobile-tags">
             {cityLine && <span>{cityLine}</span>}
+            {registrationSource && <span>{registrationSource}</span>}
             {ticketLine && <span>{ticketLine}</span>}
           </div>
         </div>
@@ -792,6 +794,22 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 <span style={{ color:tc.warning }}> • {new Date(client.archivedAt).toLocaleDateString("ar-MA")}</span>
               )}
             </p>
+            {registrationSource && (
+              <span style={{
+                display:"inline-flex",
+                alignItems:"center",
+                marginTop:5,
+                padding:"2px 8px",
+                borderRadius:999,
+                border:"1px solid rgba(212,175,55,.18)",
+                background:"rgba(212,175,55,.07)",
+                color:tc.gold,
+                fontSize:10,
+                fontWeight:800,
+              }}>
+                {registrationSource}
+              </span>
+            )}
           </div>
           {!selectMode && (
             <div style={{ display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>

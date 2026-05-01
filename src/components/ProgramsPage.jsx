@@ -52,8 +52,11 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  ChevronDown,
+  ChevronUp,
   Columns3,
   Copy,
+  Filter,
   FileSpreadsheet,
   Italic,
   LayoutGrid,
@@ -441,6 +444,12 @@ const normalizeSheetData = (data, rows = ROOMING_ROWS, cols = ROOMING_COLS) => {
 };
 
 const getClientDisplayName = (client) => resolveClientDisplayName(client, trKey("pilgrimFallback") || "معتمر");
+const getClientRegistrationSource = (client = {}) => pickFirstText(client, [
+  "registrationSource",
+  "registration_source",
+  "sourceRegistration",
+  "source",
+]);
 
 const slugifyFilePart = (value) => String(value || "program")
   .replace(/\s+/g, "-")
@@ -2261,7 +2270,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
         )}
       </Modal>
       <Modal open={showAddClient} onClose={()=>setShowAddClient(false)} title={t.addClient} width={600}>
-        <ClientForm store={store} defaultProgramId={program.id}
+        <ClientForm store={store} defaultProgramId={program.id} lockProgramId={program.id}
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
       </Modal>
@@ -2323,6 +2332,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const [panelSearch, setPanelSearch] = React.useState("");
   const [panelHotel, setPanelHotel] = React.useState("all");
   const [panelRoomType, setPanelRoomType] = React.useState("all");
+  const [roomOccupancyFilter, setRoomOccupancyFilter] = React.useState("all");
+  const [roomFilterOpen, setRoomFilterOpen] = React.useState(false);
+  const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const flowRef = React.useRef(null);
   const flowNodesRef = React.useRef([]);
@@ -2382,15 +2395,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     const gender = normalizeRoomingGender(client.gender);
     return {
       name: getClientDisplayName(client),
+      registrationSource: getClientRegistrationSource(client),
       gender,
       genderLabel: gender === "male" ? t.male : gender === "female" ? t.female : "—",
       hotel,
+      level: level ? (translateHotelLevel(level, lang) || level) : "",
       roomType,
       roomTypeLabel: getLocalizedRoomTypeLabel(roomType),
       category: client.roomCategory || "",
       familyKey: client.roomingGroupId || getRoomingFamilyKey(client),
     };
-  }, [city, packageById, packageByLevel, program, t, getLocalizedRoomTypeLabel]);
+  }, [city, packageById, packageByLevel, program, t, lang, getLocalizedRoomTypeLabel]);
 
   const hotelOptions = React.useMemo(() => {
     const values = new Set(getProgramHotelsForCity(program, packages, city));
@@ -2502,6 +2517,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     };
   }, [canvasMenu.open]);
 
+  React.useEffect(() => {
+    if (!roomFilterOpen && !roomNeedsOpen) return undefined;
+    const close = () => {
+      setRoomFilterOpen(false);
+      setRoomNeedsOpen(false);
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [roomFilterOpen, roomNeedsOpen]);
+
   const clientIdsInRooms = React.useMemo(() => {
     const ids = new Set();
     rooms.forEach((room) => (room.occupantIds || []).forEach((id) => ids.add(id)));
@@ -2596,13 +2625,78 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     });
   }, [normalizedUnassigned, clientsById, getClientContext, panelSearch, panelHotel, panelRoomType]);
 
+  const roomOccupancyOptions = React.useMemo(() => [
+    { value: "all", label: t.roomingFilterAllRooms || t.allRooms || "كل الغرف" },
+    { value: "empty", label: t.roomingFilterEmpty || "الفارغة" },
+    { value: "incomplete", label: t.roomingFilterIncomplete || "الناقصة" },
+    { value: "full", label: t.roomingFilterFull || "الممتلئة" },
+  ], [t]);
+
   const visibleRooms = React.useMemo(() => rooms.filter((room) => {
     const hotelMatch = panelHotel === "all"
       || normalizeRoomingHotel(room.hotel) === normalizeRoomingHotel(panelHotel);
     const roomTypeMatch = panelRoomType === "all"
       || normalizeRoomingRoomType(room.roomType) === normalizeRoomingRoomType(panelRoomType);
-    return hotelMatch && roomTypeMatch;
-  }), [rooms, panelHotel, panelRoomType]);
+    const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
+    const count = (room.occupantIds || []).length;
+    const occupancyMatch = roomOccupancyFilter === "all"
+      || (roomOccupancyFilter === "empty" && count === 0)
+      || (roomOccupancyFilter === "incomplete" && count > 0 && count < capacity)
+      || (roomOccupancyFilter === "full" && count === capacity);
+    return hotelMatch && roomTypeMatch && occupancyMatch;
+  }), [rooms, panelHotel, panelRoomType, roomOccupancyFilter]);
+
+  const getRoomingProgressForCity = React.useCallback((targetCity) => {
+    const sourceRooms = targetCity === city ? rooms : (() => {
+      try {
+        const raw = localStorage.getItem(`rukn_rooming_sheet_${program.id}_${targetCity}`);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed?.rooms) ? parsed.rooms : [];
+      } catch {
+        return [];
+      }
+    })();
+    const assigned = new Set();
+    sourceRooms.forEach((room) => (room.occupantIds || []).forEach((id) => {
+      if (clientsById[id]) assigned.add(id);
+    }));
+    const total = clients.length;
+    const percent = total ? Math.round((assigned.size / total) * 100) : 0;
+    return { assigned: assigned.size, total, percent };
+  }, [city, rooms, program.id, clients.length, clientsById]);
+
+  const roomingProgress = React.useMemo(() => ({
+    makkah: getRoomingProgressForCity("makkah"),
+    madinah: getRoomingProgressForCity("madinah"),
+  }), [getRoomingProgressForCity]);
+
+  const roomNeeds = React.useMemo(() => {
+    const counts = new Map();
+    clients.forEach((client) => {
+      const type = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
+      if (!type) return;
+      counts.set(type, (counts.get(type) || 0) + 1);
+    });
+    const details = ROOMING_ROOM_OPTIONS
+      .map((option) => {
+        const pilgrims = counts.get(option.value) || 0;
+        if (!pilgrims) return null;
+        const capacity = getRoomingCapacity(option.value);
+        return {
+          type: option.value,
+          label: getLocalizedRoomTypeLabel(option.value),
+          pilgrims,
+          rooms: Math.ceil(pilgrims / capacity),
+        };
+      })
+      .filter(Boolean);
+    return {
+      details,
+      totalRooms: details.reduce((sum, item) => sum + item.rooms, 0),
+      totalPilgrims: details.reduce((sum, item) => sum + item.pilgrims, 0),
+    };
+  }, [clients, getLocalizedRoomTypeLabel]);
 
   const getNextRoomNumber = React.useCallback(() => {
     const values = rooms
@@ -3065,7 +3159,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
               const category = room.category || "male_only";
               const names = occupants.map((clientId, index) => {
                 const client = clientsById[clientId];
-                return `<li><span>${index + 1}</span><b>${client ? escapeHtml(getClientDisplayName(client)) : "—"}</b></li>`;
+                const source = getClientRegistrationSource(client);
+                const label = client ? `${getClientDisplayName(client)}${source ? ` · ${source}` : ""}` : "—";
+                return `<li><span>${index + 1}</span><b>${escapeHtml(label)}</b></li>`;
               }).join("") || `<li class="empty"><span>0</span><b>${escapeHtml(t.noPilgrims || "بدون معتمرين")}</b></li>`;
               return `
                 <article class="room-card ${escapeHtml(category)}">
@@ -3233,6 +3329,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         .rooming-unassigned-card:active {
           cursor: grabbing;
         }
+        .rooming-menu-item:hover {
+          background: rgba(37,99,235,.08) !important;
+        }
       `}</style>
       <GlassCard gold style={{
         padding: 12,
@@ -3245,13 +3344,36 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         border: "1px solid rgba(203,213,225,.85)",
         overflow: "hidden",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
           <div>
             <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
             <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
               {program.name || "—"} • {roomingCityLabels[city]} • {clients.length} {t.pilgrimUnit || "معتمر"}
               {dirty ? ` • ${t.unsavedChanges || "تغييرات غير محفوظة"}` : savedAt ? ` • ${tr("lastSaved", { time: savedAt.toLocaleTimeString("ar-MA") }) || `آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}`}` : ""}
             </p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: "1 1 280px", justifyContent: "center" }}>
+            {Object.entries(roomingCityLabels).map(([key, label]) => {
+              const progress = roomingProgress[key] || { assigned: 0, total: clients.length, percent: 0 };
+              return (
+                <div key={key} style={{
+                  minWidth: 132,
+                  border: "1px solid rgba(148,163,184,.20)",
+                  background: "#fff",
+                  borderRadius: 999,
+                  padding: "5px 8px",
+                  boxShadow: "0 6px 16px rgba(15,23,42,.045)",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#334155", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>
+                    <span>{label}</span>
+                    <span>{progress.assigned}/{progress.total} · {progress.percent}%</span>
+                  </div>
+                  <div style={{ height: 3, borderRadius: 999, background: "#e2e8f0", overflow: "hidden", marginTop: 4 }}>
+                    <div style={{ width: `${Math.min(100, progress.percent)}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#2563eb,#16a34a)" }} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "#fff", border: "1px solid rgba(148,163,184,.22)" }}>
             {Object.entries(roomingCityLabels).map(([key, label]) => (
@@ -3277,12 +3399,81 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "#fff", border: "1px solid rgba(148,163,184,.2)" }}>
+        {!toolbarCollapsed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "#fff", border: "1px solid rgba(148,163,184,.2)" }}>
+            <RoomingToolbarButton
+              title={t.hideToolbar || "إخفاء الأدوات"}
+              onClick={() => setToolbarCollapsed(true)}
+              icon={<ChevronUp size={15} />}
+            />
           <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
           <RoomingToolbarButton title={t.roomingSave || "حفظ"} onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
           <RoomingToolbarButton title={t.roomingExportExcel || "تصدير Excel"} onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
+          <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
+            <RoomingToolbarButton
+              title={t.roomingRoomFilter || "فلترة الغرف"}
+              onClick={() => {
+                setRoomNeedsOpen(false);
+                setRoomFilterOpen((open) => !open);
+              }}
+              active={roomOccupancyFilter !== "all" || roomFilterOpen}
+              icon={<Filter size={15} />}
+            />
+            <RoomingMenu open={roomFilterOpen} align="start" width={190}>
+              {roomOccupancyOptions.map((option) => (
+                <RoomingMenuItem
+                  key={option.value}
+                  label={option.label}
+                  active={roomOccupancyFilter === option.value}
+                  icon={<span style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: roomOccupancyFilter === option.value ? "#2563eb" : "#cbd5e1",
+                    flexShrink: 0,
+                  }} />}
+                  onClick={() => {
+                    setRoomOccupancyFilter(option.value);
+                    setRoomFilterOpen(false);
+                  }}
+                />
+              ))}
+            </RoomingMenu>
+          </div>
+          <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
+            <RoomingToolbarButton
+              title={t.roomNeeds || "احتياج الغرف"}
+              onClick={() => {
+                setRoomFilterOpen(false);
+                setRoomNeedsOpen((open) => !open);
+              }}
+              active={roomNeedsOpen}
+              icon={<LayoutGrid size={15} />}
+            >
+              {roomNeeds.totalRooms ? `${t.roomNeeds || "احتياج الغرف"} · ${roomNeeds.totalRooms}` : (t.roomNeeds || "احتياج الغرف")}
+            </RoomingToolbarButton>
+            <RoomingMenu open={roomNeedsOpen} align="start" width={260}>
+              <div style={{ padding: "6px 8px 8px" }}>
+                <p style={{ color: "#0f172a", fontSize: 12, fontWeight: 900, marginBottom: 8 }}>{t.roomNeeds || "احتياج الغرف"}</p>
+                {!roomNeeds.details.length ? (
+                  <p style={{ color: "#64748b", fontSize: 11 }}>{t.noDetails || "بدون تفاصيل"}</p>
+                ) : (
+                  <div style={{ display: "grid", gap: 7 }}>
+                    {roomNeeds.details.map((item) => (
+                      <div key={item.type} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", color: "#334155", fontSize: 11, fontWeight: 800 }}>
+                        <span>{item.label}</span>
+                        <span style={{ color: "#0f172a" }}>
+                          {tr("roomNeedsLine", { rooms: item.rooms, pilgrims: item.pilgrims }) || `${item.rooms} غرف / ${item.pilgrims} معتمرين`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </RoomingMenu>
+          </div>
           <select
             value={zoom}
             onChange={(event) => applyFlowZoom(Number(event.target.value))}
@@ -3294,7 +3485,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           <RoomingToolbarButton title={t.roomingFit || "Fit"} onClick={fitView} icon={<Scan size={15} />} />
           <RoomingToolbarButton title={panelOpen ? (t.roomingHideUnassigned || "إخفاء غير المسكنين") : (t.roomingShowUnassigned || "إظهار غير المسكنين")} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
           <RoomingToolbarButton title={fullscreen ? (t.roomingExitFullscreen || "الخروج من ملء الشاشة") : (t.roomingFullscreen || "ملء الشاشة")} onClick={() => setFullscreen((open) => !open)} icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} active={fullscreen} />
-        </div>
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
           <div style={{
@@ -3308,6 +3500,26 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
             boxShadow: "0 12px 28px rgba(15,23,42,.08)",
             minHeight: 0,
           }}>
+            {toolbarCollapsed && (
+              <div style={{
+                position: "absolute",
+                top: 12,
+                insetInlineStart: 12,
+                zIndex: 24,
+              }}>
+                <RoomingToolbarButton
+                  title={t.showToolbar || "إظهار الأدوات"}
+                  onClick={() => setToolbarCollapsed(false)}
+                  active
+                  icon={<ChevronDown size={15} />}
+                  style={{
+                    background: "rgba(255,255,255,.96)",
+                    border: "1px solid rgba(148,163,184,.22)",
+                    boxShadow: "0 10px 24px rgba(15,23,42,.12)",
+                  }}
+                />
+              </div>
+            )}
             {!rooms.length ? (
               <div
                 onContextMenu={(event) => {
@@ -3455,7 +3667,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                         style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(148,163,184,.18)", background: draggingClientId === item.clientId ? "#eff6ff" : "#f8fafc", borderRadius: 10, padding: 9 }}
                       >
                         <strong style={{ display: "block", color: "#0f172a", fontSize: 12 }}>{context.name}</strong>
-                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}</span>
+                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                          {[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}
+                        </span>
                         {displayReason && <span style={{ display: "block", color: "#b45309", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
                         {selectedRoom && (
                           <button
@@ -3517,7 +3731,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                       <input type="checkbox" checked={checked} onChange={(event) => setSelectedPilgrimIds((prev) => event.target.checked ? [...prev, client.id] : prev.filter((id) => id !== client.id))} />
                       <span>
                         <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{context.name}</strong>
-                        <small style={{ color: "#64748b" }}>{[context.genderLabel, context.roomTypeLabel, context.hotel].filter(Boolean).join(" • ")}</small>
+                        <small style={{ color: "#64748b" }}>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ")}</small>
                       </span>
                     </label>
                   );
@@ -3584,6 +3798,8 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const room = data.room;
   const accent = getRoomingCategoryAccent(room.category);
   const occupantIds = room.occupantIds || [];
+  const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
+  const isFull = occupantIds.length === capacity;
   const dropReason = data.draggingClient ? data.getDropReason(data.draggingClient, room) : "";
   const isDropTarget = Boolean(data.draggingClient);
   const canDrop = isDropTarget && !dropReason;
@@ -3640,7 +3856,24 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           {translateRoomCategory(room.category, lang) || getRoomingCategoryLabel(room.category)}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{room.capacity}</span>
+          <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{capacity}</span>
+          {isFull && (
+            <span style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              border: "1px solid rgba(22,163,74,.22)",
+              background: "rgba(22,163,74,.08)",
+              color: "#15803d",
+              borderRadius: 999,
+              padding: "2px 6px",
+              fontSize: 9,
+              fontWeight: 900,
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: 999, background: "#16a34a" }} />
+              {t.roomingFullBadge || "مكتملة"}
+            </span>
+          )}
           {room.locked && <Lock size={13} color="#64748b" title={t.roomLocked || "الغرفة مقفلة"} />}
           <div
             className="nodrag"
@@ -3726,10 +3959,31 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
         {occupantIds.map((clientId) => {
           const client = data.clientsById[clientId];
+          const source = getClientRegistrationSource(client);
           return (
             <div key={clientId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#111827", fontSize: 12, fontWeight: 700 }}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {client ? getClientDisplayName(client) : "—"}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {client ? getClientDisplayName(client) : "—"}
+                </span>
+                {source && (
+                  <span style={{
+                    flexShrink: 0,
+                    maxWidth: 72,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    border: "1px solid rgba(148,163,184,.24)",
+                    background: "rgba(241,245,249,.7)",
+                    color: "#64748b",
+                    borderRadius: 999,
+                    padding: "1px 6px",
+                    fontSize: 9,
+                    fontWeight: 800,
+                  }}>
+                    {source}
+                  </span>
+                )}
               </span>
               <button
                 type="button"
@@ -3746,7 +4000,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
             </div>
           );
         })}
-        {occupantIds.length < room.capacity && (
+        {occupantIds.length < capacity && (
           <span style={{ color: "#94a3b8", fontSize: 12 }}>{t.emptySlot || "مكان شاغر"}</span>
         )}
       </div>
@@ -3791,11 +4045,12 @@ function RoomingMenu({ open, children, align = "start", width = 220 }) {
   );
 }
 
-function RoomingMenuItem({ label, onClick, icon, destructive = false }) {
+function RoomingMenuItem({ label, onClick, icon, destructive = false, active = false }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      className="rooming-menu-item"
       style={{
         width: "100%",
         display: "flex",
@@ -3803,8 +4058,8 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false }) {
         gap: 8,
         border: 0,
         borderRadius: 8,
-        background: "transparent",
-        color: destructive ? "#b91c1c" : "#334155",
+        background: active ? "rgba(37,99,235,.08)" : "transparent",
+        color: destructive ? "#b91c1c" : active ? "#1d4ed8" : "#334155",
         padding: "8px 9px",
         cursor: "pointer",
         textAlign: "start",
@@ -5967,6 +6222,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     transport: program?.transport || "",
     notes:     program?.notes     || "",
   });
+  const [errors, setErrors] = React.useState({});
   const [packages, setPackages] = React.useState(initialPackages);
   const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const setPackageField = (index, key, value) => {
@@ -6033,8 +6289,15 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   }));
 
   const handleSave = () => {
-    if (!form.name||!form.seats) {
-      alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد"); return;
+    const nextErrors = {};
+    if (!String(form.name || "").trim() || !String(form.seats || "").trim()) {
+      alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد");
+      return;
+    }
+    if (!String(form.transport || "").trim()) nextErrors.transport = t.transportError || "يرجى إدخال الشركة الناقلة";
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      return;
     }
     const priceTable = cleanPackages();
     const legacyFields = getLegacyFieldsFromPackages(priceTable, program || form);
@@ -6044,6 +6307,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       type: normalizeProgramType(form.type),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
+      transport: String(form.transport || "").trim(),
       priceTable,
     };
     isEdit ? updateProgram(program.id,data) : addProgram(data);
@@ -6086,7 +6350,16 @@ function ProgramForm({ program, store, onSave, onCancel }) {
             inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
           />
           <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
-          <Input label={t.transport} value={form.transport} onChange={set("transport")}/>
+          <Input
+            label={t.transport}
+            value={form.transport}
+            onChange={e => {
+              set("transport")(e);
+              setErrors(prev => (prev.transport ? { ...prev, transport: "" } : prev));
+            }}
+            required
+            error={errors.transport}
+          />
           <div style={{ gridColumn:"1/-1" }}>
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:6 }}>{t.notes}</label>
             <textarea value={form.notes} onChange={set("notes")} rows={2}

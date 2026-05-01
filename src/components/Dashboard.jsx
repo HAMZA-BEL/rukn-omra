@@ -160,7 +160,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
         )}
       </div>
 
-      <div className="page-hero" style={{ position:"relative", overflow:"hidden",
+      <div className="page-hero dashboard-search-hero" style={{ position:"relative", overflow:"hidden",
         background:"linear-gradient(135deg,rgba(26,107,58,.35),rgba(6,13,26,.9))",
         borderBottom:"1px solid rgba(212,175,55,.15)", padding:"24px 32px 26px" }}>
         {[100,180,280].map((s,i)=>(

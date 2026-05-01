@@ -31,6 +31,8 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const p           = client.passport || {};
   const docs        = client.docs || {};
   const displayName = getClientDisplayName(client);
+  const registrationSource = client.registrationSource || client.registration_source || "";
+  const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
   // Passport expiry warning
@@ -71,6 +73,16 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           <div style={{ display:"flex", flexWrap:"wrap", gap:10 }}>
             <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="phone" size={13} color={tc.grey} /> {client.phone}</span>
             <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="location" size={13} color={tc.grey} /> {client.city}</span>
+            {registrationSource && (
+              <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}>
+                <AppIcon name="contact" size={13} color={tc.gold} /> {t.registrationSource || "جهة التسجيل"}: {registrationSource}
+              </span>
+            )}
+            {address && (
+              <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}>
+                <AppIcon name="location" size={13} color={tc.grey} /> {t.address || "العنوان"}: {address}
+              </span>
+            )}
             <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="archive" size={13} color={tc.grey} /> {client.id}</span>
             {client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
           </div>
