@@ -978,6 +978,8 @@ export function useStore(agencyId, onToast) {
       ...data, id,
       receiptNo: data.receiptNo || autoReceipt,
       date:      data.date || new Date().toISOString().split("T")[0],
+      chequeNumber: trimString(data.chequeNumber),
+      paidBy: trimString(data.paidBy),
     };
     addPaymentLocal(pmt);
     const c   = clients.find(x => x.id === data.clientId);

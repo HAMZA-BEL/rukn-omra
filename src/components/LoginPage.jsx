@@ -49,6 +49,30 @@ const LOGIN_MOTION_STYLES = `
 .login-page {
   position: relative;
   overflow: hidden;
+  --login-bg: radial-gradient(ellipse 88% 58% at 50% -18%, rgba(212,175,55,0.12), #f8f3e7 62%);
+  --login-card-bg: rgba(255,255,255,0.96);
+  --login-card-border: rgba(128,91,11,0.16);
+  --login-card-shadow: 0 24px 60px rgba(15,23,42,0.12), 0 0 0 1px rgba(128,91,11,0.06);
+  --login-text: #142133;
+  --login-muted: #5b6675;
+  --login-input-bg: rgba(255,255,255,0.98);
+  --login-input-border: rgba(15,23,42,0.16);
+  --login-input-placeholder: #7a8698;
+  --login-accent-soft: rgba(128,91,11,0.08);
+  --login-accent-border: rgba(128,91,11,0.14);
+}
+html[data-theme="dark"] .login-page {
+  --login-bg: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(26,107,58,.35), #060d1a);
+  --login-card-bg: rgba(10,22,45,.85);
+  --login-card-border: rgba(212,175,55,.2);
+  --login-card-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(212,175,55,.08);
+  --login-text: #f8fafc;
+  --login-muted: #94a3b8;
+  --login-input-bg: rgba(255,255,255,.05);
+  --login-input-border: rgba(212,175,55,.2);
+  --login-input-placeholder: rgba(148,163,184,.72);
+  --login-accent-soft: rgba(212,175,55,.05);
+  --login-accent-border: rgba(212,175,55,.15);
 }
 .login-geometry {
   position: fixed;
@@ -94,16 +118,19 @@ const LOGIN_MOTION_STYLES = `
   animation: loginIconFloat 6s ease-in-out infinite;
 }
 .login-input {
-  border: 1px solid rgba(212,175,55,0.2);
-  background: rgba(255,255,255,0.05);
-  color: #f8fafc;
+  border: 1px solid var(--login-input-border);
+  background: var(--login-input-bg);
+  color: var(--login-text);
   transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+}
+.login-input::placeholder {
+  color: var(--login-input-placeholder);
 }
 .login-input:focus,
 .login-input:focus-visible {
   border-color: rgba(212,175,55,0.65);
-  background: rgba(255,255,255,0.08);
-  box-shadow: 0 0 0 3px rgba(212,175,55,0.15), 0 12px 30px rgba(0,0,0,0.35);
+  background: var(--login-input-bg);
+  box-shadow: 0 0 0 3px rgba(212,175,55,0.15), 0 12px 30px rgba(0,0,0,0.12);
 }
 .login-input:disabled {
   opacity: 0.7;
@@ -241,7 +268,7 @@ export default function LoginPage({ onLogin }) {
   const inputBaseStyle = {
     width: "100%", boxSizing: "border-box",
     padding: "12px 14px", borderRadius: 12,
-    color: "#f8fafc", fontSize: 14,
+    color: "var(--login-text)", fontSize: 14,
     fontFamily: "'Cairo', sans-serif", direction: "ltr",
     outline: "none",
   };
@@ -262,7 +289,7 @@ export default function LoginPage({ onLogin }) {
   return (
     <div className="login-page" style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(26,107,58,.35), #060d1a)",
+      background: "var(--login-bg)",
       padding: "24px",
       }}>
       <div className="login-geometry login-geometry--grid" aria-hidden="true" />
@@ -281,11 +308,11 @@ export default function LoginPage({ onLogin }) {
 
       <div ref={cardRef} className="login-card" style={{
         width: "100%", maxWidth: 420,
-        background: "rgba(10,22,45,.85)",
-        border: "1px solid rgba(212,175,55,.2)",
+        background: "var(--login-card-bg)",
+        border: "1px solid var(--login-card-border)",
         borderRadius: 20, padding: "40px 36px",
         backdropFilter: "blur(20px)",
-        boxShadow: "0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(212,175,55,.08)",
+        boxShadow: "var(--login-card-shadow)",
         position: "relative",
       }}>
         {/* Logo */}
@@ -297,13 +324,13 @@ export default function LoginPage({ onLogin }) {
             WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
             marginBottom: 6,
           }}>نظام إدارة العمرة</h1>
-          <p style={{ fontSize: 12, color: tc.grey }}>سجّل دخولك للمتابعة</p>
+          <p style={{ fontSize: 12, color: "var(--login-muted)" }}>سجّل دخولك للمتابعة</p>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {/* Email */}
           <div>
-            <label style={{ fontSize: 12, color: tc.grey, display: "block", marginBottom: 6 }}>
+            <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
               البريد الإلكتروني
             </label>
             <input
@@ -320,7 +347,7 @@ export default function LoginPage({ onLogin }) {
 
           {/* Password */}
           <div>
-            <label style={{ fontSize: 12, color: tc.grey, display: "block", marginBottom: 6 }}>
+            <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
               كلمة السر
             </label>
             <input
@@ -374,12 +401,12 @@ export default function LoginPage({ onLogin }) {
               onClick={() => { setShowReset(true); setResetEmail(email); setError(""); }}
               style={{
                 background: "none", border: "none", cursor: "pointer",
-                color: "rgba(212,175,55,.5)", fontSize: 12,
+                color: "var(--login-muted)", fontSize: 12,
                 fontFamily: "'Cairo', sans-serif",
                 transition: "color .2s",
               }}
               onMouseEnter={e => e.target.style.color = "#d4af37"}
-              onMouseLeave={e => e.target.style.color = "rgba(212,175,55,.5)"}
+              onMouseLeave={e => e.target.style.color = "var(--login-muted)"}
             >
               نسيت كلمة المرور؟
             </button>
@@ -387,8 +414,8 @@ export default function LoginPage({ onLogin }) {
         ) : (
           <div style={{
             marginTop: 20, padding: "20px",
-            background: "rgba(212,175,55,.05)",
-            border: "1px solid rgba(212,175,55,.15)",
+            background: "var(--login-accent-soft)",
+            border: "1px solid var(--login-accent-border)",
             borderRadius: 12,
           }}>
             {resetSent ? (
@@ -397,7 +424,7 @@ export default function LoginPage({ onLogin }) {
                 <p style={{ color: "#4ade80", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
                   تم الإرسال بنجاح
                 </p>
-                <p style={{ color: tc.grey, fontSize: 12, marginBottom: 12 }}>
+                <p style={{ color: "var(--login-muted)", fontSize: 12, marginBottom: 12 }}>
                   تم إرسال رابط إعادة التعيين لبريدك الإلكتروني
                 </p>
                 <button
@@ -405,7 +432,7 @@ export default function LoginPage({ onLogin }) {
                   onClick={() => { setShowReset(false); setResetSent(false); setResetEmail(""); }}
                   style={{
                     background: "none", border: "none", cursor: "pointer",
-                    color: "rgba(212,175,55,.6)", fontSize: 12,
+                    color: "var(--login-muted)", fontSize: 12,
                     fontFamily: "'Cairo', sans-serif",
                   }}
                 >
@@ -414,7 +441,7 @@ export default function LoginPage({ onLogin }) {
               </div>
             ) : (
               <form onSubmit={handleResetPassword} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <p style={{ fontSize: 12, color: tc.grey, marginBottom: 4 }}>
+                <p style={{ fontSize: 12, color: "var(--login-muted)", marginBottom: 4 }}>
                   أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين
                 </p>
                 <input
@@ -426,9 +453,9 @@ export default function LoginPage({ onLogin }) {
                   style={{
                     width: "100%", boxSizing: "border-box",
                     padding: "10px 14px", borderRadius: 10,
-                    background: "rgba(255,255,255,.05)",
-                    border: "1px solid rgba(212,175,55,.2)",
-                    color: "#f8fafc", fontSize: 13,
+                    background: "var(--login-input-bg)",
+                    border: "1px solid var(--login-input-border)",
+                    color: "var(--login-text)", fontSize: 13,
                     fontFamily: "'Cairo', sans-serif", direction: "ltr",
                     outline: "none",
                   }}
@@ -457,9 +484,9 @@ export default function LoginPage({ onLogin }) {
                     onClick={() => { setShowReset(false); setResetError(""); }}
                     style={{
                       padding: "10px 14px", borderRadius: 10,
-                      border: "1px solid rgba(212,175,55,.2)",
+                      border: "1px solid var(--login-input-border)",
                       background: "transparent",
-                      color: tc.grey, fontSize: 13,
+                      color: "var(--login-muted)", fontSize: 13,
                       fontFamily: "'Cairo', sans-serif",
                       cursor: "pointer",
                     }}
@@ -472,7 +499,7 @@ export default function LoginPage({ onLogin }) {
           </div>
         )}
 
-        <p style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "rgba(148,163,184,.3)" }}>
+        <p style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "var(--login-muted)", opacity: 0.7 }}>
           RUKN — نظام إدارة المعتمرين
         </p>
       </div>

@@ -1620,9 +1620,9 @@ function ProgramInner({ program, store, onToast, onBack }) {
                 zIndex:40,
                 padding:6,
                 borderRadius:14,
-                border:"1px solid rgba(212,175,55,.2)",
-                background:"linear-gradient(135deg, rgba(15,23,42,.98), rgba(17,24,39,.96))",
-                boxShadow:"0 22px 55px rgba(0,0,0,.38)",
+                border:"1px solid var(--rukn-menu-border, rgba(212,175,55,.2))",
+                background:"var(--rukn-menu-bg, linear-gradient(135deg, rgba(15,23,42,.98), rgba(17,24,39,.96)))",
+                boxShadow:"var(--rukn-menu-shadow, 0 22px 55px rgba(0,0,0,.38))",
                 backdropFilter:"blur(12px)",
               }}>
                 {headerActions.map((action) => {
@@ -1638,8 +1638,8 @@ function ProgramInner({ program, store, onToast, onBack }) {
                         width:"100%",
                         border:0,
                         borderRadius:10,
-                        background:hovered ? "rgba(212,175,55,.13)" : "transparent",
-                        color:hovered ? tc.gold : "#d1d5db",
+                        background:hovered ? "var(--rukn-gold-dim)" : "transparent",
+                        color:hovered ? tc.gold : "var(--rukn-text-strong)",
                         display:"flex",
                         alignItems:"center",
                         gap:9,
@@ -1652,7 +1652,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
                         transition:"background .16s ease, color .16s ease",
                       }}
                     >
-                      <AppIcon name={action.icon} size={15} color={hovered ? tc.gold : tc.grey} />
+                      <AppIcon name={action.icon} size={15} color={hovered ? tc.gold : "var(--rukn-text-muted)"} />
                       <span>{action.label}</span>
                     </button>
                   );

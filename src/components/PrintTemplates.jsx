@@ -7,6 +7,35 @@ import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 
 const trimValue = (value) => (typeof value === "string" ? value.trim() : "");
 const label = (lang, ar, fr, en = fr) => (lang === "fr" ? fr : lang === "en" ? en : ar);
+const cleanDisplay = (value, fallback = "—") => {
+  const text = trimValue(value);
+  return text || fallback;
+};
+const getClientCin = (client = {}) => (
+  trimValue(client.cin)
+  || trimValue(client.CIN)
+  || trimValue(client.nationalId)
+  || trimValue(client.national_id)
+  || trimValue(client.passport?.cin)
+  || trimValue(client.passport?.nationalId)
+);
+const normalizePaymentMethodKind = (value = "") => {
+  const method = String(value).trim().toLowerCase();
+  if (method.includes("شيك") || method.includes("chèque") || method.includes("cheque") || method.includes("check")) return "cheque";
+  if (method.includes("تحويل") || method.includes("virement") || method.includes("transfer")) return "bank";
+  return "cash";
+};
+const paymentExtraDetails = (payment = {}, lang = "ar") => {
+  const details = [];
+  const kind = normalizePaymentMethodKind(payment.method);
+  if (kind === "cheque" && trimValue(payment.chequeNumber)) {
+    details.push(`${label(lang, "رقم الشيك", "N° chèque", "Cheque number")}: ${trimValue(payment.chequeNumber)}`);
+  }
+  if ((kind === "cheque" || kind === "bank") && trimValue(payment.paidBy)) {
+    details.push(`${label(lang, "من طرف", "De la part de", "From / Paid by")}: ${trimValue(payment.paidBy)}`);
+  }
+  return details.join(" — ");
+};
 const toPositiveInt = (value) => {
   const parsed = Number.parseInt(String(value ?? "").replace(/\D+/g, ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -24,16 +53,71 @@ const getInvoiceYear = (payments = []) => {
   }
   return String(new Date().getFullYear());
 };
-const stableHash = (value) => {
-  let hash = 0;
-  const source = String(value || "");
-  for (let index = 0; index < source.length; index += 1) {
-    hash = (hash * 31 + source.charCodeAt(index)) % 10000;
+const INVOICE_REGISTRY_KEY = "rukn_invoice_registry_v1";
+const readInvoiceRegistry = () => {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(INVOICE_REGISTRY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-  return hash;
 };
-const resolveInvoiceDisplayNumber = ({ client, payments = [] }) => {
-  const stored = trimValue(
+const writeInvoiceRegistry = (registry) => {
+  try {
+    window.localStorage.setItem(INVOICE_REGISTRY_KEY, JSON.stringify(registry));
+  } catch {
+    /* Printing should not fail if localStorage is unavailable. */
+  }
+};
+const latestPaymentForInvoice = (payments = []) => (
+  [...payments].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0] || null
+);
+const getInvoiceIssueDate = (payments = []) => {
+  const latest = latestPaymentForInvoice(payments);
+  const rawDate = trimValue(latest?.date) || new Date().toISOString().slice(0, 10);
+  const match = rawDate.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(rawDate);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
+};
+const invoiceRecipientKey = (recipient = {}) => (
+  recipient.type === "company"
+    ? `company:${trimValue(recipient.companyName)}:${trimValue(recipient.ice)}`
+    : "client"
+);
+const buildInvoiceKey = ({ client, payments = [], recipient = {} }) => {
+  const latest = latestPaymentForInvoice(payments);
+  return [
+    "invoice",
+    client?.id || "unknown-client",
+    latest?.id || "no-payment",
+    invoiceRecipientKey(recipient),
+  ].join(":");
+};
+const nextInvoiceSequence = (registry, year) => {
+  const maxSeq = registry
+    .filter((item) => String(item.year) === String(year))
+    .map((item) => toPositiveInt(item.invoiceNumber))
+    .filter((value) => value !== null)
+    .reduce((max, value) => Math.max(max, value), 0);
+  return maxSeq + 1;
+};
+const latestIssuedDateForYear = (registry, year) => (
+  registry
+    .filter((item) => String(item.year) === String(year) && item.status !== "cancelled")
+    .map((item) => trimValue(item.date))
+    .filter(Boolean)
+    .sort()
+    .pop() || ""
+);
+const ensureInvoiceRegistryItem = ({ client, payments = [], recipient = {} }) => {
+  const registry = readInvoiceRegistry();
+  const invoiceKey = buildInvoiceKey({ client, payments, recipient });
+  const existing = registry.find((item) => item.invoiceKey === invoiceKey && item.status !== "cancelled");
+  if (existing?.invoiceNumber) return existing;
+
+  const requestedDate = getInvoiceIssueDate(payments);
+  const storedInvoiceNumber = trimValue(
     client?.invoiceDisplayNumber
     || client?.invoiceNumberDisplay
     || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
@@ -41,17 +125,84 @@ const resolveInvoiceDisplayNumber = ({ client, payments = [] }) => {
     || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
       ?.invoiceNumberDisplay
   );
-  if (stored) return stored;
+  if (storedInvoiceNumber) {
+    const storedYear = storedInvoiceNumber.match(/\/(\d{4})$/)?.[1] || getInvoiceYear([{ date: requestedDate }]);
+    const item = {
+      invoiceKey,
+      invoiceNumber: storedInvoiceNumber,
+      year: storedYear,
+      date: requestedDate,
+      status: "issued",
+      paymentId: latestPaymentForInvoice(payments)?.id || null,
+      clientId: client?.id || null,
+      recipientType: recipient.type || "client",
+      companyName: recipient.companyName || "",
+      ice: recipient.ice || "",
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+    writeInvoiceRegistry([...registry, item]);
+    return item;
+  }
 
-  const year = getInvoiceYear(payments);
-  const receiptSequence = payments
-    .map((payment) => toPositiveInt(payment?.receiptNo))
-    .find((value) => value !== null);
-  if (receiptSequence !== null) return `${padInvoiceSequence(receiptSequence)}/${year}`;
+  const requestedYear = getInvoiceYear([{ date: requestedDate }]);
+  const latestDate = latestIssuedDateForYear(registry, requestedYear);
+  const date = latestDate && requestedDate < latestDate ? latestDate : requestedDate;
+  const year = getInvoiceYear([{ date }]);
+  const reusableCancelled = registry.find((item) => (
+    String(item.year) === String(year)
+    && item.status === "cancelled"
+    && item.date === date
+    && !registry.some((other) => other.status !== "cancelled" && other.invoiceNumber === item.invoiceNumber && String(other.year) === String(year))
+  ));
+  const sequence = reusableCancelled ? toPositiveInt(reusableCancelled.invoiceNumber) : nextInvoiceSequence(registry, year);
+  const invoiceNumber = `${padInvoiceSequence(sequence)}/${year}`;
+  const item = {
+    invoiceKey,
+    invoiceNumber,
+    year,
+    date,
+    status: "issued",
+    paymentId: latestPaymentForInvoice(payments)?.id || null,
+    clientId: client?.id || null,
+    recipientType: recipient.type || "client",
+    companyName: recipient.companyName || "",
+    ice: recipient.ice || "",
+    createdAt: new Date().toISOString(),
+    cancelledAt: null,
+  };
+  writeInvoiceRegistry([...registry, item]);
+  return item;
+};
+export const cancelInvoiceInRegistry = (invoiceNumber, year) => {
+  const registry = readInvoiceRegistry();
+  const next = registry.map((item) => (
+    item.invoiceNumber === invoiceNumber && String(item.year) === String(year) && item.status !== "cancelled"
+      ? { ...item, status: "cancelled", cancelledAt: new Date().toISOString() }
+      : item
+  ));
+  writeInvoiceRegistry(next);
+};
+const requestInvoiceRecipient = (client, lang = "ar") => {
+  const wantsCompany = window.confirm(label(
+    lang,
+    "هل تريد إصدار الفاتورة باسم شركة؟\nاضغط إلغاء لإصدارها باسم المعتمر.",
+    "Émettre la facture au nom d'une société ?\nAnnuler pour l'émettre au nom du client.",
+    "Issue the invoice to a company?\nCancel to issue it to the client."
+  ));
+  if (!wantsCompany) return { type: "client" };
 
-  const fallbackSeed = payments[0]?.id || client?.id || `${client?.name || ""}-${year}`;
-  const fallbackSequence = (stableHash(fallbackSeed) % 9999) + 1;
-  return `${padInvoiceSequence(fallbackSequence)}/${year}`;
+  const companyName = trimValue(window.prompt(label(lang, "اسم الشركة", "Nom de la société", "Company name"), ""));
+  if (!companyName) {
+    window.alert(label(lang, "اسم الشركة مطلوب", "Le nom de la société est obligatoire", "Company name is required"));
+    return null;
+  }
+  const ice = trimValue(window.prompt("ICE", ""));
+  if (!ice) {
+    window.alert(label(lang, "ICE مطلوب لفاتورة الشركة", "ICE est obligatoire pour une facture société", "ICE is required for a company invoice"));
+    return null;
+  }
+  return { type: "company", companyName, ice };
 };
 
 const resolveAgencyIdentity = (agency = {}, t, lang = "ar") => {
@@ -75,6 +226,8 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
   const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
   const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
   const money = (value) => formatCurrency(value, lang);
+  const cin = getClientCin(client);
+  const extraDetails = paymentExtraDetails(payment, lang);
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
@@ -110,8 +263,10 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
   <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${payment.receiptNo}</strong></div>
   <table>
     <tr><td>${label(lang, "المعتمر", "Client", "Client")}</td><td>${clientName}${client.nameLatin && client.nameLatin !== clientName ? " — "+client.nameLatin : ""}</td></tr>
+    <tr><td>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</td><td>${cleanDisplay(cin, "")}</td></tr>
     <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${program?.name || "—"}</td></tr>
     <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${translatePaymentMethod(payment.method, lang)}</td></tr>
+    ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${extraDetails}</td></tr>` : ""}
     <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${payment.date}</td></tr>
     ${payment.note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${payment.note}</td></tr>` : ""}
     <tr class="amount-row">
@@ -207,16 +362,21 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
 export function printInvoice({ client, program, payments, agency, lang = "ar" }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
+  const recipient = requestInvoiceRecipient(client, lang);
+  if (!recipient) return;
   const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
   const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
   const money = (value) => formatCurrency(value, lang);
   const totalPaid = payments.reduce((s,p) => s+p.amount, 0);
   const salePrice = client.salePrice || client.price || 0;
   const remaining = Math.max(0, salePrice - totalPaid);
-  const discount  = Math.max(0, (client.officialPrice||salePrice) - salePrice);
-  const invoiceNo = resolveInvoiceDisplayNumber({ client, payments });
-  const invoiceDate = payments.find((payment) => trimValue(payment?.date))?.date
-    || new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA");
+  const cin = getClientCin(client);
+  const passportNo = trimValue(client.passport?.number);
+  const carrier = trimValue(program?.carrier || program?.company || program?.compagnie || program?.airline || program?.transport);
+  const invoiceItem = ensureInvoiceRegistryItem({ client, payments, recipient });
+  const invoiceNo = invoiceItem.invoiceNumber;
+  const invoiceDate = invoiceItem.date;
+  const issuedToCompany = recipient.type === "company";
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
@@ -225,9 +385,10 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .page { width:190mm; margin:0 auto; padding:34mm 15mm 14mm; }
-  .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
-  .invoice-title { font-size:24px; font-weight:900; color:#d4af37; text-align:${isAr?"left":"right"}; }
+  .page { width:190mm; min-height:277mm; margin:0 auto; padding:38mm 15mm 24mm; }
+  .header { display:flex; justify-content:${isAr?"flex-start":"flex-end"}; align-items:flex-start; margin-bottom:16px; }
+  .invoice-head { text-align:${isAr?"right":"left"}; direction:${isAr?"rtl":"ltr"}; min-width:180px; }
+  .invoice-title { font-size:24px; font-weight:900; color:#d4af37; text-align:${isAr?"right":"left"}; }
   .invoice-no { font-size:12px; color:#666; margin-top:4px; }
   .divider { border:none; border-top:2px solid #1a6b3a; margin:12px 0; }
   .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
@@ -242,15 +403,15 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
   .total-row { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; }
   .total-final { font-size:15px; font-weight:900; color:#1a6b3a; border-top:2px solid #1a6b3a; padding-top:6px; margin-top:4px; }
   .remaining { color:${remaining>0?"#e65100":"#1a6b3a"}; font-weight:700; }
-  .stamp { margin-top:28px; display:flex; justify-content:space-between; }
+  .stamp { margin-top:36px; margin-bottom:22mm; display:flex; justify-content:space-between; gap:24px; }
+  .stamp-box { border:1px dashed #bbb; width:150px; height:86px; margin-bottom:7px; }
   @media print { @page { size:A4; margin:0; } }
 </style>
 </head>
 <body>
 <div class="page">
   <div class="header">
-    <div></div>
-    <div style="text-align:${isAr?"left":"right"}">
+    <div class="invoice-head">
       <div class="invoice-title">${label(lang, "فاتورة", "FACTURE", "INVOICE")}</div>
       <div class="invoice-no">${label(lang, "فاتورة رقم", "Facture N°", "Invoice No.")} ${invoiceNo}</div>
       <div class="invoice-no">${label(lang, "التاريخ", "Date", "Date")}: ${invoiceDate}</div>
@@ -259,20 +420,27 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
   <hr class="divider"/>
   <div class="info-grid">
     <div class="info-box">
-      <h3>${label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}</h3>
-      <p>${clientName}</p>
+      <h3>${issuedToCompany ? label(lang, "الفاتورة باسم", "Facturée à", "Issued to") : label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}</h3>
+      ${issuedToCompany ? `
+        <p>${label(lang, "اسم الشركة", "Nom de la société", "Company name")}: ${cleanDisplay(recipient.companyName, "")}</p>
+        <p>ICE: ${cleanDisplay(recipient.ice, "")}</p>
+        <p>${label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}: ${clientName}</p>
+      ` : `
+        <p>${label(lang, "الاسم الكامل", "Nom complet", "Full name")}: ${clientName}</p>
+      `}
       ${latinName ? `<p>${latinName}</p>` : ""}
-      <p>${client.phone}</p>
-      <p>${client.city || ""}</p>
-      ${client.passport?.number ? `<p>${label(lang, "جواز السفر", "Passeport", "Passport")}: ${client.passport.number}</p>` : ""}
+      <p>${label(lang, "رقم الهاتف", "Téléphone", "Phone")}: ${cleanDisplay(client.phone, "")}</p>
+      <p>${label(lang, "رقم البطاقة الوطنية CIN", "N° CIN", "National ID / CIN")}: ${cleanDisplay(cin, "")}</p>
+      <p>${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${cleanDisplay(passportNo, "")}</p>
     </div>
     <div class="info-box">
       <h3>${label(lang, "تفاصيل البرنامج", "Détails programme", "Program Details")}</h3>
-      <p>${program?.name || "—"}</p>
+      <p>${label(lang, "البرنامج", "Programme", "Program")}: ${program?.name || "—"}</p>
       <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${program?.departure || "—"}</p>
       <p>${label(lang, "العودة", "Retour", "Return")}: ${program?.returnDate || "—"}</p>
-      <p>${label(lang, "فندق مكة", "Hôtel Mecque", "Makkah Hotel")}: ${client.hotelMecca || "—"}</p>
-      <p>${label(lang, "الغرفة", "Chambre", "Room")}: ${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</p>
+      <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(client.packageLevel || client.hotelLevel, "")}</p>
+      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</p>
+      <p>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}: ${cleanDisplay(carrier, "")}</p>
     </div>
   </div>
   <table>
@@ -283,8 +451,7 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
       </tr>
     </thead>
     <tbody>
-      <tr><td>${label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package")} — ${program?.name || ""}</td><td>${money(client.officialPrice || salePrice)}</td></tr>
-      ${discount > 0 ? `<tr><td style="color:#e65100">${label(lang, "خصم ممنوح", "Remise accordée", "Discount")}</td><td style="color:#e65100">- ${money(discount)}</td></tr>` : ""}
+      <tr><td>${label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package")} — ${program?.name || ""}</td><td>${money(salePrice)}</td></tr>
     </tbody>
   </table>
   <div class="totals">
@@ -306,13 +473,16 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
         <th>${label(lang, "المبلغ", "Montant", "Amount")}</th>
       </tr></thead>
       <tbody>
-        ${payments.map(p=>`<tr><td>${p.receiptNo}</td><td>${p.date}</td><td>${translatePaymentMethod(p.method, lang)}</td><td>${money(p.amount)}</td></tr>`).join("")}
+        ${payments.map(p=>{
+          const extra = paymentExtraDetails(p, lang);
+          return `<tr><td>${p.receiptNo || ""}</td><td>${p.date || ""}</td><td>${translatePaymentMethod(p.method, lang)}${extra ? `<br/><span style="font-size:10px;color:#666">${extra}</span>` : ""}</td><td>${money(p.amount)}</td></tr>`;
+        }).join("")}
       </tbody>
     </table>
   </div>` : ""}
   <div class="stamp">
-    <div style="text-align:center;font-size:11px"><div style="border:1px dashed #ccc;width:120px;height:60px;margin-bottom:4px"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
-    <div style="text-align:center;font-size:11px"><div style="border:1px dashed #ccc;width:120px;height:60px;margin-bottom:4px"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
+    <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
+    <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>

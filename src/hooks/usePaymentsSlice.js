@@ -21,6 +21,8 @@ export function usePaymentsSlice() {
       method: row.method,
       receiptNo: row.receipt_no,
       note: row.note,
+      chequeNumber: row.cheque_number || "",
+      paidBy: row.paid_by || "",
     };
     setPayments((prev) => {
       const exists = prev.find((p) => p.id === mapped.id);

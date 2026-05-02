@@ -319,6 +319,10 @@ function PaymentRow({ payment, onPrint, onDelete }) {
   const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","بطاقة بنكية":"payment","وقفة بنك":"bank"};
+  const extraDetails = [
+    payment.chequeNumber ? `${t.chequeNumber || "رقم الشيك"}: ${payment.chequeNumber}` : "",
+    payment.paidBy ? `${t.paidBy || "من طرف"}: ${payment.paidBy}` : "",
+  ].filter(Boolean).join(" • ");
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
@@ -334,6 +338,7 @@ function PaymentRow({ payment, onPrint, onDelete }) {
           <p style={{ fontSize:11, color:theme.colors.grey }}>
             {translatePaymentMethod(payment.method, lang)} • {payment.date} • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong>
           </p>
+          {extraDetails && <p style={{ fontSize:11, color:theme.colors.grey }}>{extraDetails}</p>}
           {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>{payment.note}</p>}
         </div>
       </div>
