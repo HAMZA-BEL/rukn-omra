@@ -7,6 +7,53 @@ import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 
 const trimValue = (value) => (typeof value === "string" ? value.trim() : "");
 const label = (lang, ar, fr, en = fr) => (lang === "fr" ? fr : lang === "en" ? en : ar);
+const toPositiveInt = (value) => {
+  const parsed = Number.parseInt(String(value ?? "").replace(/\D+/g, ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+const padInvoiceSequence = (value) => String(Math.max(1, Number(value) || 1)).padStart(4, "0");
+const getInvoiceYear = (payments = []) => {
+  const dated = [...payments]
+    .map((payment) => trimValue(payment?.date))
+    .find(Boolean);
+  if (dated) {
+    const match = dated.match(/^(\d{4})/);
+    if (match) return match[1];
+    const parsed = new Date(dated);
+    if (!Number.isNaN(parsed.getTime())) return String(parsed.getFullYear());
+  }
+  return String(new Date().getFullYear());
+};
+const stableHash = (value) => {
+  let hash = 0;
+  const source = String(value || "");
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) % 10000;
+  }
+  return hash;
+};
+const resolveInvoiceDisplayNumber = ({ client, payments = [] }) => {
+  const stored = trimValue(
+    client?.invoiceDisplayNumber
+    || client?.invoiceNumberDisplay
+    || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
+      ?.invoiceDisplayNumber
+    || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
+      ?.invoiceNumberDisplay
+  );
+  if (stored) return stored;
+
+  const year = getInvoiceYear(payments);
+  const receiptSequence = payments
+    .map((payment) => toPositiveInt(payment?.receiptNo))
+    .find((value) => value !== null);
+  if (receiptSequence !== null) return `${padInvoiceSequence(receiptSequence)}/${year}`;
+
+  const fallbackSeed = payments[0]?.id || client?.id || `${client?.name || ""}-${year}`;
+  const fallbackSequence = (stableHash(fallbackSeed) % 9999) + 1;
+  return `${padInvoiceSequence(fallbackSequence)}/${year}`;
+};
+
 const resolveAgencyIdentity = (agency = {}, t, lang = "ar") => {
   const nameAr = trimValue(agency.nameAr);
   const nameFr = trimValue(agency.nameFr);
@@ -160,10 +207,6 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
 export function printInvoice({ client, program, payments, agency, lang = "ar" }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
-  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
-  const headerPhones = [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join(" / ");
-  const footerPhones = [agency?.phoneTiznit1, agency?.phoneAgadir1].filter(Boolean).join(" / ");
-  const footerName = secondary && secondary !== primary ? `${secondary} | ${primary}` : primary;
   const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
   const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
   const money = (value) => formatCurrency(value, lang);
@@ -171,7 +214,9 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
   const salePrice = client.salePrice || client.price || 0;
   const remaining = Math.max(0, salePrice - totalPaid);
   const discount  = Math.max(0, (client.officialPrice||salePrice) - salePrice);
-  const invoiceNo = `INV-${client.id}-${new Date().getFullYear()}`;
+  const invoiceNo = resolveInvoiceDisplayNumber({ client, payments });
+  const invoiceDate = payments.find((payment) => trimValue(payment?.date))?.date
+    || new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA");
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
@@ -180,12 +225,10 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .page { width:190mm; margin:0 auto; padding:15mm; }
+  .page { width:190mm; margin:0 auto; padding:34mm 15mm 14mm; }
   .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
-  .logo { font-size:20px; font-weight:900; color:#1a6b3a; }
-  .logo-sub { font-size:11px; color:#666; margin-top:3px; }
   .invoice-title { font-size:24px; font-weight:900; color:#d4af37; text-align:${isAr?"left":"right"}; }
-  .invoice-no { font-size:12px; color:#888; }
+  .invoice-no { font-size:12px; color:#666; margin-top:4px; }
   .divider { border:none; border-top:2px solid #1a6b3a; margin:12px 0; }
   .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
   .info-box { background:#f9f9f9; border:1px solid #eee; border-radius:6px; padding:10px; }
@@ -199,25 +242,18 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
   .total-row { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; }
   .total-final { font-size:15px; font-weight:900; color:#1a6b3a; border-top:2px solid #1a6b3a; padding-top:6px; margin-top:4px; }
   .remaining { color:${remaining>0?"#e65100":"#1a6b3a"}; font-weight:700; }
-  .footer { margin-top:20px; text-align:center; font-size:10px; color:#aaa; border-top:1px solid #eee; padding-top:8px; }
-  .stamp { margin-top:24px; display:flex; justify-content:space-between; }
-  @media print { @page { size:A4; margin:10mm; } }
+  .stamp { margin-top:28px; display:flex; justify-content:space-between; }
+  @media print { @page { size:A4; margin:0; } }
 </style>
 </head>
 <body>
 <div class="page">
   <div class="header">
-    <div>
-      <div class="logo">${primary}</div>
-      <div class="logo-sub">${secondary && secondary !== primary ? secondary : ""}</div>
-      <div class="logo-sub">${agency.addressTiznit || ""}</div>
-      <div class="logo-sub">${headerPhones ? `${label(lang, "هاتف", "Tél", "Phone")}: ${headerPhones}` : ""}</div>
-      ${agency.ice ? `<div class="logo-sub">ICE: ${agency.ice}</div>` : ""}
-    </div>
+    <div></div>
     <div style="text-align:${isAr?"left":"right"}">
       <div class="invoice-title">${label(lang, "فاتورة", "FACTURE", "INVOICE")}</div>
-      <div class="invoice-no">${label(lang, "رقم", "N°", "No.")}: ${invoiceNo}</div>
-      <div class="invoice-no">${label(lang, "التاريخ", "Date", "Date")}: ${new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA")}</div>
+      <div class="invoice-no">${label(lang, "فاتورة رقم", "Facture N°", "Invoice No.")} ${invoiceNo}</div>
+      <div class="invoice-no">${label(lang, "التاريخ", "Date", "Date")}: ${invoiceDate}</div>
     </div>
   </div>
   <hr class="divider"/>
@@ -277,9 +313,6 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
   <div class="stamp">
     <div style="text-align:center;font-size:11px"><div style="border:1px dashed #ccc;width:120px;height:60px;margin-bottom:4px"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
     <div style="text-align:center;font-size:11px"><div style="border:1px dashed #ccc;width:120px;height:60px;margin-bottom:4px"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
-  </div>
-  <div class="footer">
-    ${footerName}${footerPhones ? ` — ${footerPhones}` : ""}${slogan ? ` — ${slogan}` : ""}${agency.ice ? ` — ICE: ${agency.ice}` : ""}
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>

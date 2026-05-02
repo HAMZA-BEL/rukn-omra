@@ -1515,7 +1515,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
         const cin = pickFirstText(client, [
           "cin", "CIN", "cinNumber", "cin_number", "nationalId", "national_id",
           "identityNumber", "identity_number", "idCardNumber", "id_card_number",
-        ]) || pickFirstText(client.passport || {}, ["cin", "CIN", "nationalId", "national_id"]);
+        ]);
         const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(program, ["hotelMadina", "hotel_madina"]);
         const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(program, ["hotelMecca", "hotel_mecca"]);
         const stayDates = calculateHotelStayDates({
@@ -5929,6 +5929,13 @@ function InnerClientRow({
     }
   }, [selectMode, menuOpen]);
 
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnScroll = () => setMenuOpen(false);
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => window.removeEventListener("scroll", closeOnScroll, true);
+  }, [menuOpen]);
+
   return (
     <div
       className="animate-fadeInUp"
@@ -6043,9 +6050,9 @@ function InnerClientRow({
                 width: 32,
                 height: 32,
                 borderRadius: 8,
-                background: menuOpen ? "rgba(212,175,55,.18)" : "rgba(255,255,255,.06)",
+                background: menuOpen ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
                 border: `1px solid ${
-                  menuOpen ? "rgba(212,175,55,.4)" : "rgba(255,255,255,.12)"
+                  menuOpen ? "var(--rukn-border-hover)" : "var(--rukn-border-soft)"
                 }`,
                 color: menuOpen ? tc.gold : tc.grey,
                 cursor: "pointer",
@@ -6070,10 +6077,10 @@ function InnerClientRow({
                     left: menuPos.left,
                     visibility: menuPos.visibility,
                     zIndex: 9999,
-                    background: "rgba(20,30,50,0.96)",
-                    border: "1px solid rgba(212,175,55,.3)",
+                    background: "var(--rukn-menu-bg, rgba(20,30,50,0.96))",
+                    border: "1px solid var(--rukn-menu-border, rgba(212,175,55,.3))",
                     borderRadius: 12,
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.35)",
+                    boxShadow: "var(--rukn-menu-shadow, 0 10px 25px rgba(0,0,0,0.35))",
                     minWidth: 150,
                     overflow: "hidden",
                   }}
@@ -6086,8 +6093,8 @@ function InnerClientRow({
                       setMenuOpen(false);
                       onEdit();
                     }}
-                    color={tc.white}
-                    hoverBg="rgba(212,175,55,.1)"
+                    color="var(--rukn-text-strong)"
+                    hoverBg="var(--rukn-gold-dim)"
                     isRTL={isRTL}
                     border
                   />
@@ -6100,8 +6107,8 @@ function InnerClientRow({
                         setMenuOpen(false);
                         onTransfer();
                       }}
-                      color={tc.gold}
-                      hoverBg="rgba(212,175,55,.15)"
+                      color="var(--rukn-text-strong)"
+                      hoverBg="var(--rukn-gold-dim)"
                       isRTL={isRTL}
                       border
                     />
@@ -6114,8 +6121,8 @@ function InnerClientRow({
                       setMenuOpen(false);
                       onDelete();
                     }}
-                    color={tc.danger}
-                    hoverBg="rgba(239,68,68,.12)"
+                    color="var(--rukn-danger)"
+                    hoverBg="var(--rukn-danger-dim)"
                     isRTL={isRTL}
                   />
                 </div>,
@@ -6142,7 +6149,7 @@ function InnerMenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
         width:"100%", padding:"11px 16px",
         background: hov ? hoverBg : "transparent",
         border:"none",
-        borderBottom: border ? "1px solid rgba(255,255,255,.06)" : "none",
+        borderBottom: border ? "1px solid var(--rukn-menu-divider, rgba(255,255,255,.06))" : "none",
         color, fontSize:13, fontWeight:600,
         cursor:"pointer", fontFamily:"'Cairo',sans-serif",
         textAlign: isRTL ? "right" : "left",
