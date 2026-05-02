@@ -75,6 +75,7 @@ export const globalCSS = `
     --rukn-menu-divider: rgba(255,255,255,.06);
     --rukn-menu-shadow: 0 10px 25px rgba(0,0,0,0.35);
   }
+  html:not([data-theme]),
   html[data-theme="light"] {
     color-scheme: light;
     --rukn-bg: #f7f3ea;

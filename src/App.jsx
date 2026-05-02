@@ -29,6 +29,22 @@ function getInitialPage() {
   return VALID_PAGES.includes(hash) ? hash : "dashboard";
 }
 
+function getInitialThemeMode() {
+  let resolvedTheme = "light";
+  try {
+    const saved = localStorage.getItem("rukn-theme");
+    if (saved === "light" || saved === "dark") {
+      resolvedTheme = saved;
+    }
+  } catch {}
+
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.theme = resolvedTheme;
+  }
+
+  return resolvedTheme;
+}
+
 function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
@@ -39,14 +55,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [previewNotification, setPreviewNotification] = React.useState(null);
-  const [themeMode, setThemeMode] = React.useState(() => {
-    try {
-      const saved = localStorage.getItem("rukn-theme");
-      return saved === "light" || saved === "dark" ? saved : "dark";
-    } catch {
-      return "dark";
-    }
-  });
+  const [themeMode, setThemeMode] = React.useState(getInitialThemeMode);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
