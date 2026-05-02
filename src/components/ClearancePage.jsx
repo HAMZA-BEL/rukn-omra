@@ -3,7 +3,7 @@ import { StatusBadge, GlassCard, SearchBar, Button } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
-import { printInvoice } from "./PrintTemplates";
+import { printInvoice, printProformaInvoice, InvoiceRecipientModal } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
@@ -248,8 +248,15 @@ export default function ClearancePage({ store }) {
   });
   const [pageSize, setPageSize] = React.useState(10);
   const [currentPage, setCurrentPage] = React.useState(1);
+  const [invoiceClient, setInvoiceClient] = React.useState(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
-  const invoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة فاتورة");
+  const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
+  const proformaInvoiceLabel = lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية";
+  const invoiceColumnLabel = lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة";
+  const getInvoiceActionLabel = React.useCallback(
+    (client) => (client?.remaining <= 0 ? finalInvoiceLabel : proformaInvoiceLabel),
+    [finalInvoiceLabel, proformaInvoiceLabel]
+  );
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
 
@@ -353,16 +360,23 @@ export default function ClearancePage({ store }) {
 
   const handlePrintInvoice = React.useCallback((client) => {
     if (!client) return;
-    const program = client.prog || programs.find(p => p.id === client.programId);
-    const clientPayments = client.clientPayments || payments.filter(p => p.clientId === client.id);
-    printInvoice({
-      client,
+    setInvoiceClient(client);
+  }, []);
+
+  const handlePrintSelectedInvoice = React.useCallback((recipient) => {
+    if (!invoiceClient) return false;
+    const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
+    const clientPayments = invoiceClient.clientPayments || payments.filter(p => p.clientId === invoiceClient.id);
+    const printFn = invoiceClient.remaining <= 0 ? printInvoice : printProformaInvoice;
+    return printFn({
+      client: invoiceClient,
       program,
       payments: clientPayments,
       agency,
       lang,
+      recipient,
     });
-  }, [agency, lang, payments, programs]);
+  }, [agency, invoiceClient, lang, payments, programs]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
@@ -625,7 +639,7 @@ export default function ClearancePage({ store }) {
           fontSize:11, fontWeight:700, color:t.grey,
           width:"100%",
           boxSizing:"border-box" }}>
-          {[t.fileId, t.name, t.program, t.salePrice, t.paid, t.remaining, t.status, t.lastReceipt, invoiceLabel].map(h => (
+          {[t.fileId, t.name, t.program, t.salePrice, t.paid, t.remaining, t.status, t.lastReceipt, invoiceColumnLabel].map(h => (
             <span key={h} style={TEXT_CLAMP_STYLE}>{h}</span>
           ))}
         </div>
@@ -637,7 +651,7 @@ export default function ClearancePage({ store }) {
               client={c}
               index={(currentPage - 1) * pageSize + i}
               gridTemplate={tableColumns}
-              invoiceLabel={invoiceLabel}
+              invoiceLabel={getInvoiceActionLabel(c)}
               onPrintInvoice={handlePrintInvoice}
               money={money}
             />
@@ -722,7 +736,7 @@ export default function ClearancePage({ store }) {
             key={`card-${client.id}`}
             client={client}
             index={(currentPage - 1) * pageSize + index}
-            invoiceLabel={invoiceLabel}
+            invoiceLabel={getInvoiceActionLabel(client)}
             onPrintInvoice={handlePrintInvoice}
             t={t}
             lang={lang}
@@ -763,6 +777,14 @@ export default function ClearancePage({ store }) {
           </div>
         )}
       </div>
+
+      <InvoiceRecipientModal
+        open={Boolean(invoiceClient)}
+        onClose={() => setInvoiceClient(null)}
+        lang={lang}
+        documentType={invoiceClient?.remaining <= 0 ? "invoice" : "proforma"}
+        onPrint={handlePrintSelectedInvoice}
+      />
     </div>
   );
 }

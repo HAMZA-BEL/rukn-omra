@@ -3,7 +3,7 @@ import { StatusBadge, Button, GlassCard, Divider } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
-import { printReceipt, printClientCard, printInvoice } from "./PrintTemplates";
+import { printReceipt, printClientCard, printInvoice, printProformaInvoice, InvoiceRecipientModal } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
@@ -11,12 +11,20 @@ import { formatCurrency } from "../utils/currency";
 import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 
 const tc = theme.colors;
+const printActionButtonStyle = {
+  minWidth: 168,
+  minHeight: 36,
+  justifyContent: "center",
+  whiteSpace: "nowrap",
+  textAlign: "center",
+};
 
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          deletePayment, agency } = store;
+          deletePayment, agency, clients = [] } = store;
   const [showPayForm, setShowPayForm] = React.useState(false);
+  const [invoiceModalOpen, setInvoiceModalOpen] = React.useState(false);
 
   const program     = getProgramById(client.programId);
   const payments    = getClientPayments(client.id);
@@ -24,6 +32,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const salePrice   = client.salePrice   || client.price || 0;
   const offPrice    = client.officialPrice || salePrice;
   const remaining   = Math.max(0, salePrice - totalPaid);
+  const isPaidInFull = remaining <= 0;
+  const invoiceActionLabel = isPaidInFull
+    ? t.printInvoice
+    : (lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية");
   const discount    = Math.max(0, offPrice - salePrice);
   const status      = getClientStatus(client);
   const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
@@ -34,6 +46,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
+  const programClients = React.useMemo(
+    () => clients.filter((item) => item.programId === client.programId),
+    [clients, client.programId]
+  );
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
   const template = React.useCallback((text, vars = {}) => {
     return Object.entries(vars).reduce(
@@ -101,19 +117,34 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         {payments.map && payments.length > 0 && lastPmt && (
           <Button variant="secondary" size="sm" icon="print"
+            style={printActionButtonStyle}
             onClick={() => printReceipt({ payment:lastPmt, client, program, agency, lang })}>
             {t.printReceipt}
           </Button>
         )}
         <Button variant="secondary" size="sm" icon="passport"
-          onClick={() => printClientCard({ client, program, agency, lang })}>
+          style={printActionButtonStyle}
+          onClick={() => printClientCard({ client, program, agency, lang, programClients })}>
           {t.printCard}
         </Button>
         <Button variant="secondary" size="sm" icon="file"
-          onClick={() => printInvoice({ client, program, payments, agency, lang })}>
-          {t.printInvoice}
+          style={printActionButtonStyle}
+          onClick={() => setInvoiceModalOpen(true)}>
+          {invoiceActionLabel}
         </Button>
       </div>
+
+      <InvoiceRecipientModal
+        open={invoiceModalOpen}
+        onClose={() => setInvoiceModalOpen(false)}
+        lang={lang}
+        documentType={isPaidInFull ? "invoice" : "proforma"}
+        onPrint={(recipient) => (
+          isPaidInFull
+            ? printInvoice({ client, program, payments, agency, lang, recipient })
+            : printProformaInvoice({ client, program, payments, agency, lang, recipient })
+        )}
+      />
 
       {/* Program */}
       {program && (

@@ -339,6 +339,21 @@ export const globalCSS = `
     background: linear-gradient(135deg, rgba(212,175,55,0.35), rgba(13,31,60,0.85));
     color: #f0d060;
   }
+  html[data-theme="light"] .lang-switcher-btn {
+    border: 1px solid rgba(148,163,184,.24);
+    background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(241,245,249,.96));
+    color: #334155;
+    box-shadow: inset 0 1px 3px rgba(255,255,255,.85), 0 8px 18px rgba(15,23,42,.08);
+  }
+  html[data-theme="light"] .lang-switcher-btn:hover {
+    box-shadow: inset 0 1px 3px rgba(255,255,255,.9), 0 12px 24px rgba(15,23,42,.12);
+  }
+  html[data-theme="light"] .lang-switcher-btn.is-active {
+    border: 1px solid rgba(212,175,55,.55);
+    background: linear-gradient(135deg, rgba(255,248,220,.98), rgba(253,244,195,.94));
+    color: #8b6a11;
+    box-shadow: inset 0 1px 4px rgba(255,255,255,.9), 0 10px 22px rgba(212,175,55,.16);
+  }
   .header-actions {
     display: flex;
     align-items: center;
@@ -1002,8 +1017,10 @@ export const globalCSS = `
   }
   .invoice-btn {
     width: 100%;
+    max-width: 100%;
     min-width: 0;
-    padding: 6px 12px;
+    min-height: 34px;
+    padding: 7px 12px;
     border-radius: 10px;
     border: 1px solid rgba(212,175,55,0.35);
     background: rgba(212,175,55,0.12);
@@ -1011,7 +1028,12 @@ export const globalCSS = `
     font-size: 11px;
     font-weight: 700;
     text-align: center;
-    white-space: nowrap;
+    white-space: normal;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
     transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
   }
   .invoice-btn:hover,
@@ -1200,7 +1222,7 @@ export const globalCSS = `
       line-height: 1.35 !important;
     }
     .clearance-page { padding-top: 0 !important; }
-    .invoice-btn { font-size: 10px; padding: 5px 10px; }
+    .invoice-btn { font-size: 10px; min-width: 0; min-height: 32px; padding: 6px 10px; }
     .filters-chips {
       flex-wrap: nowrap;
       overflow-x: auto;
@@ -1255,7 +1277,7 @@ export const globalCSS = `
     }
     .lang-switcher-btn { width: 36px; height: 36px; }
     .clearance-page { padding-top: 0 !important; }
-    .invoice-btn { font-size: 10px; padding: 5px 8px; }
+    .invoice-btn { font-size: 10px; min-width: 0; min-height: 32px; padding: 6px 8px; }
     .clear-card-grid { grid-template-columns: minmax(0, 1fr); }
     .mobile-nav { width: 210px; height: 220px; }
     .mobile-nav-bubble { width: 38px; height: 38px; }

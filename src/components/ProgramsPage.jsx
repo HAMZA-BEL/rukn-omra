@@ -1298,6 +1298,8 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
+  const packageFilterRef = React.useRef(null);
+  const statusFilterRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
 
   const progClients = React.useMemo(() =>
@@ -1342,6 +1344,29 @@ function ProgramInner({ program, store, onToast, onBack }) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [headerActionsOpen]);
+
+  React.useEffect(() => {
+    if (!packageFilterOpen && !statusFilterOpen) return undefined;
+    const handleOutside = (event) => {
+      if (packageFilterOpen && packageFilterRef.current && !packageFilterRef.current.contains(event.target)) {
+        setPackageFilterOpen(false);
+      }
+      if (statusFilterOpen && statusFilterRef.current && !statusFilterRef.current.contains(event.target)) {
+        setStatusFilterOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      setPackageFilterOpen(false);
+      setStatusFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [packageFilterOpen, statusFilterOpen]);
 
   const toggleCheck = React.useCallback((id) => {
     setCheckedIds(prev => {
@@ -1464,6 +1489,42 @@ function ProgramInner({ program, store, onToast, onBack }) {
     : packages.find(pkg => pkg.level === packageFilter) || null;
   const activePackageChip = packageChips.find(chip => chip.key === packageFilter) || packageChips[0];
   const searchExpanded = searchOpen || search.trim().length > 0;
+  const filterMenuBaseStyle = {
+    position:"absolute",
+    top:"calc(100% + 6px)",
+    zIndex:20,
+    background:"var(--rukn-menu-bg)",
+    border:"1px solid var(--rukn-menu-border)",
+    borderRadius:12,
+    boxShadow:"var(--rukn-menu-shadow)",
+    padding:6,
+  };
+  const filterMenuItemStyle = (active) => ({
+    width:"100%",
+    display:"flex",
+    justifyContent:"space-between",
+    alignItems:"center",
+    gap:10,
+    border:0,
+    borderRadius:9,
+    padding:"8px 9px",
+    background:active ? "var(--rukn-gold-dim)" : "transparent",
+    color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
+    fontSize:12,
+    fontWeight:active ? 800 : 600,
+    cursor:"pointer",
+    fontFamily:"'Cairo',sans-serif",
+    textAlign:"start",
+  });
+  const filterMenuCountStyle = (active) => ({
+    minWidth:20,
+    textAlign:"center",
+    borderRadius:999,
+    padding:"0 6px",
+    background:active ? "rgba(212,175,55,.14)" : "var(--rukn-bg-soft)",
+    color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+    fontSize:10,
+  });
   const tableGridTemplate = selectMode
     ? "38px 46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)"
     : "46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)";
@@ -1762,7 +1823,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
               padding:"4px 10px",
               fontWeight:800,
             }}>{packages.length} {t.levels || "مستويات"}</span>
-            <div style={{ position:"relative" }}>
+            <div ref={packageFilterRef} style={{ position:"relative" }}>
               <button type="button" onClick={() => setPackageFilterOpen(open => !open)}
                 style={{
                   minWidth:150,
@@ -1798,48 +1859,17 @@ function ProgramInner({ program, store, onToast, onBack }) {
               </button>
               {packageFilterOpen && (
                 <div style={{
-                  position:"absolute",
+                  ...filterMenuBaseStyle,
                   insetInlineEnd:0,
-                  top:"calc(100% + 6px)",
                   width:190,
-                  zIndex:20,
-                  background:"#111827",
-                  border:"1px solid rgba(212,175,55,.2)",
-                  borderRadius:12,
-                  boxShadow:"0 18px 40px rgba(0,0,0,.35)",
-                  padding:6,
                 }}>
                   {packageChips.map(chip => (
                     <button key={chip.key} type="button" onClick={() => {
                       setPackageFilter(chip.key);
                       setPackageFilterOpen(false);
-                    }} style={{
-                      width:"100%",
-                      display:"flex",
-                      justifyContent:"space-between",
-                      alignItems:"center",
-                      gap:10,
-                      border:0,
-                      borderRadius:9,
-                      padding:"8px 9px",
-                      background:packageFilter === chip.key ? "rgba(212,175,55,.14)" : "transparent",
-                      color:packageFilter === chip.key ? tc.gold : "#d1d5db",
-                      fontSize:12,
-                      fontWeight:packageFilter === chip.key ? 800 : 600,
-                      cursor:"pointer",
-                      fontFamily:"'Cairo',sans-serif",
-                      textAlign:"start",
-                    }}>
+                    }} style={filterMenuItemStyle(packageFilter === chip.key)}>
                       <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{chip.label}</span>
-                      <span style={{
-                        minWidth:20,
-                        textAlign:"center",
-                        borderRadius:999,
-                        padding:"0 6px",
-                        background:"rgba(255,255,255,.06)",
-                        color:packageFilter === chip.key ? tc.gold : tc.grey,
-                        fontSize:10,
-                      }}>{chip.count}</span>
+                      <span style={filterMenuCountStyle(packageFilter === chip.key)}>{chip.count}</span>
                     </button>
                   ))}
                 </div>
@@ -1906,7 +1936,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
         marginBottom: selectMode ? 8 : 16,
       }}>
         <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <div style={{ position:"relative" }}>
+          <div ref={statusFilterRef} style={{ position:"relative" }}>
             <button type="button" onClick={() => setStatusFilterOpen(open => !open)} style={{
               minWidth:138,
               display:"inline-flex",
@@ -1942,47 +1972,17 @@ function ProgramInner({ program, store, onToast, onBack }) {
             </button>
             {statusFilterOpen && (
               <div style={{
-                position:"absolute",
+                ...filterMenuBaseStyle,
                 insetInlineStart:0,
-                top:"calc(100% + 6px)",
                 width:180,
-                zIndex:20,
-                background:"#111827",
-                border:"1px solid rgba(212,175,55,.18)",
-                borderRadius:12,
-                boxShadow:"0 18px 40px rgba(0,0,0,.35)",
-                padding:6,
               }}>
                 {filters.map(f=>(
                   <button key={f.key} type="button" onClick={() => {
                     setFilter(f.key);
                     setStatusFilterOpen(false);
-                  }} style={{
-                    width:"100%",
-                    display:"flex",
-                    justifyContent:"space-between",
-                    alignItems:"center",
-                    gap:10,
-                    border:0,
-                    borderRadius:9,
-                    padding:"8px 9px",
-                    background:filter === f.key ? "rgba(212,175,55,.14)" : "transparent",
-                    color:filter === f.key ? tc.gold : "#d1d5db",
-                    fontSize:12,
-                    fontWeight:filter === f.key ? 800 : 600,
-                    cursor:"pointer",
-                    fontFamily:"'Cairo',sans-serif",
-                  }}>
+                  }} style={filterMenuItemStyle(filter === f.key)}>
                     <span>{f.label}</span>
-                    <span style={{
-                      minWidth:20,
-                      textAlign:"center",
-                      borderRadius:999,
-                      padding:"0 6px",
-                      background:"rgba(255,255,255,.06)",
-                      color:filter === f.key ? tc.gold : tc.grey,
-                      fontSize:10,
-                    }}>{f.count}</span>
+                    <span style={filterMenuCountStyle(filter === f.key)}>{f.count}</span>
                   </button>
                 ))}
               </div>

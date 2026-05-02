@@ -1,9 +1,13 @@
 // Print templates — called via window.print() after rendering into a hidden div
 import React from "react";
+import { Modal, Button, Input } from "./UI";
 import { TRANSLATIONS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
+import { buildInvoiceData, validateInvoiceRecipient } from "../utils/invoices";
+
+export { cancelInvoiceInRegistry } from "../utils/invoices";
 
 const trimValue = (value) => (typeof value === "string" ? value.trim() : "");
 const label = (lang, ar, fr, en = fr) => (lang === "fr" ? fr : lang === "en" ? en : ar);
@@ -11,6 +15,16 @@ const cleanDisplay = (value, fallback = "—") => {
   const text = trimValue(value);
   return text || fallback;
 };
+const openPrintWindow = (features, lang = "ar") => {
+  const printWindow = window.open("", "_blank", features);
+  return printWindow || null;
+};
+const popupBlockedMessage = (lang = "ar") => label(
+  lang,
+  "تعذر فتح نافذة الطباعة. يرجى السماح بالنوافذ المنبثقة ثم المحاولة مرة أخرى.",
+  "Impossible d'ouvrir la fenêtre d'impression. Veuillez autoriser les pop-ups puis réessayer.",
+  "Unable to open the print window. Please allow pop-ups and try again."
+);
 const getClientCin = (client = {}) => (
   trimValue(client.cin)
   || trimValue(client.CIN)
@@ -36,194 +50,193 @@ const paymentExtraDetails = (payment = {}, lang = "ar") => {
   }
   return details.join(" — ");
 };
-const toPositiveInt = (value) => {
-  const parsed = Number.parseInt(String(value ?? "").replace(/\D+/g, ""), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const FILE_NUMBER_KEYS = [
+  "fileRef", "file_ref",
+  "fileNumber", "file_number",
+  "fileNo", "file_no",
+  "dossier", "dossierNo", "dossier_no",
+  "caseNumber", "case_number",
+  "folderNumber", "folder_number",
+  "reference",
+];
+const formatPrintDate = (value) => {
+  const raw = trimValue(value);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+  const parsed = raw ? new Date(raw) : new Date();
+  if (Number.isNaN(parsed.getTime())) return raw;
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${parsed.getFullYear()}`;
 };
-const padInvoiceSequence = (value) => String(Math.max(1, Number(value) || 1)).padStart(4, "0");
-const getInvoiceYear = (payments = []) => {
-  const dated = [...payments]
-    .map((payment) => trimValue(payment?.date))
-    .find(Boolean);
-  if (dated) {
-    const match = dated.match(/^(\d{4})/);
-    if (match) return match[1];
-    const parsed = new Date(dated);
-    if (!Number.isNaN(parsed.getTime())) return String(parsed.getFullYear());
+const getReadableFileNumber = (client = {}, programClients = []) => {
+  for (const key of FILE_NUMBER_KEYS) {
+    const value = trimValue(client?.[key]);
+    if (value && !UUID_REGEX.test(value)) return value;
   }
-  return String(new Date().getFullYear());
+  const scoped = Array.isArray(programClients)
+    ? programClients.filter((item) => !client.programId || item.programId === client.programId)
+    : [];
+  const source = scoped.length ? scoped : (Array.isArray(programClients) ? programClients : []);
+  const index = source.findIndex((item) => item?.id === client?.id);
+  return String(index >= 0 ? index + 1 : 1).padStart(3, "0");
 };
-const INVOICE_REGISTRY_KEY = "rukn_invoice_registry_v1";
-const readInvoiceRegistry = () => {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(INVOICE_REGISTRY_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-const writeInvoiceRegistry = (registry) => {
-  try {
-    window.localStorage.setItem(INVOICE_REGISTRY_KEY, JSON.stringify(registry));
-  } catch {
-    /* Printing should not fail if localStorage is unavailable. */
-  }
-};
-const latestPaymentForInvoice = (payments = []) => (
-  [...payments].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))[0] || null
-);
-const getInvoiceIssueDate = (payments = []) => {
-  const latest = latestPaymentForInvoice(payments);
-  const rawDate = trimValue(latest?.date) || new Date().toISOString().slice(0, 10);
-  const match = rawDate.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match) return match[1];
-  const parsed = new Date(rawDate);
-  return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
-};
-const invoiceRecipientKey = (recipient = {}) => (
-  recipient.type === "company"
-    ? `company:${trimValue(recipient.companyName)}:${trimValue(recipient.ice)}`
-    : "client"
-);
-const buildInvoiceKey = ({ client, payments = [], recipient = {} }) => {
-  const latest = latestPaymentForInvoice(payments);
-  return [
-    "invoice",
-    client?.id || "unknown-client",
-    latest?.id || "no-payment",
-    invoiceRecipientKey(recipient),
-  ].join(":");
-};
-const nextInvoiceSequence = (registry, year) => {
-  const maxSeq = registry
-    .filter((item) => String(item.year) === String(year))
-    .map((item) => toPositiveInt(item.invoiceNumber))
-    .filter((value) => value !== null)
-    .reduce((max, value) => Math.max(max, value), 0);
-  return maxSeq + 1;
-};
-const latestIssuedDateForYear = (registry, year) => (
-  registry
-    .filter((item) => String(item.year) === String(year) && item.status !== "cancelled")
-    .map((item) => trimValue(item.date))
-    .filter(Boolean)
-    .sort()
-    .pop() || ""
-);
-const ensureInvoiceRegistryItem = ({ client, payments = [], recipient = {} }) => {
-  const registry = readInvoiceRegistry();
-  const invoiceKey = buildInvoiceKey({ client, payments, recipient });
-  const existing = registry.find((item) => item.invoiceKey === invoiceKey && item.status !== "cancelled");
-  if (existing?.invoiceNumber) return existing;
+const commonPrintCSS = `
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:50mm 16mm 38mm; direction:inherit; }
+  .issue-date { text-align:right; font-size:12px; margin-bottom:10px; color:#222; }
+  .title { text-align:center; font-size:20px; font-weight:800; margin-bottom:12px; color:#111; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+  .box { border:1px solid #ccc; padding:9px 10px; min-height:72px; }
+  .box h3 { font-size:11px; color:#555; margin-bottom:6px; font-weight:800; }
+  .box p { font-size:12px; font-weight:600; line-height:1.65; }
+  table { width:100%; border-collapse:collapse; margin-bottom:12px; }
+  th { background:#f1f1f1; color:#111; padding:7px 9px; font-size:11px; border:1px solid #cfcfcf; text-align:inherit; }
+  td { padding:7px 9px; border:1px solid #d8d8d8; font-size:12px; vertical-align:top; }
+  .amount { font-weight:800; white-space:nowrap; }
+  .total-box { margin-right:auto; width:250px; border:1px solid #aaa; padding:8px 10px; }
+  .total-row { display:flex; justify-content:space-between; gap:16px; padding:3px 0; font-size:12px; }
+  .total-final { border-top:1px solid #777; margin-top:5px; padding-top:7px; font-size:14px; font-weight:900; }
+  .payment-ref { margin-top:8px; font-size:11px; color:#333; line-height:1.7; }
+  .stamp { margin-top:26px; display:flex; justify-content:space-between; gap:24px; }
+  .stamp-box { border:1px dashed #777; width:155px; height:78px; margin-bottom:7px; }
+  @media print { @page { size:A4 portrait; margin:0; } }
+`;
+export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice" }) {
+  const [recipientType, setRecipientType] = React.useState("client");
+  const [companyName, setCompanyName] = React.useState("");
+  const [companyIce, setCompanyIce] = React.useState("");
+  const [error, setError] = React.useState("");
 
-  const requestedDate = getInvoiceIssueDate(payments);
-  const storedInvoiceNumber = trimValue(
-    client?.invoiceDisplayNumber
-    || client?.invoiceNumberDisplay
-    || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
-      ?.invoiceDisplayNumber
-    || payments.find((payment) => trimValue(payment?.invoiceDisplayNumber || payment?.invoiceNumberDisplay))
-      ?.invoiceNumberDisplay
-  );
-  if (storedInvoiceNumber) {
-    const storedYear = storedInvoiceNumber.match(/\/(\d{4})$/)?.[1] || getInvoiceYear([{ date: requestedDate }]);
-    const item = {
-      invoiceKey,
-      invoiceNumber: storedInvoiceNumber,
-      year: storedYear,
-      date: requestedDate,
-      status: "issued",
-      paymentId: latestPaymentForInvoice(payments)?.id || null,
-      clientId: client?.id || null,
-      recipientType: recipient.type || "client",
-      companyName: recipient.companyName || "",
-      ice: recipient.ice || "",
-      createdAt: new Date().toISOString(),
-      cancelledAt: null,
-    };
-    writeInvoiceRegistry([...registry, item]);
-    return item;
-  }
+  React.useEffect(() => {
+    if (!open) return;
+    setRecipientType("client");
+    setCompanyName("");
+    setCompanyIce("");
+    setError("");
+  }, [open]);
 
-  const requestedYear = getInvoiceYear([{ date: requestedDate }]);
-  const latestDate = latestIssuedDateForYear(registry, requestedYear);
-  const date = latestDate && requestedDate < latestDate ? latestDate : requestedDate;
-  const year = getInvoiceYear([{ date }]);
-  const reusableCancelled = registry.find((item) => (
-    String(item.year) === String(year)
-    && item.status === "cancelled"
-    && item.date === date
-    && !registry.some((other) => other.status !== "cancelled" && other.invoiceNumber === item.invoiceNumber && String(other.year) === String(year))
-  ));
-  const sequence = reusableCancelled ? toPositiveInt(reusableCancelled.invoiceNumber) : nextInvoiceSequence(registry, year);
-  const invoiceNumber = `${padInvoiceSequence(sequence)}/${year}`;
-  const item = {
-    invoiceKey,
-    invoiceNumber,
-    year,
-    date,
-    status: "issued",
-    paymentId: latestPaymentForInvoice(payments)?.id || null,
-    clientId: client?.id || null,
-    recipientType: recipient.type || "client",
-    companyName: recipient.companyName || "",
-    ice: recipient.ice || "",
-    createdAt: new Date().toISOString(),
-    cancelledAt: null,
+  const recipientOptions = [
+    { value: "client", label: label(lang, "إصدار باسم المعتمر", "Émettre au nom du client", "Issue to pilgrim") },
+    { value: "company", label: label(lang, "إصدار باسم شركة / مؤسسة", "Émettre au nom d'une société / institution", "Issue to company / organization") },
+  ];
+
+  const handlePrint = () => {
+    const name = trimValue(companyName);
+    const ice = trimValue(companyIce);
+    const validation = validateInvoiceRecipient(
+      recipientType === "company"
+        ? { type: "company", companyName: name, ice }
+        : { type: "client" }
+    );
+    if (validation.field === "companyName") {
+      setError(label(lang, "اسم الشركة مطلوب", "Le nom de la société est obligatoire", "Company name is required"));
+      return;
+    }
+    if (validation.field === "ice") {
+      setError(label(lang, "ICE مطلوب لفاتورة الشركة", "ICE est obligatoire pour une facture société", "ICE is required for a company invoice"));
+      return;
+    }
+
+    const printed = onPrint?.(
+      recipientType === "company"
+        ? { type: "company", companyName: name, ice }
+        : { type: "client" }
+    );
+    if (printed === false) {
+      setError(popupBlockedMessage(lang));
+      return;
+    }
+    onClose?.();
   };
-  writeInvoiceRegistry([...registry, item]);
-  return item;
-};
-export const cancelInvoiceInRegistry = (invoiceNumber, year) => {
-  const registry = readInvoiceRegistry();
-  const next = registry.map((item) => (
-    item.invoiceNumber === invoiceNumber && String(item.year) === String(year) && item.status !== "cancelled"
-      ? { ...item, status: "cancelled", cancelledAt: new Date().toISOString() }
-      : item
-  ));
-  writeInvoiceRegistry(next);
-};
-const requestInvoiceRecipient = (client, lang = "ar") => {
-  const wantsCompany = window.confirm(label(
-    lang,
-    "هل تريد إصدار الفاتورة باسم شركة؟\nاضغط إلغاء لإصدارها باسم المعتمر.",
-    "Émettre la facture au nom d'une société ?\nAnnuler pour l'émettre au nom du client.",
-    "Issue the invoice to a company?\nCancel to issue it to the client."
-  ));
-  if (!wantsCompany) return { type: "client" };
 
-  const companyName = trimValue(window.prompt(label(lang, "اسم الشركة", "Nom de la société", "Company name"), ""));
-  if (!companyName) {
-    window.alert(label(lang, "اسم الشركة مطلوب", "Le nom de la société est obligatoire", "Company name is required"));
-    return null;
-  }
-  const ice = trimValue(window.prompt("ICE", ""));
-  if (!ice) {
-    window.alert(label(lang, "ICE مطلوب لفاتورة الشركة", "ICE est obligatoire pour une facture société", "ICE is required for a company invoice"));
-    return null;
-  }
-  return { type: "company", companyName, ice };
-};
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={label(lang, "إعداد الفاتورة", "Préparation de la facture", "Invoice Setup")}
+      width={520}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "grid", gap: 10 }}>
+          {recipientOptions.map((option) => {
+            const active = recipientType === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => { setRecipientType(option.value); setError(""); }}
+                style={{
+                  width: "100%",
+                  textAlign: "start",
+                  padding: "13px 14px",
+                  borderRadius: 12,
+                  border: active ? "1px solid var(--rukn-gold)" : "1px solid var(--rukn-border-soft)",
+                  background: active ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
+                  color: active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                  fontFamily: "'Cairo',sans-serif",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
 
-const resolveAgencyIdentity = (agency = {}, t, lang = "ar") => {
-  const nameAr = trimValue(agency.nameAr);
-  const nameFr = trimValue(agency.nameFr);
-  const fallbackPrimary = t.agencyName || "Tiznit Voyages";
-  const fallbackSecondary = t.agencyNameAr || fallbackPrimary;
-  const primary = lang === "fr"
-    ? (nameFr || nameAr || fallbackPrimary)
-    : (nameAr || nameFr || fallbackPrimary);
-  const secondary = lang === "fr"
-    ? (nameAr || nameFr || fallbackSecondary)
-    : (nameFr || nameAr || fallbackSecondary);
-  const slogan = trimValue(agency.slogan) || t.agencySlogan || "";
-  return { primary, secondary, slogan };
-};
+        {recipientType === "company" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <Input
+              label={label(lang, "اسم الشركة", "Nom de la société", "Company name")}
+              required
+              value={companyName}
+              onChange={(event) => { setCompanyName(event.target.value); setError(""); }}
+            />
+            <Input
+              label="ICE"
+              required
+              value={companyIce}
+              onChange={(event) => { setCompanyIce(event.target.value); setError(""); }}
+            />
+          </div>
+        )}
+
+        {error && (
+          <div style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: "rgba(239,68,68,.1)",
+            border: "1px solid rgba(239,68,68,.25)",
+            color: "var(--rukn-danger)",
+            fontSize: 13,
+            fontWeight: 700,
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+          <Button variant="ghost" onClick={onClose}>
+            {label(lang, "إلغاء", "Annuler", "Cancel")}
+          </Button>
+          <Button variant="primary" icon="print" onClick={handlePrint}>
+            {documentType === "proforma"
+              ? label(lang, "طباعة فاتورة أولية", "Imprimer proforma", "Print Proforma")
+              : label(lang, "طباعة الفاتورة", "Imprimer la facture", "Print Invoice")}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export function printReceipt({ payment, client, program, agency, lang = "ar" }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
-  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
   const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
   const money = (value) => formatCurrency(value, lang);
   const cin = getClientCin(client);
@@ -235,30 +248,21 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
 <title>${label(lang, "وصل دفعة", "Reçu de paiement", "Payment Receipt")}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 13px; color: #111; background:#fff; }
-  .page { width: 148mm; min-height: 100mm; margin: 0 auto; padding: 10mm; }
-  .header { text-align: center; border-bottom: 2px solid #1a6b3a; padding-bottom: 8px; margin-bottom: 10px; }
-  .agency-name { font-size: 18px; font-weight: 900; color: #1a6b3a; }
-  .agency-sub  { font-size: 11px; color: #555; margin-top: 3px; }
-  .receipt-title { font-size: 15px; font-weight: 700; color: #b8941e; margin: 10px 0 8px; text-align: center; }
-  .receipt-no { text-align: center; font-size: 13px; color: #555; margin-bottom: 12px; }
+  body { font-family:Arial,sans-serif; font-size:12px; color:#111; background:#fff; }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:50mm 18mm 38mm; }
+  .receipt-title { font-size:20px; font-weight:800; margin-bottom:8px; text-align:center; color:#111; }
+  .receipt-no { text-align:center; font-size:13px; color:#333; margin-bottom:16px; }
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 5px 8px; border: 1px solid #ddd; font-size: 12px; }
-  td:first-child { font-weight: 700; background: #f5f5f5; width: 40%; }
-  .amount-row td { font-size: 16px; font-weight: 900; color: #1a6b3a; }
-  .footer { margin-top: 14px; text-align: center; font-size: 11px; color: #888; border-top: 1px solid #eee; padding-top: 8px; }
-  .signature { margin-top: 18px; display: flex; justify-content: space-between; font-size: 11px; }
-  @media print { @page { size: A5 landscape; margin: 8mm; } }
+  td { padding:8px 10px; border:1px solid #d8d8d8; font-size:12px; }
+  td:first-child { font-weight:800; background:#f5f5f5; width:36%; }
+  .amount-row td { font-size:16px; font-weight:900; color:#111; }
+  .signature { margin-top:28px; display:flex; justify-content:space-between; gap:24px; font-size:11px; }
+  .signature-box { border:1px dashed #777; width:155px; height:76px; margin-bottom:7px; }
+  @media print { @page { size:A4 portrait; margin:0; } }
 </style>
 </head>
 <body>
 <div class="page">
-  <div class="header">
-    <div class="agency-name">${primary}${secondary ? ` | ${secondary}` : ""}</div>
-    <div class="agency-sub">${[agency.phoneTiznit1, agency.phoneTiznit2].filter(Boolean).join(" / ")}</div>
-    <div class="agency-sub">${agency.addressTiznit || ""}</div>
-    ${agency.ice ? `<div class="agency-sub">ICE: ${agency.ice}</div>` : ""}
-  </div>
   <div class="receipt-title">${label(lang, "وصل استلام مبلغ", "REÇU DE PAIEMENT", "PAYMENT RECEIPT")}</div>
   <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${payment.receiptNo}</strong></div>
   <table>
@@ -275,27 +279,27 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
     </tr>
   </table>
   <div class="signature">
-    <span>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</span>
-    <span>${label(lang, "توقيع المعتمر", "Signature du client", "Client Signature")}</span>
-  </div>
-  <div class="footer">
-    ${primary}${secondary ? ` | ${secondary}` : ""}${slogan ? ` — ${slogan}` : ""}
+    <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
+    <div style="text-align:center"><div class="signature-box"></div>${label(lang, "توقيع المعتمر", "Signature du client", "Client Signature")}</div>
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
-  const w = window.open("", "_blank", "width=700,height=500");
+  const w = openPrintWindow("width=700,height=500", lang);
+  if (!w) return false;
   w.document.write(html); w.document.close();
+  return true;
 }
 
-export function printClientCard({ client, program, agency, lang = "ar" }) {
+export function printClientCard({ client, program, agency, lang = "ar", programClients = [] }) {
   const isAr = lang === "ar";  const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;  const p = client.passport || {};
-  const { primary, secondary, slogan } = resolveAgencyIdentity(agency, t, lang);
-  const headerPhones = [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join(" / ");
-  const footerPhones = [agency?.phoneTiznit1, agency?.phoneAgadir1].filter(Boolean).join(" / ");
-  const footerName = secondary && secondary !== primary ? `${secondary} | ${primary}` : primary;
   const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
   const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
+  const fileNumber = getReadableFileNumber(client, programClients);
+  const cin = getClientCin(client);
+  const carrier = trimValue(program?.carrier || program?.company || program?.compagnie || program?.airline || program?.transport);
+  const level = client.packageLevel || client.hotelLevel || "";
+  const notes = trimValue(client.note || client.notes);
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
@@ -304,126 +308,120 @@ export function printClientCard({ client, program, agency, lang = "ar" }) {
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .card { width:148mm; margin:8mm auto; padding:8mm; border:2px solid #1a6b3a; border-radius:6px; }
-  .header { display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #d4af37; padding-bottom:8px; margin-bottom:10px; }
-  .agency { font-size:14px; font-weight:900; color:#1a6b3a; }
-  .badge { background:#1a6b3a; color:#fff; border-radius:50%; width:50px; height:50px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:900; }
-  .name { font-size:17px; font-weight:900; margin-bottom:3px; }
-  .name-latin { font-size:13px; color:#555; margin-bottom:8px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-bottom:10px; }
-  .item label { font-size:10px; color:#888; display:block; }
-  .item span  { font-size:12px; font-weight:700; }
-  .docs { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-  .doc-badge { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
-  .doc-ok  { background:#e8f5e9; color:#1a6b3a; border:1px solid #a5d6a7; }
-  .doc-no  { background:#ffebee; color:#c62828; border:1px solid #ffcdd2; }
-  .footer  { margin-top:10px; text-align:center; font-size:10px; color:#aaa; }
-  @media print { @page { size:A5 landscape; margin:6mm; } }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:50mm 18mm 38mm; }
+  .title { font-size:20px; font-weight:900; text-align:center; margin-bottom:14px; }
+  .file-no { text-align:center; font-size:14px; font-weight:800; margin-bottom:14px; }
+  .name { font-size:18px; font-weight:900; margin-bottom:3px; text-align:center; }
+  .name-latin { font-size:13px; color:#555; margin-bottom:12px; text-align:center; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:12px; }
+  .item { border:1px solid #d8d8d8; padding:7px 9px; min-height:42px; }
+  .item label { font-size:10px; color:#666; display:block; margin-bottom:3px; }
+  .item span  { font-size:12px; font-weight:800; }
+  .docs { display:flex; gap:7px; flex-wrap:wrap; margin-top:10px; }
+  .doc-badge { padding:3px 8px; border-radius:10px; font-size:10px; font-weight:800; border:1px solid #aaa; color:#111; }
+  .doc-ok  { background:#f4f4f4; }
+  .doc-no  { background:#fff; color:#555; }
+  .notes { border:1px solid #d8d8d8; padding:8px 9px; margin-top:10px; font-size:12px; line-height:1.7; }
+  @media print { @page { size:A4 portrait; margin:0; } }
 </style>
 </head>
 <body>
-  <div class="card">
-  <div class="header">
-    <div>
-      <div class="agency">${primary}</div>
-      <div style="font-size:10px;color:#888">${headerPhones}</div>
-    </div>
-    <div class="badge">${clientName[0] || "—"}</div>
-  </div>
+  <div class="page">
+  <div class="title">${label(lang, "بطاقة المعتمر", "Carte pèlerin", "Pilgrim Card")}</div>
+  <div class="file-no">${label(lang, "ملف رقم", "Dossier N°", "File No.")}: ${fileNumber}</div>
   <div class="name">${clientName}</div>
   ${latinName ? `<div class="name-latin">${latinName}</div>` : ""}
   <div class="grid">
-    <div class="item"><label>${label(lang, "رقم الملف", "Référence", "Reference")}</label><span>${client.id}</span></div>
-    <div class="item"><label>${label(lang, "الهاتف", "Téléphone", "Phone")}</label><span>${client.phone}</span></div>
+    <div class="item"><label>${label(lang, "الهاتف", "Téléphone", "Phone")}</label><span>${client.phone || "—"}</span></div>
+    <div class="item"><label>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</label><span>${cleanDisplay(cin, "—")}</span></div>
+    ${p.number ? `<div class="item"><label>${label(lang, "رقم الجواز", "Passeport", "Passport")}</label><span>${p.number}</span></div>` : ""}
     <div class="item"><label>${label(lang, "البرنامج", "Programme", "Program")}</label><span>${program?.name || "—"}</span></div>
-    <div class="item"><label>${label(lang, "نوع الغرفة", "Chambre", "Room Type")}</label><span>${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</span></div>
-    <div class="item"><label>${label(lang, "فندق مكة", "Hôtel Mecque", "Makkah Hotel")}</label><span>${client.hotelMecca || "—"}</span></div>
-    <div class="item"><label>${label(lang, "فندق المدينة", "Hôtel Médine", "Madinah Hotel")}</label><span>${client.hotelMadina || "—"}</span></div>
     <div class="item"><label>${label(lang, "الذهاب", "Départ", "Departure")}</label><span>${program?.departure || "—"}</span></div>
     <div class="item"><label>${label(lang, "العودة", "Retour", "Return")}</label><span>${program?.returnDate || "—"}</span></div>
-    ${p.number ? `<div class="item"><label>${label(lang, "رقم الجواز", "Passeport", "Passport")}</label><span>${p.number}</span></div>` : ""}
+    <div class="item"><label>${label(lang, "المستوى", "Niveau", "Level/package")}</label><span>${cleanDisplay(level, "—")}</span></div>
+    <div class="item"><label>${label(lang, "نوع الغرفة", "Chambre", "Room Type")}</label><span>${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</span></div>
+    <div class="item"><label>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}</label><span>${cleanDisplay(carrier, "—")}</span></div>
     ${p.expiry ? `<div class="item"><label>${label(lang, "انتهاء الجواز", "Expiration", "Expiry")}</label><span>${p.expiry}</span></div>` : ""}
     ${client.ticketNo ? `<div class="item"><label>${label(lang, "رقم التذكرة", "N° billet", "Ticket No.")}</label><span>${client.ticketNo}</span></div>` : ""}
   </div>
   ${client.docs ? `<div class="docs">
     ${[["passportCopy",label(lang, "صورة الجواز", "Passeport", "Passport")],["photo",label(lang, "صورة", "Photo", "Photo")],["vaccine",label(lang, "تطعيم", "Vaccin", "Vaccine")],["contract",label(lang, "عقد", "Contrat", "Contract")]].map(([k,l])=>`
-    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"OK":"NO"} ${l}</span>`).join("")}
-  </div>` : ""}
-  <div class="footer">
-    ${footerName}${footerPhones ? ` — ${footerPhones}` : ""}${slogan ? ` — ${slogan}` : ""}
-  </div>
+	    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"OK":"NO"} ${l}</span>`).join("")}
+	  </div>` : ""}
+  ${notes ? `<div class="notes">${label(lang, "ملاحظات", "Notes", "Notes")}: ${notes}</div>` : ""}
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
-  const w = window.open("", "_blank", "width=750,height=520");
+  const w = openPrintWindow("width=750,height=520", lang);
+  if (!w) return false;
   w.document.write(html); w.document.close();
+  return true;
 }
 
-export function printInvoice({ client, program, payments, agency, lang = "ar" }) {
+function printInvoiceDocument({ client, program, payments, agency, lang = "ar", recipient, recipientType, companyName, companyIce, ice, documentType = "invoice" }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
-  const recipient = requestInvoiceRecipient(client, lang);
-  if (!recipient) return;
-  const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
-  const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
+  const invoicePayments = payments || [];
+  const invoiceData = buildInvoiceData({
+    client,
+    program,
+    payments: invoicePayments,
+    recipient,
+    recipientType,
+    companyName,
+    companyIce,
+    ice,
+    fallbackName: t.pilgrimFallback || "—",
+    lang,
+    documentType,
+  });
+  if (!invoiceData.valid) return false;
+  const {
+    recipient: invoiceRecipient,
+    clientName,
+    latinName,
+    totalPaid,
+    salePrice,
+    remaining,
+    cin,
+    passportNo,
+    carrier,
+    latestPayment,
+    invoiceNo,
+    invoiceDate,
+    issuedToCompany,
+  } = invoiceData;
+  const isProforma = documentType === "proforma";
   const money = (value) => formatCurrency(value, lang);
-  const totalPaid = payments.reduce((s,p) => s+p.amount, 0);
-  const salePrice = client.salePrice || client.price || 0;
-  const remaining = Math.max(0, salePrice - totalPaid);
-  const cin = getClientCin(client);
-  const passportNo = trimValue(client.passport?.number);
-  const carrier = trimValue(program?.carrier || program?.company || program?.compagnie || program?.airline || program?.transport);
-  const invoiceItem = ensureInvoiceRegistryItem({ client, payments, recipient });
-  const invoiceNo = invoiceItem.invoiceNumber;
-  const invoiceDate = invoiceItem.date;
-  const issuedToCompany = recipient.type === "company";
+  const title = isProforma
+    ? label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
+    : label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`);
+  const serviceLabel = label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package");
+  const paymentReference = latestPayment && (latestPayment.receiptNo || latestPayment.date)
+    ? [
+      latestPayment.receiptNo ? `${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}: ${latestPayment.receiptNo}` : "",
+      latestPayment.date ? `${label(lang, "التاريخ", "Date", "Date")}: ${formatPrintDate(latestPayment.date)}` : "",
+    ].filter(Boolean).join(" — ")
+    : "";
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
 <meta charset="UTF-8"/>
-<title>${label(lang, "فاتورة", "Facture", "Invoice")} ${invoiceNo}</title>
+<title>${title}</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .page { width:190mm; min-height:277mm; margin:0 auto; padding:38mm 15mm 24mm; }
-  .header { display:flex; justify-content:${isAr?"flex-start":"flex-end"}; align-items:flex-start; margin-bottom:16px; }
-  .invoice-head { text-align:${isAr?"right":"left"}; direction:${isAr?"rtl":"ltr"}; min-width:180px; }
-  .invoice-title { font-size:24px; font-weight:900; color:#d4af37; text-align:${isAr?"right":"left"}; }
-  .invoice-no { font-size:12px; color:#666; margin-top:4px; }
-  .divider { border:none; border-top:2px solid #1a6b3a; margin:12px 0; }
-  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; }
-  .info-box { background:#f9f9f9; border:1px solid #eee; border-radius:6px; padding:10px; }
-  .info-box h3 { font-size:11px; color:#888; margin-bottom:6px; font-weight:700; text-transform:uppercase; }
-  .info-box p { font-size:12px; font-weight:600; line-height:1.6; }
-  table { width:100%; border-collapse:collapse; margin-bottom:12px; }
-  th { background:#1a6b3a; color:#fff; padding:7px 10px; font-size:11px; text-align:${isAr?"right":"left"}; }
-  td { padding:7px 10px; border-bottom:1px solid #eee; font-size:12px; }
-  tr:nth-child(even) td { background:#fafafa; }
-  .totals { margin-${isAr?"right":"left"}:auto; width:240px; }
-  .total-row { display:flex; justify-content:space-between; padding:4px 0; font-size:12px; }
-  .total-final { font-size:15px; font-weight:900; color:#1a6b3a; border-top:2px solid #1a6b3a; padding-top:6px; margin-top:4px; }
-  .remaining { color:${remaining>0?"#e65100":"#1a6b3a"}; font-weight:700; }
-  .stamp { margin-top:36px; margin-bottom:22mm; display:flex; justify-content:space-between; gap:24px; }
-  .stamp-box { border:1px dashed #bbb; width:150px; height:86px; margin-bottom:7px; }
-  @media print { @page { size:A4; margin:0; } }
+${commonPrintCSS}
 </style>
 </head>
 <body>
-<div class="page">
-  <div class="header">
-    <div class="invoice-head">
-      <div class="invoice-title">${label(lang, "فاتورة", "FACTURE", "INVOICE")}</div>
-      <div class="invoice-no">${label(lang, "فاتورة رقم", "Facture N°", "Invoice No.")} ${invoiceNo}</div>
-      <div class="invoice-no">${label(lang, "التاريخ", "Date", "Date")}: ${invoiceDate}</div>
-    </div>
-  </div>
-  <hr class="divider"/>
-  <div class="info-grid">
-    <div class="info-box">
+  <div class="page">
+  <div class="issue-date">${label(lang, "تاريخ الإصدار", "Date d'émission", "Issue date")}: ${formatPrintDate(invoiceDate)}</div>
+  <div class="title">${title}</div>
+  <div class="grid">
+    <div class="box">
       <h3>${issuedToCompany ? label(lang, "الفاتورة باسم", "Facturée à", "Issued to") : label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}</h3>
       ${issuedToCompany ? `
-        <p>${label(lang, "اسم الشركة", "Nom de la société", "Company name")}: ${cleanDisplay(recipient.companyName, "")}</p>
-        <p>ICE: ${cleanDisplay(recipient.ice, "")}</p>
+        <p>${label(lang, "اسم الشركة", "Nom de la société", "Company name")}: ${cleanDisplay(invoiceRecipient.companyName, "")}</p>
+        <p>ICE: ${cleanDisplay(invoiceRecipient.ice, "")}</p>
         <p>${label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}: ${clientName}</p>
       ` : `
         <p>${label(lang, "الاسم الكامل", "Nom complet", "Full name")}: ${clientName}</p>
@@ -433,7 +431,7 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
       <p>${label(lang, "رقم البطاقة الوطنية CIN", "N° CIN", "National ID / CIN")}: ${cleanDisplay(cin, "")}</p>
       <p>${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${cleanDisplay(passportNo, "")}</p>
     </div>
-    <div class="info-box">
+    <div class="box">
       <h3>${label(lang, "تفاصيل البرنامج", "Détails programme", "Program Details")}</h3>
       <p>${label(lang, "البرنامج", "Programme", "Program")}: ${program?.name || "—"}</p>
       <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${program?.departure || "—"}</p>
@@ -451,35 +449,19 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
       </tr>
     </thead>
     <tbody>
-      <tr><td>${label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package")} — ${program?.name || ""}</td><td>${money(salePrice)}</td></tr>
+      <tr><td>${serviceLabel} — ${program?.name || ""}</td><td class="amount">${money(salePrice)}</td></tr>
     </tbody>
   </table>
-  <div class="totals">
-    <div class="total-row"><span>${label(lang, "سعر البيع", "Prix de vente", "Sale Price")}</span><span>${money(salePrice)}</span></div>
-    <div class="total-row" style="color:#1a6b3a"><span>${label(lang, "المدفوع", "Total payé", "Total Paid")}</span><span>${money(totalPaid)}</span></div>
-    <div class="total-row total-final">
-      <span class="remaining">${label(lang, "المتبقي", "RESTE À PAYER", "REMAINING")}</span>
-      <span class="remaining">${money(remaining)}</span>
-    </div>
+  <div class="total-box">
+    ${isProforma ? `
+      <div class="total-row"><span>${label(lang, "إجمالي سعر البرنامج", "Prix total du programme", "Program total")}</span><span>${money(salePrice)}</span></div>
+      <div class="total-row"><span>${label(lang, "المبلغ المدفوع", "Montant payé", "Paid amount")}</span><span>${money(totalPaid)}</span></div>
+      <div class="total-row total-final"><span>${label(lang, "المبلغ المتبقي", "Reste à payer", "Remaining amount")}</span><span>${money(remaining)}</span></div>
+    ` : `
+      <div class="total-row total-final"><span>${label(lang, "المبلغ الإجمالي", "Montant total", "Total amount")}</span><span>${money(salePrice)}</span></div>
+    `}
   </div>
-  ${payments.length > 0 ? `
-  <div style="margin-top:14px">
-    <h3 style="font-size:11px;color:#888;margin-bottom:6px">${label(lang, "سجل الدفعات", "HISTORIQUE DES PAIEMENTS", "PAYMENT HISTORY")}</h3>
-    <table>
-      <thead><tr>
-        <th>${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}</th>
-        <th>${label(lang, "التاريخ", "Date", "Date")}</th>
-        <th>${label(lang, "الطريقة", "Mode", "Method")}</th>
-        <th>${label(lang, "المبلغ", "Montant", "Amount")}</th>
-      </tr></thead>
-      <tbody>
-        ${payments.map(p=>{
-          const extra = paymentExtraDetails(p, lang);
-          return `<tr><td>${p.receiptNo || ""}</td><td>${p.date || ""}</td><td>${translatePaymentMethod(p.method, lang)}${extra ? `<br/><span style="font-size:10px;color:#666">${extra}</span>` : ""}</td><td>${money(p.amount)}</td></tr>`;
-        }).join("")}
-      </tbody>
-    </table>
-  </div>` : ""}
+  ${paymentReference ? `<div class="payment-ref">${label(lang, "مرجع الدفع", "Référence de paiement", "Payment reference")}: ${paymentReference}</div>` : ""}
   <div class="stamp">
     <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
     <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
@@ -487,6 +469,16 @@ export function printInvoice({ client, program, payments, agency, lang = "ar" })
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>
 </body></html>`;
-  const w = window.open("", "_blank", "width=900,height=680");
+  const w = openPrintWindow("width=900,height=680", lang);
+  if (!w) return false;
   w.document.write(html); w.document.close();
+  return true;
+}
+
+export function printInvoice(args) {
+  return printInvoiceDocument({ ...args, documentType: "invoice" });
+}
+
+export function printProformaInvoice(args) {
+  return printInvoiceDocument({ ...args, documentType: "proforma" });
 }
