@@ -5,6 +5,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { calcExpiry } from "../utils/amadeus";
 import { AppIcon } from "./Icon";
+import { PilgrimPhotoUploader, badgeStorageUnavailableMessage } from "../features/badges";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
   getPackageRoomPrice,
@@ -219,6 +220,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
     officialPrice,
     salePrice,
     ticketNo: pickString(client?.ticketNo, client?.ticket_no, client?.ticketNumber, client?.ticket),
+    badgePhotoPath: pickString(client?.badgePhotoPath, client?.docs?.badgePhotoPath),
     notes:    pickString(client?.notes, client?.note),
     gender,
     roomCategory: pickString(client?.roomCategory, rooming.category, "male_only"),
@@ -238,6 +240,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
       photo:        Boolean(docs.photo        ?? client?.photoProvided),
       vaccine:      Boolean(docs.vaccine      ?? client?.vaccineProvided),
       contract:     Boolean(docs.contract     ?? client?.contractSigned),
+      badgePhotoPath: pickString(client?.badgePhotoPath, docs.badgePhotoPath),
     },
   };
 };
@@ -245,6 +248,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
 export default function ClientForm({ client, store, onSave, onCancel, defaultProgramId, lockProgramId = "" }) {
   const { t, tr, dir, lang } = useLang();
   const { programs, addClient, updateClient } = store;
+  const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
   const currencyLabel = CURRENCY_BY_LANG[lang] || "د.م";
@@ -262,6 +266,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs));
   const [entryMode, setEntryMode] = React.useState(isEdit ? ROOM_ENTRY_MODES.SINGLE : ROOM_ENTRY_MODES.SINGLE);
   const [groupPeople, setGroupPeople] = React.useState([createGroupPerson(0)]);
+  const [badgePhotoFile, setBadgePhotoFile] = React.useState(null);
+  const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
+  const [badgePhotoRemoved, setBadgePhotoRemoved] = React.useState(false);
+  const [badgePhotoError, setBadgePhotoError] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
 
   // Update form when client changes (for edit mode)
   React.useEffect(() => {
@@ -272,8 +281,22 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       setForm(buildFormState(client, defaultProgramId, programs));
       setEntryMode(ROOM_ENTRY_MODES.SINGLE);
       setGroupPeople([createGroupPerson(0)]);
+      setBadgePhotoFile(null);
+      setBadgePhotoRemoved(false);
+      setBadgePhotoError("");
     }
   }, [client, defaultProgramId, programs]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const path = form.badgePhotoPath;
+    setBadgePhotoUrl("");
+    if (!path || !badgePhotoApi.isAvailable || !badgePhotoApi.getPhotoUrl) return undefined;
+    badgePhotoApi.getPhotoUrl(path).then((url) => {
+      if (!cancelled) setBadgePhotoUrl(url || "");
+    });
+    return () => { cancelled = true; };
+  }, [badgePhotoApi, form.badgePhotoPath]);
 
   React.useEffect(() => {
     if (!lockProgramId || form.programId === lockProgramId) return;
@@ -499,7 +522,56 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     return e;
   };
 
-  const handleSave = () => {
+  const createClientId = () => (
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `client-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+  );
+
+  const resolveBadgePhotoPath = async (clientId, currentPath = "") => {
+    let nextPath = pickString(currentPath);
+    if (badgePhotoFile && !badgePhotoApi.isAvailable) {
+      setBadgePhotoError(badgeStorageUnavailableMessage(lang));
+      return { ok: false, path: nextPath };
+    }
+    if (badgePhotoRemoved && nextPath && badgePhotoApi.isAvailable && badgePhotoApi.removePhoto) {
+      await badgePhotoApi.removePhoto(nextPath);
+      nextPath = "";
+    }
+    if (badgePhotoFile && badgePhotoApi.isAvailable && badgePhotoApi.uploadPhoto) {
+      const previousPath = nextPath;
+      const { data, error } = await badgePhotoApi.uploadPhoto(clientId, badgePhotoFile);
+      if (error || !data?.path) {
+        setBadgePhotoError(
+          lang === "fr"
+            ? "Impossible d'envoyer la photo. Vérifiez le bucket Supabase."
+            : lang === "en"
+              ? "Could not upload the photo. Check the Supabase bucket."
+              : "تعذر رفع الصورة. تحقق من إعدادات Supabase Storage."
+        );
+        return { ok: false, path: nextPath };
+      }
+      nextPath = data.path;
+      if (previousPath && previousPath !== nextPath && badgePhotoApi.removePhoto) {
+        await badgePhotoApi.removePhoto(previousPath);
+      }
+    }
+    if (badgePhotoRemoved && !badgePhotoFile) nextPath = "";
+    return { ok: true, path: nextPath };
+  };
+
+  const withBadgePhotoPath = (data, path) => ({
+    ...data,
+    badgePhotoPath: path,
+    docs: {
+      ...data.docs,
+      badgePhotoPath: path,
+      photo: Boolean(data.docs?.photo || path),
+    },
+  });
+
+  const handleSave = async () => {
+    if (saving) return;
     const e = validate();
     if (Object.keys(e).length) { setErrors(e); return; }
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
@@ -567,7 +639,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       onSave();
       return;
     }
-    const data = {
+    setSaving(true);
+    setBadgePhotoError("");
+    const baseData = {
       ...form,
       programId: lockProgramId || form.programId,
       packageId: selectedPackage?.id || form.packageId || "",
@@ -586,8 +660,16 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         gender: genderToPassportValue(form.gender),
       },
     };
-    isEdit ? updateClient(client.id, data) : addClient(data);
-    onSave();
+    try {
+      const targetId = isEdit ? client.id : (badgePhotoFile ? createClientId() : "");
+      const photoResult = await resolveBadgePhotoPath(targetId || client?.id, form.badgePhotoPath);
+      if (!photoResult.ok) return;
+      const data = withBadgePhotoPath(baseData, photoResult.path);
+      isEdit ? updateClient(client.id, data) : addClient(targetId ? { ...data, id: targetId } : data);
+      onSave();
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Apply MRZ data
@@ -996,6 +1078,33 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       {entryMode === ROOM_ENTRY_MODES.SINGLE && (
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="documents" size={14} color={tc.gold} /> {t.documents}</p>
+        <div style={{ marginBottom:14 }}>
+          <PilgrimPhotoUploader
+            lang={lang}
+            photoUrl={badgePhotoRemoved ? "" : badgePhotoUrl}
+            disabled={!badgePhotoApi.isAvailable}
+            busy={saving}
+            error={badgePhotoError}
+            onPhotoReady={(file) => {
+              setBadgePhotoFile(file);
+              setBadgePhotoRemoved(false);
+              setBadgePhotoError("");
+              setForm((prev) => ({
+                ...prev,
+                docs: { ...prev.docs, photo: true },
+              }));
+            }}
+            onRemove={() => {
+              setBadgePhotoFile(null);
+              setBadgePhotoRemoved(true);
+              setBadgePhotoError("");
+              setForm((prev) => ({
+                ...prev,
+                docs: { ...prev.docs, photo: false },
+              }));
+            }}
+          />
+        </div>
         <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
           {DOCUMENT_FIELDS.map(([key, labelKey])=>(
             <label key={key} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer",
@@ -1025,8 +1134,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <Divider />
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
-        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave}>
-          {isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? (t.saveRoom || "حفظ الغرفة") : t.addClient}
+        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave} disabled={saving}>
+          {saving ? (t.loading || "جاري الحفظ...") : isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? (t.saveRoom || "حفظ الغرفة") : t.addClient}
         </Button>
       </div>
     </div>

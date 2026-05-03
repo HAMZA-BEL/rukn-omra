@@ -36,6 +36,12 @@ import { getClientDisplayName, getClientIdentityName } from "../utils/clientName
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 import { buildSystemNotificationCandidates, getDaysUntil } from "../utils/notificationRules";
+import {
+  canUseBadgePhotoStorage,
+  getPilgrimPhotoUrl,
+  removePilgrimPhoto,
+  uploadPilgrimPhoto,
+} from "../features/badges";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -90,6 +96,7 @@ const sanitizeDocs = (docs = {}) => ({
   photo:        Boolean(docs.photo),
   vaccine:      Boolean(docs.vaccine),
   contract:     Boolean(docs.contract),
+  ...(trimString(docs.badgePhotoPath) ? { badgePhotoPath: trimString(docs.badgePhotoPath) } : {}),
   ...(docs.rooming ? { rooming: docs.rooming } : {}),
 });
 
@@ -126,6 +133,7 @@ const prepareClientForSave = (data) => {
   const gender = normalizeClientGender(data.gender || data.passport?.gender);
   const passport = sanitizePassport(data.passport);
   const rooming = sanitizeRoomingMeta(data, data.docs);
+  const badgePhotoPath = trimString(data.badgePhotoPath || data.docs?.badgePhotoPath);
   const cleaned = {
     ...data,
     firstName: trimString(data.firstName),
@@ -143,8 +151,9 @@ const prepareClientForSave = (data) => {
       cin: trimString(data.cin || passport.cin),
       gender: toPassportGender(gender),
     },
+    badgePhotoPath,
     docs:      {
-      ...sanitizeDocs(data.docs),
+      ...sanitizeDocs({ ...data.docs, badgePhotoPath }),
       ...(rooming ? { rooming } : {}),
     },
   };
@@ -340,6 +349,17 @@ export function useStore(agencyId, onToast) {
   const archivedClients      = useMemo(() => clients.filter(c => !!c.archived),  [clients]);
   const activeClients        = useMemo(() => clients.filter(c => !c.archived),   [clients]);
   const archiveOldActivityLog = useCallback((days = 180) => archiveActivityLog(days), [archiveActivityLog]);
+
+  const badgePhotoApi = useMemo(() => (
+    isSupabaseEnabled && agencyId && canUseBadgePhotoStorage()
+      ? {
+          isAvailable: true,
+          getPhotoUrl: getPilgrimPhotoUrl,
+          uploadPhoto: (clientId, file) => uploadPilgrimPhoto({ agencyId, clientId, file }),
+          removePhoto: removePilgrimPhoto,
+        }
+      : { isAvailable: false }
+  ), [agencyId, isSupabaseEnabled]);
 
   const fetchFinalInvoices = useCallback(() => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
@@ -831,7 +851,7 @@ export function useStore(agencyId, onToast) {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   const addClient = useCallback((data) => {
-    const id  = genId("CL");
+    const id  = trimString(data.id) || genId("CL");
     const now = new Date().toISOString().split("T")[0];
     const prepared = prepareClientForSave(data);
     const newClient = {
@@ -1255,11 +1275,12 @@ export function useStore(agencyId, onToast) {
   const dbSyncing = syncStatus === "syncing";
 
   return {
-    programs, clients, payments, agency, activityLog, stats,
+    programs, clients, payments, agency, agencyId, activityLog, stats,
     agencyUsers,
     deletedPrograms, deletedClients,
     activeClients, archivedClients,
     invoiceApi,
+    badgePhotoApi,
     notifications,
     unreadNotifications,
     unreadNotificationsCount,

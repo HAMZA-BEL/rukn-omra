@@ -5,6 +5,7 @@ import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
+import { BadgeTemplatesPage } from "../features/badges";
 
 const t2 = theme.colors;
 
@@ -94,6 +95,8 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
         </div>
       </GlassCard>
+
+      <BadgeTemplatesPage store={store} onToast={onToast} />
 
       {/* Cloud connection status */}
       {isSupabaseEnabled && (

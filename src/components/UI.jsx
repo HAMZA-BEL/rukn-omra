@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
@@ -324,16 +325,18 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
   }, [open, onClose]);
 
   if (!open) return null;
-  return (
+
+  const modalContent = (
     <div
       className="animate-fadeIn"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
-        position: "fixed", inset: 0, zIndex: 1000,
-          background: v.overlay,
+        position: "fixed", inset: 0, zIndex: 12000,
+        background: v.overlay,
         backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
+        padding: "16px max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))",
+        overflowY: "auto",
       }}
     >
       <div
@@ -343,10 +346,13 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
           border: "1px solid rgba(212,175,55,.3)",
           borderRadius: 20,
           width: "100%", maxWidth: width,
-          maxHeight: "90vh",
+          margin: "auto",
+          maxHeight: "min(90vh, 820px)",
           overflow: "hidden",
           display: "flex", flexDirection: "column",
           boxShadow: "0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(212,175,55,.08)",
+          position: "relative",
+          zIndex: 1,
         }}
       >
         {/* header */}
@@ -389,6 +395,9 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return modalContent;
+  return createPortal(modalContent, document.body);
 }
 
 // ── Search Bar ────────────────────────────────────────────────────────────────

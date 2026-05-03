@@ -9,6 +9,7 @@ import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
+import { downloadClientBadgePdf } from "../features/badges";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -22,9 +23,11 @@ const printActionButtonStyle = {
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          deletePayment, agency, clients = [], invoiceApi } = store;
+          deletePayment, agency, clients = [], invoiceApi, badgePhotoApi } = store;
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [invoiceModalOpen, setInvoiceModalOpen] = React.useState(false);
+  const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
+  const [badgeBusy, setBadgeBusy] = React.useState(false);
 
   const program     = getProgramById(client.programId);
   const payments    = getClientPayments(client.id);
@@ -46,10 +49,15 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
+  const badgePhotoPath = client.badgePhotoPath || docs.badgePhotoPath || "";
   const programClients = React.useMemo(
     () => clients.filter((item) => item.programId === client.programId),
     [clients, client.programId]
   );
+  const badgeFileNumber = React.useMemo(() => {
+    const index = programClients.findIndex((item) => item.id === client.id);
+    return String(index >= 0 ? index + 1 : 1).padStart(3, "0");
+  }, [client.id, programClients]);
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
   const template = React.useCallback((text, vars = {}) => {
     return Object.entries(vars).reduce(
@@ -57,6 +65,42 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       String(text || "")
     );
   }, []);
+
+  const handleDownloadBadge = React.useCallback(async () => {
+    if (!program) {
+      onToast?.("لا يوجد برنامج مرتبط بهذا المعتمر", "error");
+      return;
+    }
+    setBadgeBusy(true);
+    try {
+      await downloadClientBadgePdf({
+        agencyId: store.agencyId,
+        client,
+        program,
+        agency,
+        fileNumber: badgeFileNumber,
+      });
+    } catch (error) {
+      onToast?.(
+        error?.message === "missing-template"
+          ? "لا يوجد قالب شارة لهذا البرنامج بعد."
+          : "تعذر تحميل الشارة",
+        "error"
+      );
+    } finally {
+      setBadgeBusy(false);
+    }
+  }, [agency, badgeFileNumber, client, onToast, program, store.agencyId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setBadgePhotoUrl("");
+    if (!badgePhotoPath || !badgePhotoApi?.isAvailable || !badgePhotoApi.getPhotoUrl) return undefined;
+    badgePhotoApi.getPhotoUrl(badgePhotoPath).then((url) => {
+      if (!cancelled) setBadgePhotoUrl(url || "");
+    });
+    return () => { cancelled = true; };
+  }, [badgePhotoApi, badgePhotoPath]);
 
   // Passport expiry warning
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
@@ -73,8 +117,12 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           background:"linear-gradient(135deg,#d4af37,#b8941e)",
           display:"flex", alignItems:"center", justifyContent:"center",
           fontSize:24, fontWeight:900, color:"#060d1a",
-          boxShadow:"0 8px 24px rgba(212,175,55,.3)" }}>
-          {(displayName || "?")[0]}
+          boxShadow:"0 8px 24px rgba(212,175,55,.3)", overflow:"hidden" }}>
+          {badgePhotoUrl ? (
+            <img src={badgePhotoUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+          ) : (
+            (displayName || "?")[0]
+          )}
         </div>
         <div style={{ flex:1 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4, flexWrap:"wrap" }}>
@@ -132,6 +180,12 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           onClick={() => setInvoiceModalOpen(true)}>
           {invoiceActionLabel}
         </Button>
+        <Button variant="secondary" size="sm" icon="download"
+          style={printActionButtonStyle}
+          disabled={badgeBusy}
+          onClick={handleDownloadBadge}>
+          تحميل الشارة
+        </Button>
       </div>
 
       <InvoiceRecipientModal
@@ -158,6 +212,9 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
               [t.hotelMadina, client.hotelMadina||"—"],
               [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "—"],
               [t.transport,   program.transport||"—"],
+              ...(program.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
+              ...(program.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
+              ...(program.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
               [t.departure,   program.departure||"—"],
               [t.returnDate,  program.returnDate||"—"],
             ].map(([k,v]) => (

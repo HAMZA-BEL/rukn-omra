@@ -60,6 +60,11 @@ const toProgram = (p, agencyId) => ({
   seats:        p.seats        ?? 40,
   hotel_mecca:  p.hotelMecca   ?? null,
   hotel_madina: p.hotelMadina  ?? null,
+  badge_guide_phone:   p.guidePhone   ?? null,
+  badge_saudi_phone_1: p.saudiPhone1  ?? null,
+  badge_saudi_phone_2: p.saudiPhone2  ?? null,
+  badge_note:          p.badgeNote    ?? null,
+  badge_template_id:   p.badgeTemplateId ?? null,
   price_table:  p.priceTable   ?? [],
   notes:        p.notes        ?? null,
   deleted:      p.deleted      ?? false,
@@ -82,6 +87,11 @@ const fromProgram = (row) => ({
   seats:       row.seats,
   hotelMecca:  row.hotel_mecca,
   hotelMadina: row.hotel_madina,
+  guidePhone:  row.badge_guide_phone || "",
+  saudiPhone1: row.badge_saudi_phone_1 || "",
+  saudiPhone2: row.badge_saudi_phone_2 || "",
+  badgeNote:   row.badge_note || "",
+  badgeTemplateId: row.badge_template_id || "",
   priceTable:  row.price_table ?? [],
   notes:       row.notes,
   deleted:     row.deleted ?? false,
@@ -104,6 +114,7 @@ const toClient = (c, agencyId) => {
         }
       : null
   );
+  const badgePhotoPath = cleanString(c.badgePhotoPath ?? c.docs?.badgePhotoPath);
   const passport = {
     ...(c.passport ?? {}),
     cin: cleanString(c.cin ?? c.nationalId ?? c.passport?.cin ?? c.passport?.nationalId),
@@ -128,7 +139,7 @@ const toClient = (c, agencyId) => {
   sale_price:        c.salePrice        ?? c.price ?? 0,
   ticket_no:         cleanString(c.ticketNo),
   passport:          passport,
-  docs:              { ...(c.docs ?? {}), ...(rooming ? { rooming } : {}) },
+  docs:              { ...(c.docs ?? {}), ...(badgePhotoPath ? { badgePhotoPath } : {}), ...(rooming ? { rooming } : {}) },
   notes:             cleanString(c.notes),
   registration_date: c.registrationDate ?? null,
   last_modified:     c.lastModified     ?? null,
@@ -172,6 +183,7 @@ const fromClient = (row) => {
   ticketNo:         row.ticket_no,
   passport:         row.passport ?? {},
   docs:             row.docs ?? {},
+  badgePhotoPath:   row.docs?.badgePhotoPath || "",
   notes:            row.notes,
   registrationDate: row.registration_date,
   lastModified:     row.last_modified,
@@ -222,6 +234,32 @@ const fromInvoice = (row) => ({
   createdAt: row.created_at || "",
   trashedAt: row.trashed_at || "",
   deletedAt: row.deleted_at || "",
+});
+
+const toBadgeTemplate = (template, agencyId) => ({
+  id: template.id,
+  agency_id: agencyId,
+  name: cleanString(template.name) || "قالب الشارة",
+  description: cleanString(template.description),
+  template_path: cleanString(template.templatePath),
+  width_mm: Number(template.widthMm || 90),
+  height_mm: Number(template.heightMm || 140),
+  layout: template.layout || {},
+  is_default: Boolean(template.isDefault),
+  updated_at: new Date().toISOString(),
+});
+
+const fromBadgeTemplate = (row) => ({
+  id: row.id,
+  name: row.name || "قالب الشارة",
+  description: row.description || "",
+  templatePath: row.template_path || "",
+  widthMm: Number(row.width_mm || 90),
+  heightMm: Number(row.height_mm || 140),
+  layout: row.layout || {},
+  isDefault: Boolean(row.is_default),
+  createdAt: row.created_at || "",
+  updatedAt: row.updated_at || "",
 });
 
 const toNotification = (n, agencyId) => {
@@ -531,6 +569,60 @@ export const db = {
         .select("*")
         .single();
       return { data: data ? fromInvoice(data) : null, error };
+    },
+  },
+
+  badgeTemplates: {
+    async fetchAll(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("badge_templates")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .order("is_default", { ascending: false })
+        .order("updated_at", { ascending: false });
+      return { data: data?.map(fromBadgeTemplate) ?? [], error };
+    },
+    async upsert(template, agencyId) {
+      if (!agencyId) return { data: null, error: null };
+      const payload = toBadgeTemplate(template, agencyId);
+      if (payload.is_default) {
+        await supabase
+          .from("badge_templates")
+          .update({ is_default: false })
+          .eq("agency_id", agencyId);
+      }
+      const { data, error } = await supabase
+        .from("badge_templates")
+        .upsert(payload, { onConflict: "id" })
+        .select("*")
+        .single();
+      return { data: data ? fromBadgeTemplate(data) : null, error };
+    },
+    async setDefault(id, agencyId) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { error: resetError } = await supabase
+        .from("badge_templates")
+        .update({ is_default: false })
+        .eq("agency_id", agencyId);
+      if (resetError) return { data: null, error: resetError };
+      const { data, error } = await supabase
+        .from("badge_templates")
+        .update({ is_default: true })
+        .eq("agency_id", agencyId)
+        .eq("id", id)
+        .select("*")
+        .single();
+      return { data: data ? fromBadgeTemplate(data) : null, error };
+    },
+    async delete(id, agencyId) {
+      if (!agencyId || !id) return { error: null };
+      const { error } = await supabase
+        .from("badge_templates")
+        .delete()
+        .eq("agency_id", agencyId)
+        .eq("id", id);
+      return { error };
     },
   },
 

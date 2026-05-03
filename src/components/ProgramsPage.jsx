@@ -54,6 +54,13 @@ import {
   trKey,
 } from "../utils/i18nValues";
 import {
+  badgePhonesFromProgram,
+  downloadProgramBadgesPdf,
+  getBadgeContactDefaults,
+  programFieldsFromBadgePhones,
+  useBadgeTemplates,
+} from "../features/badges";
+import {
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -1113,6 +1120,11 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
     ["plane", t.departure, program.departure],
     ["planeLanding", t.returnDate, program.returnDate],
   ];
+  const badgeContactRows = [
+    [t.guidePhone || "رقم المؤطر", program.guidePhone],
+    [t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1],
+    [t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2],
+  ].filter(([, value]) => value);
   const miniStats = [
     { label: t.registered, value: registered, color: tc.gold },
     { label: t.cleared, value: cleared, color: tc.greenLight },
@@ -1156,6 +1168,28 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
             </div>
           ))}
         </div>
+
+        {badgeContactRows.length > 0 && (
+          <div style={{
+            display:"flex",
+            gap:6,
+            flexWrap:"wrap",
+            marginBottom:14,
+          }}>
+            {badgeContactRows.map(([label, value]) => (
+              <span key={label} style={{
+                fontSize:10,
+                color:tc.grey,
+                background:"var(--rukn-bg-soft)",
+                border:"1px solid var(--rukn-border-soft)",
+                borderRadius:999,
+                padding:"4px 9px",
+              }}>
+                {label}: <strong style={{ color:"var(--rukn-text-strong)" }}>{value}</strong>
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* mini stats */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, marginBottom:14,
@@ -1295,6 +1329,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
+  const [badgeExportBusy, setBadgeExportBusy] = React.useState(false);
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
@@ -1559,6 +1594,28 @@ function ProgramInner({ program, store, onToast, onBack }) {
     downloadAmadeusExcel(progClients, program);
     onToast(`تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
   }, [closeHeaderActions, onToast, progClients, program]);
+  const handleBadgePdfExport = React.useCallback(async () => {
+    closeHeaderActions();
+    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    setBadgeExportBusy(true);
+    try {
+      await downloadProgramBadgesPdf({
+        agencyId: store.agencyId,
+        clients: progClients,
+        program,
+        agency,
+      });
+    } catch (error) {
+      onToast(
+        error?.message === "missing-template"
+          ? "لا يوجد قالب شارة لهذا البرنامج بعد."
+          : "تعذر تصدير شارات البرنامج",
+        "error"
+      );
+    } finally {
+      setBadgeExportBusy(false);
+    }
+  }, [agency, closeHeaderActions, onToast, progClients, program, store.agencyId]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     setShowPassportImport(true);
@@ -1637,12 +1694,18 @@ function ProgramInner({ program, store, onToast, onBack }) {
       onClick: handleAmadeusExport,
     },
     {
+      key: "badges",
+      icon: "download",
+      label: badgeExportBusy ? "جاري تجهيز الشارات..." : "تحميل شارات البرنامج PDF",
+      onClick: handleBadgePdfExport,
+    },
+    {
       key: "contracts",
       icon: "download",
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [handleAmadeusExport, handleContractsExcelExport, handlePassportImportOpen, handleProgramPdfExport, lang]);
+  ]), [badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handlePassportImportOpen, handleProgramPdfExport, lang]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -6197,6 +6260,9 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     if (program) return normalizeProgramPackages(program).map(({ legacy, ...pkg }) => pkg);
     return [createPackage("اقتصادي")];
   }, [program, createPackage]);
+  const badgeContacts = getBadgeContactDefaults(program);
+  const initialBadgePhones = badgePhonesFromProgram(program);
+  const { templates: badgeTemplates } = useBadgeTemplates({ agencyId: store.agencyId });
   const [form, setForm] = React.useState({
     name:      program?.name      || "",
     type:      normalizeProgramType(program?.type || "عمرة"),
@@ -6207,8 +6273,14 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     price:     program?.price     || "",
     seats:     program?.seats     || "",
     transport: program?.transport || "",
+    guidePhone: badgeContacts.guidePhone,
+    saudiPhone1: badgeContacts.saudiPhone1,
+    saudiPhone2: badgeContacts.saudiPhone2,
+    badgeNote: badgeContacts.badgeNote,
+    badgeTemplateId: program?.badgeTemplateId || "",
     notes:     program?.notes     || "",
   });
+  const [badgePhones, setBadgePhones] = React.useState(initialBadgePhones.length ? initialBadgePhones : [badgeContacts.guidePhone || ""]);
   const [errors, setErrors] = React.useState({});
   const [packages, setPackages] = React.useState(initialPackages);
   const [levelMenuOpen, setLevelMenuOpen] = React.useState(false);
@@ -6232,6 +6304,18 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       if (i !== index) return pkg;
       return { ...pkg, prices: { ...(pkg.prices || {}), [key]: value } };
     }));
+  };
+  const setBadgePhone = (index, value) => {
+    setBadgePhones(prev => prev.map((phone, i) => i === index ? value : phone));
+  };
+  const addBadgePhone = () => {
+    setBadgePhones(prev => prev.length >= 3 ? prev : [...prev, ""]);
+  };
+  const removeBadgePhone = (index) => {
+    setBadgePhones(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length ? next : [""];
+    });
   };
   const addPackage = (level = "اقتصادي") => {
     setPackages(prev => [createPackage(level), ...prev]);
@@ -6304,14 +6388,18 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     }
     const priceTable = cleanPackages();
     const legacyFields = getLegacyFieldsFromPackages(priceTable, program || form);
+    const phoneFields = programFieldsFromBadgePhones(badgePhones);
     const data = {
       ...form,
       ...legacyFields,
+      ...phoneFields,
       type: normalizeProgramType(form.type),
       visitOrder: normalizeVisitOrder(form.visitOrder),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
       transport: String(form.transport || "").trim(),
+      badgeNote: String(form.badgeNote || "").trim(),
+      badgeTemplateId: String(form.badgeTemplateId || "").trim(),
       priceTable,
     };
     isEdit ? updateProgram(program.id,data) : addProgram(data);
@@ -6381,6 +6469,55 @@ function ProgramForm({ program, store, onSave, onCancel }) {
                 padding:"10px 14px", color:"var(--rukn-text)", fontSize:13,
                 fontFamily:"'Cairo',sans-serif", outline:"none", resize:"vertical" }} />
           </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard style={{ padding:16 }}>
+        <p style={{ fontSize:13, fontWeight:800, color:tc.gold, marginBottom:6 }}>
+          {t.badgeData || "بيانات الشارة"}
+        </p>
+        <p style={{ fontSize:11, color:tc.grey, marginBottom:14 }}>
+          {t.badgeDataHint || "حقول اختيارية ستستخدم لاحقاً في بطاقات المعتمرين."}
+        </p>
+        <div style={{ display:"grid", gap:12 }}>
+          <Input
+            label={t.guidePhone || "رقم المؤطر / الرقم السعودي"}
+            value={badgePhones[0] || ""}
+            onChange={e => setBadgePhone(0, e.target.value)}
+          />
+          {badgePhones.slice(1).map((phone, index) => (
+            <div key={`badge-phone-${index + 1}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:8, alignItems:"end" }}>
+              <Input
+                label={`${t.extraSaudiPhone || "رقم إضافي"} ${index + 1}`}
+                value={phone}
+                onChange={e => setBadgePhone(index + 1, e.target.value)}
+              />
+              <Button variant="ghost" icon="trash" onClick={() => removeBadgePhone(index + 1)}>
+                {t.remove || "إزالة"}
+              </Button>
+            </div>
+          ))}
+          {badgePhones.length < 3 && (
+            <Button variant="ghost" size="sm" icon="plus" onClick={addBadgePhone} style={{ justifySelf:"start" }}>
+              {t.addPhone || "+ إضافة رقم"}
+            </Button>
+          )}
+          {badgeTemplates.length > 0 && (
+            <Select
+              label={t.badgeTemplate || "قالب الشارة"}
+              value={form.badgeTemplateId}
+              onChange={set("badgeTemplateId")}
+              options={[
+                { value:"", label:t.defaultBadgeTemplate || "القالب الافتراضي" },
+                ...badgeTemplates.map(template => ({ value:template.id, label:template.name })),
+              ]}
+            />
+          )}
+          <Input
+            label={t.badgeNote || "ملاحظة الشارة"}
+            value={form.badgeNote}
+            onChange={set("badgeNote")}
+          />
         </div>
       </GlassCard>
 

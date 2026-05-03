@@ -59,6 +59,11 @@ create table if not exists public.programs (
   seats        integer not null default 40,
   hotel_mecca  text,
   hotel_madina text,
+  badge_guide_phone   text,
+  badge_saudi_phone_1 text,
+  badge_saudi_phone_2 text,
+  badge_note          text,
+  badge_template_id   text,
   notes        text,
   deleted      boolean not null default false,
   deleted_at   timestamptz,
@@ -100,6 +105,30 @@ create table if not exists public.clients (
   last_modified      date,
   created_at         timestamptz default now()
 );
+
+alter table public.programs add column if not exists badge_guide_phone text;
+alter table public.programs add column if not exists badge_saudi_phone_1 text;
+alter table public.programs add column if not exists badge_saudi_phone_2 text;
+alter table public.programs add column if not exists badge_note text;
+alter table public.programs add column if not exists badge_template_id text;
+
+-- Badge templates
+create table if not exists public.badge_templates (
+  id            uuid primary key default gen_random_uuid(),
+  agency_id     uuid not null references public.agencies(id) on delete cascade,
+  name          text not null,
+  description   text,
+  template_path text,
+  width_mm      numeric not null default 90,
+  height_mm     numeric not null default 140,
+  layout        jsonb not null default '{}'::jsonb,
+  is_default    boolean not null default false,
+  created_by    uuid references auth.users(id) on delete set null,
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now()
+);
+
+alter table public.badge_templates add column if not exists description text;
 
 -- Payments
 create table if not exists public.payments (
@@ -248,6 +277,7 @@ create index if not exists idx_activity_archive_agency   on public.activity_log_
 create index if not exists idx_activity_archive_created  on public.activity_log_archive(agency_id, created_at desc);
 create index if not exists idx_notifications_agency on public.notifications(agency_id);
 create index if not exists idx_notifications_state  on public.notifications(agency_id, is_archived, is_read);
+create index if not exists idx_badge_templates_agency on public.badge_templates(agency_id, is_default, updated_at desc);
 
 -- ── 3. RLS Helper Function ────────────────────────────────────
 -- Returns the agency_id for the currently authenticated user.
@@ -273,6 +303,7 @@ alter table public.clients      enable row level security;
 alter table public.payments     enable row level security;
 alter table public.invoice_counters enable row level security;
 alter table public.invoices enable row level security;
+alter table public.badge_templates enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.activity_log_archive enable row level security;
 alter table public.notifications enable row level security;
@@ -324,6 +355,117 @@ create policy "clients_insert" on public.clients
 create policy "clients_update" on public.clients
   for update using (agency_id = public.get_agency_id());
 create policy "clients_delete" on public.clients
+  for delete using (agency_id = public.get_agency_id());
+
+-- pilgrim badge photos: private bucket, agency-scoped object paths
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'pilgrim-photos',
+  'pilgrim-photos',
+  false,
+  3145728,
+  array['image/jpeg','image/png','image/webp']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = 3145728,
+    allowed_mime_types = array['image/jpeg','image/png','image/webp'];
+
+drop policy if exists "pilgrim_photos_select" on storage.objects;
+drop policy if exists "pilgrim_photos_insert" on storage.objects;
+drop policy if exists "pilgrim_photos_update" on storage.objects;
+drop policy if exists "pilgrim_photos_delete" on storage.objects;
+create policy "pilgrim_photos_select" on storage.objects
+  for select using (
+    bucket_id = 'pilgrim-photos'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "pilgrim_photos_insert" on storage.objects
+  for insert with check (
+    bucket_id = 'pilgrim-photos'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "pilgrim_photos_update" on storage.objects
+  for update using (
+    bucket_id = 'pilgrim-photos'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  )
+  with check (
+    bucket_id = 'pilgrim-photos'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "pilgrim_photos_delete" on storage.objects
+  for delete using (
+    bucket_id = 'pilgrim-photos'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+
+-- badge template backgrounds: private bucket, agency-scoped object paths
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'badge-templates',
+  'badge-templates',
+  false,
+  8388608,
+  array['image/jpeg','image/png','image/webp']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = 8388608,
+    allowed_mime_types = array['image/jpeg','image/png','image/webp'];
+
+drop policy if exists "badge_templates_storage_select" on storage.objects;
+drop policy if exists "badge_templates_storage_insert" on storage.objects;
+drop policy if exists "badge_templates_storage_update" on storage.objects;
+drop policy if exists "badge_templates_storage_delete" on storage.objects;
+create policy "badge_templates_storage_select" on storage.objects
+  for select using (
+    bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "badge_templates_storage_insert" on storage.objects
+  for insert with check (
+    bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "badge_templates_storage_update" on storage.objects
+  for update using (
+    bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  )
+  with check (
+    bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "badge_templates_storage_delete" on storage.objects
+  for delete using (
+    bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+
+-- badge template rows
+drop policy if exists "badge_templates_select" on public.badge_templates;
+drop policy if exists "badge_templates_insert" on public.badge_templates;
+drop policy if exists "badge_templates_update" on public.badge_templates;
+drop policy if exists "badge_templates_delete" on public.badge_templates;
+create policy "badge_templates_select" on public.badge_templates
+  for select using (agency_id = public.get_agency_id());
+create policy "badge_templates_insert" on public.badge_templates
+  for insert with check (agency_id = public.get_agency_id());
+create policy "badge_templates_update" on public.badge_templates
+  for update using (agency_id = public.get_agency_id())
+  with check (agency_id = public.get_agency_id());
+create policy "badge_templates_delete" on public.badge_templates
   for delete using (agency_id = public.get_agency_id());
 
 -- payments
