@@ -1,12 +1,18 @@
 import React from "react";
-import { StatusBadge, GlassCard, SearchBar, Button } from "./UI";
+import { StatusBadge, GlassCard, SearchBar, Button, Modal } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
-import { printInvoice, printProformaInvoice, InvoiceRecipientModal } from "./PrintTemplates";
+import { printInvoice, printProformaInvoice, printInvoiceSnapshot, previewInvoiceSnapshot, InvoiceRecipientModal } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
+import {
+  deleteSavedInvoiceSnapshot,
+  readSavedInvoices,
+  restoreSavedInvoiceSnapshot,
+  trashSavedInvoiceSnapshot,
+} from "../utils/invoices";
 
 const tc = theme.colors;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,6 +58,14 @@ const getProgramDateValue = (program = {}) => {
   const raw = program.departure || program.startDate || program.date || program.departureDate || "";
   const time = raw ? new Date(raw).getTime() : NaN;
   return Number.isFinite(time) ? time : null;
+};
+
+const getProgramYear = (program = {}) => {
+  const raw = String(program.departure || program.startDate || program.date || program.departureDate || "").trim();
+  const direct = raw.match(/^(\d{4})/);
+  if (direct) return direct[1];
+  const time = getProgramDateValue(program);
+  return time !== null ? String(new Date(time).getFullYear()) : "";
 };
 
 const pickDefaultProgramId = (programs = []) => {
@@ -228,6 +242,110 @@ const getStatusLabel = (status, labels) => {
   return labels.unpaidStatus;
 };
 
+const formatClearanceDate = (value = "") => {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+  return raw || "—";
+};
+
+const invoiceTabText = (lang) => {
+  if (lang === "fr") {
+    return {
+      clearance: "Règlement",
+      invoices: "Factures",
+      title: "Factures finales",
+      subtitle: "Factures officielles émises uniquement",
+      year: "Année",
+      program: "Programme",
+      all: "Tous",
+      search: "Rechercher par client ou numéro de facture",
+      empty: "Aucune facture finale enregistrée",
+      issued: "Émise",
+      trashed: "Corbeille",
+      client: "Client",
+      company: "Société",
+      preview: "Voir",
+      reprint: "Réimprimer",
+      trash: "Supprimer",
+      restore: "Restaurer",
+      deletePermanent: "Supprimer définitivement",
+      warningTitle: "Avertissement important",
+      warningBody: "Vous êtes sur le point de supprimer définitivement une facture finale officielle. Elle sera supprimée du registre local des factures enregistrées et ne s'affichera plus.",
+      confirmDelete: "Oui, supprimer définitivement",
+      cancel: "Annuler",
+      invoiceNumber: "N° facture",
+      date: "Date",
+      amount: "Montant",
+      status: "Statut",
+      recipient: "Bénéficiaire",
+      ice: "ICE",
+    };
+  }
+  if (lang === "en") {
+    return {
+      clearance: "Clearance",
+      invoices: "Invoices",
+      title: "Final invoices",
+      subtitle: "Official issued invoices only",
+      year: "Year",
+      program: "Program",
+      all: "All",
+      search: "Search by pilgrim name or invoice number",
+      empty: "No saved final invoices",
+      issued: "Issued",
+      trashed: "Trash",
+      client: "Pilgrim",
+      company: "Company",
+      preview: "View",
+      reprint: "Reprint",
+      trash: "Delete",
+      restore: "Restore",
+      deletePermanent: "Delete permanently",
+      warningTitle: "Important warning",
+      warningBody: "You are about to permanently delete an official final invoice. It will be removed from the local saved invoice list and will not appear again.",
+      confirmDelete: "Yes, delete permanently",
+      cancel: "Cancel",
+      invoiceNumber: "Invoice no.",
+      date: "Date",
+      amount: "Amount",
+      status: "Status",
+      recipient: "Beneficiary",
+      ice: "ICE",
+    };
+  }
+  return {
+    clearance: "التصفية",
+    invoices: "الفواتير",
+    title: "الفواتير النهائية",
+    subtitle: "الفواتير الرسمية الصادرة فقط",
+    year: "السنة",
+    program: "البرنامج",
+    all: "الكل",
+    search: "ابحث باسم المعتمر أو رقم الفاتورة",
+    empty: "لا توجد فواتير نهائية محفوظة",
+    issued: "صادرة",
+    trashed: "في سلة المحذوفات",
+    client: "معتمر",
+    company: "شركة",
+    preview: "عرض / معاينة",
+    reprint: "إعادة طباعة",
+    trash: "حذف",
+    restore: "استعادة",
+    deletePermanent: "حذف نهائي",
+    warningTitle: "تحذير مهم",
+    warningBody: "أنت على وشك حذف فاتورة نهائية رسميًا. سيتم حذف هذه الفاتورة من السجل المحلي للفواتير المحفوظة ولن تظهر مجددًا.",
+    confirmDelete: "نعم، حذف نهائيًا",
+    cancel: "إلغاء",
+    invoiceNumber: "رقم الفاتورة",
+    date: "التاريخ",
+    amount: "المبلغ",
+    status: "الحالة",
+    recipient: "المستفيد",
+    ice: "ICE",
+  };
+};
+
 export default function ClearancePage({ store }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -239,6 +357,7 @@ export default function ClearancePage({ store }) {
     getClientTotalPaid,
     getClientLastPayment,
     agency,
+    invoiceApi,
   } = store;
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
@@ -249,7 +368,10 @@ export default function ClearancePage({ store }) {
   const [pageSize, setPageSize] = React.useState(10);
   const [currentPage, setCurrentPage] = React.useState(1);
   const [invoiceClient, setInvoiceClient] = React.useState(null);
+  const [activeTab, setActiveTab] = React.useState("clearance");
+  const [savedInvoices, setSavedInvoices] = React.useState(() => readSavedInvoices());
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
+  const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
   const proformaInvoiceLabel = lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية";
   const invoiceColumnLabel = lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة";
@@ -259,6 +381,20 @@ export default function ClearancePage({ store }) {
   );
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
+  const refreshSavedInvoices = React.useCallback(async () => {
+    if (invoiceApi?.isRemote) {
+      const { data, error } = await invoiceApi.fetchFinalInvoices();
+      if (!error) setSavedInvoices(data || []);
+      return data || [];
+    }
+    const localInvoices = readSavedInvoices();
+    setSavedInvoices(localInvoices);
+    return localInvoices;
+  }, [invoiceApi]);
+
+  React.useEffect(() => {
+    if (activeTab === "invoices") refreshSavedInvoices();
+  }, [activeTab, refreshSavedInvoices]);
 
   React.useEffect(() => {
     if (!programs.length) {
@@ -363,20 +499,23 @@ export default function ClearancePage({ store }) {
     setInvoiceClient(client);
   }, []);
 
-  const handlePrintSelectedInvoice = React.useCallback((recipient) => {
+  const handlePrintSelectedInvoice = React.useCallback(async (recipient) => {
     if (!invoiceClient) return false;
     const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
     const clientPayments = invoiceClient.clientPayments || payments.filter(p => p.clientId === invoiceClient.id);
     const printFn = invoiceClient.remaining <= 0 ? printInvoice : printProformaInvoice;
-    return printFn({
+    const printed = await printFn({
       client: invoiceClient,
       program,
       payments: clientPayments,
       agency,
       lang,
       recipient,
+      invoiceApi: invoiceClient.remaining <= 0 ? invoiceApi : null,
     });
-  }, [agency, invoiceClient, lang, payments, programs]);
+    if (printed && invoiceClient.remaining <= 0) await refreshSavedInvoices();
+    return printed;
+  }, [agency, invoiceApi, invoiceClient, lang, payments, programs, refreshSavedInvoices]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
@@ -493,6 +632,33 @@ export default function ClearancePage({ store }) {
     XLSX.writeFile(wb, `${prefix}-${sanitizeFileName(selectedProgram.name)}.xlsx`, { bookType:"xlsx", compression:true });
   }, [agency, isRTL, labels, lang, programData, selectedProgram, statusCounts, totals]);
 
+  const handleTrashInvoice = React.useCallback(async (invoice) => {
+    if (invoiceApi?.isRemote) {
+      await invoiceApi.trashFinalInvoice(invoice.id);
+      await refreshSavedInvoices();
+      return;
+    }
+    setSavedInvoices(trashSavedInvoiceSnapshot(invoice.id));
+  }, [invoiceApi, refreshSavedInvoices]);
+
+  const handleRestoreInvoice = React.useCallback(async (invoice) => {
+    if (invoiceApi?.isRemote) {
+      await invoiceApi.restoreFinalInvoice(invoice.id);
+      await refreshSavedInvoices();
+      return;
+    }
+    setSavedInvoices(restoreSavedInvoiceSnapshot(invoice.id));
+  }, [invoiceApi, refreshSavedInvoices]);
+
+  const handleDeleteInvoice = React.useCallback(async (invoice) => {
+    if (invoiceApi?.isRemote) {
+      await invoiceApi.deleteFinalInvoice(invoice.id);
+      await refreshSavedInvoices();
+      return;
+    }
+    setSavedInvoices(deleteSavedInvoiceSnapshot(invoice.id));
+  }, [invoiceApi, refreshSavedInvoices]);
+
   return (
     <div className="page-body clearance-page" style={{ padding:"0 32px 32px" }}>
       <div className="page-header clearance-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
@@ -502,6 +668,24 @@ export default function ClearancePage({ store }) {
         </div>
       </div>
 
+      <div className="page-filters filters-chips" style={{ marginBottom:18 }}>
+        {[
+          { key:"clearance", label:invoiceLabels.clearance },
+          { key:"invoices", label:invoiceLabels.invoices },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`filter-chip${activeTab === tab.key ? " is-active" : ""}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "clearance" && (
+      <>
       <GlassCard style={{ padding:14, marginBottom:18 }}>
         <div style={{
           display:"flex",
@@ -777,6 +961,24 @@ export default function ClearancePage({ store }) {
           </div>
         )}
       </div>
+      </>
+      )}
+
+      {activeTab === "invoices" && (
+        <InvoicesTab
+          invoices={savedInvoices}
+          programs={programs}
+          labels={invoiceLabels}
+          lang={lang}
+          dir={dir}
+          money={money}
+          onPreview={(invoice) => previewInvoiceSnapshot({ snapshot: invoice, lang })}
+          onReprint={(invoice) => printInvoiceSnapshot({ snapshot: invoice, lang })}
+          onTrash={handleTrashInvoice}
+          onRestore={handleRestoreInvoice}
+          onDelete={handleDeleteInvoice}
+        />
+      )}
 
       <InvoiceRecipientModal
         open={Boolean(invoiceClient)}
@@ -785,6 +987,336 @@ export default function ClearancePage({ store }) {
         documentType={invoiceClient?.remaining <= 0 ? "invoice" : "proforma"}
         onPrint={handlePrintSelectedInvoice}
       />
+    </div>
+  );
+}
+
+function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, onPreview, onReprint, onTrash, onRestore, onDelete }) {
+  const [yearFilter, setYearFilter] = React.useState("all");
+  const [programFilter, setProgramFilter] = React.useState("all");
+  const [search, setSearch] = React.useState("");
+  const [deleteTarget, setDeleteTarget] = React.useState(null);
+
+  const invoiceYears = React.useMemo(() => (
+    [...new Set(programs.map((program) => getProgramYear(program)).filter(Boolean))]
+      .sort((a, b) => String(b).localeCompare(String(a)))
+  ), [programs]);
+
+  const invoicePrograms = React.useMemo(() => {
+    const seen = new Map();
+    programs.forEach((program) => {
+      const key = program?.id || "";
+      const label = program?.name || "—";
+      if (key && !seen.has(key)) seen.set(key, { key, label });
+    });
+    return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [programs]);
+
+  const filteredInvoices = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return invoices.filter((invoice) => {
+      const snapshotProgram = invoice.programSnapshot || {};
+      const recipient = invoice.recipientSnapshot || {};
+      const programKey = invoice.programId || "";
+      const snapshotYear = String(invoice.year || "").trim()
+        || getProgramYear({ departure: snapshotProgram.departureDate });
+      const okYear = yearFilter === "all" || snapshotYear === String(yearFilter);
+      const okProgram = programFilter === "all" || programKey === programFilter;
+      const haystack = [
+        recipient.name,
+        recipient.clientName,
+        recipient.companyName,
+        recipient.phone,
+        recipient.ice,
+        invoice.invoiceDisplayNumber,
+        invoice.invoiceNumber,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return okYear && okProgram && (!q || haystack.includes(q));
+    });
+  }, [invoices, programFilter, search, yearFilter]);
+
+  const selectStyle = {
+    width:"100%",
+    height:42,
+    background:"var(--rukn-bg-select)",
+    border:"1px solid var(--rukn-border-input)",
+    borderRadius:10,
+    color:"var(--rukn-text)",
+    padding:"9px 12px",
+    fontSize:13,
+    fontFamily:"'Cairo',sans-serif",
+    direction:dir,
+    outline:"none",
+  };
+
+  const renderInvoiceTitle = (invoice) => {
+    const recipient = invoice.recipientSnapshot || {};
+    const name = invoice.recipientType === "company"
+      ? recipient.companyName || recipient.name
+      : recipient.clientName || recipient.name;
+    return lang === "fr"
+      ? `Facture ${name || "—"}`
+      : lang === "en"
+        ? `Invoice ${name || "—"}`
+        : `فاتورة ${name || "—"}`;
+  };
+
+  return (
+    <>
+      <GlassCard style={{ padding:16, marginBottom:18 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16, flexWrap:"wrap", marginBottom:16 }}>
+          <div>
+            <h2 style={{ fontSize:18, fontWeight:800, color:"var(--rukn-text)" }}>{labels.title}</h2>
+            <p style={{ fontSize:12, color:"var(--rukn-text-muted)", marginTop:3 }}>{labels.subtitle}</p>
+          </div>
+          <div style={{ fontSize:12, fontWeight:800, color:"var(--rukn-gold)" }}>
+            {filteredInvoices.length} / {invoices.length}
+          </div>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:12, alignItems:"end", marginBottom:16 }}>
+          <label style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text-muted)" }}>{labels.year}</span>
+            <select value={yearFilter} onChange={(event) => setYearFilter(event.target.value)} style={selectStyle}>
+              <option value="all">{labels.all}</option>
+              {invoiceYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </label>
+
+          <label style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text-muted)" }}>{labels.program}</span>
+            <select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} style={selectStyle}>
+              <option value="all">{labels.all}</option>
+              {invoicePrograms.map((program) => <option key={program.key} value={program.key}>{program.label}</option>)}
+            </select>
+          </label>
+
+          <SearchBar
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={labels.search}
+            style={{ width:"100%" }}
+          />
+        </div>
+
+        <div style={{ display:"grid", gap:10 }}>
+          {filteredInvoices.map((invoice) => {
+            const recipient = invoice.recipientSnapshot || {};
+            const program = invoice.programSnapshot || {};
+            const isTrashed = invoice.status === "trashed";
+            const menuItems = !isTrashed
+              ? [
+                { key: "preview", label: labels.preview, icon: "eye", onClick: () => onPreview?.(invoice) },
+                { key: "reprint", label: labels.reprint, icon: "print", onClick: () => onReprint?.(invoice) },
+                { key: "trash", label: labels.trash, icon: "trash", tone: "danger", onClick: () => onTrash?.(invoice) },
+              ]
+              : [
+                { key: "restore", label: labels.restore, icon: "restore", onClick: () => onRestore?.(invoice) },
+                { key: "delete", label: labels.deletePermanent, icon: "trash", tone: "danger", onClick: () => setDeleteTarget(invoice) },
+              ];
+            return (
+              <div
+                key={invoice.id}
+                style={{
+                  display:"flex",
+                  gap:12,
+                  flexWrap:"wrap",
+                  alignItems:"center",
+                  padding:"10px 12px",
+                  borderRadius:12,
+                  background:"var(--rukn-row-bg)",
+                  border:"1px solid var(--rukn-row-border)",
+                }}
+              >
+                <div style={{ minWidth:220, flex:"1 1 240px" }}>
+                  <p style={{ ...TEXT_CLAMP_STYLE, fontSize:13, fontWeight:800, color:"var(--rukn-text)" }}>
+                    {renderInvoiceTitle(invoice)}
+                  </p>
+                  <p style={{ ...TEXT_CLAMP_STYLE, fontSize:11, color:"var(--rukn-text-muted)", marginTop:2 }}>
+                    {invoice.recipientType === "company" ? labels.company : labels.client}
+                    {invoice.recipientType === "company" && recipient.ice ? ` • ${labels.ice}: ${recipient.ice}` : ""}
+                  </p>
+                </div>
+                <div style={{ minWidth:130, flex:"0 1 145px", fontSize:11, color:"var(--rukn-text-muted)" }}>
+                  <strong style={{ display:"block", fontSize:12, color:"var(--rukn-gold)" }}>{invoice.invoiceDisplayNumber}</strong>
+                  <p style={{ marginTop:2 }}>{labels.date}: {formatClearanceDate(invoice.issueDate)}</p>
+                </div>
+                <div style={{ minWidth:150, flex:"1 1 180px", fontSize:11, color:"var(--rukn-text-muted)" }}>
+                  <p style={TEXT_CLAMP_STYLE}>{program.programName || "—"}</p>
+                  <p style={{ marginTop:2, fontSize:12, fontWeight:700, color:"var(--rukn-text)" }}>{money(invoice.amountSnapshot?.total || 0)}</p>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginInlineStart:"auto" }}>
+                  <span style={{
+                    display:"inline-flex",
+                    alignItems:"center",
+                    minHeight:24,
+                    padding:"3px 9px",
+                    borderRadius:999,
+                    fontSize:11,
+                    fontWeight:800,
+                    color:isTrashed ? "var(--rukn-danger)" : "var(--rukn-gold)",
+                    background:isTrashed ? "rgba(239,68,68,.1)" : "var(--rukn-gold-dim)",
+                    border:isTrashed ? "1px solid rgba(239,68,68,.25)" : "1px solid rgba(212,175,55,.28)",
+                  }}>
+                    {isTrashed ? labels.trashed : labels.issued}
+                  </span>
+                  <InvoiceActionsMenu
+                    label={lang === "fr" ? "Actions facture" : lang === "en" ? "Invoice actions" : "إجراءات الفاتورة"}
+                    items={menuItems}
+                  />
+                </div>
+              </div>
+            );
+          })}
+
+          {!filteredInvoices.length && (
+            <div style={{
+              padding:22,
+              textAlign:"center",
+              borderRadius:12,
+              border:"1px dashed var(--rukn-border-soft)",
+              color:"var(--rukn-text-muted)",
+              fontSize:13,
+            }}>
+              {labels.empty}
+            </div>
+          )}
+        </div>
+      </GlassCard>
+
+      <Modal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title={labels.warningTitle}
+        width={520}
+      >
+        <div style={{ display:"grid", gap:16 }}>
+          <div style={{
+            padding:"13px 14px",
+            borderRadius:12,
+            background:"rgba(239,68,68,.1)",
+            border:"1px solid rgba(239,68,68,.28)",
+            color:"var(--rukn-text)",
+            lineHeight:1.8,
+            fontSize:13,
+            fontWeight:700,
+          }}>
+            <p>{labels.warningBody}</p>
+            <p style={{ marginTop:10 }}>{labels.invoiceNumber}: {deleteTarget?.invoiceDisplayNumber || "—"}</p>
+            <p>{labels.recipient}: {deleteTarget ? renderInvoiceTitle(deleteTarget).replace(/^فاتورة\s|^Facture\s|^Invoice\s/, "") : "—"}</p>
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>{labels.cancel}</Button>
+            <Button
+              variant="danger"
+              icon="trash"
+              onClick={() => {
+                if (deleteTarget) onDelete?.(deleteTarget);
+                setDeleteTarget(null);
+              }}
+            >
+              {labels.confirmDelete}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+function InvoiceActionsMenu({ label, items = [] }) {
+  const [open, setOpen] = React.useState(false);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const handlePointer = (event) => {
+      if (!menuRef.current || menuRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointer);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} style={{ position:"relative" }}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          width:34,
+          height:34,
+          borderRadius:10,
+          border:"1px solid var(--rukn-border-soft)",
+          background:"var(--rukn-bg-soft)",
+          color:"var(--rukn-text-muted)",
+          display:"inline-flex",
+          alignItems:"center",
+          justifyContent:"center",
+          fontSize:18,
+          lineHeight:1,
+          cursor:"pointer",
+          transition:"border-color .2s ease, background .2s ease, color .2s ease",
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute",
+          top:"calc(100% + 8px)",
+          insetInlineEnd:0,
+          minWidth:190,
+          padding:6,
+          borderRadius:12,
+          background:"var(--rukn-bg-card)",
+          border:"1px solid var(--rukn-border-soft)",
+          boxShadow:"var(--rukn-shadow-card)",
+          zIndex:30,
+        }}>
+          {items.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                item.onClick?.();
+                setOpen(false);
+              }}
+              style={{
+                width:"100%",
+                display:"flex",
+                alignItems:"center",
+                gap:8,
+                padding:"9px 10px",
+                borderRadius:10,
+                border:"none",
+                background:"transparent",
+                color:item.tone === "danger" ? "var(--rukn-danger)" : "var(--rukn-text)",
+                fontFamily:"'Cairo',sans-serif",
+                fontSize:13,
+                fontWeight:700,
+                textAlign:"start",
+                cursor:"pointer",
+              }}
+            >
+              <AppIcon
+                name={item.icon}
+                size={14}
+                color={item.tone === "danger" ? "var(--rukn-danger)" : "var(--rukn-text-muted)"}
+              />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

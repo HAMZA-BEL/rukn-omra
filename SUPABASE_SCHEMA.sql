@@ -114,6 +114,39 @@ create table if not exists public.payments (
   created_at  timestamptz default now()
 );
 
+-- Final official invoices
+create table if not exists public.invoice_counters (
+  agency_id     uuid not null references public.agencies(id) on delete cascade,
+  invoice_year  integer not null,
+  last_number   integer not null default 0,
+  updated_at    timestamptz not null default now(),
+  primary key (agency_id, invoice_year)
+);
+
+create table if not exists public.invoices (
+  id                  uuid primary key default gen_random_uuid(),
+  agency_id           uuid not null references public.agencies(id) on delete cascade,
+  client_id           text,
+  program_id          text,
+  invoice_number      integer not null,
+  invoice_display_number text not null,
+  invoice_year        integer not null,
+  issue_date          date not null,
+  status              text not null default 'issued' check (status in ('issued','trashed','deleted')),
+  recipient_type      text not null check (recipient_type in ('client','company')),
+  recipient_snapshot  jsonb not null default '{}'::jsonb,
+  program_snapshot    jsonb not null default '{}'::jsonb,
+  amount_snapshot     jsonb not null default '{}'::jsonb,
+  payment_references  jsonb not null default '[]'::jsonb,
+  invoice_key         text,
+  created_by          uuid references auth.users(id) on delete set null,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  trashed_at          timestamptz,
+  deleted_at          timestamptz,
+  constraint invoices_agency_year_number_unique unique (agency_id, invoice_year, invoice_number)
+);
+
 -- Activity log
 create table if not exists public.activity_log (
   id           uuid primary key default gen_random_uuid(),
@@ -204,6 +237,11 @@ create index if not exists idx_clients_program    on public.clients(program_id);
 create index if not exists idx_clients_archived   on public.clients(agency_id, archived);
 create index if not exists idx_payments_agency    on public.payments(agency_id);
 create index if not exists idx_payments_client    on public.payments(client_id);
+create index if not exists idx_invoices_agency_year on public.invoices(agency_id, invoice_year, invoice_number);
+create index if not exists idx_invoices_agency_status on public.invoices(agency_id, status, issue_date desc);
+create unique index if not exists idx_invoices_active_key
+  on public.invoices(agency_id, invoice_key)
+  where invoice_key is not null and status <> 'deleted';
 create index if not exists idx_activity_agency           on public.activity_log(agency_id);
 create index if not exists idx_activity_agency_created   on public.activity_log(agency_id, created_at desc);
 create index if not exists idx_activity_archive_agency   on public.activity_log_archive(agency_id);
@@ -233,6 +271,8 @@ alter table public.users        enable row level security;
 alter table public.programs     enable row level security;
 alter table public.clients      enable row level security;
 alter table public.payments     enable row level security;
+alter table public.invoice_counters enable row level security;
+alter table public.invoices enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.activity_log_archive enable row level security;
 alter table public.notifications enable row level security;
@@ -299,6 +339,140 @@ create policy "payments_update" on public.payments
   for update using (agency_id = public.get_agency_id());
 create policy "payments_delete" on public.payments
   for delete using (agency_id = public.get_agency_id());
+
+-- invoices
+drop policy if exists "invoices_select" on public.invoices;
+drop policy if exists "invoices_insert" on public.invoices;
+drop policy if exists "invoices_update" on public.invoices;
+create policy "invoices_select" on public.invoices
+  for select using (agency_id = public.get_agency_id());
+create policy "invoices_insert" on public.invoices
+  for insert with check (agency_id = public.get_agency_id());
+create policy "invoices_update" on public.invoices
+  for update using (agency_id = public.get_agency_id())
+  with check (agency_id = public.get_agency_id());
+
+-- counters are only changed by the issue_final_invoice RPC.
+drop policy if exists "invoice_counters_select" on public.invoice_counters;
+create policy "invoice_counters_select" on public.invoice_counters
+  for select using (agency_id = public.get_agency_id());
+
+create or replace function public.touch_invoice_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_invoices_updated_at on public.invoices;
+create trigger trg_invoices_updated_at
+before update on public.invoices
+for each row execute function public.touch_invoice_updated_at();
+
+create or replace function public.issue_final_invoice(
+  p_agency_id uuid,
+  p_invoice_key text,
+  p_client_id text,
+  p_program_id text,
+  p_issue_date date,
+  p_recipient_type text,
+  p_recipient_snapshot jsonb,
+  p_program_snapshot jsonb,
+  p_amount_snapshot jsonb,
+  p_payment_references jsonb
+)
+returns public.invoices
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  existing_invoice public.invoices;
+  next_number integer;
+  v_invoice_year integer;
+  inserted_invoice public.invoices;
+begin
+  if p_agency_id is null or p_agency_id <> public.get_agency_id() then
+    raise exception 'invalid agency';
+  end if;
+  if p_recipient_type not in ('client','company') then
+    raise exception 'invalid recipient type';
+  end if;
+
+  if p_invoice_key is not null and length(trim(p_invoice_key)) > 0 then
+    select *
+    into existing_invoice
+    from public.invoices
+    where agency_id = p_agency_id
+      and invoice_key = p_invoice_key
+      and status <> 'deleted'
+    limit 1;
+    if found then
+      return existing_invoice;
+    end if;
+  end if;
+
+  v_invoice_year := extract(year from coalesce(p_issue_date, current_date))::integer;
+
+  insert into public.invoice_counters (agency_id, invoice_year, last_number)
+  values (p_agency_id, v_invoice_year, 0)
+  on conflict (agency_id, invoice_year) do nothing;
+
+  select last_number + 1
+  into next_number
+  from public.invoice_counters
+  where agency_id = p_agency_id
+    and invoice_year = v_invoice_year
+  for update;
+
+  update public.invoice_counters
+  set last_number = next_number,
+      updated_at = now()
+  where agency_id = p_agency_id
+    and invoice_year = v_invoice_year;
+
+  insert into public.invoices (
+    agency_id,
+    client_id,
+    program_id,
+    invoice_number,
+    invoice_display_number,
+    invoice_year,
+    issue_date,
+    status,
+    recipient_type,
+    recipient_snapshot,
+    program_snapshot,
+    amount_snapshot,
+    payment_references,
+    invoice_key,
+    created_by
+  )
+  values (
+    p_agency_id,
+    nullif(p_client_id, ''),
+    nullif(p_program_id, ''),
+    next_number,
+    lpad(next_number::text, 4, '0') || '/' || v_invoice_year::text,
+    v_invoice_year,
+    coalesce(p_issue_date, current_date),
+    'issued',
+    p_recipient_type,
+    coalesce(p_recipient_snapshot, '{}'::jsonb),
+    coalesce(p_program_snapshot, '{}'::jsonb),
+    coalesce(p_amount_snapshot, '{}'::jsonb),
+    coalesce(p_payment_references, '[]'::jsonb),
+    nullif(p_invoice_key, ''),
+    auth.uid()
+  )
+  returning * into inserted_invoice;
+
+  return inserted_invoice;
+end;
+$$;
 
 -- Activity logging for payments
 drop function if exists public.log_payment_activity cascade;

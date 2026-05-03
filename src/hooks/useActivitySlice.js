@@ -7,12 +7,13 @@ import {
 } from "../services/activityService";
 
 const DASHBOARD_ACTIVITY_LIMIT = 5;
+const ACTIVITY_CACHE_LIMIT = 500;
 
 export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) {
   const [activityLog, setActivityLog] = useState([]);
 
   const setInitialActivity = useCallback((items = []) => {
-    setActivityLog(Array.isArray(items) ? items.slice(0, DASHBOARD_ACTIVITY_LIMIT) : []);
+    setActivityLog(Array.isArray(items) ? items.slice(0, ACTIVITY_CACHE_LIMIT) : []);
   }, []);
 
   const fetchActivityLogPage = useCallback(
@@ -48,7 +49,7 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
         clientName,
         time: new Date().toISOString(),
       };
-      setActivityLog((prev) => [entry, ...prev].slice(0, DASHBOARD_ACTIVITY_LIMIT));
+      setActivityLog((prev) => [entry, ...prev].slice(0, ACTIVITY_CACHE_LIMIT));
       if (!options.skipRemote && isSupabaseEnabled && agencyId) {
         insertActivityEntry(agencyId, null, entry).catch(() => {});
       }

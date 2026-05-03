@@ -341,6 +341,51 @@ export function useStore(agencyId, onToast) {
   const activeClients        = useMemo(() => clients.filter(c => !c.archived),   [clients]);
   const archiveOldActivityLog = useCallback((days = 180) => archiveActivityLog(days), [archiveActivityLog]);
 
+  const fetchFinalInvoices = useCallback(() => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
+    return db.invoices.fetch(agencyId);
+  }, [agencyId]);
+
+  const issueFinalInvoiceSnapshot = useCallback((draft) => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
+    return db.invoices.issueFinal(agencyId, draft);
+  }, [agencyId]);
+
+  const trashFinalInvoice = useCallback((id) => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
+    return db.invoices.trash(agencyId, id);
+  }, [agencyId]);
+
+  const restoreFinalInvoice = useCallback((id) => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
+    return db.invoices.restore(agencyId, id);
+  }, [agencyId]);
+
+  const deleteFinalInvoice = useCallback((id) => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
+    return db.invoices.markDeleted(agencyId, id);
+  }, [agencyId]);
+
+  const invoiceApi = useMemo(() => (
+    isSupabaseEnabled && agencyId
+      ? {
+          isRemote: true,
+          fetchFinalInvoices,
+          issueFinalInvoiceSnapshot,
+          trashFinalInvoice,
+          restoreFinalInvoice,
+          deleteFinalInvoice,
+        }
+      : null
+  ), [
+    agencyId,
+    deleteFinalInvoice,
+    fetchFinalInvoices,
+    issueFinalInvoiceSnapshot,
+    restoreFinalInvoice,
+    trashFinalInvoice,
+  ]);
+
   // ── Silent background sync: local-first, Supabase async ──────────────────
   const sync = useCallback(async (fn) => {
     if (!isSupabaseEnabled || !agencyId) return;
@@ -1214,6 +1259,7 @@ export function useStore(agencyId, onToast) {
     agencyUsers,
     deletedPrograms, deletedClients,
     activeClients, archivedClients,
+    invoiceApi,
     notifications,
     unreadNotifications,
     unreadNotificationsCount,

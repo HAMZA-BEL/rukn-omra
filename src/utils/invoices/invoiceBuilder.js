@@ -1,6 +1,6 @@
 import { getClientDisplayName } from "../clientNames";
 import { ensureInvoiceRegistryItem } from "./invoiceRegistry";
-import { trimInvoiceValue } from "./invoiceNumbering";
+import { buildInvoiceKey, getInvoiceIssueDate, trimInvoiceValue } from "./invoiceNumbering";
 import { normalizeInvoiceRecipient, validateInvoiceRecipient } from "./invoiceValidation";
 
 export const getInvoiceClientCin = (client = {}) => (
@@ -37,6 +37,7 @@ export const buildInvoiceData = ({
   fallbackName = "—",
   lang = "ar",
   documentType = "invoice",
+  skipInvoiceRegistry = false,
 } = {}) => {
   const safeClient = client || {};
   const safeProgram = program || {};
@@ -63,7 +64,11 @@ export const buildInvoiceData = ({
       paidInFull,
     };
   }
-  const invoiceItem = isProforma ? null : ensureInvoiceRegistryItem({ client: safeClient, payments, recipient: invoiceRecipient });
+  const invoiceItem = isProforma
+    ? null
+    : skipInvoiceRegistry
+      ? { invoiceKey: buildInvoiceKey({ client: safeClient, payments, recipient: invoiceRecipient }) }
+      : ensureInvoiceRegistryItem({ client: safeClient, payments, recipient: invoiceRecipient });
 
   return {
     valid: true,
@@ -81,7 +86,7 @@ export const buildInvoiceData = ({
     latestPayment,
     invoiceItem,
     invoiceNo: invoiceItem?.invoiceNumber || "",
-    invoiceDate: invoiceItem?.date || getTodayDate(),
+    invoiceDate: invoiceItem?.date || (isProforma ? getTodayDate() : getInvoiceIssueDate(payments)),
     issuedToCompany: invoiceRecipient.type === "company",
   };
 };

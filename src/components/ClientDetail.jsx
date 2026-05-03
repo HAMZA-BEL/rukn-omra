@@ -22,7 +22,7 @@ const printActionButtonStyle = {
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          deletePayment, agency, clients = [] } = store;
+          deletePayment, agency, clients = [], invoiceApi } = store;
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [invoiceModalOpen, setInvoiceModalOpen] = React.useState(false);
 
@@ -141,7 +141,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         documentType={isPaidInFull ? "invoice" : "proforma"}
         onPrint={(recipient) => (
           isPaidInFull
-            ? printInvoice({ client, program, payments, agency, lang, recipient })
+            ? printInvoice({ client, program, payments, agency, lang, recipient, invoiceApi })
             : printProformaInvoice({ client, program, payments, agency, lang, recipient })
         )}
       />

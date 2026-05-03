@@ -4,95 +4,136 @@ import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { translateActivityDescription } from "../utils/i18nValues";
 
-const PAGE_SIZE = 20;
-const CATEGORY_GROUPS = {
-  all: null,
-  clients: [
-    "client_add","client_update","client_delete","client_transfer",
-    "client_archive","client_restore","client_bulk_archive","client_bulk_delete"
-  ],
-  programs: [
-    "program_add","program_update","program_delete","program_archive","program_restore"
-  ],
-  payments: ["payment_add","payment_delete"],
-  imports: ["import_excel","bulk_import"],
-};
+const LOAD_LIMIT = 500;
+const DISPLAY_STEP = 50;
 
 const PERIOD_OPTIONS = [
   { key: "all", days: null },
-  { key: "today", days: 1 },
+  { key: "today", days: "today" },
   { key: "7", days: 7 },
   { key: "30", days: 30 },
   { key: "180", days: 180 },
 ];
 
+const CATEGORY_KEYS = ["all", "clients", "programs", "payments", "imports"];
+
+const normalizeText = (value) => String(value ?? "").trim().toLowerCase();
+
+const getActivityTime = (row = {}) => {
+  const raw = row.time || row.created_at || row.createdAt || row.date || row.timestamp;
+  const date = raw ? new Date(raw) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+};
+
+const getActivityCategory = (row = {}) => {
+  const type = normalizeText(row.type || row.action || row.entity);
+  const text = [
+    row.type,
+    row.action,
+    row.entity,
+    row.description,
+    row.title,
+    row.clientName,
+    row.programName,
+    row.receiptNo,
+    row.receiptNumber,
+    row.metadata && JSON.stringify(row.metadata),
+    row.meta && JSON.stringify(row.meta),
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (type.startsWith("client_") || type.includes("pilgrim") || /معتمر|client|pilgrim|pèlerin/.test(text)) return "clients";
+  if (type.startsWith("program_") || /برنامج|program|programme/.test(text)) return "programs";
+  if (type.startsWith("payment_") || /دفعة|دفع|وصل|payment|paiement|receipt|reçu/.test(text)) return "payments";
+  if (
+    type.startsWith("import_")
+    || type.includes("import")
+    || type.includes("backup")
+    || /استيراد|استورد|import|backup|sauvegarde|ملف|excel/.test(text)
+  ) return "imports";
+
+  return "other";
+};
+
+const buildSearchHaystack = (row = {}) => [
+  row.type,
+  row.action,
+  row.entity,
+  row.description,
+  row.title,
+  row.clientName,
+  row.client_name,
+  row.programName,
+  row.program_name,
+  row.receiptNo,
+  row.receiptNumber,
+  row.paymentNumber,
+  row.metadata && JSON.stringify(row.metadata),
+  row.meta && JSON.stringify(row.meta),
+].filter(Boolean).join(" ").toLowerCase();
+
+const isWithinPeriod = (row, periodKey) => {
+  if (periodKey === "all") return true;
+  const time = getActivityTime(row);
+  if (!time) return false;
+  const now = new Date();
+  if (periodKey === "today") {
+    return time.getFullYear() === now.getFullYear()
+      && time.getMonth() === now.getMonth()
+      && time.getDate() === now.getDate();
+  }
+  const days = Number(periodKey);
+  if (!Number.isFinite(days)) return true;
+  return time.getTime() >= now.getTime() - days * 86400000;
+};
+
 export default function ActivityLogPage({ store }) {
   const { t, lang } = useLang();
   const [category, setCategory] = React.useState("all");
   const [period, setPeriod] = React.useState("30");
-  const [page, setPage] = React.useState(0);
   const [searchDraft, setSearchDraft] = React.useState("");
   const [search, setSearch] = React.useState("");
-  const [rows, setRows] = React.useState([]);
-  const [total, setTotal] = React.useState(0);
+  const [rawRows, setRawRows] = React.useState([]);
+  const [visibleCount, setVisibleCount] = React.useState(DISPLAY_STEP);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [archiveBusy, setArchiveBusy] = React.useState(false);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const searchDebounce = React.useRef(null);
+  const filtersRef = React.useRef(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
   const archiveOldActivityLog = store.archiveOldActivityLog;
   const cachedActivity = store.activityLog || [];
 
-  const types = React.useMemo(() => CATEGORY_GROUPS[category] || null, [category]);
-  const fromDate = React.useMemo(() => {
-    const option = PERIOD_OPTIONS.find(p => p.key === period);
-    if (!option || !option.days) return null;
-    const date = new Date(Date.now() - option.days * 86400000);
-    return date.toISOString();
-  }, [period]);
+  const applyFallback = React.useCallback(() => {
+    setRawRows(Array.isArray(cachedActivity) ? cachedActivity : []);
+    setError(null);
+  }, [cachedActivity]);
 
-  const applyFallback = React.useCallback((nextPage) => {
-    const start = nextPage * PAGE_SIZE;
-    const fallbackRows = cachedActivity.slice(start, start + PAGE_SIZE);
-    if (fallbackRows.length) {
-      setRows(fallbackRows);
-      setTotal(cachedActivity.length);
-      setPage(nextPage);
-      setError(null);
-    } else {
-      setRows([]);
-      setTotal(0);
-      setError(t.activityError || "تعذّر تحميل السجل");
+  const loadActivities = React.useCallback(async () => {
+    if (!fetchActivityLogPage) {
+      applyFallback();
+      return;
     }
-  }, [cachedActivity, t.activityError]);
-
-  const loadPage = React.useCallback(async (nextPage = 0) => {
-    if (!fetchActivityLogPage) return;
     setLoading(true);
     setError(null);
     try {
-      const { data, count, error } = await fetchActivityLogPage({
-        page: nextPage,
-        limit: PAGE_SIZE,
-        types,
-        from: fromDate,
-        search,
+      const { data, error } = await fetchActivityLogPage({
+        page: 0,
+        limit: LOAD_LIMIT,
       });
       if (error) {
-        applyFallback(nextPage);
+        applyFallback();
         return;
       }
-      setRows(data || []);
-      setTotal(count ?? 0);
-      setPage(nextPage);
+      setRawRows(data || []);
     } catch (err) {
       console.error("[ActivityLogPage]", err);
-      applyFallback(nextPage);
+      applyFallback();
     } finally {
       setLoading(false);
     }
-  }, [applyFallback, fetchActivityLogPage, fromDate, search, types]);
+  }, [applyFallback, fetchActivityLogPage]);
 
   React.useEffect(() => {
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
@@ -105,19 +146,64 @@ export default function ActivityLogPage({ store }) {
   }, [searchDraft]);
 
   React.useEffect(() => {
-    loadPage(0);
-  }, [category, period, search, loadPage]);
+    loadActivities();
+  }, [loadActivities]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const disablePrev = loading || page === 0;
-  const disableNext = loading || page >= totalPages - 1;
+  React.useEffect(() => {
+    setVisibleCount(DISPLAY_STEP);
+  }, [category, period, search]);
+
+  React.useEffect(() => {
+    if (!filtersOpen) return undefined;
+    const handlePointer = (event) => {
+      if (!filtersRef.current || filtersRef.current.contains(event.target)) return;
+      setFiltersOpen(false);
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setFiltersOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointer);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [filtersOpen]);
+
+  const filteredRows = React.useMemo(() => {
+    const q = normalizeText(search);
+    return rawRows
+      .filter((row) => category === "all" || getActivityCategory(row) === category)
+      .filter((row) => isWithinPeriod(row, period))
+      .filter((row) => !q || buildSearchHaystack(row).includes(q))
+      .sort((a, b) => {
+        const aTime = getActivityTime(a)?.getTime() || 0;
+        const bTime = getActivityTime(b)?.getTime() || 0;
+        return bTime - aTime;
+      });
+  }, [category, period, rawRows, search]);
+
+  const rows = filteredRows.slice(0, visibleCount);
+  const canShowMore = visibleCount < filteredRows.length;
+  const categoryOptions = React.useMemo(
+    () => CATEGORY_KEYS.map((key) => ({ key, label:t[`activityFilter_${key}`] || key })),
+    [t]
+  );
+  const periodOptions = React.useMemo(
+    () => PERIOD_OPTIONS.map((opt) => ({ key:opt.key, label:t[`activityPeriod_${opt.key}`] || opt.key })),
+    [t]
+  );
+  const filterSummary = [
+    categoryOptions.find((option) => option.key === category)?.label,
+    periodOptions.find((option) => option.key === period)?.label,
+  ].filter(Boolean).join(" · ");
 
   const handleArchivePurge = async () => {
     if (!archiveOldActivityLog) return;
     setArchiveBusy(true);
     try {
       await archiveOldActivityLog(180);
-      await loadPage(0);
+      await loadActivities();
     } finally {
       setArchiveBusy(false);
     }
@@ -135,56 +221,62 @@ export default function ActivityLogPage({ store }) {
         </Button>
       </div>
 
-      <div className="filters-chips" style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
-        {["all","clients","programs","payments","imports"].map(key => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setCategory(key)}
-            style={{
-              padding:"7px 16px",
-              borderRadius:18,
-              border:`1px solid ${category===key?theme.colors.gold:"rgba(255,255,255,.08)"}`,
-              background:category===key?"rgba(212,175,55,.15)":"rgba(255,255,255,.03)",
-              color:category===key?theme.colors.gold:theme.colors.grey,
-              fontSize:12,
-              fontWeight:category===key?700:500,
-              cursor:"pointer",
-            }}
-          >
-            {t[`activityFilter_${key}`] || key}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {PERIOD_OPTIONS.map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => setPeriod(opt.key)}
-              style={{
-                padding:"5px 12px",
-                borderRadius:14,
-                border:`1px solid ${period===opt.key?theme.colors.gold:"rgba(255,255,255,.08)"}`,
-                background:period===opt.key?"rgba(212,175,55,.15)":"rgba(255,255,255,.02)",
-                color:period===opt.key?theme.colors.gold:theme.colors.grey,
-                fontSize:11,
-                cursor:"pointer",
-              }}
+      <GlassCard style={{ padding:12, marginBottom:14 }}>
+        <div style={{
+          display:"flex",
+          gap:10,
+          flexWrap:"wrap",
+          alignItems:"center",
+        }}>
+          <div style={{ flex:"1 1 300px", minWidth:220 }}>
+            <SearchBar
+              value={searchDraft}
+              onChange={(e)=>setSearchDraft(e.target.value)}
+              placeholder={t.activitySearchPlaceholder || "ابحث في السجل..."}
+              style={{ width:"100%" }}
+            />
+          </div>
+          <div ref={filtersRef} style={{ position:"relative", flex:"0 0 auto", zIndex:99999}}>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="settings"
+              onClick={() => setFiltersOpen((open) => !open)}
+              style={{ minHeight:40 }}
             >
-              {t[`activityPeriod_${opt.key}`] || opt.key}
-            </button>
-          ))}
+              {lang === "fr" ? "Filtres" : lang === "en" ? "Filters" : "الفلاتر"}
+            </Button>
+            {filtersOpen && (
+              <div style={{
+                position:"absolute",
+                bottom:"calc(100% + 8px)",
+                insetInlineEnd:0,
+                width:"min(520px, calc(100vw - 48px))",
+                padding:12,
+                borderRadius:14,
+                background:"var(--rukn-bg-card)",
+                border:"1px solid var(--rukn-border-soft)",
+                boxShadow:"var(--rukn-shadow-card)",
+                zIndex:99999,
+                pointerEvents:"auto",
+                display:"grid",
+                gap:10,
+              }}>
+                <CompactChipGroup value={category} options={categoryOptions} onChange={setCategory} />
+                <CompactChipGroup value={period} options={periodOptions} onChange={setPeriod} />
+              </div>
+            )}
+          </div>
+          <span style={{
+            flex:"0 1 auto",
+            fontSize:12,
+            color:"var(--rukn-text-muted)",
+            whiteSpace:"nowrap",
+          }}>
+            {filterSummary}
+          </span>
         </div>
-        <SearchBar
-          value={searchDraft}
-          onChange={(e)=>setSearchDraft(e.target.value)}
-          placeholder={t.activitySearchPlaceholder || "ابحث في السجل..."}
-          style={{ flex:"1 1 240px", minWidth:220 }}
-        />
-      </div>
+      </GlassCard>
 
       <GlassCard style={{ padding:0 }}>
         {loading && (
@@ -194,37 +286,87 @@ export default function ActivityLogPage({ store }) {
           <div style={{ padding:16, textAlign:"center", color:theme.colors.danger }}>{error}</div>
         )}
         {!loading && !error && rows.length === 0 && (
-          <div style={{ padding:20, textAlign:"center", color:theme.colors.grey }}>{t.activityEmpty || "لا توجد أنشطة"}</div>
+          <div style={{ padding:20, textAlign:"center", color:theme.colors.grey }}>
+            {t.activityEmpty || "لا توجد أنشطة مطابقة للفلاتر الحالية"}
+          </div>
         )}
         {rows.map((row, idx) => (
           <ActivityLogItem key={row.id || idx} row={row} t={t} lang={lang} />
         ))}
       </GlassCard>
 
-      {total > PAGE_SIZE && (
+      {filteredRows.length > 0 && (
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:18, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontSize:12, color:theme.colors.grey }}>
-            {t.activityShowing || "عدد السجلات"}: {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total}
+            {t.activityShowing || "عرض"} {rows.length} / {filteredRows.length}
           </span>
-          <div style={{ display:"flex", gap:8 }}>
-            <Button variant="ghost" size="sm" onClick={() => !disablePrev && loadPage(page - 1)} disabled={disablePrev}>
-              ⟵ {t.activityNewer || (t.newerUpdates || "الأحدث")}
+          {canShowMore && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setVisibleCount((count) => count + DISPLAY_STEP)}
+            >
+              {lang === "fr" ? "Afficher plus" : lang === "en" ? "Show more" : "عرض المزيد"}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => !disableNext && loadPage(page + 1)} disabled={disableNext}>
-              {t.activityOlder || (t.olderUpdates || "الأقدم")} ⟶
-            </Button>
-          </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
+function CompactChipGroup({ value, options, onChange }) {
+  return (
+    <div style={{
+      display:"flex",
+      gap:4,
+      flexWrap:"wrap",
+      padding:4,
+      borderRadius:14,
+      background:"var(--rukn-bg-soft)",
+      border:"1px solid var(--rukn-border-soft)",
+      minWidth:0,
+    }}>
+      {options.map((option) => {
+        const active = value === option.key;
+        return (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onChange(option.key)}
+            style={{
+              flex:"1 1 auto",
+              minWidth:0,
+              minHeight:30,
+              padding:"5px 9px",
+              borderRadius:10,
+              border:`1px solid ${active ? "var(--rukn-gold)" : "transparent"}`,
+              background:active ? "var(--rukn-gold-dim)" : "transparent",
+              color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+              fontFamily:"'Cairo',sans-serif",
+              fontSize:11,
+              fontWeight:active ? 800 : 700,
+              lineHeight:1.25,
+              whiteSpace:"nowrap",
+              cursor:"pointer",
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ActivityLogItem({ row, t, lang }) {
-  const time = new Date(row.time || row.created_at);
+  const time = getActivityTime(row);
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
-  const timeStr = `${time.toLocaleDateString(locale)} ${time.toLocaleTimeString(locale, { hour:"2-digit", minute:"2-digit" })}`;
+  const timeStr = time
+    ? `${time.toLocaleDateString(locale)} ${time.toLocaleTimeString(locale, { hour:"2-digit", minute:"2-digit" })}`
+    : "—";
   const description = translateActivityDescription(row.description, lang);
+  const clientName = row.clientName || row.client_name;
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"12px 16px",
       background:"var(--rukn-row-bg)",
@@ -233,8 +375,8 @@ function ActivityLogItem({ row, t, lang }) {
         <span style={{ fontSize:14, fontWeight:700, color:theme.colors.white }}>{description}</span>
         <span style={{ fontSize:11, color:theme.colors.grey }}>{timeStr}</span>
       </div>
-      {row.clientName && (
-        <span style={{ fontSize:12, color:theme.colors.gold }}>{row.clientName}</span>
+      {clientName && (
+        <span style={{ fontSize:12, color:theme.colors.gold }}>{clientName}</span>
       )}
       {row.isArchived && (
         <span style={{ fontSize:10, color:theme.colors.grey }}>{t.archivedBadge || "مؤرشف"}</span>

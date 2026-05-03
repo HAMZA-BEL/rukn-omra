@@ -5,7 +5,15 @@ import { TRANSLATIONS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
-import { buildInvoiceData, validateInvoiceRecipient } from "../utils/invoices";
+import {
+  buildInvoiceData,
+  createInvoiceSnapshot,
+  createInvoiceSnapshotDraft,
+  findSavedInvoiceSnapshot,
+  saveSavedInvoiceSnapshot,
+  savedInvoiceSnapshotToPrintData,
+  validateInvoiceRecipient,
+} from "../utils/invoices";
 
 export { cancelInvoiceInRegistry } from "../utils/invoices";
 
@@ -109,6 +117,7 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
   const [companyName, setCompanyName] = React.useState("");
   const [companyIce, setCompanyIce] = React.useState("");
   const [error, setError] = React.useState("");
+  const [printing, setPrinting] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) return;
@@ -116,6 +125,7 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
     setCompanyName("");
     setCompanyIce("");
     setError("");
+    setPrinting(false);
   }, [open]);
 
   const recipientOptions = [
@@ -123,7 +133,8 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
     { value: "company", label: label(lang, "إصدار باسم شركة / مؤسسة", "Émettre au nom d'une société / institution", "Issue to company / organization") },
   ];
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (printing) return;
     const name = trimValue(companyName);
     const ice = trimValue(companyIce);
     const validation = validateInvoiceRecipient(
@@ -140,16 +151,21 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
       return;
     }
 
-    const printed = onPrint?.(
-      recipientType === "company"
-        ? { type: "company", companyName: name, ice }
-        : { type: "client" }
-    );
-    if (printed === false) {
-      setError(popupBlockedMessage(lang));
-      return;
+    setPrinting(true);
+    try {
+      const printed = await Promise.resolve(onPrint?.(
+        recipientType === "company"
+          ? { type: "company", companyName: name, ice }
+          : { type: "client" }
+      ));
+      if (printed === false) {
+        setError(popupBlockedMessage(lang));
+        return;
+      }
+      onClose?.();
+    } finally {
+      setPrinting(false);
     }
-    onClose?.();
   };
 
   return (
@@ -223,8 +239,10 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
           <Button variant="ghost" onClick={onClose}>
             {label(lang, "إلغاء", "Annuler", "Cancel")}
           </Button>
-          <Button variant="primary" icon="print" onClick={handlePrint}>
-            {documentType === "proforma"
+          <Button variant="primary" icon="print" onClick={handlePrint} disabled={printing}>
+            {printing
+              ? label(lang, "جاري التحضير...", "Préparation...", "Preparing...")
+              : documentType === "proforma"
               ? label(lang, "طباعة فاتورة أولية", "Imprimer proforma", "Print Proforma")
               : label(lang, "طباعة الفاتورة", "Imprimer la facture", "Print Invoice")}
           </Button>
@@ -358,11 +376,29 @@ export function printClientCard({ client, program, agency, lang = "ar", programC
   return true;
 }
 
-function printInvoiceDocument({ client, program, payments, agency, lang = "ar", recipient, recipientType, companyName, companyIce, ice, documentType = "invoice" }) {
+async function printInvoiceDocument({
+  client,
+  program,
+  payments,
+  agency,
+  lang = "ar",
+  recipient,
+  recipientType,
+  companyName,
+  companyIce,
+  ice,
+  documentType = "invoice",
+  snapshot,
+  autoPrint = true,
+  invoiceApi,
+}) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
   const invoicePayments = payments || [];
-  const invoiceData = buildInvoiceData({
+  const remoteFinalInvoice = !snapshot && documentType !== "proforma" && invoiceApi?.isRemote && invoiceApi?.issueFinalInvoiceSnapshot;
+  const snapshotInvoiceData = snapshot ? savedInvoiceSnapshotToPrintData(snapshot) : null;
+  if (snapshot && !snapshotInvoiceData) return false;
+  const builtInvoiceData = snapshotInvoiceData || buildInvoiceData({
     client,
     program,
     payments: invoicePayments,
@@ -374,18 +410,64 @@ function printInvoiceDocument({ client, program, payments, agency, lang = "ar", 
     fallbackName: t.pilgrimFallback || "—",
     lang,
     documentType,
+    skipInvoiceRegistry: remoteFinalInvoice,
   });
+  let earlyPrintWindow = null;
+  let invoiceData = builtInvoiceData;
+  let pendingSnapshot = null;
+
+  if (remoteFinalInvoice) {
+    if (!builtInvoiceData.valid) return false;
+    if (autoPrint) {
+      earlyPrintWindow = openPrintWindow("width=900,height=680", lang);
+      if (!earlyPrintWindow) return false;
+    }
+    const draft = createInvoiceSnapshotDraft({
+      invoiceData: builtInvoiceData,
+      client,
+      program,
+      payments: invoicePayments,
+    });
+    const result = await invoiceApi.issueFinalInvoiceSnapshot(draft);
+    const savedSnapshot = result?.data || result;
+    const remoteInvoiceData = savedInvoiceSnapshotToPrintData(savedSnapshot);
+    if (!remoteInvoiceData) {
+      try { earlyPrintWindow?.close?.(); } catch {}
+      return false;
+    }
+    invoiceData = remoteInvoiceData;
+  } else {
+  const existingSnapshot = !snapshotInvoiceData && documentType !== "proforma" && builtInvoiceData.valid
+    ? findSavedInvoiceSnapshot({
+      invoiceKey: builtInvoiceData.invoiceItem?.invoiceKey,
+      invoiceDisplayNumber: builtInvoiceData.invoiceNo,
+    })
+    : null;
+  pendingSnapshot = !snapshotInvoiceData && !existingSnapshot && documentType !== "proforma" && builtInvoiceData.valid
+    ? createInvoiceSnapshot({ invoiceData: builtInvoiceData, client, program, payments: invoicePayments })
+    : null;
+  const snapshotSource = snapshotInvoiceData ? snapshot : existingSnapshot || pendingSnapshot;
+  invoiceData = snapshotSource
+    ? savedInvoiceSnapshotToPrintData(snapshotSource) || builtInvoiceData
+    : builtInvoiceData;
+  }
   if (!invoiceData.valid) return false;
   const {
     recipient: invoiceRecipient,
     clientName,
     latinName,
+    phone,
     totalPaid,
     salePrice,
     remaining,
     cin,
     passportNo,
     carrier,
+    programName,
+    departureDate,
+    returnDate,
+    level,
+    roomType,
     latestPayment,
     invoiceNo,
     invoiceDate,
@@ -402,6 +484,15 @@ function printInvoiceDocument({ client, program, payments, agency, lang = "ar", 
       latestPayment.receiptNo ? `${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}: ${latestPayment.receiptNo}` : "",
       latestPayment.date ? `${label(lang, "التاريخ", "Date", "Date")}: ${formatPrintDate(latestPayment.date)}` : "",
     ].filter(Boolean).join(" — ")
+    : "";
+  const displayProgramName = programName || program?.name || "—";
+  const displayDeparture = departureDate || program?.departure || "—";
+  const displayReturn = returnDate || program?.returnDate || "—";
+  const displayLevel = level || client?.packageLevel || client?.hotelLevel || "";
+  const displayRoomType = roomType || client?.roomType || client?.roomTypeLabel || "";
+  const displayPhone = phone || client?.phone || "";
+  const bootScript = autoPrint
+    ? `<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>`
     : "";
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
@@ -427,17 +518,17 @@ ${commonPrintCSS}
         <p>${label(lang, "الاسم الكامل", "Nom complet", "Full name")}: ${clientName}</p>
       `}
       ${latinName ? `<p>${latinName}</p>` : ""}
-      <p>${label(lang, "رقم الهاتف", "Téléphone", "Phone")}: ${cleanDisplay(client.phone, "")}</p>
+      <p>${label(lang, "رقم الهاتف", "Téléphone", "Phone")}: ${cleanDisplay(displayPhone, "")}</p>
       <p>${label(lang, "رقم البطاقة الوطنية CIN", "N° CIN", "National ID / CIN")}: ${cleanDisplay(cin, "")}</p>
       <p>${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${cleanDisplay(passportNo, "")}</p>
     </div>
     <div class="box">
       <h3>${label(lang, "تفاصيل البرنامج", "Détails programme", "Program Details")}</h3>
-      <p>${label(lang, "البرنامج", "Programme", "Program")}: ${program?.name || "—"}</p>
-      <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${program?.departure || "—"}</p>
-      <p>${label(lang, "العودة", "Retour", "Return")}: ${program?.returnDate || "—"}</p>
-      <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(client.packageLevel || client.hotelLevel, "")}</p>
-      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</p>
+      <p>${label(lang, "البرنامج", "Programme", "Program")}: ${displayProgramName}</p>
+      <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${displayDeparture}</p>
+      <p>${label(lang, "العودة", "Retour", "Return")}: ${displayReturn}</p>
+      <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(displayLevel, "")}</p>
+      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${translateRoomType(displayRoomType, lang) || "—"}</p>
       <p>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}: ${cleanDisplay(carrier, "")}</p>
     </div>
   </div>
@@ -449,7 +540,7 @@ ${commonPrintCSS}
       </tr>
     </thead>
     <tbody>
-      <tr><td>${serviceLabel} — ${program?.name || ""}</td><td class="amount">${money(salePrice)}</td></tr>
+      <tr><td>${serviceLabel} — ${displayProgramName === "—" ? "" : displayProgramName}</td><td class="amount">${money(salePrice)}</td></tr>
     </tbody>
   </table>
   <div class="total-box">
@@ -467,11 +558,12 @@ ${commonPrintCSS}
     <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
   </div>
 </div>
-<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>
+${bootScript}
 </body></html>`;
-  const w = openPrintWindow("width=900,height=680", lang);
+  const w = earlyPrintWindow || openPrintWindow("width=900,height=680", lang);
   if (!w) return false;
   w.document.write(html); w.document.close();
+  if (pendingSnapshot && autoPrint) saveSavedInvoiceSnapshot(pendingSnapshot);
   return true;
 }
 
@@ -481,4 +573,12 @@ export function printInvoice(args) {
 
 export function printProformaInvoice(args) {
   return printInvoiceDocument({ ...args, documentType: "proforma" });
+}
+
+export function printInvoiceSnapshot({ snapshot, lang = "ar" }) {
+  return printInvoiceDocument({ snapshot, lang, documentType: "invoice" });
+}
+
+export function previewInvoiceSnapshot({ snapshot, lang = "ar" }) {
+  return printInvoiceDocument({ snapshot, lang, documentType: "invoice", autoPrint: false });
 }

@@ -204,6 +204,26 @@ const fromPayment = (row) => ({
   note:      row.note,
 });
 
+const fromInvoice = (row) => ({
+  id: row.id,
+  invoiceKey: row.invoice_key || "",
+  invoiceNumber: row.invoice_display_number,
+  invoiceDisplayNumber: row.invoice_display_number,
+  year: String(row.invoice_year || ""),
+  issueDate: row.issue_date || "",
+  status: row.status || "issued",
+  clientId: row.client_id || "",
+  programId: row.program_id || "",
+  recipientType: row.recipient_type || "client",
+  recipientSnapshot: row.recipient_snapshot || {},
+  programSnapshot: row.program_snapshot || {},
+  amountSnapshot: row.amount_snapshot || {},
+  paymentReferences: Array.isArray(row.payment_references) ? row.payment_references : [],
+  createdAt: row.created_at || "",
+  trashedAt: row.trashed_at || "",
+  deletedAt: row.deleted_at || "",
+});
+
 const toNotification = (n, agencyId) => {
   const normalizedTargetId = normalizeForeignKey(n.targetId ?? n.programId);
   const normalizedMeta = (n.meta && typeof n.meta === "object") ? n.meta : {};
@@ -442,6 +462,75 @@ export const db = {
       const { error } = await supabase
         .from("payments").delete().eq("id", id).eq("agency_id", agencyId);
       return { error };
+    },
+  },
+
+  invoices: {
+    async fetch(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .neq("status", "deleted")
+        .order("issue_date", { ascending: false })
+        .order("invoice_number", { ascending: false });
+      return {
+        data: data?.map(fromInvoice) ?? [],
+        error,
+      };
+    },
+    async issueFinal(agencyId, draft = {}) {
+      if (!agencyId) return { data: null, error: null };
+      const { data, error } = await supabase.rpc("issue_final_invoice", {
+        p_agency_id: agencyId,
+        p_invoice_key: draft.invoiceKey || null,
+        p_client_id: draft.clientId || null,
+        p_program_id: draft.programId || null,
+        p_issue_date: draft.issueDate || null,
+        p_recipient_type: draft.recipientType || "client",
+        p_recipient_snapshot: draft.recipientSnapshot || {},
+        p_program_snapshot: draft.programSnapshot || {},
+        p_amount_snapshot: draft.amountSnapshot || {},
+        p_payment_references: draft.paymentReferences || [],
+      });
+      return {
+        data: data ? fromInvoice(data) : null,
+        error,
+      };
+    },
+    async trash(agencyId, id) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("invoices")
+        .update({ status: "trashed", trashed_at: new Date().toISOString() })
+        .eq("agency_id", agencyId)
+        .eq("id", id)
+        .select("*")
+        .single();
+      return { data: data ? fromInvoice(data) : null, error };
+    },
+    async restore(agencyId, id) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("invoices")
+        .update({ status: "issued", trashed_at: null })
+        .eq("agency_id", agencyId)
+        .eq("id", id)
+        .select("*")
+        .single();
+      return { data: data ? fromInvoice(data) : null, error };
+    },
+    async markDeleted(agencyId, id) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("invoices")
+        .update({ status: "deleted", deleted_at: new Date().toISOString() })
+        .eq("agency_id", agencyId)
+        .eq("id", id)
+        .select("*")
+        .single();
+      return { data: data ? fromInvoice(data) : null, error };
     },
   },
 
