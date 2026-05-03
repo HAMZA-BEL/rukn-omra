@@ -1,13 +1,14 @@
-export const badgePhonesFromProgram = (program = {}) => (
-  [
-    program.guidePhone || program.badgeGuidePhone,
-    program.saudiPhone1 || program.badgeSaudiPhone1,
-    program.saudiPhone2 || program.badgeSaudiPhone2,
+export const badgePhonesFromProgram = (program = {}) => {
+  const safeProgram = program || {};
+
+  return [
+    safeProgram.guidePhone || safeProgram.badgeGuidePhone,
+    safeProgram.saudiPhone1 || safeProgram.badgeSaudiPhone1,
+    safeProgram.saudiPhone2 || safeProgram.badgeSaudiPhone2,
   ]
     .map((value) => (typeof value === "string" ? value.trim() : ""))
-    .filter(Boolean)
-);
-
+    .filter(Boolean);
+};
 export const programFieldsFromBadgePhones = (phones = []) => {
   const clean = (Array.isArray(phones) ? phones : [])
     .map((value) => (typeof value === "string" ? value.trim() : ""))

@@ -19,12 +19,16 @@ export const buildBadgeTemplatePath = ({ agencyId, templateId, extension = "webp
   return `agencies/${safeAgencyId}/badge-templates/${safeTemplateId}/front.${extension}`;
 };
 
-export const getBadgeContactDefaults = (program = {}) => ({
-  guidePhone: program.guidePhone || program.badgeGuidePhone || "",
-  saudiPhone1: program.saudiPhone1 || program.badgeSaudiPhone1 || "",
-  saudiPhone2: program.saudiPhone2 || program.badgeSaudiPhone2 || "",
-  badgeNote: program.badgeNote || "",
-});
+export const getBadgeContactDefaults = (program = {}) => {
+  const safeProgram = program || {};
+
+  return {
+    guidePhone: safeProgram.guidePhone || safeProgram.badgeGuidePhone || "",
+    saudiPhone1: safeProgram.saudiPhone1 || safeProgram.badgeSaudiPhone1 || "",
+    saudiPhone2: safeProgram.saudiPhone2 || safeProgram.badgeSaudiPhone2 || "",
+    badgeNote: safeProgram.badgeNote || "",
+  };
+};
 
 export const DEFAULT_BADGE_SIZE = {
   widthMm: 90,

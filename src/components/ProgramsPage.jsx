@@ -14,6 +14,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge } from "./UI";
+import AirlineSelector from "./AirlineSelector";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
 import MRZReader from "./MRZReader";
@@ -21,6 +22,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
+import { formatAirlineLabel, getProgramAirline } from "../utils/airlines";
 import { printProgramPDF } from "../utils/exportPdf";
 import {
   calculateHotelStayDates,
@@ -1587,6 +1589,11 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const handleAmadeusExport = React.useCallback(() => {
     closeHeaderActions();
     if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    const airline = getProgramAirline(program);
+    if (!airline?.code) {
+      onToast("يرجى اختيار شركة الطيران قبل تصدير Amadeus", "error");
+      return;
+    }
     const missing = progClients.filter(c => !c.passport?.number);
     if (missing.length > 0) {
       onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
@@ -6262,6 +6269,7 @@ function ProgramForm({ program, store, onSave, onCancel }) {
   }, [program, createPackage]);
   const badgeContacts = getBadgeContactDefaults(program);
   const initialBadgePhones = badgePhonesFromProgram(program);
+  const initialAirline = getProgramAirline(program);
   const { templates: badgeTemplates } = useBadgeTemplates({ agencyId: store.agencyId });
   const [form, setForm] = React.useState({
     name:      program?.name      || "",
@@ -6272,7 +6280,9 @@ function ProgramForm({ program, store, onSave, onCancel }) {
     visitOrder: normalizeVisitOrder(program?.visitOrder || program?.visit_order),
     price:     program?.price     || "",
     seats:     program?.seats     || "",
-    transport: program?.transport || "",
+    transport: formatAirlineLabel(initialAirline) || program?.transport || "",
+    airlineCode: initialAirline?.code || program?.airlineCode || "",
+    airlineName: initialAirline?.name || program?.airlineName || "",
     guidePhone: badgeContacts.guidePhone,
     saudiPhone1: badgeContacts.saudiPhone1,
     saudiPhone2: badgeContacts.saudiPhone2,
@@ -6381,7 +6391,8 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد");
       return;
     }
-    if (!String(form.transport || "").trim()) nextErrors.transport = t.transportError || "يرجى إدخال الشركة الناقلة";
+    const selectedAirline = getProgramAirline(form);
+    if (!selectedAirline?.code) nextErrors.transport = t.transportError || "يرجى اختيار شركة الطيران";
     if (Object.keys(nextErrors).length) {
       setErrors(nextErrors);
       return;
@@ -6397,7 +6408,9 @@ function ProgramForm({ program, store, onSave, onCancel }) {
       visitOrder: normalizeVisitOrder(form.visitOrder),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
-      transport: String(form.transport || "").trim(),
+      transport: formatAirlineLabel(selectedAirline),
+      airlineCode: selectedAirline.code,
+      airlineName: selectedAirline.name,
       badgeNote: String(form.badgeNote || "").trim(),
       badgeTemplateId: String(form.badgeTemplateId || "").trim(),
       priceTable,
@@ -6451,11 +6464,16 @@ function ProgramForm({ program, store, onSave, onCancel }) {
             ]}
           />
           <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
-          <Input
+          <AirlineSelector
             label={t.transport}
             value={form.transport}
-            onChange={e => {
-              set("transport")(e);
+            onChange={(airline) => {
+              setForm(prev => ({
+                ...prev,
+                transport: formatAirlineLabel(airline),
+                airlineCode: airline.code,
+                airlineName: airline.name,
+              }));
               setErrors(prev => (prev.transport ? { ...prev, transport: "" } : prev));
             }}
             required
