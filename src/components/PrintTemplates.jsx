@@ -3,6 +3,7 @@ import React from "react";
 import { Modal, Button, Input } from "./UI";
 import { TRANSLATIONS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
+import { amountInWordsSentence } from "../utils/amountToWords";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import {
@@ -23,6 +24,12 @@ const cleanDisplay = (value, fallback = "—") => {
   const text = trimValue(value);
   return text || fallback;
 };
+const escapeHtml = (value) => String(value ?? "")
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;")
+  .replaceAll("'", "&#039;");
 const openPrintWindow = (features, lang = "ar") => {
   const printWindow = window.open("", "_blank", features);
   return printWindow || null;
@@ -78,6 +85,30 @@ const formatPrintDate = (value) => {
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   return `${day}/${month}/${parsed.getFullYear()}`;
 };
+const getAgencyDisplay = (agency = {}, lang = "ar") => {
+  const name = lang === "ar"
+    ? trimValue(agency.nameAr || agency.agencyNameAr || agency.name_ar || agency.nameFr || agency.name_fr)
+    : trimValue(agency.nameFr || agency.agencyNameFr || agency.name_fr || agency.nameAr || agency.name_ar);
+  return {
+    name,
+    city: trimValue(agency.city || agency.agencyCity || agency.agency_city),
+    address: trimValue(agency.addressTiznit || agency.address_tiznit || agency.mainAddress || agency.address),
+    address2: trimValue(agency.addressAgadir || agency.address_agadir || agency.additionalAddress),
+    phone1: trimValue(agency.phoneTiznit1 || agency.phone_tiznit1 || agency.phone1),
+    phone2: trimValue(agency.phoneAgadir1 || agency.phone_agadir1 || agency.phone2),
+    email: trimValue(agency.email),
+    website: trimValue(agency.website),
+    ice: trimValue(agency.ice),
+    rc: trimValue(agency.rc),
+  };
+};
+const getAgencyBankDetails = (agency = {}) => ([
+  ["bank", trimValue(agency.bankName || agency.bank_name)],
+  ["holder", trimValue(agency.bankAccountHolder || agency.bank_account_holder)],
+  ["rib", trimValue(agency.bankRib || agency.bank_rib)],
+  ["iban", trimValue(agency.bankIban || agency.bank_iban)],
+  ["note", trimValue(agency.bankNote || agency.bank_note)],
+]).filter(([, value]) => value);
 const getReadableFileNumber = (client = {}, programClients = []) => {
   for (const key of FILE_NUMBER_KEYS) {
     const value = trimValue(client?.[key]);
@@ -93,23 +124,38 @@ const getReadableFileNumber = (client = {}, programClients = []) => {
 const commonPrintCSS = `
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .page { width:190mm; min-height:297mm; margin:0 auto; padding:50mm 16mm 38mm; direction:inherit; }
-  .issue-date { text-align:right; font-size:12px; margin-bottom:10px; color:#222; }
-  .title { text-align:center; font-size:20px; font-weight:800; margin-bottom:12px; color:#111; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
-  .box { border:1px solid #ccc; padding:9px 10px; min-height:72px; }
-  .box h3 { font-size:11px; color:#555; margin-bottom:6px; font-weight:800; }
-  .box p { font-size:12px; font-weight:600; line-height:1.65; }
-  table { width:100%; border-collapse:collapse; margin-bottom:12px; }
-  th { background:#f1f1f1; color:#111; padding:7px 9px; font-size:11px; border:1px solid #cfcfcf; text-align:inherit; }
-  td { padding:7px 9px; border:1px solid #d8d8d8; font-size:12px; vertical-align:top; }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:30mm 15mm 24mm; direction:inherit; }
+  .agency-head { border-bottom:2px solid #111; padding-bottom:8px; margin-bottom:14px; display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+  .agency-name { font-size:16px; font-weight:900; color:#111; }
+  .agency-meta { margin-top:4px; font-size:10.5px; color:#333; line-height:1.55; }
+  .issue-date { text-align:end; font-size:12px; margin-bottom:10px; color:#222; font-weight:700; }
+  .title { text-align:center; font-size:20px; font-weight:900; margin:12px 0 16px; color:#111; letter-spacing:.2px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+  .box { border:1px solid #bdbdbd; padding:9px 10px; min-height:92px; }
+  .box h3 { font-size:11px; color:#111; margin-bottom:6px; font-weight:900; text-transform:uppercase; border-bottom:1px solid #e5e5e5; padding-bottom:4px; }
+  .box p { font-size:11.5px; font-weight:600; line-height:1.65; }
+  table.invoice-table { width:100%; border-collapse:collapse; margin:10px 0 12px; table-layout:fixed; }
+  .invoice-table th { background:#f3f4f6; color:#111; padding:8px 8px; font-size:11px; border:1px solid #a7a7a7; text-align:center; font-weight:900; }
+  .invoice-table td { padding:9px 8px; border:1px solid #bdbdbd; font-size:12px; vertical-align:top; }
+  .qty { width:12%; text-align:center; }
+  .designation { width:52%; line-height:1.7; }
+  .price { width:18%; text-align:center; white-space:nowrap; }
   .amount { font-weight:800; white-space:nowrap; }
-  .total-box { margin-right:auto; width:250px; border:1px solid #aaa; padding:8px 10px; }
-  .total-row { display:flex; justify-content:space-between; gap:16px; padding:3px 0; font-size:12px; }
-  .total-final { border-top:1px solid #777; margin-top:5px; padding-top:7px; font-size:14px; font-weight:900; }
+  .total-line td { font-weight:900; background:#fafafa; }
+  .total-label { text-align:end; }
+  .summary-box { margin-inline-start:auto; width:280px; border:1px solid #aaa; padding:8px 10px; margin-bottom:10px; }
+  .summary-row { display:flex; justify-content:space-between; gap:16px; padding:3px 0; font-size:12px; }
+  .summary-final { border-top:1px solid #777; margin-top:5px; padding-top:7px; font-size:14px; font-weight:900; }
+  .words { margin:12px 0; border:1px solid #cfcfcf; background:#fafafa; padding:9px 10px; font-size:12px; font-weight:800; line-height:1.75; }
+  .bank { margin-top:14px; border:1px solid #bdbdbd; padding:10px; }
+  .bank h3 { font-size:12px; font-weight:900; margin-bottom:7px; color:#111; }
+  .bank-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; }
+  .bank-row { font-size:11.5px; line-height:1.55; }
+  .bank-row strong { color:#111; }
   .payment-ref { margin-top:8px; font-size:11px; color:#333; line-height:1.7; }
-  .stamp { margin-top:26px; display:flex; justify-content:space-between; gap:24px; }
+  .stamp { margin-top:24px; display:flex; justify-content:space-between; gap:24px; }
   .stamp-box { border:1px dashed #777; width:155px; height:78px; margin-bottom:7px; }
+  html[dir="rtl"] .price, html[dir="rtl"] .qty { text-align:center; }
   @media print { @page { size:A4 portrait; margin:0; } }
 `;
 export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice" }) {
@@ -475,11 +521,20 @@ async function printInvoiceDocument({
   } = invoiceData;
   const isProforma = documentType === "proforma";
   const money = (value) => formatCurrency(value, lang);
+  const agencyDisplay = getAgencyDisplay(agency, lang);
+  const bankDetails = getAgencyBankDetails(agency);
+  const bankLabels = {
+    bank: label(lang, "اسم البنك", "Banque", "Bank"),
+    holder: label(lang, "صاحب الحساب", "Titulaire du compte", "Account holder"),
+    rib: "RIB",
+    iban: "IBAN",
+    note: label(lang, "ملاحظة", "Note", "Note"),
+  };
   const title = isProforma
     ? label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
     : label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`);
   const serviceLabel = label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package");
-  const paymentReference = latestPayment && (latestPayment.receiptNo || latestPayment.date)
+  const paymentReference = !isProforma && latestPayment && (latestPayment.receiptNo || latestPayment.date)
     ? [
       latestPayment.receiptNo ? `${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}: ${latestPayment.receiptNo}` : "",
       latestPayment.date ? `${label(lang, "التاريخ", "Date", "Date")}: ${formatPrintDate(latestPayment.date)}` : "",
@@ -491,6 +546,28 @@ async function printInvoiceDocument({
   const displayLevel = level || client?.packageLevel || client?.hotelLevel || "";
   const displayRoomType = roomType || client?.roomType || client?.roomTypeLabel || "";
   const displayPhone = phone || client?.phone || "";
+  const agencyMeta = [
+    agencyDisplay.address,
+    agencyDisplay.address2,
+    agencyDisplay.city,
+    [agencyDisplay.phone1, agencyDisplay.phone2].filter(Boolean).join(" / "),
+    agencyDisplay.email,
+    agencyDisplay.website,
+    agencyDisplay.ice ? `ICE: ${agencyDisplay.ice}` : "",
+    agencyDisplay.rc ? `RC: ${agencyDisplay.rc}` : "",
+  ].filter(Boolean);
+  const descriptionLines = [
+    `${serviceLabel}${displayProgramName && displayProgramName !== "—" ? ` — ${displayProgramName}` : ""}`,
+    `${label(lang, "المستفيد", "Bénéficiaire", "Beneficiary")}: ${clientName}`,
+    displayDeparture && displayDeparture !== "—" ? `${label(lang, "الذهاب", "Départ", "Departure")}: ${displayDeparture}` : "",
+    displayReturn && displayReturn !== "—" ? `${label(lang, "العودة", "Retour", "Return")}: ${displayReturn}` : "",
+  ].filter(Boolean);
+  const totalWords = amountInWordsSentence(salePrice, lang, isProforma ? "proforma" : "invoice");
+  const dateLine = lang === "fr"
+    ? `DATE : ${formatPrintDate(invoiceDate)}`
+    : lang === "en"
+      ? `DATE: ${formatPrintDate(invoiceDate)}`
+      : `التاريخ: ${formatPrintDate(invoiceDate)}`;
   const bootScript = autoPrint
     ? `<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>`
     : "";
@@ -505,54 +582,74 @@ ${commonPrintCSS}
 </head>
 <body>
   <div class="page">
-  <div class="issue-date">${label(lang, "تاريخ الإصدار", "Date d'émission", "Issue date")}: ${formatPrintDate(invoiceDate)}</div>
+  <div class="agency-head">
+    <div>
+      <div class="agency-name">${escapeHtml(agencyDisplay.name || label(lang, "الوكالة", "Agence", "Agency"))}</div>
+      ${agencyMeta.length ? `<div class="agency-meta">${agencyMeta.map(escapeHtml).join("<br/>")}</div>` : ""}
+    </div>
+    <div class="issue-date">${dateLine}</div>
+  </div>
   <div class="title">${title}</div>
   <div class="grid">
     <div class="box">
       <h3>${issuedToCompany ? label(lang, "الفاتورة باسم", "Facturée à", "Issued to") : label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}</h3>
       ${issuedToCompany ? `
-        <p>${label(lang, "اسم الشركة", "Nom de la société", "Company name")}: ${cleanDisplay(invoiceRecipient.companyName, "")}</p>
-        <p>ICE: ${cleanDisplay(invoiceRecipient.ice, "")}</p>
-        <p>${label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}: ${clientName}</p>
+        <p>${label(lang, "اسم الشركة", "Nom de la société", "Company name")}: ${escapeHtml(cleanDisplay(invoiceRecipient.companyName, ""))}</p>
+        <p>ICE: ${escapeHtml(cleanDisplay(invoiceRecipient.ice, ""))}</p>
+        <p>${label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}: ${escapeHtml(clientName)}</p>
       ` : `
-        <p>${label(lang, "الاسم الكامل", "Nom complet", "Full name")}: ${clientName}</p>
+        <p>${label(lang, "الاسم الكامل", "Nom complet", "Full name")}: ${escapeHtml(clientName)}</p>
       `}
-      ${latinName ? `<p>${latinName}</p>` : ""}
-      <p>${label(lang, "رقم الهاتف", "Téléphone", "Phone")}: ${cleanDisplay(displayPhone, "")}</p>
-      <p>${label(lang, "رقم البطاقة الوطنية CIN", "N° CIN", "National ID / CIN")}: ${cleanDisplay(cin, "")}</p>
-      <p>${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${cleanDisplay(passportNo, "")}</p>
+      ${latinName ? `<p>${escapeHtml(latinName)}</p>` : ""}
+      <p>${label(lang, "رقم الهاتف", "Téléphone", "Phone")}: ${escapeHtml(cleanDisplay(displayPhone, ""))}</p>
+      <p>${label(lang, "رقم البطاقة الوطنية CIN", "N° CIN", "National ID / CIN")}: ${escapeHtml(cleanDisplay(cin, ""))}</p>
+      <p>${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${escapeHtml(cleanDisplay(passportNo, ""))}</p>
     </div>
     <div class="box">
       <h3>${label(lang, "تفاصيل البرنامج", "Détails programme", "Program Details")}</h3>
-      <p>${label(lang, "البرنامج", "Programme", "Program")}: ${displayProgramName}</p>
-      <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${displayDeparture}</p>
-      <p>${label(lang, "العودة", "Retour", "Return")}: ${displayReturn}</p>
-      <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(displayLevel, "")}</p>
-      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${translateRoomType(displayRoomType, lang) || "—"}</p>
-      <p>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}: ${cleanDisplay(carrier, "")}</p>
+      <p>${label(lang, "البرنامج", "Programme", "Program")}: ${escapeHtml(displayProgramName)}</p>
+      <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${escapeHtml(displayDeparture)}</p>
+      <p>${label(lang, "العودة", "Retour", "Return")}: ${escapeHtml(displayReturn)}</p>
+      <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${escapeHtml(cleanDisplay(displayLevel, ""))}</p>
+      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${escapeHtml(translateRoomType(displayRoomType, lang) || "—")}</p>
+      <p>${label(lang, "شركة الطيران", "Compagnie aérienne", "Airline")}: ${escapeHtml(cleanDisplay(carrier, ""))}</p>
     </div>
   </div>
-  <table>
+  <table class="invoice-table">
     <thead>
       <tr>
-        <th>${label(lang, "البيان", "Description", "Description")}</th>
-        <th>${label(lang, "المبلغ", "Montant", "Amount")}</th>
+        <th class="qty">${label(lang, "الكمية", "Qté", "Qty")}</th>
+        <th class="designation">${label(lang, "البيان", "Désignations", "Description")}</th>
+        <th class="price">${label(lang, "ثمن الوحدة", "P.U", "Unit price")}</th>
+        <th class="price">${label(lang, "المجموع", "P.T", "Total")}</th>
       </tr>
     </thead>
     <tbody>
-      <tr><td>${serviceLabel} — ${displayProgramName === "—" ? "" : displayProgramName}</td><td class="amount">${money(salePrice)}</td></tr>
+      <tr>
+        <td class="qty">1</td>
+        <td class="designation">${descriptionLines.map(escapeHtml).join("<br/>")}</td>
+        <td class="price amount">${money(salePrice)}</td>
+        <td class="price amount">${money(salePrice)}</td>
+      </tr>
+      <tr class="total-line">
+        <td colspan="3" class="total-label">${label(lang, "المجموع شامل الرسوم", "TOTAL TTC", "TOTAL incl. tax")}</td>
+        <td class="price amount">${money(salePrice)}</td>
+      </tr>
     </tbody>
   </table>
-  <div class="total-box">
-    ${isProforma ? `
-      <div class="total-row"><span>${label(lang, "إجمالي سعر البرنامج", "Prix total du programme", "Program total")}</span><span>${money(salePrice)}</span></div>
-      <div class="total-row"><span>${label(lang, "المبلغ المدفوع", "Montant payé", "Paid amount")}</span><span>${money(totalPaid)}</span></div>
-      <div class="total-row total-final"><span>${label(lang, "المبلغ المتبقي", "Reste à payer", "Remaining amount")}</span><span>${money(remaining)}</span></div>
-    ` : `
-      <div class="total-row total-final"><span>${label(lang, "المبلغ الإجمالي", "Montant total", "Total amount")}</span><span>${money(salePrice)}</span></div>
-    `}
-  </div>
+  ${isProforma ? `<div class="summary-box">
+    <div class="summary-row"><span>${label(lang, "إجمالي سعر البرنامج", "Prix total du programme", "Program total")}</span><span>${money(salePrice)}</span></div>
+    <div class="summary-row"><span>${label(lang, "المبلغ المدفوع", "Montant payé", "Paid amount")}</span><span>${money(totalPaid)}</span></div>
+    <div class="summary-row summary-final"><span>${label(lang, "المبلغ المتبقي", "Reste à payer", "Remaining amount")}</span><span>${money(remaining)}</span></div>
+  </div>` : ""}
+  <div class="words">${escapeHtml(totalWords)}</div>
   ${paymentReference ? `<div class="payment-ref">${label(lang, "مرجع الدفع", "Référence de paiement", "Payment reference")}: ${paymentReference}</div>` : ""}
+  ${isProforma && bankDetails.length ? `<div class="bank">
+    <h3>${label(lang, "المعلومات البنكية", "Coordonnées bancaires", "Bank details")}</h3>
+    <div class="bank-grid">
+      ${bankDetails.map(([key, value]) => `<div class="bank-row"><strong>${bankLabels[key]}:</strong> ${escapeHtml(value)}</div>`).join("")}
+    </div>
+  </div>` : ""}
   <div class="stamp">
     <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
     <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>

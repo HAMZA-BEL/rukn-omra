@@ -11,16 +11,20 @@ export const getBadgeFieldDefinition = (key) => (
   BADGE_FIELD_DEFINITIONS.find((field) => field.key === key) || null
 );
 
-export const createBadgeField = (key, index = 0) => {
+export const createBadgeField = (key, index = 0, position = {}) => {
   const definition = getBadgeFieldDefinition(key);
   if (!definition) return null;
   const row = index % 8;
   const col = Math.floor(index / 8);
+  const wPct = pct(position.wPct, definition.wPct || 40);
+  const hPct = pct(position.hPct, definition.hPct || 8);
   return {
     ...definition,
     id: `${key}-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
-    xPct: Math.min(70, 10 + col * 8),
-    yPct: Math.min(88, 12 + row * 9),
+    xPct: clamp(pct(position.xPct, 10 + col * 8), 0, 100 - wPct),
+    yPct: clamp(pct(position.yPct, 12 + row * 9), 0, 100 - hPct),
+    wPct,
+    hPct,
     visible: true,
   };
 };
@@ -51,12 +55,12 @@ export const normalizeBadgeLayout = (layout = {}) => {
   };
 };
 
-export const addBadgeFieldToLayout = (layout, key) => {
+export const addBadgeFieldToLayout = (layout, key, position = {}) => {
   const current = normalizeBadgeLayout(layout);
   const definition = getBadgeFieldDefinition(key);
   if (!definition) return current;
   if (!definition.repeatable && current.fields.some((field) => field.key === key)) return current;
-  const field = createBadgeField(key, current.fields.length);
+  const field = createBadgeField(key, current.fields.length, position);
   return { ...current, fields: field ? [...current.fields, field] : current.fields };
 };
 

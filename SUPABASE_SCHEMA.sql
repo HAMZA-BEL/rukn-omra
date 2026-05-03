@@ -15,6 +15,7 @@ create table if not exists public.agencies (
   id               uuid primary key default gen_random_uuid(),
   name_ar          text,
   name_fr          text,
+  agency_city      text,
   address_tiznit   text,
   address_agadir   text,
   phone_tiznit1    text,
@@ -25,8 +26,20 @@ create table if not exists public.agencies (
   rc               text,
   email            text,
   website          text,
+  bank_name        text,
+  bank_account_holder text,
+  bank_rib         text,
+  bank_iban        text,
+  bank_note        text,
   created_at       timestamptz default now()
 );
+
+alter table public.agencies add column if not exists agency_city text;
+alter table public.agencies add column if not exists bank_name text;
+alter table public.agencies add column if not exists bank_account_holder text;
+alter table public.agencies add column if not exists bank_rib text;
+alter table public.agencies add column if not exists bank_iban text;
+alter table public.agencies add column if not exists bank_note text;
 
 -- User profiles (linked to auth.users)
 create table if not exists public.users (

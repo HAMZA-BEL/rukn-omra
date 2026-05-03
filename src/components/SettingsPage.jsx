@@ -9,10 +9,62 @@ import { BadgeTemplatesPage } from "../features/badges";
 
 const t2 = theme.colors;
 
+function SettingsSectionCard({ title, description, open, onToggle, children }) {
+  return (
+    <GlassCard gold={open} style={{ padding: open ? 18 : 14, marginBottom: 14 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          width: "100%",
+          border: "none",
+          background: "transparent",
+          color: "var(--rukn-text)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 14,
+          padding: 0,
+          textAlign: "start",
+          fontFamily: "'Cairo',sans-serif",
+        }}
+      >
+        <span>
+          <span style={{ display: "block", fontSize: 14, fontWeight: 900, color: t2.gold }}>{title}</span>
+          <span style={{ display: "block", fontSize: 12, color: t2.grey, marginTop: 4, lineHeight: 1.6 }}>
+            {description}
+          </span>
+        </span>
+        <span style={{
+          width: 32,
+          height: 32,
+          borderRadius: 10,
+          border: "1px solid var(--rukn-border-soft)",
+          background: "var(--rukn-bg-soft)",
+          color: t2.gold,
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+        }}>
+          {open ? "⌃" : "⌄"}
+        </span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 16 }}>
+          {children}
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
 export default function SettingsPage({ store, onToast, currentUserRole, currentUserId }) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
+  const [agencyOpen, setAgencyOpen] = React.useState(false);
+  const [bankOpen, setBankOpen] = React.useState(false);
   React.useEffect(() => {
     setForm(agency);
   }, [agency]);
@@ -73,28 +125,47 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       </GlassCard>
 
       {/* Agency info */}
-      <GlassCard gold style={{ padding:20, marginBottom:20 }}>
-        <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:16 }}>{t.agencyInfoTitle}</p>
-        <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          <Input label={t.agencyNameArLabel} value={form.nameAr} onChange={set("nameAr")} />
-          <Input label={t.agencyNameFrLabel} value={form.nameFr} onChange={set("nameFr")} />
-          <Input label={t.addressTiznitLabel} value={form.addressTiznit} onChange={set("addressTiznit")}
+      <SettingsSectionCard
+        title={t.agencyInfoTitle}
+        description={t.agencyInfoDesc}
+        open={agencyOpen}
+        onToggle={() => setAgencyOpen((current) => !current)}
+      >
+        <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
+          <Input label={t.agencyNameArLabel} value={form.nameAr || ""} onChange={set("nameAr")} />
+          <Input label={t.agencyNameFrLabel} value={form.nameFr || ""} onChange={set("nameFr")} />
+          <Input label={t.agencyCityLabel} value={form.city || ""} onChange={set("city")} />
+          <Input label={t.iceLabel} value={form.ice || ""} onChange={set("ice")} placeholder={t.icePlaceholder} />
+          <Input label={t.rcLabel} value={form.rc || ""} onChange={set("rc")} />
+          <Input label={t.email} value={form.email || ""} onChange={set("email")} />
+          <Input label={t.website} value={form.website || ""} onChange={set("website")} />
+          <Input label={t.phoneTiznit1} value={form.phoneTiznit1 || ""} onChange={set("phoneTiznit1")} />
+          <Input label={t.phoneAgadir1} value={form.phoneAgadir1 || ""} onChange={set("phoneAgadir1")} />
+          <Input label={t.addressTiznitLabel} value={form.addressTiznit || ""} onChange={set("addressTiznit")}
             style={{ gridColumn:"1/-1" }} />
-          <Input label={t.addressAgadirLabel} value={form.addressAgadir} onChange={set("addressAgadir")}
+          <Input label={t.addressAgadirLabel} value={form.addressAgadir || ""} onChange={set("addressAgadir")}
             style={{ gridColumn:"1/-1" }} />
-          <Input label={t.phoneTiznit1} value={form.phoneTiznit1} onChange={set("phoneTiznit1")} />
-          <Input label={t.phoneTiznit2} value={form.phoneTiznit2} onChange={set("phoneTiznit2")} />
-          <Input label={t.phoneAgadir1} value={form.phoneAgadir1} onChange={set("phoneAgadir1")} />
-          <Input label={t.phoneAgadir2} value={form.phoneAgadir2} onChange={set("phoneAgadir2")} />
-          <Input label={t.iceLabel} value={form.ice} onChange={set("ice")} placeholder={t.icePlaceholder} />
-          <Input label={t.rcLabel} value={form.rc} onChange={set("rc")} />
-          <Input label={t.email} value={form.email} onChange={set("email")} />
-          <Input label={t.website} value={form.website} onChange={set("website")} />
         </div>
-        <div className="page-actions" style={{ marginTop:16 }}>
-          <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title={t.bankInfoTitle}
+        description={t.bankInfoDesc}
+        open={bankOpen}
+        onToggle={() => setBankOpen((current) => !current)}
+      >
+        <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
+          <Input label={t.bankNameLabel} value={form.bankName || ""} onChange={set("bankName")} />
+          <Input label={t.bankAccountHolderLabel} value={form.bankAccountHolder || ""} onChange={set("bankAccountHolder")} />
+          <Input label={t.bankRibLabel} value={form.bankRib || ""} onChange={set("bankRib")} />
+          <Input label={t.bankIbanLabel} value={form.bankIban || ""} onChange={set("bankIban")} />
+          <Input label={t.bankNoteLabel} value={form.bankNote || ""} onChange={set("bankNote")} style={{ gridColumn:"1/-1" }} />
         </div>
-      </GlassCard>
+      </SettingsSectionCard>
+
+      <div className="page-actions" style={{ marginBottom:20 }}>
+        <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
+      </div>
 
       <BadgeTemplatesPage store={store} onToast={onToast} />
 

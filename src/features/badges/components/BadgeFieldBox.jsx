@@ -6,7 +6,7 @@ const pointToPct = (event, box) => ({
   yPct: ((event.clientY - box.top) / box.height) * 100,
 });
 
-export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
+export function BadgeFieldBox({ field, selected, value, label, onSelect, onChange, onRemove }) {
   const interactionRef = React.useRef(null);
 
   const beginInteraction = (event, mode) => {
@@ -24,6 +24,8 @@ export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
       grabOffsetXPct: point.xPct - start.xPct,
       grabOffsetYPct: point.yPct - start.yPct,
       previousUserSelect: document.body.style.userSelect,
+      frame: null,
+      pendingPatch: null,
     };
     document.body.style.userSelect = "none";
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -35,21 +37,37 @@ export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
     const interaction = interactionRef.current;
     if (!interaction) return;
     const point = pointToPct(event, interaction.box);
+    let patch;
     if (interaction.mode === "resize") {
-      onChange(field.id, {
+      patch = {
         wPct: clamp(point.xPct - interaction.start.xPct, 4, 100 - interaction.start.xPct),
         hPct: clamp(point.yPct - interaction.start.yPct, 4, 100 - interaction.start.yPct),
-      });
-      return;
+      };
+    } else {
+      patch = {
+        xPct: clamp(point.xPct - interaction.grabOffsetXPct, 0, 100 - interaction.start.wPct),
+        yPct: clamp(point.yPct - interaction.grabOffsetYPct, 0, 100 - interaction.start.hPct),
+      };
     }
-    onChange(field.id, {
-      xPct: clamp(point.xPct - interaction.grabOffsetXPct, 0, 100 - interaction.start.wPct),
-      yPct: clamp(point.yPct - interaction.grabOffsetYPct, 0, 100 - interaction.start.hPct),
+    interaction.pendingPatch = patch;
+    if (interaction.frame) return;
+    interaction.frame = window.requestAnimationFrame(() => {
+      const current = interactionRef.current;
+      if (!current?.pendingPatch) return;
+      onChange(field.id, current.pendingPatch);
+      current.pendingPatch = null;
+      current.frame = null;
     });
   };
 
   const endInteraction = () => {
     if (interactionRef.current) {
+      if (interactionRef.current.frame) {
+        window.cancelAnimationFrame(interactionRef.current.frame);
+      }
+      if (interactionRef.current.pendingPatch) {
+        onChange(field.id, interactionRef.current.pendingPatch);
+      }
       document.body.style.userSelect = interactionRef.current.previousUserSelect || "";
     }
     interactionRef.current = null;
@@ -58,6 +76,9 @@ export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
 
   React.useEffect(() => () => {
     if (interactionRef.current) {
+      if (interactionRef.current.frame) {
+        window.cancelAnimationFrame(interactionRef.current.frame);
+      }
       document.body.style.userSelect = interactionRef.current.previousUserSelect || "";
     }
     window.removeEventListener("pointermove", handlePointerMove);
@@ -92,8 +113,42 @@ export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
         boxShadow: selected ? "0 8px 24px rgba(0,0,0,.18)" : "none",
         backdropFilter: "blur(2px)",
         zIndex: selected ? 3 : 2,
+        touchAction: "none",
       }}
     >
+      {selected && (
+        <button
+          type="button"
+          aria-label="Remove field"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRemove?.(field.id);
+          }}
+          style={{
+            position: "absolute",
+            top: -9,
+            left: -9,
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            border: "1px solid rgba(239,68,68,.45)",
+            background: "#fff",
+            color: "#dc2626",
+            fontSize: 13,
+            lineHeight: "18px",
+            cursor: "pointer",
+            zIndex: 4,
+            boxShadow: "0 6px 16px rgba(0,0,0,.18)",
+          }}
+        >
+          ×
+        </button>
+      )}
       {field.type === "image" ? (
         <div style={{
           width: "100%",
@@ -106,10 +161,10 @@ export function BadgeFieldBox({ field, selected, value, onSelect, onChange }) {
           fontSize: 11,
           color: "var(--rukn-text-muted)",
         }}>
-          {field.labelAr}
+          {label || field.labelAr}
         </div>
       ) : (
-        value || field.labelAr
+        value || label || field.labelAr
       )}
       <span
         onPointerDown={(event) => beginInteraction(event, "resize")}

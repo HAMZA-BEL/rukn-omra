@@ -406,7 +406,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 function PaymentRow({ payment, onPrint, onDelete }) {
   const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
-  const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","بطاقة بنكية":"payment","وقفة بنك":"bank"};
+  const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","إيداع بنكي":"bank","بطاقة بنكية":"payment","وقفة بنك":"bank","وقفة بنكية":"bank"};
   const extraDetails = [
     payment.chequeNumber ? `${t.chequeNumber || "رقم الشيك"}: ${payment.chequeNumber}` : "",
     payment.paidBy ? `${t.paidBy || "من طرف"}: ${payment.paidBy}` : "",

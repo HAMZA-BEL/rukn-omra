@@ -327,6 +327,7 @@ const fromUser = (row) => ({
 const toAgency = (a) => ({
   name_ar:        a.nameAr        ?? null,
   name_fr:        a.nameFr        ?? null,
+  agency_city:    a.city          ?? null,
   address_tiznit: a.addressTiznit ?? null,
   address_agadir: a.addressAgadir ?? null,
   phone_tiznit1:  a.phoneTiznit1  ?? null,
@@ -337,11 +338,17 @@ const toAgency = (a) => ({
   rc:             a.rc            ?? null,
   email:          a.email         ?? null,
   website:        a.website       ?? null,
+  bank_name:           a.bankName          ?? null,
+  bank_account_holder: a.bankAccountHolder ?? null,
+  bank_rib:            a.bankRib           ?? null,
+  bank_iban:           a.bankIban          ?? null,
+  bank_note:           a.bankNote          ?? null,
 });
 
 const fromAgency = (row) => ({
   nameAr:        row.name_ar,
   nameFr:        row.name_fr,
+  city:          row.agency_city || "",
   addressTiznit: row.address_tiznit,
   addressAgadir: row.address_agadir,
   phoneTiznit1:  row.phone_tiznit1,
@@ -352,6 +359,11 @@ const fromAgency = (row) => ({
   rc:            row.rc,
   email:         row.email,
   website:       row.website,
+  bankName:          row.bank_name || "",
+  bankAccountHolder: row.bank_account_holder || "",
+  bankRib:           row.bank_rib || "",
+  bankIban:          row.bank_iban || "",
+  bankNote:          row.bank_note || "",
 });
 
 // ─── DB operations ────────────────────────────────────────────────────────────

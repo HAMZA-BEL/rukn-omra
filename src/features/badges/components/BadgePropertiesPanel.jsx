@@ -1,16 +1,6 @@
 import React from "react";
 import { Button, Input, Select } from "../../../components/UI";
-
-const alignOptions = [
-  { value: "start", label: "بداية" },
-  { value: "center", label: "وسط" },
-  { value: "end", label: "نهاية" },
-];
-
-const fitOptions = [
-  { value: "cover", label: "ملء وقص" },
-  { value: "contain", label: "احتواء" },
-];
+import { useLang } from "../../../hooks/useLang";
 
 const safeNumber = (value, fallback) => {
   const number = Number(value);
@@ -18,6 +8,17 @@ const safeNumber = (value, fallback) => {
 };
 
 export function BadgePropertiesPanel({ field, onChange, onRemove }) {
+  const { t } = useLang();
+  const alignOptions = [
+    { value: "start", label: t.badgeAlignStart || "بداية" },
+    { value: "center", label: t.badgeAlignCenter || "وسط" },
+    { value: "end", label: t.badgeAlignEnd || "نهاية" },
+  ];
+  const fitOptions = [
+    { value: "cover", label: t.badgeFitCover || "ملء وقص" },
+    { value: "contain", label: t.badgeFitContain || "احتواء" },
+  ];
+
   if (!field) {
     return (
       <div style={{
@@ -28,7 +29,7 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
         fontSize: 12,
         lineHeight: 1.7,
       }}>
-        اختر حقلاً من الشارة لتعديل خصائصه.
+        {t.badgeNoFieldSelected || "اختر حقلاً من الشارة لتعديل خصائصه."}
       </div>
     );
   }
@@ -47,8 +48,8 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <div>
-        <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>الخصائص</p>
-        <p style={{ fontSize: 11, color: "var(--rukn-gold)", fontWeight: 800, marginTop: 3 }}>{field.labelAr}</p>
+        <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>{t.badgeFieldProperties || "خصائص الحقل"}</p>
+        <p style={{ fontSize: 11, color: "var(--rukn-gold)", fontWeight: 800, marginTop: 3 }}>{t[field.labelKey] || field.labelAr}</p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
         {numberInput("X %", "xPct")}
@@ -60,14 +61,14 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
             <Input
-              label="حجم الخط"
+              label={t.badgeFontSize || "حجم الخط"}
               type="number"
               min={6}
               value={field.fontSize || 12}
               onChange={(event) => onChange?.(field.id, { fontSize: Number(event.target.value) || 12 })}
             />
             <Input
-              label="السماكة"
+              label={t.badgeFontWeight || "السماكة"}
               type="number"
               min={300}
               max={900}
@@ -78,13 +79,13 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
             <Select
-              label="المحاذاة"
+              label={t.badgeAlignment || "المحاذاة"}
               value={field.align || "center"}
               onChange={(event) => onChange?.(field.id, { align: event.target.value })}
               options={alignOptions}
             />
             <Input
-              label="اللون"
+              label={t.badgeTextColor || "اللون"}
               type="color"
               value={field.color || "#111111"}
               onChange={(event) => onChange?.(field.id, { color: event.target.value })}
@@ -92,7 +93,7 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
             />
           </div>
           <Input
-            label="عدد الأسطر"
+            label={t.badgeMaxLines || "عدد الأسطر"}
             type="number"
             min={1}
             max={3}
@@ -102,14 +103,14 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
         </>
       ) : (
         <Select
-          label="ملاءمة الصورة"
+          label={t.badgeImageFit || "ملاءمة الصورة"}
           value={field.fit || "cover"}
           onChange={(event) => onChange?.(field.id, { fit: event.target.value })}
           options={fitOptions}
         />
       )}
       <Button variant="danger" size="sm" icon="trash" onClick={() => onRemove?.(field.id)}>
-        حذف الحقل
+        {t.badgeRemoveField || "حذف الحقل"}
       </Button>
     </div>
   );

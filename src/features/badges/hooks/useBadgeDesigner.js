@@ -15,9 +15,9 @@ export function useBadgeDesigner(initialLayout) {
     setLayout(normalizeBadgeLayout(initialLayout || createDefaultBadgeLayout()));
   }, [initialLayout]);
 
-  const addField = React.useCallback((key) => {
+  const addField = React.useCallback((key, position) => {
     setLayout((current) => {
-      const next = addBadgeFieldToLayout(current, key);
+      const next = addBadgeFieldToLayout(current, key, position);
       const added = next.fields[next.fields.length - 1];
       if (added) setSelectedFieldId(added.id);
       return next;

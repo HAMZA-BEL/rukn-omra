@@ -8,7 +8,7 @@ import { formatCurrency } from "../utils/currency";
 const normalizePaymentMethodKind = (value = "") => {
   const method = String(value).trim().toLowerCase();
   if (method.includes("شيك") || method.includes("chèque") || method.includes("cheque") || method.includes("check")) return "cheque";
-  if (method.includes("تحويل") || method.includes("virement") || method.includes("transfer")) return "bank";
+  if (method.includes("تحويل") || method.includes("virement") || method.includes("transfer") || method.includes("إيداع") || method.includes("ايداع") || method.includes("dépôt") || method.includes("depot") || method.includes("deposit")) return "bank";
   return "cash";
 };
 

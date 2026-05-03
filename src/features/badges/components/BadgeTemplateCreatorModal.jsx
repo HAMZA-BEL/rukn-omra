@@ -6,10 +6,12 @@ import { DEFAULT_BADGE_SIZE } from "../utils/badgeDefaults";
 import { createDefaultBadgeLayout } from "../utils/badgeLayout";
 import { createBadgeTemplateId } from "../services/badgeTemplatesApi";
 import { uploadBadgeTemplateImage } from "../utils/badgeStorage";
+import { useLang } from "../../../hooks/useLang";
 
 export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, onToast }) {
+  const { t } = useLang();
   const inputRef = React.useRef(null);
-  const [name, setName] = React.useState("قالب الشارة");
+  const [name, setName] = React.useState(t.badgeDefaultTemplateName || "قالب الشارة");
   const [description, setDescription] = React.useState("");
   const [widthMm, setWidthMm] = React.useState(DEFAULT_BADGE_SIZE.widthMm);
   const [heightMm, setHeightMm] = React.useState(DEFAULT_BADGE_SIZE.heightMm);
@@ -18,7 +20,7 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
 
   React.useEffect(() => {
     if (!open) return;
-    setName("قالب الشارة");
+    setName(t.badgeDefaultTemplateName || "قالب الشارة");
     setDescription("");
     setWidthMm(DEFAULT_BADGE_SIZE.widthMm);
     setHeightMm(DEFAULT_BADGE_SIZE.heightMm);
@@ -29,7 +31,7 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
   const handleCreate = async () => {
     if (!name.trim()) return;
     if (!isSupabaseEnabled || !agencyId) {
-      onToast?.("إنشاء قوالب الشارات يتطلب Supabase Storage", "error");
+      onToast?.(t.badgeStorageRequired || "إنشاء قوالب الشارات يتطلب Supabase Storage", "error");
       return;
     }
     setBusy(true);
@@ -54,21 +56,21 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
       });
       onClose?.();
     } catch {
-      onToast?.("تعذر إنشاء قالب الشارة", "error");
+      onToast?.(t.badgeCreateError || "تعذر إنشاء قالب الشارة", "error");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="قالب جديد" width={560}>
+    <Modal open={open} onClose={onClose} title={t.badgeNewTemplate || "قالب جديد"} width={560}>
       <div style={{ display: "grid", gap: 14 }}>
-        <Input label="اسم القالب" value={name} onChange={(event) => setName(event.target.value)} />
+        <Input label={t.badgeTemplateName || "اسم القالب"} value={name} onChange={(event) => setName(event.target.value)} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Input label="العرض (mm)" type="number" value={widthMm} onChange={(event) => setWidthMm(Number(event.target.value) || DEFAULT_BADGE_SIZE.widthMm)} />
-          <Input label="الارتفاع (mm)" type="number" value={heightMm} onChange={(event) => setHeightMm(Number(event.target.value) || DEFAULT_BADGE_SIZE.heightMm)} />
+          <Input label={t.badgeWidthMm || "العرض (mm)"} type="number" value={widthMm} onChange={(event) => setWidthMm(Number(event.target.value) || DEFAULT_BADGE_SIZE.widthMm)} />
+          <Input label={t.badgeHeightMm || "الارتفاع (mm)"} type="number" value={heightMm} onChange={(event) => setHeightMm(Number(event.target.value) || DEFAULT_BADGE_SIZE.heightMm)} />
         </div>
-        <Input label="وصف اختياري" value={description} onChange={(event) => setDescription(event.target.value)} />
+        <Input label={t.badgeDescriptionOptional || "وصف اختياري"} value={description} onChange={(event) => setDescription(event.target.value)} />
         <div style={{
           border: "1px dashed var(--rukn-border-soft)",
           borderRadius: 14,
@@ -81,21 +83,21 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
           flexWrap: "wrap",
         }}>
           <span style={{ fontSize: 12, color: "var(--rukn-text-muted)" }}>
-            {file ? file.name : "ارفع تصميم الشارة PNG/JPG/WebP"}
+            {file ? file.name : (t.badgeUploadDesignFile || "ارفع تصميم الشارة PNG/JPG/WebP")}
           </span>
           <Button variant="secondary" size="sm" icon="upload" onClick={() => inputRef.current?.click()} disabled={busy || !isSupabaseEnabled}>
-            رفع تصميم الشارة
+            {t.badgeUploadDesign || "رفع تصميم الشارة"}
           </Button>
         </div>
         {!isSupabaseEnabled && (
           <p style={{ fontSize: 12, color: "var(--rukn-danger)", fontWeight: 700 }}>
-            رفع قوالب الشارات يتطلب Supabase Storage.
+            {t.badgeStorageRequired || "رفع قوالب الشارات يتطلب Supabase Storage."}
           </p>
         )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <Button variant="ghost" onClick={onClose}>إلغاء</Button>
+          <Button variant="ghost" onClick={onClose}>{t.cancel || "إلغاء"}</Button>
           <Button variant="primary" icon="plus" onClick={handleCreate} disabled={busy || !isSupabaseEnabled}>
-            إنشاء القالب
+            {t.badgeCreateTemplate || "إنشاء القالب"}
           </Button>
         </div>
         <input
