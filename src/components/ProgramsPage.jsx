@@ -1573,42 +1573,56 @@ function ProgramInner({ program, store, onToast, onBack }) {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
   }, []);
+  const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
+  const notifyNoExportClients = React.useCallback(() => {
+    onToast(
+      lang === "fr"
+        ? "Aucun pèlerin ne correspond aux filtres actuels"
+        : lang === "en"
+          ? "No pilgrims match the current filters"
+          : "لا يوجد معتمرون مطابقون للفلاتر الحالية",
+      "info"
+    );
+  }, [lang, onToast]);
   const handleProgramPdfExport = React.useCallback(() => {
     closeHeaderActions();
-    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    const exportClients = getCurrentExportClients();
+    if (exportClients.length === 0) { notifyNoExportClients(); return; }
     printProgramPDF({
       program,
-      clients: progClients,
+      clients: exportClients,
       getClientStatus,
       getClientTotalPaid,
       lang,
       t,
       agency,
     });
-  }, [agency, closeHeaderActions, getClientStatus, getClientTotalPaid, lang, onToast, progClients, program, t]);
+  }, [agency, closeHeaderActions, getClientStatus, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
   const handleAmadeusExport = React.useCallback(() => {
     closeHeaderActions();
-    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    const exportClients = getCurrentExportClients();
+    if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const airline = getProgramAirline(program);
     if (!airline?.code) {
       onToast("يرجى اختيار شركة الطيران قبل تصدير Amadeus", "error");
       return;
     }
-    const missing = progClients.filter(c => !c.passport?.number);
+    const missing = exportClients.filter(c => !c.passport?.number);
     if (missing.length > 0) {
       onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
     }
-    downloadAmadeusExcel(progClients, program);
-    onToast(`تم تصدير ملف Amadeus — ${progClients.length} معتمر`, "success");
-  }, [closeHeaderActions, onToast, progClients, program]);
+    downloadAmadeusExcel(exportClients, program);
+    onToast(`تم تصدير ملف Amadeus — ${exportClients.length} معتمر`, "success");
+  }, [closeHeaderActions, getCurrentExportClients, notifyNoExportClients, onToast, program]);
   const handleBadgePdfExport = React.useCallback(async () => {
     closeHeaderActions();
-    if (progClients.length === 0) { onToast("لا يوجد معتمرون في هذا البرنامج","info"); return; }
+    const exportClients = getCurrentExportClients();
+    if (exportClients.length === 0) { notifyNoExportClients(); return; }
     setBadgeExportBusy(true);
     try {
       await downloadProgramBadgesPdf({
         agencyId: store.agencyId,
-        clients: progClients,
+        clients: exportClients,
         program,
         agency,
       });
@@ -1622,17 +1636,19 @@ function ProgramInner({ program, store, onToast, onBack }) {
     } finally {
       setBadgeExportBusy(false);
     }
-  }, [agency, closeHeaderActions, onToast, progClients, program, store.agencyId]);
+  }, [agency, closeHeaderActions, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     setShowPassportImport(true);
   }, [closeHeaderActions]);
   const handleContractsExcelExport = React.useCallback(async () => {
     closeHeaderActions();
+    const exportClients = getCurrentExportClients();
+    if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const XLSX = await import("xlsx");
     const rows = [
       CONTRACT_EXPORT_HEADERS,
-      ...progClients.map((client) => {
+      ...exportClients.map((client) => {
         const pkgLevel = client.packageLevel || client.hotelLevel || "";
         const pkg = packageById.get(client.packageId || client.package_id) || packageByLevel.get(pkgLevel) || null;
         const fullName = getClientArabicName(client) || getClientLatinName(client) || resolveClientDisplayName(client, "");
@@ -1680,7 +1696,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
     XLSX.utils.book_append_sheet(wb, ws, "contracts");
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
-  }, [closeHeaderActions, lang, onToast, packageById, packageByLevel, progClients, program]);
+  }, [closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
   const headerActions = React.useMemo(() => ([
     {
       key: "passport",
@@ -4009,7 +4025,19 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           const client = data.clientsById[clientId];
           const source = getClientRegistrationSource(client);
           return (
-            <div key={clientId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, color: "#111827", fontSize: 12, fontWeight: 700 }}>
+            <div key={clientId} style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              color: "#111827",
+              fontSize: 12,
+              fontWeight: 800,
+              padding: "5px 7px",
+              borderRadius: 8,
+              border: "1px solid rgba(148,163,184,.18)",
+              background: "rgba(248,250,252,.78)",
+            }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden" }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {client ? getClientDisplayName(client) : "—"}
@@ -4041,9 +4069,24 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                   event.stopPropagation();
                   data.onRemoveClient(room.id, clientId);
                 }}
-                style={{ border: 0, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 12, flexShrink: 0 }}
+                style={{
+                  width: 20,
+                  height: 20,
+                  border: "1px solid rgba(148,163,184,.18)",
+                  background: "rgba(255,255,255,.55)",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  lineHeight: 1,
+                  borderRadius: 7,
+                  flexShrink: 0,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 0,
+                }}
               >
-                {t.remove || "إزالة"}
+                ×
               </button>
             </div>
           );

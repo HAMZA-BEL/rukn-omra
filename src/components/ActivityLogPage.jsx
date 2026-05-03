@@ -1,12 +1,13 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { Filter } from "lucide-react";
 import { GlassCard, Button, SearchBar } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { translateActivityDescription } from "../utils/i18nValues";
 
-const LOAD_LIMIT = 500;
-const DISPLAY_STEP = 50;
+const PAGE_FETCH_SIZE = 1000;
+const PAGE_SIZE = 20;
 
 const PERIOD_OPTIONS = [
   { key: "all", days: null },
@@ -94,7 +95,7 @@ export default function ActivityLogPage({ store }) {
   const [searchDraft, setSearchDraft] = React.useState("");
   const [search, setSearch] = React.useState("");
   const [rawRows, setRawRows] = React.useState([]);
-  const [visibleCount, setVisibleCount] = React.useState(DISPLAY_STEP);
+  const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [archiveBusy, setArchiveBusy] = React.useState(false);
@@ -122,15 +123,26 @@ export default function ActivityLogPage({ store }) {
     setLoading(true);
     setError(null);
     try {
-      const { data, error } = await fetchActivityLogPage({
-        page: 0,
-        limit: LOAD_LIMIT,
+      const { data, error, count } = await fetchActivityLogPage({
+        offset: 0,
+        limit: PAGE_FETCH_SIZE,
       });
       if (error) {
         applyFallback();
         return;
       }
-      setRawRows(data || []);
+      const allData = Array.isArray(data) ? [...data] : [];
+      const total = Number(count) || allData.length;
+      let offset = allData.length;
+      while (offset < total) {
+        const next = await fetchActivityLogPage({ offset, limit: PAGE_FETCH_SIZE });
+        if (next.error) break;
+        const rows = Array.isArray(next.data) ? next.data : [];
+        if (!rows.length) break;
+        allData.push(...rows);
+        offset = allData.length;
+      }
+      setRawRows(allData);
     } catch (err) {
       console.error("[ActivityLogPage]", err);
       applyFallback();
@@ -154,7 +166,7 @@ export default function ActivityLogPage({ store }) {
   }, [loadActivities]);
 
   React.useEffect(() => {
-    setVisibleCount(DISPLAY_STEP);
+    setPage(1);
   }, [category, period, search]);
 
   React.useEffect(() => {
@@ -211,8 +223,32 @@ export default function ActivityLogPage({ store }) {
       });
   }, [category, period, rawRows, search]);
 
-  const rows = filteredRows.slice(0, visibleCount);
-  const canShowMore = visibleCount < filteredRows.length;
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStartIndex = (safePage - 1) * PAGE_SIZE;
+  const pageEndIndex = Math.min(pageStartIndex + PAGE_SIZE, filteredRows.length);
+  const rows = filteredRows.slice(pageStartIndex, pageEndIndex);
+  const canGoPrevious = safePage > 1;
+  const canGoNext = safePage < totalPages;
+
+  React.useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const rangeLabel = React.useMemo(() => {
+    if (!filteredRows.length) return "";
+    const first = pageStartIndex + 1;
+    const last = pageEndIndex;
+    const template = t.activityRange || (
+      lang === "fr" ? "Affichage de {start}–{end} sur {total}"
+        : lang === "en" ? "Showing {start}–{end} of {total}"
+          : "عرض {start}–{end} من {total}"
+    );
+    return String(template)
+      .replaceAll("{start}", first)
+      .replaceAll("{end}", last)
+      .replaceAll("{total}", filteredRows.length);
+  }, [filteredRows.length, lang, pageEndIndex, pageStartIndex, t.activityRange]);
   const categoryOptions = React.useMemo(
     () => CATEGORY_KEYS.map((key) => ({ key, label:t[`activityFilter_${key}`] || key })),
     [t]
@@ -291,7 +327,7 @@ export default function ActivityLogPage({ store }) {
               <Button
                 variant="secondary"
                 size="sm"
-                icon="settings"
+                icon={<Filter size={16} />}
                 onClick={() => setFiltersOpen((open) => !open)}
                 style={{ minHeight:38, minWidth:120 }}
               >
@@ -333,17 +369,40 @@ export default function ActivityLogPage({ store }) {
       {filteredRows.length > 0 && (
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:18, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontSize:12, color:theme.colors.grey }}>
-            {t.activityShowing || "عرض"} {rows.length} / {filteredRows.length}
+            {rangeLabel}
           </span>
-          {canShowMore && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setVisibleCount((count) => count + DISPLAY_STEP)}
+              disabled={!canGoPrevious}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
             >
-              {lang === "fr" ? "Afficher plus" : lang === "en" ? "Show more" : "عرض المزيد"}
+              {t.activityPrevious || "Previous"}
             </Button>
-          )}
+            <span style={{
+              minHeight:30,
+              display:"inline-flex",
+              alignItems:"center",
+              padding:"0 10px",
+              borderRadius:10,
+              border:"1px solid var(--rukn-border-soft)",
+              background:"var(--rukn-bg-soft)",
+              color:"var(--rukn-text-muted)",
+              fontSize:12,
+              fontWeight:700,
+            }}>
+              {t.activityPage || "Page"} {safePage} / {totalPages}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!canGoNext}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            >
+              {t.activityNext || "Next"}
+            </Button>
+          </div>
         </div>
       )}
     </div>

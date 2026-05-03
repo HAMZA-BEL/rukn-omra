@@ -3,13 +3,14 @@ import { StatusBadge, Button, GlassCard, Divider } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
-import { printReceipt, printClientCard, printInvoice, printProformaInvoice, InvoiceRecipientModal } from "./PrintTemplates";
+import { printReceipt, printClientCard } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { downloadClientBadgePdf } from "../features/badges";
+import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -20,12 +21,42 @@ const printActionButtonStyle = {
   textAlign: "center",
 };
 
+const KNOWN_AIRLINE_LABELS = {
+  SV: {
+    ar: "الخطوط السعودية",
+    fr: "Saudi Airlines",
+    en: "Saudi Airlines",
+  },
+  AT: {
+    ar: "الخطوط الملكية المغربية",
+    fr: "Royal Air Maroc",
+    en: "Royal Air Maroc",
+  },
+};
+
+const translateClientLevel = (value, lang) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const direct = translateHotelLevel(raw, lang);
+  if (direct && direct !== raw) return direct;
+  const withoutArticle = raw.replace(/^ال/u, "");
+  const normalized = translateHotelLevel(withoutArticle, lang);
+  return normalized || raw;
+};
+
+const translateProgramAirline = (program, lang) => {
+  const airline = getProgramAirline(program);
+  if (!airline) return program?.transport || "";
+  const code = normalizeAirlineCode(airline.code);
+  const translatedName = KNOWN_AIRLINE_LABELS[code]?.[lang] || airline.name || program?.transport || code;
+  return code ? `${translatedName} (${code})` : translatedName;
+};
+
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          deletePayment, agency, clients = [], invoiceApi, badgePhotoApi } = store;
+          deletePayment, agency, clients = [], badgePhotoApi } = store;
   const [showPayForm, setShowPayForm] = React.useState(false);
-  const [invoiceModalOpen, setInvoiceModalOpen] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
 
@@ -35,10 +66,6 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const salePrice   = client.salePrice   || client.price || 0;
   const offPrice    = client.officialPrice || salePrice;
   const remaining   = Math.max(0, salePrice - totalPaid);
-  const isPaidInFull = remaining <= 0;
-  const invoiceActionLabel = isPaidInFull
-    ? t.printInvoice
-    : (lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية");
   const discount    = Math.max(0, offPrice - salePrice);
   const status      = getClientStatus(client);
   const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
@@ -68,7 +95,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
   const handleDownloadBadge = React.useCallback(async () => {
     if (!program) {
-      onToast?.("لا يوجد برنامج مرتبط بهذا المعتمر", "error");
+      onToast?.(t.badgeNoProgramForClient || "No program is linked to this pilgrim.", "error");
       return;
     }
     setBadgeBusy(true);
@@ -83,14 +110,14 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
     } catch (error) {
       onToast?.(
         error?.message === "missing-template"
-          ? "لا يوجد قالب شارة لهذا البرنامج بعد."
-          : "تعذر تحميل الشارة",
+          ? (t.badgeNoTemplateForProgram || "No badge template is linked to this program yet.")
+          : (t.badgeDownloadError || "Unable to download badge"),
         "error"
       );
     } finally {
       setBadgeBusy(false);
     }
-  }, [agency, badgeFileNumber, client, onToast, program, store.agencyId]);
+  }, [agency, badgeFileNumber, client, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -175,30 +202,13 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           onClick={() => printClientCard({ client, program, agency, lang, programClients })}>
           {t.printCard}
         </Button>
-        <Button variant="secondary" size="sm" icon="file"
-          style={printActionButtonStyle}
-          onClick={() => setInvoiceModalOpen(true)}>
-          {invoiceActionLabel}
-        </Button>
         <Button variant="secondary" size="sm" icon="download"
           style={printActionButtonStyle}
           disabled={badgeBusy}
           onClick={handleDownloadBadge}>
-          تحميل الشارة
+          {t.downloadBadge || "Download badge"}
         </Button>
       </div>
-
-      <InvoiceRecipientModal
-        open={invoiceModalOpen}
-        onClose={() => setInvoiceModalOpen(false)}
-        lang={lang}
-        documentType={isPaidInFull ? "invoice" : "proforma"}
-        onPrint={(recipient) => (
-          isPaidInFull
-            ? printInvoice({ client, program, payments, agency, lang, recipient, invoiceApi })
-            : printProformaInvoice({ client, program, payments, agency, lang, recipient })
-        )}
-      />
 
       {/* Program */}
       {program && (
@@ -207,11 +217,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {[
               [t.program,     program.name],
-              [t.level || "المستوى",  translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "—"],
+              [t.level || "المستوى",  translateClientLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "—"],
               [t.hotelMecca,  client.hotelMecca||"—"],
               [t.hotelMadina, client.hotelMadina||"—"],
               [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "—"],
-              [t.transport,   program.transport||"—"],
+              [t.transport,   translateProgramAirline(program, lang) || program.transport || "—"],
               ...(program.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
               ...(program.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
               ...(program.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
