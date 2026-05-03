@@ -10,8 +10,7 @@ const SITE_URL = (
   process.env.DEPLOY_PRIME_URL ||
   ""
 ).replace(/\/$/, "");
-const ALLOWED_ROLES = new Set(["owner", "manager", "staff"]);
-const ALLOWED_STATUS = new Set(["active", "disabled", "invited"]);
+const ALLOWED_ROLES = new Set(["manager", "staff"]);
 const ADMIN_ROLES = new Set(["owner", "manager"]);
 
 function buildClient() {
@@ -48,16 +47,13 @@ exports.handler = async (event) => {
     const email = (payload.email || "").trim().toLowerCase();
     const fullName = (payload.fullName || "").trim();
     const role = (payload.role || "staff").toLowerCase();
-    const status = (payload.status || "active").toLowerCase();
+    const status = "invited";
 
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return { statusCode: 400, body: JSON.stringify({ error: "Email is required" }) };
     }
     if (!ALLOWED_ROLES.has(role)) {
       return { statusCode: 422, body: JSON.stringify({ error: "Invalid role" }) };
-    }
-    if (!ALLOWED_STATUS.has(status)) {
-      return { statusCode: 422, body: JSON.stringify({ error: "Invalid status" }) };
     }
 
     const supabase = buildClient();
@@ -79,11 +75,28 @@ exports.handler = async (event) => {
     if (!ADMIN_ROLES.has(requesterRole)) {
       return { statusCode: 403, body: JSON.stringify({ error: "Insufficient permissions" }) };
     }
-    if (role === "owner" && requesterRole !== "owner") {
-      return { statusCode: 403, body: JSON.stringify({ error: "Only owners can create owners" }) };
-    }
 
     const agencyId = requesterProfile.agency_id;
+    const { data: existingUsers, error: existingUsersError } = await supabase
+      .from("users")
+      .select("id, role")
+      .eq("agency_id", agencyId);
+    if (existingUsersError) {
+      return { statusCode: 500, body: JSON.stringify({ error: existingUsersError.message }) };
+    }
+    const existing = Array.isArray(existingUsers) ? existingUsers : [];
+    const managerExists = existing.some((user) => ["owner", "manager"].includes(String(user.role || "").toLowerCase()));
+    const staffExists = existing.some((user) => String(user.role || "").toLowerCase() === "staff");
+    if (existing.length >= 2) {
+      return { statusCode: 409, body: JSON.stringify({ error: "This agency has reached the maximum number of users" }) };
+    }
+    if (role === "manager" && managerExists) {
+      return { statusCode: 409, body: JSON.stringify({ error: "A manager already exists for this agency" }) };
+    }
+    if (role === "staff" && staffExists) {
+      return { statusCode: 409, body: JSON.stringify({ error: "A staff user already exists for this agency" }) };
+    }
+
     const tempPassword = crypto.randomUUID();
 
     const { data: authResult, error: authError } = await supabase.auth.admin.createUser({

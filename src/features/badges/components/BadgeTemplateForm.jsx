@@ -1,12 +1,7 @@
 import React from "react";
 import { Button, GlassCard, Input, Select } from "../../../components/UI";
+import { useLang } from "../../../hooks/useLang";
 import { DEFAULT_BADGE_SIZE } from "../utils/badgeDefaults";
-
-const alignOptions = [
-  { value: "center", label: "وسط" },
-  { value: "start", label: "بداية" },
-  { value: "end", label: "نهاية" },
-];
 
 export function BadgeTemplateForm({
   template,
@@ -17,25 +12,34 @@ export function BadgeTemplateForm({
   uploadDisabled,
   busy,
 }) {
+  const { t } = useLang();
+  const alignOptions = [
+    { value: "center", label: t.badgeAlignCenter || "Center" },
+    { value: "start", label: t.badgeAlignStart || "Start" },
+    { value: "end", label: t.badgeAlignEnd || "End" },
+  ];
+  const selectedFieldLabel = selectedField
+    ? (t[selectedField.labelKey] || selectedField.label || selectedField.key)
+    : "";
   return (
     <GlassCard style={{ padding: 14 }}>
       <div style={{ display: "grid", gap: 12 }}>
-        <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>إعدادات القالب</p>
+        <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>{t.badgeTemplateSettings || t.badgeTemplateName || "Template settings"}</p>
         <Input
-          label="اسم القالب"
+          label={t.badgeTemplateName || "Template name"}
           value={template.name}
           onChange={(event) => onTemplateChange({ name: event.target.value })}
         />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Input
-            label="العرض (mm)"
+            label={t.badgeWidthMm || "Width (mm)"}
             type="number"
             min={40}
             value={template.widthMm || DEFAULT_BADGE_SIZE.widthMm}
             onChange={(event) => onTemplateChange({ widthMm: Number(event.target.value) || DEFAULT_BADGE_SIZE.widthMm })}
           />
           <Input
-            label="الارتفاع (mm)"
+            label={t.badgeHeightMm || "Height (mm)"}
             type="number"
             min={40}
             value={template.heightMm || DEFAULT_BADGE_SIZE.heightMm}
@@ -44,11 +48,11 @@ export function BadgeTemplateForm({
         </div>
         <div>
           <Button variant="secondary" size="sm" icon="upload" disabled={uploadDisabled || busy} onClick={onUpload}>
-            رفع تصميم الشارة
+            {t.badgeUploadDesign || "Import design"}
           </Button>
           {uploadDisabled && (
             <p style={{ fontSize: 11, color: "var(--rukn-text-muted)", marginTop: 7 }}>
-              رفع الصور يتطلب تفعيل Supabase Storage.
+              {t.badgeStorageRequired || "Creating badge templates requires Supabase Storage."}
             </p>
           )}
         </div>
@@ -60,19 +64,19 @@ export function BadgeTemplateForm({
             gap: 10,
           }}>
             <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-gold)" }}>
-              الحقل المحدد: {selectedField.labelAr}
+              {(t.badgeSelectedField || "Selected field")}: {selectedFieldLabel}
             </p>
             {selectedField.type === "text" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <Input
-                  label="حجم الخط"
+                  label={t.badgeFontSize || "Font size"}
                   type="number"
                   min={6}
                   value={selectedField.fontSize || 12}
                   onChange={(event) => onFieldChange(selectedField.key, { fontSize: Number(event.target.value) || 12 })}
                 />
                 <Select
-                  label="المحاذاة"
+                  label={t.badgeAlignment || "Alignment"}
                   value={selectedField.align || "center"}
                   onChange={(event) => onFieldChange(selectedField.key, { align: event.target.value })}
                   options={alignOptions}

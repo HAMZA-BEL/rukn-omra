@@ -754,15 +754,15 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         {selectedPackage && (
           <div style={{
             marginTop:12,
-            padding:"10px 12px",
-            borderRadius:10,
-            background:"rgba(0,0,0,.16)",
-            border:"1px solid rgba(212,175,55,.14)",
+            padding:"11px 12px",
+            borderRadius:12,
+            background:"var(--rukn-bg-soft)",
+            border:"1px solid var(--rukn-border-soft)",
           }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMecca) || "—"}</span></p>
-              <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:"#f8fafc" }}>{formatHotelName(selectedPackage.hotelMadina) || "—"}</span></p>
-              <p style={{ fontSize:11, color:tc.grey }}>{t.mealPlan}: <span style={{ color:"#f8fafc" }}>{selectedPackage.mealPlan || "—"}</span></p>
+              <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.hotelMecca}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{formatHotelName(selectedPackage.hotelMecca) || "—"}</span></p>
+              <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.hotelMadina}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{formatHotelName(selectedPackage.hotelMadina) || "—"}</span></p>
+              <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.mealPlan}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{selectedPackage.mealPlan || "—"}</span></p>
               <p style={{ fontSize:11, color:tc.grey }}>{t.officialPrice}: <span style={{ color:tc.gold }}>{derivedOfficialPrice ? `${formatPrice(derivedOfficialPrice)} ${currencyLabel}` : "—"}</span></p>
             </div>
             {officialPriceMissing && (

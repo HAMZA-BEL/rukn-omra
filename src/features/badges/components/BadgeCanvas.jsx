@@ -147,7 +147,7 @@ export function BadgeCanvas({
                   fontWeight: 800,
                   lineHeight: 1.7,
                 }}>
-                  {t.badgeUploadDesignPrompt || "ارفع تصميم الشارة للبدء"}
+                  {t.badgeUploadDesignPrompt || "Import the badge design to start"}
                 </div>
               )}
               {normalized.fields.filter((field) => field.visible !== false).map((field) => (
@@ -165,7 +165,7 @@ export function BadgeCanvas({
             </div>
           </div>
           <p style={{ fontSize: 11, color: "var(--rukn-text-muted)", marginTop: 10, textAlign: "center" }}>
-            {widthMm}mm × {heightMm}mm · {t.badgePercentHint || "تحفظ المواضع كنسب مئوية"}
+            {widthMm}mm × {heightMm}mm · {t.badgePercentHint || "Positions are saved as percentages"}
           </p>
         </div>
       </div>

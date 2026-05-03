@@ -23,7 +23,7 @@ export const programFieldsFromBadgePhones = (phones = []) => {
 
 export const normalizeBadgeTemplate = (template = {}) => ({
   id: template.id || "",
-  name: template.name || "قالب الشارة",
+  name: template.name || "Badge template",
   description: template.description || "",
   templatePath: template.templatePath || template.template_path || "",
   widthMm: Number(template.widthMm ?? template.width_mm ?? 90) || 90,
@@ -38,7 +38,7 @@ export const toBadgeTemplatePayload = (template = {}) => {
   const normalized = normalizeBadgeTemplate(template);
   return {
     ...normalized,
-    name: normalized.name.trim() || "قالب الشارة",
+    name: normalized.name.trim() || "Badge template",
     description: normalized.description.trim(),
     templatePath: normalized.templatePath,
     layout: normalized.layout,

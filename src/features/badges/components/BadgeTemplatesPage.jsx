@@ -12,6 +12,7 @@ const isMissingSetupError = (error) => Boolean(error && (
   || String(error.message || "").includes("does not exist")
   || String(error.code || "") === "42P01"
 ));
+const DEFAULT_TEMPLATE_NAMES = new Set(["قالب الشارة", "Modèle de badge", "Badge template"]);
 
 export function BadgeTemplatesPage({ store, onToast }) {
   const { t } = useLang();
@@ -38,20 +39,26 @@ export function BadgeTemplatesPage({ store, onToast }) {
 
   const activeTemplate = templates.find((template) => template.id === activeId) || null;
   const editorTemplate = templates.find((template) => template.id === editorId) || null;
+  const displayTemplateName = React.useCallback((template) => {
+    const name = String(template?.name || "").trim();
+    return !name || DEFAULT_TEMPLATE_NAMES.has(name)
+      ? (t.badgeDefaultTemplateName || "Badge template")
+      : name;
+  }, [t.badgeDefaultTemplateName]);
   const setupMissing = isMissingSetupError(error);
   const message = setupMissing
-    ? (t.badgeSetupMissing || "لم يتم تفعيل إعدادات قوالب الشارات في قاعدة البيانات بعد.")
-    : (t.badgeLoadError || "تعذر تحميل قوالب الشارات. تحقق من الاتصال ثم أعد المحاولة.");
+    ? (t.badgeSetupMissing || "Badge templates are not configured in the database yet.")
+    : (t.badgeLoadError || "Unable to load badge templates. Check the connection and try again.");
 
   const handleSave = async (template, options = {}) => {
     try {
       const saved = await save(template);
       setActiveId(saved.id || template.id);
       if (options.openEditor) setEditorId(saved.id || template.id);
-      onToast?.(t.badgeSaveSuccess || "تم حفظ قالب الشارة", "success");
+      onToast?.(t.badgeSaveSuccess || "Badge template saved", "success");
       return saved;
     } catch {
-      onToast?.(t.badgeSaveError || "تعذر حفظ قالب الشارة", "error");
+      onToast?.(t.badgeSaveError || "Unable to save badge template", "error");
       return null;
     }
   };
@@ -61,18 +68,18 @@ export function BadgeTemplatesPage({ store, onToast }) {
       await remove(template.id);
       setActiveId("");
       setEditorId("");
-      onToast?.(t.badgeDeleteSuccess || "تم حذف قالب الشارة", "info");
+      onToast?.(t.badgeDeleteSuccess || "Badge template deleted", "info");
     } catch {
-      onToast?.(t.badgeDeleteError || "تعذر حذف قالب الشارة", "error");
+      onToast?.(t.badgeDeleteError || "Unable to delete badge template", "error");
     }
   };
 
   const handleDefault = async (template) => {
     try {
       await makeDefault(template.id);
-      onToast?.(t.badgeDefaultSuccess || "تم تعيين القالب الافتراضي", "success");
+      onToast?.(t.badgeDefaultSuccess || "Default badge template set", "success");
     } catch {
-      onToast?.(t.badgeDefaultError || "تعذر تعيين القالب الافتراضي", "error");
+      onToast?.(t.badgeDefaultError || "Unable to set default badge template", "error");
     }
   };
 
@@ -108,16 +115,16 @@ export function BadgeTemplatesPage({ store, onToast }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, minHeight: 34 }}>
             <div>
               <p style={{ fontSize: 15, fontWeight: 900, color: "var(--rukn-gold)", lineHeight: 1.2 }}>
-                {t.badgeDesignerTitle || "مصمم الشارة"}
+                {t.badgeDesignerTitle || "Badge designer"}
               </p>
               <p style={{ fontSize: 10, color: "var(--rukn-text-muted)", marginTop: 2 }}>
-                {t.badgeDesignerSubtitle || "مساحة عمل كاملة لضبط أماكن حقول الشارة بدقة."}
+                {t.badgeDesignerSubtitle || "A full workspace for precisely placing badge fields."}
               </p>
             </div>
             <button
               type="button"
               onClick={() => setEditorId("")}
-              title={t.close || "إغلاق"}
+              title={t.close || "Close"}
               aria-label={t.close || "إغلاق"}
               style={{
                 width: 34,
@@ -151,13 +158,13 @@ export function BadgeTemplatesPage({ store, onToast }) {
     <GlassCard gold style={{ padding: 18, marginBottom: 20, overflow: "visible" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
-          <p style={{ fontSize: 19, fontWeight: 900, color: "var(--rukn-gold)" }}>{t.badgeTemplatesTitle || "قوالب الشارات"}</p>
+          <p style={{ fontSize: 19, fontWeight: 900, color: "var(--rukn-gold)" }}>{t.badgeTemplatesTitle || "Badge templates"}</p>
           <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", marginTop: 5, lineHeight: 1.7 }}>
-            {t.badgeTemplatesSubtitle || "ارفع تصميم الشارة وحدد أماكن البيانات ثم استعمله لطباعة شارات المعتمرين."}
+            {t.badgeTemplatesSubtitle || "Import the badge design, place the data, then use it to print pilgrim badges."}
           </p>
         </div>
         <Button variant="primary" size="sm" icon="plus" onClick={() => setCreatorOpen(true)}>
-          {t.badgeNewTemplate || "قالب جديد"}
+          {t.badgeNewTemplate || "New template"}
         </Button>
       </div>
 
@@ -178,15 +185,15 @@ export function BadgeTemplatesPage({ store, onToast }) {
           marginBottom: 14,
         }}>
           <span>{message}</span>
-          <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>{t.retry || "إعادة المحاولة"}</Button>
+          <Button variant="ghost" size="sm" onClick={refresh} disabled={loading}>{t.retry || "Retry"}</Button>
         </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(240px,320px) minmax(0,1fr)", gap: 14, alignItems: "start" }}>
         <GlassCard style={{ padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>{t.badgeTemplatesList || "القوالب"}</p>
-            {loading && <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>{t.loading || "تحميل..."}</span>}
+            <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>{t.badgeTemplatesList || "Templates"}</p>
+            {loading && <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>{t.loading || "Loading..."}</span>}
           </div>
 
           {!loading && !templates.length && (
@@ -199,8 +206,8 @@ export function BadgeTemplatesPage({ store, onToast }) {
               fontSize: 12,
               lineHeight: 1.8,
             }}>
-              <strong style={{ color: "var(--rukn-text)", display: "block", marginBottom: 4 }}>{t.badgeNoTemplatesTitle || "لا توجد قوالب شارات بعد"}</strong>
-              {t.badgeNoTemplatesSubtitle || "ابدأ برفع تصميم الشارة الخاص بوكالتك."}
+              <strong style={{ color: "var(--rukn-text)", display: "block", marginBottom: 4 }}>{t.badgeNoTemplatesTitle || "No badge templates yet"}</strong>
+              {t.badgeNoTemplatesSubtitle || "Start by importing your agency badge design."}
             </div>
           )}
 
@@ -226,9 +233,9 @@ export function BadgeTemplatesPage({ store, onToast }) {
                     fontFamily: "'Cairo',sans-serif",
                   }}
                 >
-                  <strong style={{ display: "block", fontSize: 13 }}>{template.name}</strong>
+                  <strong style={{ display: "block", fontSize: 13 }}>{displayTemplateName(template)}</strong>
                   <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
-                    {template.widthMm}×{template.heightMm}mm {template.isDefault ? `· ${t.badgeDefault || "افتراضي"}` : ""}
+                    {template.widthMm}×{template.heightMm}mm {template.isDefault ? `· ${t.badgeDefault || "Default"}` : ""}
                   </span>
                 </button>
               );
@@ -245,17 +252,17 @@ export function BadgeTemplatesPage({ store, onToast }) {
         }}>
           {activeTemplate ? (
             <div style={{ textAlign: "center", display: "grid", gap: 10, justifyItems: "center" }}>
-              <p style={{ fontSize: 15, fontWeight: 900, color: "var(--rukn-text)" }}>{activeTemplate.name}</p>
+              <p style={{ fontSize: 15, fontWeight: 900, color: "var(--rukn-text)" }}>{displayTemplateName(activeTemplate)}</p>
               <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.8, maxWidth: 420 }}>
-                {t.badgeOpenDesignerHint || "افتح مساحة التصميم لتعديل مواضع الحقول وحفظ قالب الشارة."}
+                {t.badgeOpenDesignerHint || "Open the design workspace to adjust fields and save the template."}
               </p>
               <Button variant="secondary" size="sm" onClick={() => setEditorId(activeTemplate.id)}>
-                {t.badgeOpenDesigner || "فتح مصمم الشارة"}
+                {t.badgeOpenDesigner || "Open designer"}
               </Button>
             </div>
           ) : (
             <div style={{ textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 12, lineHeight: 1.8 }}>
-              {t.badgeSelectTemplateEmpty || "اختر قالباً من القائمة أو أنشئ قالباً جديداً للبدء."}
+              {t.badgeSelectTemplateEmpty || "Select a template or create a new one to start."}
             </div>
           )}
         </GlassCard>

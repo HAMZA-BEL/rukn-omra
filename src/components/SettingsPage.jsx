@@ -88,8 +88,8 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     onToast(t.saveSettingsSuccess, "success");
   };
 
-  const normalizedRole = (currentUserRole || "").toLowerCase();
-  const canManageUsers = ["owner", "manager"].includes(normalizedRole);
+  const normalizedRole = String(currentUserRole || "").toLowerCase();
+  const canManageUsers = normalizedRole === "manager" || normalizedRole === "owner";
 
   return (
     <div className="page-body settings-page" style={{ padding:"24px 32px" }}>
@@ -99,29 +99,81 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       </p>
 
       {/* Language switcher */}
-      <GlassCard gold style={{ padding:16, marginBottom:20 }}>
-        <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:12 }}>{t.languageTitle}</p>
-        <div className="button-row" style={{ display:"flex", gap:10 }}>
-          {[
-            { code:"ar", label:"العربية" },
-            { code:"fr", label:"Français" },
-            { code:"en", label:"English" },
-          ].map(l => (
-            <button key={l.code} onClick={() => setLang(l.code)} style={{
-              padding:"10px 24px", borderRadius:10,
-              background: lang===l.code ? "rgba(212,175,55,.2)" : "rgba(255,255,255,.04)",
-              border:`2px solid ${lang===l.code ? t2.gold : "rgba(255,255,255,.1)"}`,
-              color: lang===l.code ? t2.gold : t2.grey,
-              fontSize:14, fontWeight:700, cursor:"pointer",
-              fontFamily:"'Cairo',sans-serif", transition:"all .2s",
-            }}>
-              {l.label}
-            </button>
-          ))}
+      <GlassCard style={{ padding:14, marginBottom:18 }}>
+        <div style={{
+          display:"flex",
+          justifyContent:"space-between",
+          alignItems:"center",
+          gap:14,
+          flexWrap:"wrap",
+        }}>
+          <div style={{ minWidth:190 }}>
+            <p style={{ fontSize:14, fontWeight:900, color:"var(--rukn-text)", lineHeight:1.25 }}>{t.languageTitle}</p>
+            <p style={{ fontSize:11.5, color:"var(--rukn-text-muted)", marginTop:3, lineHeight:1.55 }}>
+              {t.appName} {t.appNameNote}
+            </p>
+          </div>
+          <div
+            role="radiogroup"
+            aria-label={t.languageTitle}
+            style={{
+              display:"inline-grid",
+              gridTemplateColumns:"repeat(3,minmax(0,1fr))",
+              gap:4,
+              padding:4,
+              borderRadius:999,
+              background:"var(--rukn-bg-card)",
+              border:"1px solid var(--rukn-border-soft)",
+              boxShadow:"0 10px 28px rgba(15,23,42,.06)",
+              width:"min(100%, 360px)",
+              minWidth:0,
+            }}
+          >
+            {[
+              { code:"ar", label:"العربية", short:"AR" },
+              { code:"fr", label:"Français", short:"FR" },
+              { code:"en", label:"English", short:"EN" },
+            ].map(l => {
+              const active = lang === l.code;
+              return (
+                <button
+                  key={l.code}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setLang(l.code)}
+                  style={{
+                    minHeight:34,
+                    padding:"6px 11px",
+                    borderRadius:999,
+                    border:`1px solid ${active ? "rgba(212,175,55,.45)" : "transparent"}`,
+                    background:active ? "linear-gradient(135deg, rgba(212,175,55,.2), rgba(212,175,55,.1))" : "transparent",
+                    color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                    fontSize:12.5,
+                    fontWeight:active ? 900 : 700,
+                    cursor:"pointer",
+                    fontFamily:"'Cairo',sans-serif",
+                    transition:"background .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease",
+                    boxShadow:active ? "0 6px 18px rgba(212,175,55,.12)" : "none",
+                    display:"inline-flex",
+                    alignItems:"center",
+                    justifyContent:"center",
+                    gap:7,
+                    whiteSpace:"nowrap",
+                  }}
+                >
+                  <span style={{
+                    fontSize:10,
+                    fontWeight:900,
+                    color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                    opacity:active ? 1 : .72,
+                  }}>{l.short}</span>
+                  <span>{l.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <p style={{ fontSize:11, color:t2.grey, marginTop:8 }}>
-          * {t.appName} {t.appNameNote}
-        </p>
       </GlassCard>
 
       {/* Agency info */}
@@ -174,7 +226,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
         <GlassCard style={{ padding:20, marginBottom:20 }}>
           <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:16 }}>
             <AppIcon name="shieldCheck" size={15} style={{ marginInlineEnd:6, verticalAlign:"middle" }} />
-            {lang === "fr" ? "État du système" : lang === "en" ? "System Status" : "حالة النظام"}
+            {t.systemStatusTitle || (lang === "fr" ? "État du système" : lang === "en" ? "System Status" : "حالة النظام")}
           </p>
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
             <span style={{

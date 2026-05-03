@@ -4,6 +4,10 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 
 const tc = theme.colors;
+const normalizeRole = (role) => {
+  const value = String(role || "").toLowerCase();
+  return value === "owner" ? "manager" : value;
+};
 
 export default function UsersPage({
   store,
@@ -22,9 +26,9 @@ export default function UsersPage({
   const refreshUsersFn = store.refreshAgencyUsers;
   const createUserFn = store.createAgencyUser;
   const updateUserFn = store.updateAgencyUser;
-  const viewerRole = (currentUserRole || store?.currentUserRole || "").toLowerCase();
+  const viewerRole = normalizeRole(currentUserRole || store?.currentUserRole || "");
   const viewerId = currentUserId || store?.currentUserId || null;
-  const canManageUsers = ["owner", "manager"].includes(viewerRole);
+  const canManageUsers = viewerRole === "manager";
   const [showAddModal, setShowAddModal] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState(null);
@@ -32,7 +36,6 @@ export default function UsersPage({
     email: "",
     fullName: "",
     role: "staff",
-    status: "active",
   });
   const [manageModalUser, setManageModalUser] = React.useState(null);
   const [manageState, setManageState] = React.useState({ role: "staff", status: "active" });
@@ -92,8 +95,7 @@ export default function UsersPage({
   const canEditUser = React.useCallback((user) => {
     if (!canManageUsers || !user) return false;
     if (viewerId && user.id === viewerId) return false;
-    const targetRole = (user.role || "").toLowerCase();
-    if (viewerRole === "owner") return true;
+    const targetRole = normalizeRole(user.role);
     if (viewerRole === "manager") {
       return targetRole === "staff";
     }
@@ -101,17 +103,12 @@ export default function UsersPage({
   }, [canManageUsers, viewerRole, viewerId]);
 
   const roleOptions = React.useMemo(() => {
-    const base = [
-      { value: "owner", label: t.usersRoleOwner || "Owner" },
+    if (viewerRole !== "manager") return [];
+    return [
       { value: "manager", label: t.usersRoleManager || "Manager" },
       { value: "staff", label: t.usersRoleStaff || "Staff" },
     ];
-    if (viewerRole === "owner") return base;
-    if (viewerRole === "manager") {
-      return base.filter((opt) => opt.value !== "owner");
-    }
-    return [];
-  }, [viewerRole, t.usersRoleOwner, t.usersRoleManager, t.usersRoleStaff]);
+  }, [viewerRole, t.usersRoleManager, t.usersRoleStaff]);
 
   const statusOptions = React.useMemo(() => {
     const base = [
@@ -125,11 +122,36 @@ export default function UsersPage({
     return base;
   }, [viewerRole, t.usersStatusActive, t.usersStatusDisabled, t.usersStatusInvited]);
 
+  const userRoleCounts = React.useMemo(() => {
+    const counts = { total: 0, manager: 0, staff: 0 };
+    users.forEach((user) => {
+      counts.total += 1;
+      const role = normalizeRole(user.role);
+      if (role === "manager") counts.manager += 1;
+      if (role === "staff") counts.staff += 1;
+    });
+    return counts;
+  }, [users]);
+
+  const getCreateUserLimitError = React.useCallback((role) => {
+    const normalizedRole = normalizeRole(role);
+    if (userRoleCounts.total >= 2) {
+      return t.usersMaxReached || "This agency has reached the maximum number of users.";
+    }
+    if (normalizedRole === "manager" && userRoleCounts.manager >= 1) {
+      return t.usersManagerExists || "A manager already exists for this agency.";
+    }
+    if (normalizedRole === "staff" && userRoleCounts.staff >= 1) {
+      return t.usersStaffExists || "A staff user already exists for this agency.";
+    }
+    return "";
+  }, [t.usersManagerExists, t.usersMaxReached, t.usersStaffExists, userRoleCounts]);
+
   const openManageModal = React.useCallback((user) => {
     if (!user) return;
     setManageModalUser(user);
     setManageState({
-      role: (user.role || "staff").toLowerCase(),
+      role: normalizeRole(user.role || "staff"),
       status: (user.status || "active").toLowerCase(),
     });
     setManageError(null);
@@ -194,7 +216,7 @@ export default function UsersPage({
               variant="primary"
               size="sm"
               onClick={() => {
-                setFormState({ email: "", fullName: "", role: "staff", status: "active" });
+                setFormState({ email: "", fullName: "", role: "staff" });
                 setFormError(null);
                 setShowAddModal(true);
               }}
@@ -294,7 +316,12 @@ export default function UsersPage({
             setSaving(true);
             setFormError(null);
             try {
-              await createUserFn(formState);
+              const limitError = getCreateUserLimitError(formState.role);
+              if (limitError) {
+                setFormError(limitError);
+                return;
+              }
+              await createUserFn({ ...formState, status: "invited" });
               if (onToast) onToast(t.usersCreateSuccess || "User created", "success");
               setShowAddModal(false);
             } catch (err) {
@@ -322,19 +349,8 @@ export default function UsersPage({
             value={formState.role}
             onChange={(e) => setFormState((prev) => ({ ...prev, role: e.target.value }))}
             options={[
-              { value: "owner", label: t.usersRoleOwner || "Owner" },
               { value: "manager", label: t.usersRoleManager || "Manager" },
               { value: "staff", label: t.usersRoleStaff || "Staff" },
-            ]}
-          />
-          <Select
-            label={t.usersStatusLabel || t.usersStatus || "Status"}
-            value={formState.status}
-            onChange={(e) => setFormState((prev) => ({ ...prev, status: e.target.value }))}
-            options={[
-              { value: "active", label: t.usersStatusActive || "Active" },
-              { value: "invited", label: t.usersStatusInvited || "Invited" },
-              { value: "disabled", label: t.usersStatusDisabled || "Disabled" },
             ]}
           />
           {formError && (
@@ -400,8 +416,17 @@ export default function UsersPage({
 }
 
 function StatusPill({ value, kind }) {
+  const { t } = useLang();
   if (!value) return <span style={{ color: theme.colors.grey }}>—</span>;
-  const formatted = value === value.toLowerCase() ? value : value.toLowerCase();
+  const formatted = kind === "role" ? normalizeRole(value) : String(value || "").toLowerCase();
+  const label = kind === "role"
+    ? formatted === "manager" ? (t.usersRoleManager || "Manager")
+      : formatted === "staff" ? (t.usersRoleStaff || "Staff")
+        : formatted
+    : formatted === "active" ? (t.usersStatusActive || "Active")
+      : formatted === "disabled" ? (t.usersStatusDisabled || "Disabled")
+        : formatted === "invited" ? (t.usersStatusInvited || "Invited")
+          : formatted;
   const color = kind === "status"
     ? formatted === "active" ? theme.colors.greenLight
       : formatted === "disabled" ? theme.colors.danger
@@ -419,9 +444,8 @@ function StatusPill({ value, kind }) {
       color,
       fontSize: 12,
       fontWeight: 600,
-      textTransform: "capitalize",
     }}>
-      {formatted}
+      {label}
     </span>
   );
 }

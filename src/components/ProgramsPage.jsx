@@ -885,7 +885,7 @@ export default function ProgramsPage({ store, onToast }) {
           <div>
             <h1 style={{ fontSize:22, fontWeight:800, color:tc.white }}>{t.availablePrograms}</h1>
             <p style={{ fontSize:13, color:tc.grey, marginTop:4 }}>
-              {t.programsSubtitle || `${programs.length} programmes disponibles`}
+              {tr("programsSubtitle", { count: programs.length })}
             </p>
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>

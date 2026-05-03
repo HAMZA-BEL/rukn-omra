@@ -1,4 +1,5 @@
 import React from "react";
+import { useLang } from "../../../hooks/useLang";
 import { BadgeFieldBox } from "./BadgeFieldBox";
 import { normalizeBadgeLayout, sampleBadgeData } from "../utils/badgeLayout";
 
@@ -11,6 +12,7 @@ export function BadgeTemplatePreview({
   onSelectField,
   onFieldChange,
 }) {
+  const { t } = useLang();
   const normalized = normalizeBadgeLayout(layout);
   const aspect = Number(widthMm || 90) / Number(heightMm || 140);
 
@@ -47,7 +49,7 @@ export function BadgeTemplatePreview({
             fontSize: 13,
             fontWeight: 800,
           }}>
-            ارفع تصميم الشارة للبدء
+            {t.badgeUploadDesignPrompt || "Import the badge design to start"}
           </div>
         )}
         {normalized.fields.map((field) => (
@@ -62,7 +64,7 @@ export function BadgeTemplatePreview({
         ))}
       </div>
       <p style={{ fontSize: 11, color: "var(--rukn-text-muted)", marginTop: 8, textAlign: "center" }}>
-        {widthMm}mm × {heightMm}mm · تحفظ المواضع كنسب مئوية
+        {widthMm}mm × {heightMm}mm · {t.badgePercentHint || "Positions are saved as percentages"}
       </p>
     </div>
   );

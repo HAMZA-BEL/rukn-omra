@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { GlassCard, Button, SearchBar } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
@@ -100,6 +101,9 @@ export default function ActivityLogPage({ store }) {
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const searchDebounce = React.useRef(null);
   const filtersRef = React.useRef(null);
+  const filterButtonRef = React.useRef(null);
+  const filterMenuRef = React.useRef(null);
+  const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
   const archiveOldActivityLog = store.archiveOldActivityLog;
@@ -156,7 +160,10 @@ export default function ActivityLogPage({ store }) {
   React.useEffect(() => {
     if (!filtersOpen) return undefined;
     const handlePointer = (event) => {
-      if (!filtersRef.current || filtersRef.current.contains(event.target)) return;
+      if (
+        (filtersRef.current && filtersRef.current.contains(event.target))
+        || (filterMenuRef.current && filterMenuRef.current.contains(event.target))
+      ) return;
       setFiltersOpen(false);
     };
     const handleEscape = (event) => {
@@ -167,6 +174,27 @@ export default function ActivityLogPage({ store }) {
     return () => {
       document.removeEventListener("pointerdown", handlePointer);
       document.removeEventListener("keydown", handleEscape);
+    };
+  }, [filtersOpen]);
+
+  React.useLayoutEffect(() => {
+    if (!filtersOpen || !filterButtonRef.current) return undefined;
+    const updatePosition = () => {
+      const rect = filterButtonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(520, window.innerWidth - 48);
+      setFilterMenuStyle({
+        top: rect.bottom + 8,
+        left: Math.max(24, Math.min(rect.right - width, window.innerWidth - width - 24)),
+        width,
+      });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
   }, [filtersOpen]);
 
@@ -197,6 +225,28 @@ export default function ActivityLogPage({ store }) {
     categoryOptions.find((option) => option.key === category)?.label,
     periodOptions.find((option) => option.key === period)?.label,
   ].filter(Boolean).join(" · ");
+  const filtersMenu = filtersOpen && filterMenuStyle && typeof document !== "undefined"
+    ? createPortal(
+      <div style={{
+        position: "fixed",
+        top: filterMenuStyle.top,
+        left: filterMenuStyle.left,
+        width: filterMenuStyle.width,
+        padding: 12,
+        borderRadius: 14,
+        background: "var(--rukn-bg-card)",
+        border: "1px solid var(--rukn-border-soft)",
+        boxShadow: "0 22px 48px rgba(0,0,0,.34)",
+        zIndex: 14000,
+        display: "grid",
+        gap: 10,
+      }} ref={filterMenuRef}>
+        <CompactChipGroup value={category} options={categoryOptions} onChange={setCategory} />
+        <CompactChipGroup value={period} options={periodOptions} onChange={setPeriod} />
+      </div>,
+      document.body
+    )
+    : null;
 
   const handleArchivePurge = async () => {
     if (!archiveOldActivityLog) return;
@@ -211,17 +261,17 @@ export default function ActivityLogPage({ store }) {
 
   return (
     <div className="page-body" style={{ padding:"24px 32px" }}>
-      <div className="page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, flexWrap:"wrap", gap:12 }}>
+      <div className="page-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:10 }}>
         <div>
-          <h1 style={{ fontSize:22, fontWeight:800, color:theme.colors.white }}>{t.activityLog || "سجل النشاط"}</h1>
-          <p style={{ fontSize:12, color:theme.colors.grey }}>{t.activityLogDesc || "جميع الأحداث المهمة في النظام"}</p>
+          <h1 style={{ fontSize:20, fontWeight:800, color:theme.colors.white, lineHeight:1.2 }}>{t.activityLog || "سجل النشاط"}</h1>
+          <p style={{ fontSize:12, color:theme.colors.grey, marginTop:3 }}>{t.activityLogDesc || "جميع الأحداث المهمة في النظام"}</p>
         </div>
         <Button variant="ghost" size="sm" onClick={handleArchivePurge} disabled={archiveBusy}>
           {archiveBusy ? (t.loading || "جاري التحميل...") : (t.activityArchiveAction || "تنظيف السجل")}
         </Button>
       </div>
 
-      <GlassCard style={{ padding:12, marginBottom:14 }}>
+      <GlassCard style={{ padding:"10px 12px", marginBottom:14, overflow:"visible" }}>
         <div style={{
           display:"flex",
           gap:10,
@@ -236,47 +286,32 @@ export default function ActivityLogPage({ store }) {
               style={{ width:"100%" }}
             />
           </div>
-          <div ref={filtersRef} style={{ position:"relative", flex:"0 0 auto", zIndex:99999}}>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon="settings"
-              onClick={() => setFiltersOpen((open) => !open)}
-              style={{ minHeight:40 }}
-            >
-              {lang === "fr" ? "Filtres" : lang === "en" ? "Filters" : "الفلاتر"}
-            </Button>
-            {filtersOpen && (
-              <div style={{
-                position:"absolute",
-                bottom:"calc(100% + 8px)",
-                insetInlineEnd:0,
-                width:"min(520px, calc(100vw - 48px))",
-                padding:12,
-                borderRadius:14,
-                background:"var(--rukn-bg-card)",
-                border:"1px solid var(--rukn-border-soft)",
-                boxShadow:"var(--rukn-shadow-card)",
-                zIndex:99999,
-                pointerEvents:"auto",
-                display:"grid",
-                gap:10,
-              }}>
-                <CompactChipGroup value={category} options={categoryOptions} onChange={setCategory} />
-                <CompactChipGroup value={period} options={periodOptions} onChange={setPeriod} />
-              </div>
-            )}
+          <div ref={filtersRef} style={{ position:"relative", flex:"0 0 auto" }}>
+            <div ref={filterButtonRef}>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="settings"
+                onClick={() => setFiltersOpen((open) => !open)}
+                style={{ minHeight:38, minWidth:120 }}
+              >
+                {t.filterLabel || (lang === "fr" ? "Filtrer" : lang === "en" ? "Filter" : "تصفية")}
+              </Button>
+            </div>
           </div>
           <span style={{
             flex:"0 1 auto",
             fontSize:12,
             color:"var(--rukn-text-muted)",
             whiteSpace:"nowrap",
+            paddingInline:"2px",
           }}>
             {filterSummary}
           </span>
         </div>
       </GlassCard>
+
+      {filtersMenu}
 
       <GlassCard style={{ padding:0 }}>
         {loading && (

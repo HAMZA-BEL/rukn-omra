@@ -950,7 +950,7 @@ export function useStore(agencyId, onToast) {
     return entries.length;
   }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
 
-  const createAgencyUser = useCallback(async ({ email, fullName, role = "staff", status = "active" }) => {
+  const createAgencyUser = useCallback(async ({ email, fullName, role = "staff", status = "invited" }) => {
     if (!isSupabaseEnabled || !agencyId) {
       throw new Error("Cloud features are unavailable");
     }

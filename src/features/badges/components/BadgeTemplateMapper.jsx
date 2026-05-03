@@ -167,7 +167,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, bus
             {headerCollapsed ? (
               <div style={{ minWidth: 0 }}>
                 <p style={{ fontSize: 13, fontWeight: 900, color: "var(--rukn-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {draft.name || t.badgeTemplateName || "اسم القالب"}
+                  {draft.name || t.badgeTemplateName || "Template name"}
                 </p>
                 <p style={{ fontSize: 10, color: "var(--rukn-text-muted)", marginTop: 1 }}>
                   {draft.widthMm}mm × {draft.heightMm}mm
@@ -176,7 +176,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, bus
             ) : (
               <>
                 <Input
-                  label={t.badgeTemplateName || "اسم القالب"}
+                  label={t.badgeTemplateName || "Template name"}
                   value={draft.name || ""}
                   onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
                   style={{ minWidth: 260, flex: "1 1 300px" }}
