@@ -55,7 +55,7 @@ import {
   translateRoomType,
   trKey,
 } from "../utils/i18nValues";
-import { getParticipantTerminology } from "../utils/participantTerminology";
+import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import {
   badgePhonesFromProgram,
   downloadProgramBadgesPdf,
@@ -811,11 +811,15 @@ export default function ProgramsPage({ store, onToast }) {
   const currentYear = React.useMemo(() => new Date().getFullYear(), []);
   const nextYear = currentYear + 1;
   const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
+  const [programTypeFilter, setProgramTypeFilter] = React.useState("all");
+  const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
+  const programTypeMenuRef = React.useRef(null);
+  const programTypeButtonRef = React.useRef(null);
 
   const searchPlaceholder = React.useMemo(() => {
     if (lang === "fr") return "Rechercher un programme...";
@@ -835,6 +839,12 @@ export default function ProgramsPage({ store, onToast }) {
     return "كل السنوات";
   }, [lang]);
 
+  const programTypeLabels = React.useMemo(() => {
+    if (lang === "fr") return { all: "Tous", umrah: "Omra", hajj: "Hajj" };
+    if (lang === "en") return { all: "All", umrah: "Umrah", hajj: "Hajj" };
+    return { all: "الكل", umrah: "عمرة", hajj: "حج" };
+  }, [lang]);
+
   const yearOptions = React.useMemo(() => ([
     { value: "all", label: allYearsLabel },
     { value: String(currentYear), label: String(currentYear) },
@@ -846,7 +856,7 @@ export default function ProgramsPage({ store, onToast }) {
     [yearOptions, selectedYear]
   );
 
-  const filteredPrograms = React.useMemo(() => {
+  const baseFilteredPrograms = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     return programs.filter((program) => {
       const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
@@ -856,6 +866,22 @@ export default function ProgramsPage({ store, onToast }) {
       return departureYear === Number(selectedYear);
     });
   }, [programs, search, selectedYear]);
+
+  const programTypeOptions = React.useMemo(() => ([
+    { key: "all", label: programTypeLabels.all, count: baseFilteredPrograms.length },
+    { key: "umrah", label: programTypeLabels.umrah, count: baseFilteredPrograms.filter((program) => getProgramKind(program) === "umrah").length },
+    { key: "hajj", label: programTypeLabels.hajj, count: baseFilteredPrograms.filter((program) => getProgramKind(program) === "hajj").length },
+  ]), [baseFilteredPrograms, programTypeLabels]);
+
+  const selectedProgramTypeOption = React.useMemo(
+    () => programTypeOptions.find((option) => option.key === programTypeFilter) || programTypeOptions[0],
+    [programTypeOptions, programTypeFilter]
+  );
+
+  const filteredPrograms = React.useMemo(() => {
+    if (programTypeFilter === "all") return baseFilteredPrograms;
+    return baseFilteredPrograms.filter((program) => getProgramKind(program) === programTypeFilter);
+  }, [baseFilteredPrograms, programTypeFilter]);
 
   const openProgramDetail = React.useCallback((programId) => {
     setActiveProgram(programId);
@@ -907,6 +933,25 @@ export default function ProgramsPage({ store, onToast }) {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [yearMenuOpen]);
+
+  React.useEffect(() => {
+    if (!programTypeMenuOpen) return;
+    const handlePointerDown = (event) => {
+      const menuNode = programTypeMenuRef.current;
+      const buttonNode = programTypeButtonRef.current;
+      if (menuNode?.contains(event.target) || buttonNode?.contains(event.target)) return;
+      setProgramTypeMenuOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setProgramTypeMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [programTypeMenuOpen]);
 
   const handleConfirmDeleteProgram = React.useCallback(() => {
     if (!deletePrompt) return;
@@ -967,6 +1012,120 @@ export default function ProgramsPage({ store, onToast }) {
             style={{ flex:"1 1 360px", minWidth:280, maxWidth:420 }}
             disabled={!programs.length}
           />
+          <div style={{ position:"relative", flex:"0 0 168px", minWidth:150, maxWidth:190 }}>
+            <button
+              ref={programTypeButtonRef}
+              type="button"
+              aria-label={t.programType || (lang === "fr" ? "Type de programme" : lang === "en" ? "Program type" : "نوع البرنامج")}
+              aria-haspopup="listbox"
+              aria-expanded={programTypeMenuOpen}
+              disabled={!programs.length}
+              onClick={() => programs.length && setProgramTypeMenuOpen((open) => !open)}
+              style={{
+                width:"100%",
+                height:46,
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:10,
+                background:programTypeFilter === "all" ? "var(--rukn-bg-input)" : "var(--rukn-gold-dim)",
+                border:"1px solid var(--rukn-border)",
+                borderRadius:12,
+                padding:"0 12px",
+                color:programTypeFilter === "all" ? "var(--rukn-text)" : "var(--rukn-gold)",
+                fontSize:13,
+                fontWeight:800,
+                fontFamily:"'Cairo',sans-serif",
+                direction:dir,
+                opacity:programs.length ? 1 : 0.55,
+                cursor:programs.length ? "pointer" : "not-allowed",
+                transition:"border-color .2s, box-shadow .2s, background .2s",
+              }}
+            >
+              <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+                <Filter size={14} />
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {selectedProgramTypeOption?.label}
+                  <span style={{ color:"var(--rukn-text-muted)", fontWeight:700 }}> ({selectedProgramTypeOption?.count ?? 0})</span>
+                </span>
+              </span>
+              <ChevronDown
+                size={15}
+                style={{ flexShrink:0, transform:programTypeMenuOpen ? "rotate(180deg)" : "none", transition:"transform .18s ease" }}
+              />
+            </button>
+            {programTypeMenuOpen && (
+              <div
+                ref={programTypeMenuRef}
+                role="listbox"
+                aria-label={t.programType || (lang === "fr" ? "Type de programme" : lang === "en" ? "Program type" : "نوع البرنامج")}
+                style={{
+                  position:"absolute",
+                  top:"calc(100% + 8px)",
+                  insetInlineStart:0,
+                  width:"100%",
+                  minWidth:180,
+                  zIndex:35,
+                  padding:6,
+                  borderRadius:14,
+                  border:"1px solid var(--rukn-border-soft)",
+                  background:"var(--rukn-bg-select)",
+                  boxShadow:"var(--rukn-shadow-card)",
+                  backdropFilter:"blur(12px)",
+                }}
+              >
+                {programTypeOptions.map((option) => {
+                  const active = option.key === programTypeFilter;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => {
+                        setProgramTypeFilter(option.key);
+                        setProgramTypeMenuOpen(false);
+                      }}
+                      style={{
+                        width:"100%",
+                        display:"flex",
+                        alignItems:"center",
+                        justifyContent:"space-between",
+                        gap:10,
+                        border:0,
+                        borderRadius:10,
+                        padding:"9px 10px",
+                        background:active ? "var(--rukn-gold-dim)" : "transparent",
+                        color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                        fontSize:12,
+                        fontWeight:active ? 900 : 700,
+                        fontFamily:"'Cairo',sans-serif",
+                        cursor:"pointer",
+                        textAlign:"start",
+                      }}
+                    >
+                      <span>{option.label}</span>
+                      <span style={{
+                        minWidth:22,
+                        height:20,
+                        borderRadius:999,
+                        display:"inline-flex",
+                        alignItems:"center",
+                        justifyContent:"center",
+                        padding:"0 7px",
+                        background:active ? "rgba(212,175,55,.16)" : "var(--rukn-bg-soft)",
+                        color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                        fontSize:10,
+                        fontWeight:900,
+                      }}>
+                        {option.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <div style={{ position:"relative", flex:"0 0 198px", minWidth:180, maxWidth:220 }}>
             <button
               ref={yearButtonRef}
