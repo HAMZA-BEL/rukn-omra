@@ -366,6 +366,7 @@ const toAgency = (a) => ({
   bank_rib:            a.bankRib           ?? null,
   bank_iban:           a.bankIban          ?? null,
   bank_note:           a.bankNote          ?? null,
+  logo_path:           a.logoPath || a.logo_path || null,
 });
 
 const fromAgency = (row) => ({
@@ -387,6 +388,8 @@ const fromAgency = (row) => ({
   bankRib:           row.bank_rib || "",
   bankIban:          row.bank_iban || "",
   bankNote:          row.bank_note || "",
+  logoPath:          row.logo_path || "",
+  logoUrl:           row.logo_url || "",
 });
 
 // ─── DB operations ────────────────────────────────────────────────────────────

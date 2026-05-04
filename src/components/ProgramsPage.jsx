@@ -33,7 +33,6 @@ import {
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
-import tiznitVoyagesLogo from "../assets/tiznit-voyages-logo.png";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
   getPackageStartingPrice,
@@ -3662,6 +3661,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     const win = window.open("", "_blank");
     if (!win) return;
     const printDir = lang === "ar" ? "rtl" : "ltr";
+    const agencyLogoUrl = agency?.logoUrl || agency?.logo_url || "";
+    const agencyName = agency?.nameAr || agency?.nameFr || t.agencyName || "";
+    const agencySubline = agency?.nameFr && agency?.nameFr !== agencyName ? agency.nameFr : (agency?.city || "");
+    const agencyBrandHtml = agencyLogoUrl
+      ? `<img src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName)}" onerror="this.style.display='none'"/>`
+      : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
     win.document.write(`<!doctype html><html dir="${printDir}"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
       <style>
         @page{size:A4 landscape;margin:7mm 8mm}
@@ -3672,6 +3677,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         .hero{position:relative;text-align:center;padding:3px 60mm 3px 18mm;margin-bottom:2px;min-height:29mm}
         .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:7px;width:58mm;text-align:start}
         .agency-brand img{display:block;width:22mm;height:22mm;object-fit:contain;flex:0 0 auto}
+        .agency-logo-fallback{width:22mm;height:22mm;border:1px solid #d7dbe2;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9a7418;background:#fff;font-size:16px;font-weight:900;flex:0 0 auto}
         .agency-copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
         .agency-copy strong{display:block;color:#0f5aa6;font-size:16px;line-height:1.05;font-weight:900;white-space:nowrap}
         .agency-copy small{display:block;color:#a9472d;font-size:8.5px;line-height:1.2;font-weight:800;white-space:nowrap;margin-top:2px}
@@ -3727,10 +3733,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         <header>
           <div class="hero">
             <div class="agency-brand">
-              <img src="${tiznitVoyagesLogo}" alt="تيزنيت أسفار - TIZNIT VOYAGES" />
+              ${agencyBrandHtml}
               <div class="agency-copy">
-                <strong>تيزنيت أسفار</strong>
-                <small>تجربة أعوام منذ 1975</small>
+                <strong>${escapeHtml(agencyName || "—")}</strong>
+                ${agencySubline ? `<small>${escapeHtml(agencySubline)}</small>` : ""}
               </div>
             </div>
             <h1>${escapeHtml(t.roomingPrintTitle || "ورقة التسكين")}</h1>

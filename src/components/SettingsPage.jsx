@@ -6,6 +6,7 @@ import { isSupabaseEnabled } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
+import { validateAgencyLogoFile } from "../utils/agencyLogo";
 
 const t2 = theme.colors;
 
@@ -64,10 +65,30 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
   const [agencyOpen, setAgencyOpen] = React.useState(false);
+  const [logoOpen, setLogoOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
+  const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
+  const [logoBusy, setLogoBusy] = React.useState(false);
+  const logoInputRef = React.useRef(null);
   React.useEffect(() => {
     setForm(agency);
   }, [agency]);
+  React.useEffect(() => {
+    let cancelled = false;
+    const path = form?.logoPath || "";
+    if (form?.logoUrl) {
+      setLogoPreviewUrl(form.logoUrl);
+      return undefined;
+    }
+    if (!path || !store.agencyLogoApi?.isAvailable || !store.agencyLogoApi.getLogoUrl) {
+      setLogoPreviewUrl("");
+      return undefined;
+    }
+    store.agencyLogoApi.getLogoUrl(path).then((url) => {
+      if (!cancelled) setLogoPreviewUrl(url || "");
+    });
+    return () => { cancelled = true; };
+  }, [form?.logoPath, form?.logoUrl, store.agencyLogoApi]);
   const [isSyncing,  setIsSyncing] = React.useState(false);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
 
@@ -86,6 +107,84 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const handleSave = () => {
     updateAgency(form);
     onToast(t.saveSettingsSuccess, "success");
+  };
+
+  const logoUnavailableMessage = t.agencyLogoStorageUnavailable || (
+    lang === "fr"
+      ? "Le stockage Supabase du logo n’est pas configuré."
+      : lang === "en"
+      ? "Supabase logo storage is not configured."
+      : "تخزين شعار الوكالة في Supabase غير مفعّل."
+  );
+
+  const logoUploadErrorMessage = (reason) => {
+    if (reason === "type") return t.agencyLogoInvalidType || (
+      lang === "fr" ? "Format non pris en charge. Utilisez PNG, JPG ou WEBP."
+      : lang === "en" ? "Unsupported file type. Use PNG, JPG, or WEBP."
+      : "صيغة الملف غير مدعومة. استعمل PNG أو JPG أو WEBP."
+    );
+    if (reason === "size") return t.agencyLogoTooLarge || (
+      lang === "fr" ? "Le logo est trop volumineux. Taille maximale : 5 Mo."
+      : lang === "en" ? "Logo is too large. Maximum size is 5 MB."
+      : "حجم الشعار كبير جدًا. الحد الأقصى 5MB."
+    );
+    return t.agencyLogoUploadFailed || (
+      lang === "fr" ? "Impossible d’importer le logo."
+      : lang === "en" ? "Unable to upload logo."
+      : "تعذر رفع الشعار."
+    );
+  };
+
+  const handleLogoFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const validation = validateAgencyLogoFile(file);
+    if (!validation.valid) {
+      onToast(logoUploadErrorMessage(validation.reason), "error");
+      return;
+    }
+    if (!store.agencyLogoApi?.isAvailable || !store.agencyLogoApi.uploadLogo) {
+      onToast(logoUnavailableMessage, "error");
+      return;
+    }
+    setLogoBusy(true);
+    try {
+      const previousPath = form.logoPath || "";
+      const { data, error } = await store.agencyLogoApi.uploadLogo(file, previousPath);
+      if (error) throw error;
+      const path = data?.path || "";
+      const previewUrl = store.agencyLogoApi.getLogoUrl ? await store.agencyLogoApi.getLogoUrl(path) : "";
+      const next = { logoPath: path, logoUrl: previewUrl };
+      setForm((current) => ({ ...current, ...next }));
+      updateAgency(next);
+      setLogoPreviewUrl(previewUrl);
+      onToast(t.agencyLogoUploadSuccess || (lang === "fr" ? "Logo enregistré" : lang === "en" ? "Logo saved" : "تم حفظ الشعار"), "success");
+    } catch (error) {
+      onToast(logoUploadErrorMessage(error?.message?.replace("invalid-logo-", "")), "error");
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    const path = form.logoPath || "";
+    setLogoBusy(true);
+    try {
+      if (path && store.agencyLogoApi?.isAvailable && store.agencyLogoApi.removeLogo) {
+        const { error } = await store.agencyLogoApi.removeLogo(path);
+        if (error) throw error;
+      }
+      const next = { logoPath: "", logoUrl: "" };
+      setForm((current) => ({ ...current, ...next }));
+      updateAgency(next);
+      setLogoPreviewUrl("");
+      onToast(t.agencyLogoRemoveSuccess || (lang === "fr" ? "Logo supprimé" : lang === "en" ? "Logo removed" : "تم حذف الشعار"), "success");
+    } catch {
+      onToast(t.agencyLogoRemoveFailed || (lang === "fr" ? "Impossible de supprimer le logo" : lang === "en" ? "Unable to remove logo" : "تعذر حذف الشعار"), "error");
+    } finally {
+      setLogoBusy(false);
+    }
   };
 
   const normalizedRole = String(currentUserRole || "").toLowerCase();
@@ -197,6 +296,91 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
             style={{ gridColumn:"1/-1" }} />
           <Input label={t.addressAgadirLabel} value={form.addressAgadir || ""} onChange={set("addressAgadir")}
             style={{ gridColumn:"1/-1" }} />
+        </div>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title={t.agencyLogoTitle}
+        description={t.agencyLogoHint}
+        open={logoOpen}
+        onToggle={() => setLogoOpen((current) => !current)}
+      >
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(120px, 160px) 1fr",
+          gap: 16,
+          alignItems: "center",
+        }}>
+          <div style={{
+            minHeight: 104,
+            borderRadius: 14,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "var(--rukn-bg-card)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 12,
+            overflow: "hidden",
+          }}>
+            {logoPreviewUrl ? (
+              <img
+                src={logoPreviewUrl}
+                alt={t.agencyLogoTitle}
+                onError={() => setLogoPreviewUrl("")}
+                style={{ maxWidth: "100%", maxHeight: 80, objectFit: "contain" }}
+              />
+            ) : (
+              <div style={{
+                width: 62,
+                height: 62,
+                borderRadius: 16,
+                border: "1px dashed var(--rukn-border)",
+                color: "var(--rukn-text-muted)",
+                display: "grid",
+                placeItems: "center",
+                background: "var(--rukn-bg-soft)",
+              }}>
+                <AppIcon name="upload" size={22} />
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.7 }}>
+              {t.agencyLogoHelper}
+            </p>
+            {!store.agencyLogoApi?.isAvailable && (
+              <p style={{ margin: 0, fontSize: 12, color: "var(--rukn-warning)", lineHeight: 1.6 }}>
+                {logoUnavailableMessage}
+              </p>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <Button
+                variant="secondary"
+                icon="upload"
+                disabled={logoBusy}
+                onClick={() => logoInputRef.current?.click()}
+              >
+                {logoPreviewUrl ? t.agencyLogoChange : t.agencyLogoUpload}
+              </Button>
+              {logoPreviewUrl && (
+                <Button
+                  variant="ghost"
+                  icon="trash"
+                  disabled={logoBusy}
+                  onClick={handleRemoveLogo}
+                >
+                  {t.agencyLogoRemove}
+                </Button>
+              )}
+            </div>
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleLogoFile}
+              style={{ display: "none" }}
+            />
+          </div>
         </div>
       </SettingsSectionCard>
 

@@ -31,10 +31,12 @@ create table if not exists public.agencies (
   bank_rib         text,
   bank_iban        text,
   bank_note        text,
+  logo_path        text,
   created_at       timestamptz default now()
 );
 
 alter table public.agencies add column if not exists agency_city text;
+alter table public.agencies add column if not exists logo_path text;
 alter table public.agencies add column if not exists bank_name text;
 alter table public.agencies add column if not exists bank_account_holder text;
 alter table public.agencies add column if not exists bank_rib text;
@@ -466,6 +468,54 @@ create policy "badge_templates_storage_update" on storage.objects
 create policy "badge_templates_storage_delete" on storage.objects
   for delete using (
     bucket_id = 'badge-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+
+-- agency assets: private bucket, agency-scoped object paths for logos
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'agency-assets',
+  'agency-assets',
+  false,
+  5242880,
+  array['image/jpeg','image/png','image/webp']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = 5242880,
+    allowed_mime_types = array['image/jpeg','image/png','image/webp'];
+
+drop policy if exists "agency_assets_select" on storage.objects;
+drop policy if exists "agency_assets_insert" on storage.objects;
+drop policy if exists "agency_assets_update" on storage.objects;
+drop policy if exists "agency_assets_delete" on storage.objects;
+create policy "agency_assets_select" on storage.objects
+  for select using (
+    bucket_id = 'agency-assets'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "agency_assets_insert" on storage.objects
+  for insert with check (
+    bucket_id = 'agency-assets'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "agency_assets_update" on storage.objects
+  for update using (
+    bucket_id = 'agency-assets'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  )
+  with check (
+    bucket_id = 'agency-assets'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "agency_assets_delete" on storage.objects
+  for delete using (
+    bucket_id = 'agency-assets'
     and split_part(name, '/', 1) = 'agencies'
     and split_part(name, '/', 2) = public.get_agency_id()::text
   );

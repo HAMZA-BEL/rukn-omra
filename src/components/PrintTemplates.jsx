@@ -311,6 +311,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   const receiptNo = getPaymentValue(payment, ["receiptNo", "receipt_no", "receiptNumber", "receipt_number"]);
   const note = getPaymentValue(payment, ["note", "notes"]);
   const extraDetails = paymentExtraDetails(payment, lang, { includeInternal: isAgencyReceipt });
+  const agencyLogoUrl = cleanDisplay(agency?.logoUrl || agency?.logo_url, "");
   const receiptTitle = isAgencyReceipt
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
     : terms.receiptTitle;
@@ -323,6 +324,8 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; color:#111; background:#fff; }
   .page { width:190mm; min-height:297mm; margin:0 auto; padding:50mm 18mm 38mm; }
+  .receipt-logo { display:flex; justify-content:center; align-items:center; margin:-16mm 0 7mm; min-height:18mm; }
+  .receipt-logo img { display:block; max-width:42mm; max-height:18mm; object-fit:contain; }
   .receipt-title { font-size:20px; font-weight:800; margin-bottom:8px; text-align:center; color:#111; }
   .receipt-no { text-align:center; font-size:13px; color:#333; margin-bottom:16px; }
   table { width: 100%; border-collapse: collapse; }
@@ -336,6 +339,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
 </head>
 <body>
 <div class="page">
+  ${agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
   <div class="receipt-title">${receiptTitle}</div>
   <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${receiptNo}</strong></div>
   <table>

@@ -42,6 +42,12 @@ import {
   removePilgrimPhoto,
   uploadPilgrimPhoto,
 } from "../features/badges";
+import {
+  canUseAgencyLogoStorage,
+  getAgencyLogoUrl,
+  removeAgencyLogo,
+  uploadAgencyLogo,
+} from "../utils/agencyLogo";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
@@ -360,6 +366,32 @@ export function useStore(agencyId, onToast) {
         }
       : { isAvailable: false }
   ), [agencyId, isSupabaseEnabled]);
+
+  const agencyLogoApi = useMemo(() => (
+    isSupabaseEnabled && agencyId && canUseAgencyLogoStorage()
+      ? {
+          isAvailable: true,
+          getLogoUrl: getAgencyLogoUrl,
+          uploadLogo: (file, previousPath) => uploadAgencyLogo({ agencyId, file, previousPath }),
+          removeLogo: removeAgencyLogo,
+        }
+      : { isAvailable: false }
+  ), [agencyId, isSupabaseEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const path = agency?.logoPath || agency?.logo_path || "";
+    if (!path || !agencyLogoApi?.isAvailable || !agencyLogoApi.getLogoUrl) {
+      return undefined;
+    }
+    agencyLogoApi.getLogoUrl(path).then((url) => {
+      if (cancelled || !url) return;
+      setAgency((prev) => (
+        prev.logoPath === path && prev.logoUrl === url ? prev : { ...prev, logoUrl: url }
+      ));
+    });
+    return () => { cancelled = true; };
+  }, [agency?.logoPath, agency?.logo_path, agencyLogoApi, setAgency]);
 
   const fetchFinalInvoices = useCallback(() => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
@@ -1294,6 +1326,7 @@ export function useStore(agencyId, onToast) {
     activeClients, archivedClients,
     invoiceApi,
     badgePhotoApi,
+    agencyLogoApi,
     notifications,
     unreadNotifications,
     unreadNotificationsCount,
