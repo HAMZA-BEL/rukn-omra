@@ -56,6 +56,7 @@ import {
   trKey,
 } from "../utils/i18nValues";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
+import { isMinor } from "../utils/age";
 import {
   badgePhonesFromProgram,
   downloadProgramBadgesPdf,
@@ -1516,8 +1517,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     programs: allPrograms,
     activeClients = [],
     transferClients,
+    deleteClientsBulk,
+    deleteClient,
   } = store;
-  const { t, lang } = useLang();
+  const { t, lang, dir } = useLang();
+  const isRTL = dir === "rtl";
   const tr = React.useCallback((key, vars = {}) => {
     const template = t?.[key] ?? key;
     if (typeof template === "function") return template(vars);
@@ -1537,6 +1541,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [checkedIds,     setCheckedIds]     = React.useState(new Set());
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+  const [bulkActionsOpen, setBulkActionsOpen] = React.useState(false);
   const [packageFilter, setPackageFilter] = React.useState("all");
   const [programTab, setProgramTab] = React.useState("clients");
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
@@ -1547,10 +1553,19 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
+  const bulkActionsBtnRef = React.useRef(null);
+  const bulkActionsMenuRef = React.useRef(null);
   const packageFilterRef = React.useRef(null);
   const statusFilterRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const bulkActionsMenuPos = useDropdownPosition({
+    anchorRef: bulkActionsBtnRef,
+    menuRef: bulkActionsMenuRef,
+    open: bulkActionsOpen,
+    rtl: isRTL,
+    offset: MENU_OFFSET_PX,
+  });
 
   const progClients = React.useMemo(() =>
     clients.filter(c => c.programId === program.id), [clients, program.id]);
@@ -1618,6 +1633,31 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     };
   }, [packageFilterOpen, statusFilterOpen]);
 
+  React.useEffect(() => {
+    if (!bulkActionsOpen) return undefined;
+    const handleOutside = (event) => {
+      if (bulkActionsMenuRef.current?.contains(event.target)) return;
+      if (bulkActionsBtnRef.current?.contains(event.target)) return;
+      setBulkActionsOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setBulkActionsOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [bulkActionsOpen]);
+
+  React.useEffect(() => {
+    if (!bulkActionsOpen) return undefined;
+    const closeOnScroll = () => setBulkActionsOpen(false);
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => window.removeEventListener("scroll", closeOnScroll, true);
+  }, [bulkActionsOpen]);
+
   const toggleCheck = React.useCallback((id) => {
     setCheckedIds(prev => {
       const next = new Set(prev);
@@ -1628,9 +1668,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
 
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
 
-  const selectAllFiltered = React.useCallback(() => {
+  const toggleAllFiltered = React.useCallback(() => {
     if (!filtered.length) return;
-    setCheckedIds(new Set(filtered.map(c => c.id)));
+    const filteredIds = filtered.map((client) => client.id);
+    setCheckedIds((prev) => {
+      const allVisibleSelected = filteredIds.every((id) => prev.has(id));
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        filteredIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...filteredIds]);
+    });
   }, [filtered, setCheckedIds]);
 
   const exitSelectMode = React.useCallback(() => {
@@ -1656,8 +1705,36 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       onToast(t.noClientsSelected || "يرجى اختيار معتمر واحد على الأقل", "info");
       return;
     }
+    setBulkActionsOpen(false);
     openTransferSheet(Array.from(checkedIds));
   }, [checkedIds, onToast, t.noClientsSelected, openTransferSheet]);
+
+  const handleDeleteSelectedClick = React.useCallback(() => {
+    if (!checkedIds.size) {
+      onToast(t.noClientsSelected || "يرجى اختيار معتمر واحد على الأقل", "info");
+      return;
+    }
+    setBulkActionsOpen(false);
+    setBulkDeleteOpen(true);
+  }, [checkedIds, onToast, t.noClientsSelected]);
+
+  const handleConfirmDeleteSelected = React.useCallback(() => {
+    const ids = Array.from(checkedIds);
+    if (!ids.length) {
+      setBulkDeleteOpen(false);
+      return;
+    }
+    const deletedCount = typeof deleteClientsBulk === "function"
+      ? deleteClientsBulk(ids)
+      : ids.reduce((count, id) => {
+          if (typeof deleteClient !== "function") return count;
+          deleteClient(id);
+          return count + 1;
+        }, 0);
+    setBulkDeleteOpen(false);
+    exitSelectMode();
+    onToast(tr("bulkDeleteSuccess", { count: deletedCount || ids.length }), "info");
+  }, [checkedIds, deleteClientsBulk, deleteClient, exitSelectMode, onToast, tr]);
 
   const transferList = React.useMemo(
     () => transferTargets
@@ -1704,7 +1781,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     exitSelectMode();
   }, [allPrograms, transferTargets, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode]);
 
-  const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
+  const selectedVisibleCount = React.useMemo(
+    () => filtered.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
+    [filtered, checkedIds]
+  );
+  const allChecked = selectedVisibleCount === filtered.length && filtered.length > 0;
+  const partiallyChecked = selectedVisibleCount > 0 && !allChecked;
 
   const totals = React.useMemo(() => ({
     revenue: progClients.reduce((s,c)=>s+(c.salePrice||c.price||0),0),
@@ -2422,35 +2504,84 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       </div>
 
       {selectMode && (
-        <GlassCard style={{ padding:"12px 16px", marginBottom:14 }}>
+        <GlassCard style={{ padding:"10px 14px", marginBottom:14 }}>
           <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", justifyContent:"space-between" }}>
             <span style={{ fontSize:13, color:tc.gold, fontWeight:700 }}>
               {tr("selectedCount", { count: checkedIds.size })}
             </span>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={selectAllFiltered}
-                disabled={allChecked || filtered.length === 0}
-              >
-                {t.selectAll}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearSelection}
-                disabled={checkedIds.size === 0}
-              >
-                {t.deselectAll}
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleTransferSelected}
-              >
-                {t.transferSelected}
-              </Button>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
+              <div style={{ position:"relative" }}>
+                <button
+                  ref={bulkActionsBtnRef}
+                  type="button"
+                  onClick={() => setBulkActionsOpen((open) => !open)}
+                  disabled={checkedIds.size === 0}
+                  title={t.bulkActions || "Actions"}
+                  style={{
+                    width:34,
+                    height:32,
+                    borderRadius:9,
+                    border:`1px solid ${bulkActionsOpen ? "var(--rukn-border-hover)" : "var(--rukn-border-soft)"}`,
+                    background:bulkActionsOpen ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
+                    color:bulkActionsOpen ? tc.gold : tc.grey,
+                    cursor:checkedIds.size === 0 ? "not-allowed" : "pointer",
+                    opacity:checkedIds.size === 0 ? .55 : 1,
+                    display:"inline-flex",
+                    alignItems:"center",
+                    justifyContent:"center",
+                    fontSize:18,
+                    fontWeight:900,
+                    letterSpacing:1,
+                    transition:"all .15s",
+                  }}
+                  aria-label={t.bulkActions || "Actions"}
+                >
+                  ···
+                </button>
+                {bulkActionsOpen && createPortal(
+                  <div
+                    ref={bulkActionsMenuRef}
+                    style={{
+                      position:"fixed",
+                      top:bulkActionsMenuPos.top,
+                      left:bulkActionsMenuPos.left,
+                      visibility:bulkActionsMenuPos.visibility,
+                      zIndex:9999,
+                      background:"var(--rukn-menu-bg, rgba(20,30,50,0.96))",
+                      border:"1px solid var(--rukn-menu-border, rgba(212,175,55,.3))",
+                      borderRadius:12,
+                      boxShadow:"var(--rukn-menu-shadow, 0 10px 25px rgba(0,0,0,0.35))",
+                      minWidth:220,
+                      overflow:"hidden",
+                    }}
+                  >
+                    <InnerMenuBtn
+                      icon="refresh"
+                      label={t.transferSelected}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleTransferSelected();
+                      }}
+                      color="var(--rukn-text-strong)"
+                      hoverBg="var(--rukn-gold-dim)"
+                      isRTL={isRTL}
+                      border
+                    />
+                    <InnerMenuBtn
+                      icon="trash"
+                      label={t.deleteSelected}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleDeleteSelectedClick();
+                      }}
+                      color="var(--rukn-danger)"
+                      hoverBg="var(--rukn-danger-dim)"
+                      isRTL={isRTL}
+                    />
+                  </div>,
+                  document.body
+                )}
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
@@ -2477,7 +2608,14 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           fontWeight:700,
           color:tc.grey,
         }}>
-          {selectMode && <span style={{ textAlign:"center" }} />}
+          {selectMode && (
+            <HeaderSelectCheckbox
+              checked={allChecked}
+              indeterminate={partiallyChecked}
+              onChange={toggleAllFiltered}
+              label={allChecked ? t.deselectAll : t.selectAll}
+            />
+          )}
           <span>#</span>
           <span>{t.name}</span>
           <span style={{ textAlign:"center" }}>{t.roomType}</span>
@@ -2618,6 +2756,36 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
       />
+      <Modal
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        title={t.confirmDeleteSelectedTitle || t.deleteSelected || "Delete selected"}
+        width={440}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <p style={{
+            margin: 0,
+            color: "var(--rukn-text-strong)",
+            fontSize: 14,
+            lineHeight: 1.8,
+          }}>
+            {tr("confirmDeleteSelected", { count: checkedIds.size })}
+          </p>
+          <div style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 10,
+            flexWrap: "wrap",
+          }}>
+            <Button variant="ghost" onClick={() => setBulkDeleteOpen(false)}>
+              {t.cancel}
+            </Button>
+            <Button variant="danger" icon="trash" onClick={handleConfirmDeleteSelected}>
+              {t.confirmDeleteSelectedAction || t.deleteSelected}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -6223,6 +6391,32 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
 // ═══════════════════════════════════════
 // INNER CLIENT ROW
 // ═══════════════════════════════════════
+function HeaderSelectCheckbox({ checked, indeterminate, onChange, label }) {
+  const inputRef = React.useRef(null);
+  React.useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = Boolean(indeterminate);
+  }, [indeterminate]);
+
+  return (
+    <span style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <input
+        ref={inputRef}
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        aria-label={label}
+        style={{
+          width: 18,
+          height: 18,
+          accentColor: "#fff",
+          cursor: "pointer",
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,.25))",
+        }}
+      />
+    </span>
+  );
+}
+
 function InnerClientRow({
   client,
   index,
@@ -6263,6 +6457,7 @@ function InnerClientRow({
   const roomLabel = translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "";
   const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
   const infoLine = [phoneLabel, cityLabel, bookingLabel ? `• ${bookingLabel}` : ""].filter(Boolean).join(" ");
+  const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
 
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
@@ -6378,7 +6573,33 @@ function InnerClientRow({
             </div>
           </div>
           <div style={{ minWidth: 0 }}>
-            <p style={{ fontWeight: 700, fontSize: 13, color: tc.white }}>{fallbackName || "—"}</p>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              minWidth: 0,
+              flexWrap: "wrap",
+              direction: isRTL ? "rtl" : "ltr",
+            }}>
+              <p style={{ fontWeight: 700, fontSize: 13, color: tc.white, margin: 0, minWidth: 0 }}>
+                {fallbackName || "—"}
+              </p>
+              {minorClient && (
+                <span style={{
+                  fontSize: 10,
+                  lineHeight: 1.4,
+                  fontWeight: 800,
+                  padding: "1px 7px",
+                  borderRadius: 999,
+                  background: "rgba(59,130,246,.1)",
+                  border: "1px solid rgba(59,130,246,.2)",
+                  color: "var(--rukn-text-strong)",
+                  whiteSpace: "nowrap",
+                }}>
+                  {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
+                </span>
+              )}
+            </div>
             <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 12 }}>

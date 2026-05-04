@@ -4,6 +4,7 @@ import { CITIES, NATIONALITIES } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { calcExpiry } from "../utils/amadeus";
+import { isFutureDateInput, toDateInputValue } from "../utils/age";
 import { AppIcon } from "./Icon";
 import { PilgrimPhotoUploader, badgeStorageUnavailableMessage } from "../features/badges";
 import {
@@ -496,6 +497,15 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   }, [form.passport.issueDate]);
 
   const discount = Math.max(0, Number(form.officialPrice) - Number(form.salePrice));
+  const todayInputValue = React.useMemo(() => toDateInputValue(new Date()), []);
+  const passportDateErrors = React.useMemo(() => ({
+    birthDate: isFutureDateInput(form.passport.birthDate)
+      ? (t.birthDateFutureError || (lang === "fr" ? "La date de naissance ne peut pas être dans le futur" : lang === "en" ? "Birth date cannot be in the future" : "لا يمكن أن يكون تاريخ الميلاد في المستقبل"))
+      : "",
+    issueDate: isFutureDateInput(form.passport.issueDate)
+      ? (t.issueDateFutureError || (lang === "fr" ? "La date d’émission ne peut pas être dans le futur" : lang === "en" ? "Issue date cannot be in the future" : "لا يمكن أن يكون تاريخ الإصدار في المستقبل"))
+      : "",
+  }), [form.passport.birthDate, form.passport.issueDate, lang, t.birthDateFutureError, t.issueDateFutureError]);
 
   const validate = () => {
     const e = {};
@@ -517,6 +527,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (!form.phone.trim())    e.phone    = t.phoneError;
     if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
     if (!form.gender) e.gender = t.genderRequired || "يرجى تحديد الجنس";
+    if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
+    if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
     return e;
   };
 
@@ -1061,8 +1073,22 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             value={form.passport.gender}
             onChange={(e) => setGender(normalizeGenderValue(e.target.value))}
             options={[{value:"",label:"—"},{value:"M",label:t.male},{value:"F",label:t.female}]} />
-          <Input label={t.birthDate} value={form.passport.birthDate} onChange={setPass("birthDate")} type="date" />
-          <Input label={t.issueDate} value={form.passport.issueDate} onChange={setPass("issueDate")} type="date" />
+          <Input
+            label={t.birthDate}
+            value={form.passport.birthDate}
+            onChange={setPass("birthDate")}
+            type="date"
+            max={todayInputValue}
+            error={passportDateErrors.birthDate}
+          />
+          <Input
+            label={t.issueDate}
+            value={form.passport.issueDate}
+            onChange={setPass("issueDate")}
+            type="date"
+            max={todayInputValue}
+            error={passportDateErrors.issueDate}
+          />
           <Input label={t.expiry} value={form.passport.expiry} onChange={setPass("expiry")} type="date" />
         </div>
         {form.passport.issueDate && form.passport.expiry && (

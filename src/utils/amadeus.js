@@ -4,6 +4,7 @@
  * Dates in Amadeus format: 09APR00 (DDMMMYY)
  */
 import { getProgramAirline, normalizeAirlineCode } from "./airlines";
+import { getAmadeusPassengerTypeCode } from "./age";
 
 const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 
@@ -92,10 +93,15 @@ export function downloadAmadeusExcel(clients, program) {
 
   // Build lines — only valid entries
   const lines = [];
+  const passengerTypeReferenceDate = program?.departure || program?.departureDate || program?.startDate || new Date();
   sortClientsForAmadeus(clients).forEach(c => {
     const line = buildAmadeusLine(c, airlineCode);
     if (line) {
-      lines.push({ docs: line, pax: lines.length + 1 });
+      lines.push({
+        docs: line,
+        pax: lines.length + 1,
+        ptc: getAmadeusPassengerTypeCode(c.passport?.birthDate || c.birthDate || c.dateOfBirth, passengerTypeReferenceDate),
+      });
     }
   });
 
@@ -122,11 +128,12 @@ export function downloadAmadeusExcel(clients, program) {
       </tr>
       <tr></tr>
       <tr>
-        <td colspan="2">SR DOCS — جاهز للنسخ في Amadeus PNR</td>
+        <td colspan="3">SR DOCS — جاهز للنسخ في Amadeus PNR</td>
       </tr>
       <tr>
         <th>DOCS</th>
         <th>PAX</th>
+        <th>PTC</th>
       </tr>
       ${lines
         .map(
@@ -134,6 +141,7 @@ export function downloadAmadeusExcel(clients, program) {
             <tr>
               <td>${escapeHtml(line.docs)}</td>
               <td>${escapeHtml(line.pax)}</td>
+              <td>${escapeHtml(line.ptc)}</td>
             </tr>
           `
         )

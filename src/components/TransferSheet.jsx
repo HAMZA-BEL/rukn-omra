@@ -12,7 +12,8 @@ export default function TransferSheet({
   occupancy = new Map(),
   onConfirm,
 }) {
-  const { t } = useLang();
+  const { t, dir } = useLang();
+  const isRTL = dir === "rtl";
   const [search, setSearch] = React.useState("");
   const [selectedProgramId, setSelectedProgramId] = React.useState(null);
   const dragStartRef = React.useRef(null);
@@ -101,7 +102,7 @@ export default function TransferSheet({
     <>
       <div
         onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 9998 }}
+        style={{ position: "fixed", inset: 0, background: "var(--rukn-overlay)", zIndex: 9998, backdropFilter: "blur(5px)" }}
       />
       <div
         role="dialog"
@@ -120,17 +121,17 @@ export default function TransferSheet({
         <div
           style={{
             margin: "0 auto",
-            background: "rgba(6,13,26,.96)",
+            background: "var(--rukn-bg-modal)",
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
-            border: "1px solid rgba(212,175,55,.25)",
+            border: "1px solid var(--rukn-border)",
             padding: "16px 18px 24px",
             maxWidth: 640,
             width: "100%",
             maxHeight: "82vh",
             minHeight: "38vh",
             overflow: "hidden",
-            boxShadow: "0 -24px 60px rgba(0,0,0,.55)",
+            boxShadow: "var(--rukn-shadow-card-hover)",
           }}
         >
           <div
@@ -139,38 +140,39 @@ export default function TransferSheet({
               width: 60,
               height: 5,
               borderRadius: 999,
-              background: "rgba(255,255,255,.2)",
+              background: "var(--rukn-border-soft)",
               margin: "0 auto 18px",
               cursor: "grab",
             }}
           />
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t.close || t.cancel || "Close"}
             style={{
               position: "absolute",
               top: 16,
-              right: 20,
+              right: isRTL ? "auto" : 20,
+              left: isRTL ? 20 : "auto",
               width: 34,
               height: 34,
               borderRadius: "50%",
-              border: "1px solid rgba(255,255,255,.15)",
-              background: "rgba(255,255,255,.04)",
-              color: "#f8fafc",
+              border: "1px solid var(--rukn-border-soft)",
+              background: "var(--rukn-bg-soft)",
+              color: "var(--rukn-text-muted)",
               fontWeight: 700,
               cursor: "pointer",
             }}
           >
             ×
           </button>
-          <div style={{ marginBottom: 16, paddingRight: 40 }}>
-            <p style={{ fontSize: 16, fontWeight: 800, color: "#f8fafc", marginBottom: 4 }}>
+          <div style={{ marginBottom: 16, paddingInlineEnd: 40 }}>
+            <p style={{ fontSize: 16, fontWeight: 800, color: "var(--rukn-text-strong)", marginBottom: 4 }}>
               {t.transferSheetTitle || "اختر البرنامج"}
             </p>
-            <p style={{ fontSize: 12, color: "rgba(148,163,184,.8)" }}>{subtitle}</p>
+            <p style={{ fontSize: 12, color: "var(--rukn-text-muted)" }}>{subtitle}</p>
           </div>
           {clients.length === 0 ? (
-            <p style={{ color: "rgba(148,163,184,.8)", fontSize: 13 }}>
+            <p style={{ color: "var(--rukn-text-muted)", fontSize: 13 }}>
               {t.noClientsSelected || "يرجى اختيار معتمر واحد على الأقل"}
             </p>
           ) : (
@@ -195,7 +197,7 @@ export default function TransferSheet({
                   <p
                     style={{
                       textAlign: "center",
-                      color: "rgba(148,163,184,.8)",
+                      color: "var(--rukn-text-muted)",
                       fontSize: 13,
                       padding: "24px 0",
                     }}
@@ -222,11 +224,11 @@ export default function TransferSheet({
                           cursor: isDisabled ? "not-allowed" : "pointer",
                           opacity: isDisabled ? 0.55 : 1,
                           border: selected
-                            ? "1px solid rgba(212,175,55,.5)"
-                            : "1px solid rgba(255,255,255,.08)",
+                            ? "1px solid var(--rukn-border-hover)"
+                            : "1px solid var(--rukn-border-soft)",
                           transition: "border .2s, transform .2s",
                           transform: selected ? "translateY(-2px)" : "none",
-                          outline: selected ? "2px solid rgba(212,175,55,.35)" : "none",
+                          outline: selected ? "2px solid var(--rukn-gold-dim)" : "none",
                         }}
                         onClick={() => handleProgramPick(program.id, isDisabled)}
                         onKeyDown={(event) => {
@@ -250,13 +252,13 @@ export default function TransferSheet({
                               style={{
                                 fontSize: 15,
                                 fontWeight: 700,
-                                color: "#f8fafc",
+                                color: "var(--rukn-text-strong)",
                                 marginBottom: 4,
                               }}
                             >
                               {program.name}
                             </p>
-                            <p style={{ fontSize: 11, color: "rgba(148,163,184,.8)" }}>
+                            <p style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
                               {program.departure || "—"} • {program.returnDate || "—"}
                             </p>
                           </div>
@@ -266,29 +268,29 @@ export default function TransferSheet({
                                 width: 26,
                                 height: 26,
                                 borderRadius: "50%",
-                                border: "1px solid rgba(212,175,55,.5)",
+                                border: "1px solid var(--rukn-border-hover)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                color: "#d4af37",
+                                color: "var(--rukn-gold)",
                                 fontWeight: 800,
                                 fontSize: 14,
                               }}
                             >
-                              <AppIcon name="check" size={14} color="#d4af37" />
+                              <AppIcon name="check" size={14} color="var(--rukn-gold)" />
                             </span>
                           )}
-                          <div style={{ textAlign: "right" }}>
-                            <p style={{ fontSize: 11, color: "rgba(148,163,184,.7)" }}>
+                          <div style={{ textAlign: isRTL ? "left" : "right" }}>
+                            <p style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
                               {t.registered || "Registered"}
                             </p>
-                            <p style={{ fontSize: 15, fontWeight: 800, color: "#d4af37" }}>
+                            <p style={{ fontSize: 15, fontWeight: 800, color: "var(--rukn-gold)" }}>
                               {registered}/{capacity || "∞"}
                             </p>
                           </div>
                         </div>
                         {isDisabled && (
-                          <p style={{ marginTop: 8, fontSize: 12, color: "rgba(239,68,68,.9)" }}>
+                          <p style={{ marginTop: 8, fontSize: 12, color: "var(--rukn-danger)" }}>
                             {t.programFull || "البرنامج ممتلئ"}
                           </p>
                         )}

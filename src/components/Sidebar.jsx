@@ -14,7 +14,6 @@ const SYNC_DOT = {
 export default function Sidebar({ active, onNavigate, stats, onExport, onImport, syncStatus = "synced", onLogout, notificationsCount = 0, agency }) {
   const { t, lang, dir } = useLang();
   const [collapsed, setCollapsed] = React.useState(false);
-  const fileRef = React.useRef();
   const [brandHover, setBrandHover] = React.useState(false);
 
   const handleBrandClick = React.useCallback(() => {
@@ -129,28 +128,6 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
         </div>
       )}
 
-      {/* Backup */}
-      {!collapsed && (
-        <div style={{ padding:"10px 12px", margin:"0 8px 10px",
-          background:"rgba(212,175,55,.03)", borderRadius:10,
-          border:"1px solid rgba(212,175,55,.1)" }}>
-          <p style={{ fontSize:10, color:tc.grey, marginBottom:7, fontWeight:700 }}>{t.backupData}</p>
-          <button onClick={onExport} style={{ width:"100%", padding:"6px", marginBottom:5,
-            background:"rgba(34,197,94,.1)", border:"1px solid rgba(34,197,94,.25)",
-            borderRadius:8, color:tc.greenLight, fontSize:11, fontWeight:600,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-            <AppIcon name="download" size={13} /> {t.exportData}
-          </button>
-          <button onClick={()=>fileRef.current.click()} style={{ width:"100%", padding:"6px",
-            background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
-            borderRadius:8, color:tc.gold, fontSize:11, fontWeight:600,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-            <AppIcon name="upload" size={13} /> {t.importData}
-          </button>
-          <input ref={fileRef} type="file" accept=".json" style={{ display:"none" }}
-            onChange={e=>{ if(e.target.files[0]) onImport(e.target.files[0]); e.target.value=""; }} />
-        </div>
-      )}
       {/* Sync status + version */}
       <div style={{ padding:"6px 10px 10px", textAlign:"center" }}>
         {!collapsed && (

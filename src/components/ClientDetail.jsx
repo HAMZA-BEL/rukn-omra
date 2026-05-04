@@ -13,6 +13,7 @@ import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology } from "../utils/participantTerminology";
+import { isMinor } from "../utils/age";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -150,6 +151,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   // Passport expiry warning
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
   const daysToExp   = passExpiry ? Math.ceil((passExpiry - new Date())/(1000*60*60*24)) : null;
+  const minorClient = isMinor(p.birthDate);
 
   return (
     <div>
@@ -178,6 +180,19 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 background:"rgba(245,158,11,.12)", border:"1px solid rgba(245,158,11,.3)",
                 color:tc.warning,
               }}><AppIcon name="archive" size={12} color={tc.warning} /> {t.archivedBadge}</span>
+            )}
+            {minorClient && (
+              <span style={{
+                fontSize:11,
+                fontWeight:800,
+                padding:"2px 10px",
+                borderRadius:20,
+                background:"rgba(59,130,246,.1)",
+                border:"1px solid rgba(59,130,246,.22)",
+                color:"var(--rukn-text-strong)",
+              }}>
+                {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
+              </span>
             )}
           </div>
           {/* Amadeus format */}
