@@ -6,6 +6,7 @@ import { formatCurrency } from "../utils/currency";
 import { amountInWordsSentence } from "../utils/amountToWords";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
   buildInvoiceData,
   createInvoiceSnapshot,
@@ -51,17 +52,37 @@ const getClientCin = (client = {}) => (
 const normalizePaymentMethodKind = (value = "") => {
   const method = String(value).trim().toLowerCase();
   if (method.includes("شيك") || method.includes("chèque") || method.includes("cheque") || method.includes("check")) return "cheque";
-  if (method.includes("تحويل") || method.includes("virement") || method.includes("transfer")) return "bank";
+  if (
+    method.includes("تحويل")
+    || method.includes("virement")
+    || method.includes("transfer")
+    || method.includes("إيداع")
+    || method.includes("ايداع")
+    || method.includes("dépôt")
+    || method.includes("depot")
+    || method.includes("deposit")
+  ) return "bank";
   return "cash";
 };
-const paymentExtraDetails = (payment = {}, lang = "ar") => {
-  const details = [];
-  const kind = normalizePaymentMethodKind(payment.method);
-  if (kind === "cheque" && trimValue(payment.chequeNumber)) {
-    details.push(`${label(lang, "رقم الشيك", "N° chèque", "Cheque number")}: ${trimValue(payment.chequeNumber)}`);
+const getPaymentValue = (payment = {}, keys = []) => {
+  for (const key of keys) {
+    const value = trimValue(payment[key]);
+    if (value) return value;
   }
-  if ((kind === "cheque" || kind === "bank") && trimValue(payment.paidBy)) {
-    details.push(`${label(lang, "من طرف", "De la part de", "From / Paid by")}: ${trimValue(payment.paidBy)}`);
+  return "";
+};
+const paymentExtraDetails = (payment = {}, lang = "ar", { includeInternal = false } = {}) => {
+  if (!includeInternal) return "";
+  const details = [];
+  const method = getPaymentValue(payment, ["method", "paymentMethod", "payment_method"]);
+  const kind = normalizePaymentMethodKind(method);
+  const chequeNumber = getPaymentValue(payment, ["chequeNumber", "cheque_number", "checkNumber", "check_number"]);
+  const paidBy = getPaymentValue(payment, ["paidBy", "paid_by"]);
+  if (kind === "cheque" && chequeNumber) {
+    details.push(`${label(lang, "رقم الشيك", "N° chèque", "Cheque number")}: ${chequeNumber}`);
+  }
+  if ((kind === "cheque" || kind === "bank") && paidBy) {
+    details.push(`${label(lang, "من طرف", "Payé par", "Paid by")}: ${paidBy}`);
   }
   return details.join(" — ");
 };
@@ -85,23 +106,6 @@ const formatPrintDate = (value) => {
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   return `${day}/${month}/${parsed.getFullYear()}`;
 };
-const getAgencyDisplay = (agency = {}, lang = "ar") => {
-  const name = lang === "ar"
-    ? trimValue(agency.nameAr || agency.agencyNameAr || agency.name_ar || agency.nameFr || agency.name_fr)
-    : trimValue(agency.nameFr || agency.agencyNameFr || agency.name_fr || agency.nameAr || agency.name_ar);
-  return {
-    name,
-    city: trimValue(agency.city || agency.agencyCity || agency.agency_city),
-    address: trimValue(agency.addressTiznit || agency.address_tiznit || agency.mainAddress || agency.address),
-    address2: trimValue(agency.addressAgadir || agency.address_agadir || agency.additionalAddress),
-    phone1: trimValue(agency.phoneTiznit1 || agency.phone_tiznit1 || agency.phone1),
-    phone2: trimValue(agency.phoneAgadir1 || agency.phone_agadir1 || agency.phone2),
-    email: trimValue(agency.email),
-    website: trimValue(agency.website),
-    ice: trimValue(agency.ice),
-    rc: trimValue(agency.rc),
-  };
-};
 const getAgencyBankDetails = (agency = {}) => ([
   ["bank", trimValue(agency.bankName || agency.bank_name)],
   ["holder", trimValue(agency.bankAccountHolder || agency.bank_account_holder)],
@@ -124,11 +128,8 @@ const getReadableFileNumber = (client = {}, programClients = []) => {
 const commonPrintCSS = `
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
-  .page { width:190mm; min-height:297mm; margin:0 auto; padding:30mm 15mm 24mm; direction:inherit; }
-  .agency-head { border-bottom:2px solid #111; padding-bottom:8px; margin-bottom:14px; display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
-  .agency-name { font-size:16px; font-weight:900; color:#111; }
-  .agency-meta { margin-top:4px; font-size:10.5px; color:#333; line-height:1.55; }
-  .issue-date { text-align:end; font-size:12px; margin-bottom:10px; color:#222; font-weight:700; }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:42mm 15mm 32mm; direction:inherit; }
+  .issue-date { text-align:end; font-size:12px; margin-bottom:8px; color:#222; font-weight:700; }
   .title { text-align:center; font-size:20px; font-weight:900; margin:12px 0 16px; color:#111; letter-spacing:.2px; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
   .box { border:1px solid #bdbdbd; padding:9px 10px; min-height:92px; }
@@ -153,8 +154,8 @@ const commonPrintCSS = `
   .bank-row { font-size:11.5px; line-height:1.55; }
   .bank-row strong { color:#111; }
   .payment-ref { margin-top:8px; font-size:11px; color:#333; line-height:1.7; }
-  .stamp { margin-top:24px; display:flex; justify-content:space-between; gap:24px; }
-  .stamp-box { border:1px dashed #777; width:155px; height:78px; margin-bottom:7px; }
+  .stamp { margin-top:14px; display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+  .stamp-label { min-width:150px; text-align:center; font-size:11px; color:#222; font-weight:700; }
   html[dir="rtl"] .price, html[dir="rtl"] .qty { text-align:center; }
   @media print { @page { size:A4 portrait; margin:0; } }
 `;
@@ -298,18 +299,26 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
   );
 }
 
-export function printReceipt({ payment, client, program, agency, lang = "ar" }) {
+export function printReceipt({ payment, client, program, agency, lang = "ar", receiptType = "client" }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
-  const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
+  const isAgencyReceipt = receiptType === "agency";
+  const terms = getParticipantTerminology(program, lang);
+  const clientName = getClientDisplayName(client, terms.singular || t.pilgrimFallback || "—", lang);
   const money = (value) => formatCurrency(value, lang);
   const cin = getClientCin(client);
-  const extraDetails = paymentExtraDetails(payment, lang);
+  const paymentMethod = getPaymentValue(payment, ["method", "paymentMethod", "payment_method"]);
+  const receiptNo = getPaymentValue(payment, ["receiptNo", "receipt_no", "receiptNumber", "receipt_number"]);
+  const note = getPaymentValue(payment, ["note", "notes"]);
+  const extraDetails = paymentExtraDetails(payment, lang, { includeInternal: isAgencyReceipt });
+  const receiptTitle = isAgencyReceipt
+    ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
+    : terms.receiptTitle;
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
 <meta charset="UTF-8"/>
-<title>${label(lang, "وصل دفعة", "Reçu de paiement", "Payment Receipt")}</title>
+<title>${receiptTitle}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; color:#111; background:#fff; }
@@ -327,16 +336,16 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
 </head>
 <body>
 <div class="page">
-  <div class="receipt-title">${label(lang, "وصل استلام مبلغ", "REÇU DE PAIEMENT", "PAYMENT RECEIPT")}</div>
-  <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${payment.receiptNo}</strong></div>
+  <div class="receipt-title">${receiptTitle}</div>
+  <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${receiptNo}</strong></div>
   <table>
-    <tr><td>${label(lang, "المعتمر", "Client", "Client")}</td><td>${clientName}${client.nameLatin && client.nameLatin !== clientName ? " — "+client.nameLatin : ""}</td></tr>
+    <tr><td>${terms.singular}</td><td>${clientName}${client.nameLatin && client.nameLatin !== clientName ? " — "+client.nameLatin : ""}</td></tr>
     <tr><td>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</td><td>${cleanDisplay(cin, "")}</td></tr>
     <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${program?.name || "—"}</td></tr>
-    <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${translatePaymentMethod(payment.method, lang)}</td></tr>
+    <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${translatePaymentMethod(paymentMethod, lang)}</td></tr>
     ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${extraDetails}</td></tr>` : ""}
     <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${payment.date}</td></tr>
-    ${payment.note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${payment.note}</td></tr>` : ""}
+    ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${note}</td></tr>` : ""}
     <tr class="amount-row">
       <td>${label(lang, "المبلغ المستلم", "MONTANT REÇU", "AMOUNT RECEIVED")}</td>
       <td>${money(payment.amount)}</td>
@@ -344,7 +353,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
   </table>
   <div class="signature">
     <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
-    <div style="text-align:center"><div class="signature-box"></div>${label(lang, "توقيع المعتمر", "Signature du client", "Client Signature")}</div>
+    <div style="text-align:center"><div class="signature-box"></div>${terms.signatureLabel}</div>
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
@@ -357,7 +366,8 @@ export function printReceipt({ payment, client, program, agency, lang = "ar" }) 
 
 export function printClientCard({ client, program, agency, lang = "ar", programClients = [] }) {
   const isAr = lang === "ar";  const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;  const p = client.passport || {};
-  const clientName = getClientDisplayName(client, t.pilgrimFallback || "—", lang);
+  const terms = getParticipantTerminology(program, lang);
+  const clientName = getClientDisplayName(client, terms.singular || t.pilgrimFallback || "—", lang);
   const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
   const fileNumber = getReadableFileNumber(client, programClients);
   const cin = getClientCin(client);
@@ -368,7 +378,7 @@ export function printClientCard({ client, program, agency, lang = "ar", programC
 <html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
 <head>
 <meta charset="UTF-8"/>
-<title>${label(lang, "بطاقة المعتمر", "Carte pèlerin", "Pilgrim Card")}</title>
+<title>${terms.cardTitle}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
@@ -391,7 +401,7 @@ export function printClientCard({ client, program, agency, lang = "ar", programC
 </head>
 <body>
   <div class="page">
-  <div class="title">${label(lang, "بطاقة المعتمر", "Carte pèlerin", "Pilgrim Card")}</div>
+  <div class="title">${terms.cardTitle}</div>
   <div class="file-no">${label(lang, "ملف رقم", "Dossier N°", "File No.")}: ${fileNumber}</div>
   <div class="name">${clientName}</div>
   ${latinName ? `<div class="name-latin">${latinName}</div>` : ""}
@@ -521,7 +531,6 @@ async function printInvoiceDocument({
   } = invoiceData;
   const isProforma = documentType === "proforma";
   const money = (value) => formatCurrency(value, lang);
-  const agencyDisplay = getAgencyDisplay(agency, lang);
   const bankDetails = getAgencyBankDetails(agency);
   const bankLabels = {
     bank: label(lang, "اسم البنك", "Banque", "Bank"),
@@ -546,23 +555,14 @@ async function printInvoiceDocument({
   const displayLevel = level || client?.packageLevel || client?.hotelLevel || "";
   const displayRoomType = roomType || client?.roomType || client?.roomTypeLabel || "";
   const displayPhone = phone || client?.phone || "";
-  const agencyMeta = [
-    agencyDisplay.address,
-    agencyDisplay.address2,
-    agencyDisplay.city,
-    [agencyDisplay.phone1, agencyDisplay.phone2].filter(Boolean).join(" / "),
-    agencyDisplay.email,
-    agencyDisplay.website,
-    agencyDisplay.ice ? `ICE: ${agencyDisplay.ice}` : "",
-    agencyDisplay.rc ? `RC: ${agencyDisplay.rc}` : "",
-  ].filter(Boolean);
   const descriptionLines = [
     `${serviceLabel}${displayProgramName && displayProgramName !== "—" ? ` — ${displayProgramName}` : ""}`,
     `${label(lang, "المستفيد", "Bénéficiaire", "Beneficiary")}: ${clientName}`,
     displayDeparture && displayDeparture !== "—" ? `${label(lang, "الذهاب", "Départ", "Departure")}: ${displayDeparture}` : "",
     displayReturn && displayReturn !== "—" ? `${label(lang, "العودة", "Retour", "Return")}: ${displayReturn}` : "",
   ].filter(Boolean);
-  const totalWords = amountInWordsSentence(salePrice, lang, isProforma ? "proforma" : "invoice");
+  const amountForWords = isProforma ? Math.max(0, Number(remaining) || 0) : salePrice;
+  const totalWords = amountInWordsSentence(amountForWords, lang, isProforma ? "proforma" : "invoice");
   const dateLine = lang === "fr"
     ? `DATE : ${formatPrintDate(invoiceDate)}`
     : lang === "en"
@@ -582,13 +582,7 @@ ${commonPrintCSS}
 </head>
 <body>
   <div class="page">
-  <div class="agency-head">
-    <div>
-      <div class="agency-name">${escapeHtml(agencyDisplay.name || label(lang, "الوكالة", "Agence", "Agency"))}</div>
-      ${agencyMeta.length ? `<div class="agency-meta">${agencyMeta.map(escapeHtml).join("<br/>")}</div>` : ""}
-    </div>
-    <div class="issue-date">${dateLine}</div>
-  </div>
+  <div class="issue-date">${dateLine}</div>
   <div class="title">${title}</div>
   <div class="grid">
     <div class="box">
@@ -651,8 +645,8 @@ ${commonPrintCSS}
     </div>
   </div>` : ""}
   <div class="stamp">
-    <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "ختم الوكالة", "Cachet agence", "Agency Stamp")}</div>
-    <div style="text-align:center;font-size:11px"><div class="stamp-box"></div>${label(lang, "توقيع المعتمر", "Signature client", "Client Signature")}</div>
+    <div class="stamp-label">${label(lang, "طابع الوكالة", "Cachet agence", "Agency stamp")}</div>
+    <div class="stamp-label">${label(lang, "توقيع الزبون", "Signature client", "Client signature")}</div>
   </div>
 </div>
 ${bootScript}

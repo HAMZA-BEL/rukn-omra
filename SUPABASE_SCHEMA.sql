@@ -124,6 +124,7 @@ alter table public.programs add column if not exists badge_saudi_phone_1 text;
 alter table public.programs add column if not exists badge_saudi_phone_2 text;
 alter table public.programs add column if not exists badge_note text;
 alter table public.programs add column if not exists badge_template_id text;
+alter table public.clients add column if not exists registration_source text;
 
 -- Badge templates
 create table if not exists public.badge_templates (
@@ -155,6 +156,9 @@ create table if not exists public.payments (
   note        text,
   created_at  timestamptz default now()
 );
+
+alter table public.payments add column if not exists cheque_number text;
+alter table public.payments add column if not exists paid_by text;
 
 -- Final official invoices
 create table if not exists public.invoice_counters (

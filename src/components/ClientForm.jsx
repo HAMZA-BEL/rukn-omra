@@ -501,7 +501,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     const e = {};
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
       if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
-      if (!form.registrationSource.trim()) e.registrationSource = t.registrationSourceError || "يرجى إدخال جهة التسجيل";
       const peopleErrors = groupPeople.map((person) => {
         const rowErrors = {};
         if (!pickString(person.lastName)) rowErrors.lastName = t.lastNameError || "يرجى إدخال الاسم العائلي";
@@ -516,7 +515,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     }
     if (!form.firstName.trim() && !form.lastName.trim()) e.firstName = t.firstNameError;
     if (!form.phone.trim())    e.phone    = t.phoneError;
-    if (!form.registrationSource.trim()) e.registrationSource = t.registrationSourceError || "يرجى إدخال جهة التسجيل";
     if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
     if (!form.gender) e.gender = t.genderRequired || "يرجى تحديد الجنس";
     return e;
@@ -936,7 +934,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             label={t.registrationSource || "جهة التسجيل"}
             value={form.registrationSource}
             onChange={set("registrationSource")}
-            required
             error={errors.registrationSource}
           />
           <Input

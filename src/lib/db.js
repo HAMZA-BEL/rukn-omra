@@ -130,6 +130,7 @@ const toClient = (c, agencyId) => {
   nom:               cleanString(c.nom),
   prenom:            cleanString(c.prenom),
   phone:             cleanString(c.phone),
+  registration_source: cleanString(c.registrationSource ?? c.registration_source ?? c.sourceRegistration ?? c.source),
   city:              cleanString(c.city),
   hotel_level:       cleanString(c.packageLevel ?? c.hotelLevel),
   hotel_mecca:       cleanString(c.hotelMecca),
@@ -163,6 +164,8 @@ const fromClient = (row) => {
   nom:              row.nom,
   prenom:           row.prenom,
   phone:            row.phone,
+  registrationSource: row.registration_source,
+  registration_source: row.registration_source,
   cin:              row.passport?.cin || row.passport?.nationalId || "",
   city:             row.city,
   hotelLevel:       row.hotel_level,
@@ -201,20 +204,40 @@ const toPayment = (p, agencyId) => ({
   client_id:  normalizeForeignKey(p.clientId),
   amount:     p.amount,
   date:       p.date      ?? null,
-  method:     p.method    ?? null,
-  receipt_no: p.receiptNo ?? null,
-  note:       p.note      ?? null,
+  method:     p.method ?? p.paymentMethod ?? p.payment_method ?? null,
+  receipt_no: p.receiptNo ?? p.receipt_no ?? p.receiptNumber ?? p.receipt_number ?? null,
+  cheque_number: cleanString(p.chequeNumber ?? p.cheque_number ?? p.checkNumber ?? p.check_number),
+  paid_by: cleanString(p.paidBy ?? p.paid_by),
+  note:       p.note ?? p.notes ?? null,
 });
 
-const fromPayment = (row) => ({
-  id:        row.id,
-  clientId:  row.client_id,
-  amount:    Number(row.amount),
-  date:      row.date,
-  method:    row.method,
-  receiptNo: row.receipt_no,
-  note:      row.note,
-});
+const fromPayment = (row) => {
+  const method = row.method || row.payment_method || "";
+  const receiptNo = row.receipt_no || row.receipt_number || "";
+  const chequeNumber = row.cheque_number || row.check_number || "";
+  const note = row.note || row.notes || "";
+  return {
+    id:        row.id,
+    clientId:  row.client_id,
+    amount:    Number(row.amount),
+    date:      row.date,
+    method,
+    paymentMethod: method,
+    payment_method: method,
+    receiptNo,
+    receipt_no: receiptNo,
+    receiptNumber: receiptNo,
+    receipt_number: receiptNo,
+    chequeNumber,
+    cheque_number: chequeNumber,
+    checkNumber: chequeNumber,
+    check_number: chequeNumber,
+    paidBy: row.paid_by || "",
+    paid_by: row.paid_by || "",
+    note,
+    notes: note,
+  };
+};
 
 const fromInvoice = (row) => ({
   id: row.id,

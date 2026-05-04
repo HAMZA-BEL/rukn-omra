@@ -49,13 +49,17 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
     if ((methodKind === "cheque" || methodKind === "bank") && !form.paidBy.trim())
       e.paidBy = t.paidByRequired || "يرجى إدخال من طرف";
     if (Object.keys(e).length) { setErrors(e); return; }
+    const chequeNumber = form.chequeNumber.trim();
+    const paidBy = form.paidBy.trim();
     store.addPayment({
       clientId, amount: Number(form.amount),
-      method: form.method, date: form.date,
-      receiptNo: form.receiptNo,
-      chequeNumber: form.chequeNumber.trim(),
-      paidBy: form.paidBy.trim(),
-      note: form.note,
+      method: form.method, payment_method: form.method, date: form.date,
+      receiptNo: form.receiptNo, receipt_no: form.receiptNo,
+      receiptNumber: form.receiptNo, receipt_number: form.receiptNo,
+      chequeNumber, cheque_number: chequeNumber,
+      checkNumber: chequeNumber, check_number: chequeNumber,
+      paidBy, paid_by: paidBy,
+      note: form.note, notes: form.note,
     });
     onSave();
   };

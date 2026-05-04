@@ -13,7 +13,15 @@ const isEditableTarget = (target) => {
   return target?.isContentEditable || ["input", "textarea", "select"].includes(tag);
 };
 
-export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, busy }) {
+const editableTemplateState = (template = {}, layout) => JSON.stringify({
+  name: String(template.name || ""),
+  description: String(template.description || ""),
+  widthMm: Number(template.widthMm) || 90,
+  heightMm: Number(template.heightMm) || 140,
+  layout: normalizeBadgeLayout(layout || template.layout),
+});
+
+export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onDirtyChange, busy }) {
   const { t } = useLang();
   const [draft, setDraft] = React.useState(template);
   const [imageUrl, setImageUrl] = React.useState("");
@@ -25,6 +33,16 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, bus
   React.useEffect(() => {
     setDraft(template);
   }, [template]);
+
+  const isDirty = React.useMemo(() => {
+    if (!draft || !template) return false;
+    return editableTemplateState(draft, designer.layout) !== editableTemplateState(template, template.layout);
+  }, [designer.layout, draft, template]);
+
+  React.useEffect(() => {
+    onDirtyChange?.(isDirty);
+    return () => onDirtyChange?.(false);
+  }, [isDirty, onDirtyChange]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -66,10 +84,13 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, bus
     );
   }
 
-  const saveTemplate = () => onSave?.({
-    ...draft,
-    layout: normalizeBadgeLayout(designer.layout),
-  });
+  const saveTemplate = async () => {
+    const saved = await onSave?.({
+      ...draft,
+      layout: normalizeBadgeLayout(designer.layout),
+    });
+    if (saved) onDirtyChange?.(false);
+  };
 
   const actionMenu = (
     <div ref={actionsRef} style={{ position: "relative" }}>

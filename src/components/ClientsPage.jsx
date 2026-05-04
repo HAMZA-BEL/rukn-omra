@@ -11,6 +11,7 @@ import { formatCurrency } from "../utils/currency";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
@@ -73,6 +74,14 @@ export default function ClientsPage({ store, onToast }) {
   const [showImport,  setShowImport]  = React.useState(false);
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
+  const getClientProgram = React.useCallback(
+    (client) => programs.find((program) => program.id === client?.programId) || null,
+    [programs]
+  );
+  const getClientTerms = React.useCallback(
+    (client) => getParticipantTerminology(getClientProgram(client), lang),
+    [getClientProgram, lang]
+  );
 
   // Reset tab-specific state when switching tabs
   const switchTab = (newTab) => {
@@ -510,7 +519,7 @@ export default function ClientsPage({ store, onToast }) {
       )}
 
       {/* Modals */}
-      <Modal open={!!selected} onClose={() => setSelected(null)} title={t.clientFile} width={660}>
+      <Modal open={!!selected} onClose={() => setSelected(null)} title={selected ? getClientTerms(selected).fileTitle : t.clientFile} width={660}>
         {selected && (
           <ClientDetail client={selected} store={store}
             onClose={() => setSelected(null)}
@@ -522,7 +531,7 @@ export default function ClientsPage({ store, onToast }) {
         )}
       </Modal>
       <Modal open={!!editing} onClose={() => setEditing(null)}
-        title={`${t.editLabel} — ${t.clientFile}`} width={660}>
+        title={`${t.editLabel} — ${editing ? getClientTerms(editing).fileTitle : t.clientFile}`} width={660}>
         {editing && (
           <ClientForm client={editing} store={store}
             onSave={() => { setEditing(null); onToast(t.updateSuccess,"success"); }}

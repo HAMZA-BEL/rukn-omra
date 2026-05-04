@@ -55,6 +55,7 @@ import {
   translateRoomType,
   trKey,
 } from "../utils/i18nValues";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
   badgePhonesFromProgram,
   downloadProgramBadgesPdf,
@@ -504,6 +505,54 @@ const safeCellValue = (value) => {
   return "";
 };
 
+const compareText = (a, b, lang = "ar") => String(a || "").localeCompare(String(b || ""), lang === "ar" ? "ar" : lang);
+
+const pushVerticalMerge = (merges, startRow, endRow, columnIndex) => {
+  if (endRow > startRow) {
+    merges.push({ s: { r: startRow, c: columnIndex }, e: { r: endRow, c: columnIndex } });
+  }
+};
+
+const buildPilgrimsListSheet = (clients = [], lang = "ar", labels = {}) => {
+  const rows = clients
+    .map((client, index) => ({
+      latinName: safeCellValue(getClientLatinName(client)),
+      localName: safeCellValue(getClientArabicName(client) || resolveClientDisplayName(client, "")),
+      phone: safeCellValue(client.phone),
+      source: safeCellValue(getClientRegistrationSource(client)),
+      index,
+    }))
+    .sort((a, b) => (
+      compareText(a.source, b.source, lang)
+      || compareText(a.phone, b.phone, lang)
+      || compareText(a.localName, b.localName, lang)
+      || compareText(a.latinName, b.latinName, lang)
+      || a.index - b.index
+    ));
+  const data = [
+    [
+      "Nom complet",
+      labels.localName,
+      labels.phone,
+      labels.registrationSource,
+    ],
+    ...rows.map((row) => [row.latinName, row.localName, row.phone, row.source]),
+  ];
+  const merges = [];
+  ["phone", "source"].forEach((field) => {
+    const columnIndex = field === "phone" ? 2 : 3;
+    let groupStart = 0;
+    for (let index = 1; index <= rows.length; index += 1) {
+      const current = rows[groupStart]?.[field] || "";
+      const sameGroup = index < rows.length && rows[index]?.[field] === current;
+      if (sameGroup) continue;
+      if (current) pushVerticalMerge(merges, groupStart + 1, index, columnIndex);
+      groupStart = index;
+    }
+  });
+  return { data, merges };
+};
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -866,15 +915,35 @@ export default function ProgramsPage({ store, onToast }) {
     setDeletePrompt(null);
     onToast(t.deleteSuccess, "info");
   }, [deletePrompt, deleteProgram, activeProgram, setActiveProgram, onToast, t.deleteSuccess]);
+  const closeProgramForm = React.useCallback(() => {
+    setShowForm(false);
+    setEditing(null);
+  }, []);
+  const handleProgramFormSaved = React.useCallback(() => {
+    const wasEditing = Boolean(editing);
+    closeProgramForm();
+    onToast(wasEditing ? t.updateSuccess : t.addSuccess, "success");
+  }, [closeProgramForm, editing, onToast, t.addSuccess, t.updateSuccess]);
 
   if (activeProgram) {
     const prog = programs.find(p => p.id === activeProgram);
     if (!prog) { setActiveProgram(null); return null; }
     return (
-      <ProgramInner
-        program={prog} store={store} onToast={onToast}
-        onBack={() => closeProgramDetail(true)}
-      />
+      <>
+        <ProgramInner
+          program={prog} store={store} onToast={onToast}
+          onBack={() => closeProgramDetail(true)}
+          onEditProgram={() => setEditing(prog)}
+        />
+        <ProgramEditorModal
+          open={!!editing}
+          program={editing}
+          store={store}
+          title={t.editProgramTitle}
+          onSaved={handleProgramFormSaved}
+          onClose={closeProgramForm}
+        />
+      </>
     );
   }
 
@@ -1059,16 +1128,14 @@ export default function ProgramsPage({ store, onToast }) {
         </div>
       )}
 
-      <Modal open={showForm||!!editing} onClose={() => { setShowForm(false); setEditing(null); }}
-        title={editing ? t.editProgramTitle : t.addProgramTitle} width={620}>
-        <ProgramForm program={editing} store={store}
-          onSave={() => {
-            setShowForm(false);
-            setEditing(null);
-            onToast(editing ? t.updateSuccess : t.addSuccess, "success");
-          }}
-          onCancel={() => { setShowForm(false); setEditing(null); }} />
-      </Modal>
+      <ProgramEditorModal
+        open={showForm || !!editing}
+        program={editing}
+        store={store}
+        title={editing ? t.editProgramTitle : t.addProgramTitle}
+        onSaved={handleProgramFormSaved}
+        onClose={closeProgramForm}
+      />
       <Modal
         open={!!deletePrompt}
         onClose={() => setDeletePrompt(null)}
@@ -1122,11 +1189,6 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
     ["plane", t.departure, program.departure],
     ["planeLanding", t.returnDate, program.returnDate],
   ];
-  const badgeContactRows = [
-    [t.guidePhone || "رقم المؤطر", program.guidePhone],
-    [t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1],
-    [t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2],
-  ].filter(([, value]) => value);
   const miniStats = [
     { label: t.registered, value: registered, color: tc.gold },
     { label: t.cleared, value: cleared, color: tc.greenLight },
@@ -1170,28 +1232,6 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
             </div>
           ))}
         </div>
-
-        {badgeContactRows.length > 0 && (
-          <div style={{
-            display:"flex",
-            gap:6,
-            flexWrap:"wrap",
-            marginBottom:14,
-          }}>
-            {badgeContactRows.map(([label, value]) => (
-              <span key={label} style={{
-                fontSize:10,
-                color:tc.grey,
-                background:"var(--rukn-bg-soft)",
-                border:"1px solid var(--rukn-border-soft)",
-                borderRadius:999,
-                padding:"4px 9px",
-              }}>
-                {label}: <strong style={{ color:"var(--rukn-text-strong)" }}>{value}</strong>
-              </span>
-            ))}
-          </div>
-        )}
 
         {/* mini stats */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, marginBottom:14,
@@ -1292,10 +1332,23 @@ function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
   );
 }
 
+function ProgramEditorModal({ open, program, store, title, onSaved, onClose }) {
+  return (
+    <Modal open={open} onClose={onClose} title={title} width={620}>
+      <ProgramForm
+        program={program}
+        store={store}
+        onSave={onSaved}
+        onCancel={onClose}
+      />
+    </Modal>
+  );
+}
+
 // ═══════════════════════════════════════
 // PROGRAM INNER — full client list
 // ═══════════════════════════════════════
-function ProgramInner({ program, store, onToast, onBack }) {
+function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const {
     clients,
     getClientTotalPaid,
@@ -1338,6 +1391,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
   const packageFilterRef = React.useRef(null);
   const statusFilterRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
+  const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
 
   const progClients = React.useMemo(() =>
     clients.filter(c => c.programId === program.id), [clients, program.id]);
@@ -1575,15 +1629,8 @@ function ProgramInner({ program, store, onToast, onBack }) {
   }, []);
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const notifyNoExportClients = React.useCallback(() => {
-    onToast(
-      lang === "fr"
-        ? "Aucun pèlerin ne correspond aux filtres actuels"
-        : lang === "en"
-          ? "No pilgrims match the current filters"
-          : "لا يوجد معتمرون مطابقون للفلاتر الحالية",
-      "info"
-    );
-  }, [lang, onToast]);
+    onToast(participantTerms.noMatching, "info");
+  }, [onToast, participantTerms.noMatching]);
   const handleProgramPdfExport = React.useCallback(() => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -1641,6 +1688,34 @@ function ProgramInner({ program, store, onToast, onBack }) {
     closeHeaderActions();
     setShowPassportImport(true);
   }, [closeHeaderActions]);
+  const handleEditProgram = React.useCallback(() => {
+    closeHeaderActions();
+    onEditProgram?.();
+  }, [closeHeaderActions, onEditProgram]);
+  const handlePilgrimsListExport = React.useCallback(async () => {
+    closeHeaderActions();
+    const exportClients = getCurrentExportClients();
+    if (exportClients.length === 0) { notifyNoExportClients(); return; }
+    const XLSX = await import("xlsx");
+    const labels = {
+      localName: "الاسم الكامل",
+      phone: "رقم الهاتف",
+      registrationSource: "جهة التسجيل",
+    };
+    const { data, merges } = buildPilgrimsListSheet(exportClients, lang, labels);
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws["!cols"] = [{ wch: 28 }, { wch: 32 }, { wch: 18 }, { wch: 24 }];
+    if (merges.length) ws["!merges"] = merges;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "pilgrims");
+    const levelPart = packageFilter === "all" ? "all" : (activePackageChip?.label || packageFilter || "filtered");
+    XLSX.writeFile(
+      wb,
+      `${participantTerms.kind === "hajj" ? "hajj-pilgrims-list" : "pilgrims-list"}-${slugifyFilePart(program.name)}-${slugifyFilePart(levelPart)}.xlsx`,
+      { bookType: "xlsx", compression: true }
+    );
+    onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
+  }, [activePackageChip?.label, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady]);
   const handleContractsExcelExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -1699,10 +1774,22 @@ function ProgramInner({ program, store, onToast, onBack }) {
   }, [closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
   const headerActions = React.useMemo(() => ([
     {
+      key: "edit",
+      icon: "edit",
+      label: t.editProgramTitle || (lang === "fr" ? "Modifier le programme" : lang === "en" ? "Edit program" : "تعديل البرنامج"),
+      onClick: handleEditProgram,
+    },
+    {
       key: "passport",
       icon: "passport",
       label: lang === "fr" ? "Importer depuis les passeports" : lang === "en" ? "Import from passports" : "استيراد من الجوازات",
       onClick: handlePassportImportOpen,
+    },
+    {
+      key: "pilgrims-list",
+      icon: "download",
+      label: participantTerms.exportListAction || t.exportPilgrimsList || (lang === "fr" ? "Exporter la liste des pèlerins" : lang === "en" ? "Export pilgrims list" : "تصدير لائحة المعتمرين"),
+      onClick: handlePilgrimsListExport,
     },
     {
       key: "pdf",
@@ -1728,7 +1815,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handlePassportImportOpen, handleProgramPdfExport, lang]);
+  ]), [badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -1808,7 +1895,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
             )}
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowAddClient(true)}>
-            {t.addClient}
+            {participantTerms.addAction || t.addClient}
           </Button>
         </div>
       </div>
@@ -1823,7 +1910,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
         border:"1px solid rgba(212,175,55,.14)",
       }}>
         {[
-          { key:"clients", label:"المعتمرون", icon:"users" },
+          { key:"clients", label:participantTerms.plural || t.clients, icon:"users" },
           { key:"rooming", label:"التسكين", icon:"hotel" },
         ].map(tab => (
           <button key={tab.key} type="button" onClick={() => setProgramTab(tab.key)}
@@ -2243,8 +2330,8 @@ function ProgramInner({ program, store, onToast, onBack }) {
       )}
 
       {filtered.length === 0 ? (
-        <EmptyState icon="users" title={t.programNoPilgrimsTitle}
-          sub={filter!=="all"?t.programNoPilgrimsFiltered:t.programNoPilgrimsSub} />
+        <EmptyState icon="users" title={participantTerms.emptyTitle || t.programNoPilgrimsTitle}
+          sub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)} />
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
           {filtered.map((c,i)=>{
@@ -2298,7 +2385,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
             flexWrap:"nowrap",
           }}>
             <span style={{ color:tc.gold, whiteSpace:"nowrap", flexShrink:0 }}>
-              {tr("programTotalsLabel", { count: filtered.length })}
+              {participantTerms.totalLabel ? participantTerms.totalLabel(filtered.length) : tr("programTotalsLabel", { count: filtered.length })}
             </span>
             <span style={{
               color:tc.grey,
@@ -2307,7 +2394,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
               overflow:"hidden",
               textOverflow:"ellipsis",
             }}>
-              {t.summary || t.clients}
+              {t.summary || participantTerms.plural || t.clients}
             </span>
           </div>
           <span />
@@ -2325,7 +2412,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
       )}
 
       {/* modals */}
-      <Modal open={!!selectedClient} onClose={()=>setSelectedClient(null)} title={t.clientFile} width={640}>
+      <Modal open={!!selectedClient} onClose={()=>setSelectedClient(null)} title={participantTerms.fileTitle || t.clientFile} width={640}>
         {selectedClient && (
           <ClientDetail client={selectedClient} store={store}
             onClose={()=>setSelectedClient(null)}
@@ -2333,7 +2420,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
             onToast={onToast} />
         )}
       </Modal>
-      <Modal open={showAddClient} onClose={()=>setShowAddClient(false)} title={t.addClient} width={600}>
+      <Modal open={showAddClient} onClose={()=>setShowAddClient(false)} title={participantTerms.addAction || t.addClient} width={600}>
         <ClientForm store={store} defaultProgramId={program.id} lockProgramId={program.id}
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
@@ -2357,7 +2444,7 @@ function ProgramInner({ program, store, onToast, onBack }) {
           />
         )}
       </Modal>
-      <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={`${t.edit} — ${t.clientFile}`} width={600}>
+      <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={`${t.edit} — ${participantTerms.fileTitle || t.clientFile}`} width={600}>
         {editingClient && (
           <ClientForm client={editingClient} store={store}
             onSave={()=>{setEditingClient(null);onToast(t.updateSuccess,"success");}}

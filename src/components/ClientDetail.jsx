@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { StatusBadge, Button, GlassCard, Divider } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
@@ -11,6 +12,7 @@ import { formatCurrency } from "../utils/currency";
 import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -59,8 +61,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
+  const [receiptPayment, setReceiptPayment] = React.useState(null);
 
   const program     = getProgramById(client.programId);
+  const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
   const payments    = getClientPayments(client.id);
   const totalPaid   = getClientTotalPaid(client.id);
   const salePrice   = client.salePrice   || client.price || 0;
@@ -118,6 +122,20 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       setBadgeBusy(false);
     }
   }, [agency, badgeFileNumber, client, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
+
+  const openReceiptSelector = React.useCallback((payment) => {
+    if (payment) setReceiptPayment(payment);
+  }, []);
+
+  const closeReceiptSelector = React.useCallback(() => {
+    setReceiptPayment(null);
+  }, []);
+
+  const handleReceiptTypeSelect = React.useCallback((receiptType) => {
+    if (!receiptPayment) return;
+    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType });
+    setReceiptPayment(null);
+  }, [agency, client, lang, program, receiptPayment]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -193,7 +211,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         {payments.map && payments.length > 0 && lastPmt && (
           <Button variant="secondary" size="sm" icon="print"
             style={printActionButtonStyle}
-            onClick={() => printReceipt({ payment:lastPmt, client, program, agency, lang })}>
+            onClick={() => openReceiptSelector(lastPmt)}>
             {t.printReceipt}
           </Button>
         )}
@@ -363,7 +381,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
           {[...payments].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(pmt => (
             <PaymentRow key={pmt.id} payment={pmt}
-              onPrint={() => printReceipt({ payment:pmt, client, program, agency, lang })}
+              onPrint={() => openReceiptSelector(pmt)}
               onDelete={() => {
                 if (window.confirm(t.confirmDeletePayment)) {
                   deletePayment(pmt.id);
@@ -409,7 +427,110 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           )}
         </div>
       </div>
+
+      <ReceiptTypeSelector
+        open={Boolean(receiptPayment)}
+        onClose={closeReceiptSelector}
+        onSelect={handleReceiptTypeSelect}
+        t={t}
+        lang={lang}
+        participantTerms={participantTerms}
+      />
     </div>
+  );
+}
+
+function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerms }) {
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
+  if (!open || typeof document === "undefined") return null;
+
+  const labels = {
+    title: t.receiptTypeTitle || (lang === "fr" ? "Choisir le type de reçu" : lang === "en" ? "Choose receipt type" : "اختر نوع الوصل"),
+    agency: t.agencyReceipt || (lang === "fr" ? "Reçu agence" : lang === "en" ? "Agency receipt" : "وصل الوكالة"),
+    client: participantTerms?.receiptTitle || t.pilgrimReceipt || (lang === "fr" ? "Reçu pèlerin" : lang === "en" ? "Pilgrim receipt" : "وصل المعتمر"),
+    cancel: t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء"),
+  };
+
+  return createPortal(
+    <div
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 13050,
+        background: "rgba(2,6,23,.62)",
+        backdropFilter: "blur(8px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={labels.title}
+        style={{
+          width: "min(420px, 100%)",
+          background: "var(--rukn-bg-modal)",
+          border: "1px solid var(--rukn-border-soft)",
+          borderRadius: 18,
+          boxShadow: "0 32px 80px rgba(0,0,0,.5)",
+          padding: 18,
+          direction: lang === "ar" ? "rtl" : "ltr",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: "var(--rukn-text-strong)" }}>
+            {labels.title}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={labels.cancel}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 9,
+              border: "1px solid var(--rukn-border-soft)",
+              background: "var(--rukn-bg-soft)",
+              color: "var(--rukn-text-muted)",
+              cursor: "pointer",
+              fontWeight: 900,
+              fontSize: 16,
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <Button variant="secondary" icon="receipt" onClick={() => onSelect("agency")}
+            style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
+            {labels.agency}
+          </Button>
+          <Button variant="primary" icon="receipt" onClick={() => onSelect("client")}
+            style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
+            {labels.client}
+          </Button>
+          <Button variant="ghost" onClick={onClose}
+            style={{ justifyContent: "center", width: "100%", minHeight: 38 }}>
+            {labels.cancel}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

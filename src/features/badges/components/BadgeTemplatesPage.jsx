@@ -20,6 +20,8 @@ export function BadgeTemplatesPage({ store, onToast }) {
   const [creatorOpen, setCreatorOpen] = React.useState(false);
   const [activeId, setActiveId] = React.useState("");
   const [editorId, setEditorId] = React.useState("");
+  const [editorDirty, setEditorDirty] = React.useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = React.useState(false);
   const { templates, loading, error, refresh, save, remove, makeDefault } = useBadgeTemplates({ agencyId });
 
   React.useEffect(() => {
@@ -28,17 +30,29 @@ export function BadgeTemplatesPage({ store, onToast }) {
     }
   }, [activeId, templates]);
 
+  const activeTemplate = templates.find((template) => template.id === activeId) || null;
+  const editorTemplate = templates.find((template) => template.id === editorId) || null;
+  const closeEditorNow = React.useCallback(() => {
+    setEditorId("");
+    setEditorDirty(false);
+    setConfirmCloseOpen(false);
+  }, []);
+  const requestEditorClose = React.useCallback(() => {
+    if (editorDirty) {
+      setConfirmCloseOpen(true);
+      return;
+    }
+    closeEditorNow();
+  }, [closeEditorNow, editorDirty]);
+
   React.useEffect(() => {
     if (!editorId) return undefined;
     const handler = (event) => {
-      if (event.key === "Escape") setEditorId("");
+      if (event.key === "Escape") requestEditorClose();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [editorId]);
-
-  const activeTemplate = templates.find((template) => template.id === activeId) || null;
-  const editorTemplate = templates.find((template) => template.id === editorId) || null;
+  }, [editorId, requestEditorClose]);
   const displayTemplateName = React.useCallback((template) => {
     const name = String(template?.name || "").trim();
     return !name || DEFAULT_TEMPLATE_NAMES.has(name)
@@ -123,7 +137,7 @@ export function BadgeTemplatesPage({ store, onToast }) {
             </div>
             <button
               type="button"
-              onClick={() => setEditorId("")}
+              onClick={requestEditorClose}
               title={t.close || "Close"}
               aria-label={t.close || "إغلاق"}
               style={{
@@ -146,8 +160,43 @@ export function BadgeTemplatesPage({ store, onToast }) {
             onSave={handleSave}
             onDelete={handleDelete}
             onDefault={handleDefault}
+            onDirtyChange={setEditorDirty}
             busy={loading || Boolean(error)}
           />
+          {confirmCloseOpen && (
+            <div style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 13200,
+              display: "grid",
+              placeItems: "center",
+              background: "rgba(2,6,23,.46)",
+              backdropFilter: "blur(4px)",
+              padding: 16,
+            }}>
+              <GlassCard style={{
+                width: "min(440px, 100%)",
+                padding: 18,
+                border: "1px solid rgba(245,158,11,.34)",
+                boxShadow: "0 28px 80px rgba(0,0,0,.48)",
+              }}>
+                <p style={{ fontSize: 16, fontWeight: 900, color: "var(--rukn-text)", marginBottom: 8 }}>
+                  {t.badgeUnsavedChangesTitle || "You have unsaved changes"}
+                </p>
+                <p style={{ fontSize: 13, color: "var(--rukn-text-muted)", lineHeight: 1.7, marginBottom: 16 }}>
+                  {t.badgeUnsavedChangesMessage || "Do you want to leave without saving?"}
+                </p>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmCloseOpen(false)}>
+                    {t.badgeStayInDesigner || "Stay"}
+                  </Button>
+                  <Button variant="warning" size="sm" onClick={closeEditorNow}>
+                    {t.badgeLeaveWithoutSaving || "Leave without saving"}
+                  </Button>
+                </div>
+              </GlassCard>
+            </div>
+          )}
         </div>
       </div>,
       document.body

@@ -1,3 +1,5 @@
+import { getParticipantTerminology } from "./participantTerminology";
+
 /**
  * Generates a print-ready HTML page for a program's pilgrim list
  * and opens it in a new window for window.print().
@@ -6,6 +8,7 @@
 export function printProgramPDF({ program, clients, getClientStatus, getClientTotalPaid, lang, t, agency }) {
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
+  const terms = getParticipantTerminology(program, lang);
 
   // ── Labels (fall back to Arabic if key missing) ─────────────────────────
   const L = {
@@ -28,7 +31,9 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     cleared:      t.status_cleared || (lang === "fr" ? "Soldé"          : "مصفّى"),
     partial:      t.status_partial || (lang === "fr" ? "Partiel"        : "جزئي"),
     unpaid:       t.status_unpaid  || (lang === "fr" ? "Non payé"       : "لم يدفع"),
-    totalClients: t.totalClients   || (lang === "fr" ? "Total pèlerins" : "إجمالي المعتمرين"),
+    totalClients: lang === "ar"
+      ? `إجمالي ${terms.plural}`
+      : t.totalClients || (lang === "fr" ? "Total pèlerins" : "Total Pilgrims"),
     collected:    t.collected      || (lang === "fr" ? "Encaissé"       : "المحصَّل"),
     male:         lang === "fr" ? "M" : "ذ",
     female:       lang === "fr" ? "F" : "أ",

@@ -498,7 +498,7 @@ export function Toast({ message, type = "success", onClose }) {
     <div
       className="animate-slideIn"
       style={{
-        position: "fixed", bottom: 24, left: 24, zIndex: 9999,
+        position: "fixed", bottom: 24, left: 24, zIndex: 20000,
         background: c.bg,
         border: `1px solid ${c.border}`,
         borderRadius: 12,

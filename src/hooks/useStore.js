@@ -1039,12 +1039,25 @@ export function useStore(agencyId, onToast) {
   const addPayment = useCallback((data) => {
     const id          = genId("PMT");
     const autoReceipt = "REC-" + id.slice(-6).toUpperCase();
+    const receiptNo = data.receiptNo || data.receipt_no || data.receiptNumber || data.receipt_number || autoReceipt;
+    const chequeNumber = trimString(data.chequeNumber ?? data.cheque_number ?? data.checkNumber ?? data.check_number);
+    const paidBy = trimString(data.paidBy ?? data.paid_by);
     const pmt = {
       ...data, id,
-      receiptNo: data.receiptNo || autoReceipt,
+      method: data.method || data.paymentMethod || data.payment_method || "",
+      payment_method: data.payment_method || data.method || data.paymentMethod || "",
+      receiptNo,
+      receipt_no: receiptNo,
+      receiptNumber: receiptNo,
+      receipt_number: receiptNo,
       date:      data.date || new Date().toISOString().split("T")[0],
-      chequeNumber: trimString(data.chequeNumber),
-      paidBy: trimString(data.paidBy),
+      chequeNumber,
+      cheque_number: chequeNumber,
+      checkNumber: chequeNumber,
+      check_number: chequeNumber,
+      paidBy,
+      paid_by: paidBy,
+      notes: data.notes ?? data.note ?? "",
     };
     addPaymentLocal(pmt);
     const c   = clients.find(x => x.id === data.clientId);

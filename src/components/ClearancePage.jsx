@@ -1,4 +1,5 @@
 import React from "react";
+import { ChevronDown, Filter } from "lucide-react";
 import { StatusBadge, GlassCard, SearchBar, Button, Modal } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
@@ -53,6 +54,105 @@ const formatFileReference = (client = {}) => {
 };
 
 const CLEARANCE_PROGRAM_STORAGE_KEY = "rukn-clearance-selected-program";
+
+const normalizeText = (value) => String(value ?? "").trim().toLowerCase();
+
+const joinNormalizedValues = (...values) => values
+  .flat()
+  .filter((value) => value !== null && value !== undefined && String(value).trim())
+  .map(normalizeText)
+  .join(" ");
+
+const getPaymentMethodText = (payment = {}) => joinNormalizedValues(
+  payment.method,
+  payment.paymentMethod,
+  payment.payment_method,
+  payment.paidByMethod,
+  payment.paid_by_method
+);
+
+const normalizePaymentMethod = (value = "") => {
+  const method = typeof value === "object" && value !== null
+    ? getPaymentMethodText(value)
+    : normalizeText(value);
+  if (!method) return "";
+  if (method.includes("شيك") || method.includes("chèque") || method.includes("cheque") || method.includes("check")) return "cheque";
+  if (method.includes("إيداع") || method.includes("ايداع") || method.includes("dépôt") || method.includes("depot") || method.includes("deposit")) return "bank_deposit";
+  if (method === "bank" || method.includes("تحويل") || method.includes("virement") || method.includes("transfer")) return "bank_transfer";
+  if (method.includes("نقد") || method.includes("espèces") || method.includes("especes") || method.includes("cash")) return "cash";
+  return method;
+};
+
+const getPaymentReferenceText = (payment = {}) => joinNormalizedValues(
+  payment.chequeNumber,
+  payment.cheque_number,
+  payment.checkNumber,
+  payment.check_number,
+  payment.reference,
+  payment.paymentReference,
+  payment.payment_reference,
+  payment.receiptNo,
+  payment.receipt_no,
+  payment.receiptNumber,
+  payment.receipt_number,
+  payment.ref,
+  payment.note,
+  payment.notes
+);
+
+const getPaymentPayerText = (payment = {}) => joinNormalizedValues(
+  payment.paidBy,
+  payment.paid_by,
+  payment.payerName,
+  payment.payer_name,
+  payment.depositorName,
+  payment.depositor_name,
+  payment.transferName,
+  payment.transfer_name,
+  payment.reference,
+  payment.paymentReference,
+  payment.payment_reference,
+  payment.ref,
+  payment.note,
+  payment.notes
+);
+
+const getPaymentContextSearchPlaceholder = (method, lang = "ar", t = {}) => {
+  if (method === "cheque") {
+    return t.chequeSearchPlaceholder || (lang === "fr" ? "Rechercher par numéro de chèque" : lang === "en" ? "Search by cheque number" : "ابحث برقم الشيك");
+  }
+  if (method === "bank_transfer") {
+    return t.transferNameSearchPlaceholder || (lang === "fr" ? "Rechercher par nom du virement" : lang === "en" ? "Search by transfer name" : "ابحث باسم المحوّل");
+  }
+  if (method === "bank_deposit") {
+    return t.depositorNameSearchPlaceholder || (lang === "fr" ? "Rechercher par nom du déposant" : lang === "en" ? "Search by depositor name" : "ابحث باسم المودِع");
+  }
+  return "";
+};
+
+const getPaymentMethodOptions = (lang = "ar") => {
+  if (lang === "fr") return [
+    { key: "all", label: "Tous" },
+    { key: "cash", label: "Espèces" },
+    { key: "bank_transfer", label: "Virement bancaire" },
+    { key: "cheque", label: "Chèque" },
+    { key: "bank_deposit", label: "Dépôt bancaire" },
+  ];
+  if (lang === "en") return [
+    { key: "all", label: "All" },
+    { key: "cash", label: "Cash" },
+    { key: "bank_transfer", label: "Bank transfer" },
+    { key: "cheque", label: "Cheque" },
+    { key: "bank_deposit", label: "Bank deposit" },
+  ];
+  return [
+    { key: "all", label: "الكل" },
+    { key: "cash", label: "نقد" },
+    { key: "bank_transfer", label: "تحويل بنكي" },
+    { key: "cheque", label: "شيك" },
+    { key: "bank_deposit", label: "إيداع بنكي" },
+  ];
+};
 
 const getProgramDateValue = (program = {}) => {
   const raw = program.departure || program.startDate || program.date || program.departureDate || "";
@@ -361,6 +461,9 @@ export default function ClearancePage({ store }) {
   } = store;
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const [paymentMethodFilter, setPaymentMethodFilter] = React.useState("all");
+  const [paymentMethodOpen, setPaymentMethodOpen] = React.useState(false);
+  const [paymentContextSearch, setPaymentContextSearch] = React.useState("");
   const [selectedProgramId, setSelectedProgramId] = React.useState(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(CLEARANCE_PROGRAM_STORAGE_KEY) || "";
@@ -370,6 +473,7 @@ export default function ClearancePage({ store }) {
   const [invoiceClient, setInvoiceClient] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState("clearance");
   const [savedInvoices, setSavedInvoices] = React.useState(() => readSavedInvoices());
+  const paymentMethodRef = React.useRef(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
@@ -419,7 +523,28 @@ export default function ClearancePage({ store }) {
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [selectedProgramId, filter, search, pageSize]);
+  }, [selectedProgramId, filter, search, paymentMethodFilter, paymentContextSearch, pageSize]);
+
+  React.useEffect(() => {
+    setPaymentContextSearch("");
+  }, [paymentMethodFilter]);
+
+  React.useEffect(() => {
+    if (!paymentMethodOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (paymentMethodRef.current?.contains(event.target)) return;
+      setPaymentMethodOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setPaymentMethodOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [paymentMethodOpen]);
 
   const selectedProgram = React.useMemo(
     () => programs.find((program) => program.id === selectedProgramId) || null,
@@ -430,6 +555,8 @@ export default function ClearancePage({ store }) {
     () => selectedProgramId ? clients.filter((client) => client.programId === selectedProgramId) : [],
     [clients, selectedProgramId]
   );
+  const paymentMethodOptions = React.useMemo(() => getPaymentMethodOptions(lang), [lang]);
+  const activePaymentMethodOption = paymentMethodOptions.find((option) => option.key === paymentMethodFilter) || paymentMethodOptions[0];
 
   const programData = React.useMemo(() => selectedProgramClients.map(c => {
     const prog      = selectedProgram || programs.find(p => p.id === c.programId);
@@ -454,8 +581,21 @@ export default function ClearancePage({ store }) {
       || (c.displayName || c.name || "").toLowerCase().includes(q)
       || (c.id || "").toLowerCase().includes(q)
       || refMatch.includes(q);
-    return ok1 && ok2;
-  }), [programData, filter, search]);
+    const methodMatches = paymentMethodFilter === "all"
+      || c.clientPayments.some((payment) => normalizePaymentMethod(payment) === paymentMethodFilter);
+    const contextQuery = normalizeText(paymentContextSearch);
+    const hasContextSearch = ["cheque", "bank_transfer", "bank_deposit"].includes(paymentMethodFilter);
+    const contextMatches = !hasContextSearch || !contextQuery
+      || c.clientPayments.some((payment) => (
+        normalizePaymentMethod(payment) === paymentMethodFilter
+        && (
+          paymentMethodFilter === "cheque"
+            ? getPaymentReferenceText(payment).includes(contextQuery)
+            : getPaymentPayerText(payment).includes(contextQuery)
+        )
+      ));
+    return ok1 && ok2 && methodMatches && contextMatches;
+  }), [paymentContextSearch, programData, filter, paymentMethodFilter, search]);
 
   const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
   const pageData = React.useMemo(() => {
@@ -805,13 +945,100 @@ export default function ClearancePage({ store }) {
         ))}
       </div>
 
-      <div className="clearance-search">
+      <div className="clearance-search" style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
         <SearchBar
           value={search}
           onChange={e=>setSearch(e.target.value)}
           placeholder={t.searchGeneral}
-          style={{ width:"100%", maxWidth:360 }}
+          style={{ width:"100%", maxWidth:360, flex:"1 1 260px" }}
         />
+        <div ref={paymentMethodRef} style={{ position:"relative", flex:"0 0 auto" }}>
+          <button
+            type="button"
+            onClick={() => setPaymentMethodOpen((open) => !open)}
+            aria-expanded={paymentMethodOpen}
+            title={t.paymentMethodFilter || t.paymentMethodLabel || activePaymentMethodOption.label}
+            style={{
+              height:38,
+              minWidth:170,
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"space-between",
+              gap:10,
+              border:"1px solid var(--rukn-border-soft)",
+              borderRadius:12,
+              background:paymentMethodFilter === "all" ? "var(--rukn-bg-input)" : "var(--rukn-gold-dim)",
+              color:paymentMethodFilter === "all" ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
+              padding:"0 11px",
+              fontSize:12,
+              fontWeight:800,
+              fontFamily:"'Cairo',sans-serif",
+              cursor:"pointer",
+            }}
+          >
+            <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+              <Filter size={14} />
+              <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {activePaymentMethodOption.label}
+              </span>
+            </span>
+            <ChevronDown
+              size={14}
+              style={{ flexShrink:0, transform:paymentMethodOpen ? "rotate(180deg)" : "none", transition:"transform .18s ease" }}
+            />
+          </button>
+          {paymentMethodOpen && (
+            <div style={{
+              position:"absolute",
+              top:"calc(100% + 7px)",
+              insetInlineStart:0,
+              width:210,
+              zIndex:40,
+              padding:6,
+              borderRadius:12,
+              border:"1px solid var(--rukn-menu-border, var(--rukn-border-soft))",
+              background:"var(--rukn-menu-bg, var(--rukn-bg-card))",
+              boxShadow:"var(--rukn-menu-shadow, 0 18px 40px rgba(0,0,0,.28))",
+            }}>
+              {paymentMethodOptions.map((option) => {
+                const active = paymentMethodFilter === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => {
+                      setPaymentMethodFilter(option.key);
+                      setPaymentMethodOpen(false);
+                    }}
+                    style={{
+                      width:"100%",
+                      border:0,
+                      borderRadius:9,
+                      background:active ? "var(--rukn-gold-dim)" : "transparent",
+                      color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                      padding:"8px 9px",
+                      fontSize:12,
+                      fontWeight:active ? 800 : 600,
+                      cursor:"pointer",
+                      fontFamily:"'Cairo',sans-serif",
+                      textAlign:"start",
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {["cheque", "bank_transfer", "bank_deposit"].includes(paymentMethodFilter) && (
+          <SearchBar
+            value={paymentContextSearch}
+            onChange={(event) => setPaymentContextSearch(event.target.value)}
+            placeholder={getPaymentContextSearchPlaceholder(paymentMethodFilter, lang, t)}
+            style={{ width:"100%", maxWidth:260, flex:"0 1 240px" }}
+          />
+        )}
       </div>
 
       <div className="table-scroll clearance-table">

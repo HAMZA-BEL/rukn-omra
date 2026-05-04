@@ -3,10 +3,13 @@ import { badgePhonesFromProgram } from "./badgeTemplateMapping";
 import { normalizeBadgeLayout } from "./badgeLayout";
 import { getBadgeTemplateImageUrl, getPilgrimPhotoUrl } from "./badgeStorage";
 import { fitTextBox } from "./badgeTextFit";
+import { getParticipantTerminology } from "../../../utils/participantTerminology";
 
 const mmToPt = (mm) => Number(mm || 0) * 72 / 25.4;
 const sanitizeFile = (value) => String(value || "badge").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").slice(0, 90);
-const clientName = (client = {}) => [client.firstName, client.lastName].filter(Boolean).join(" ").trim() || client.name || "معتمر";
+const clientName = (client = {}, program = {}) => [client.firstName, client.lastName].filter(Boolean).join(" ").trim()
+  || client.name
+  || getParticipantTerminology(program, "ar").singular;
 const passportNumber = (client = {}) => client.passport?.number || client.passportNumber || "";
 
 const loadImage = async (url) => {
@@ -41,7 +44,7 @@ const drawCover = (ctx, image, x, y, width, height, mode = "cover") => {
 const dataForField = ({ field, client, program, agency, fileNumber }) => {
   const phones = badgePhonesFromProgram(program);
   const map = {
-    fullName: clientName(client),
+    fullName: clientName(client, program),
     passportNumber: passportNumber(client),
     primaryPhone: phones[0] || "",
     extraPhone: phones[1] || phones[2] || "",
@@ -209,7 +212,7 @@ export async function downloadClientBadgePdf({ agencyId, client, program, agency
   if (!template) throw new Error("missing-template");
   const page = await renderBadgeCanvas({ template, client, program, agency, fileNumber });
   const pdf = await makePdf([page]);
-  downloadBlob(pdf, `badge-${sanitizeFile(clientName(client))}.pdf`);
+  downloadBlob(pdf, `badge-${sanitizeFile(clientName(client, program))}.pdf`);
 }
 
 export async function downloadProgramBadgesPdf({ agencyId, clients = [], program, agency }) {

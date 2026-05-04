@@ -13,16 +13,30 @@ export function usePaymentsSlice() {
 
   const handleRealtimeUpsert = useCallback((row) => {
     if (!row) return;
+    const method = row.method || row.payment_method || "";
+    const receiptNo = row.receipt_no || row.receipt_number || "";
+    const chequeNumber = row.cheque_number || row.check_number || "";
+    const note = row.note || row.notes || "";
     const mapped = {
       id: row.id,
       clientId: row.client_id,
       amount: Number(row.amount),
       date: row.date,
-      method: row.method,
-      receiptNo: row.receipt_no,
-      note: row.note,
-      chequeNumber: row.cheque_number || "",
+      method,
+      paymentMethod: method,
+      payment_method: method,
+      receiptNo,
+      receipt_no: receiptNo,
+      receiptNumber: receiptNo,
+      receipt_number: receiptNo,
+      note,
+      notes: note,
+      chequeNumber,
+      cheque_number: chequeNumber,
+      checkNumber: chequeNumber,
+      check_number: chequeNumber,
       paidBy: row.paid_by || "",
+      paid_by: row.paid_by || "",
     };
     setPayments((prev) => {
       const exists = prev.find((p) => p.id === mapped.id);
