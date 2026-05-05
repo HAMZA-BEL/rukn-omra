@@ -590,33 +590,21 @@ create policy "badge_templates_delete" on public.badge_templates
   for delete using (agency_id = public.get_agency_id());
 
 -- payments
+revoke insert, update on table public.payments from public, anon, authenticated;
+
 drop policy if exists "payments_select" on public.payments;
 drop policy if exists "payments_insert" on public.payments;
 drop policy if exists "payments_update" on public.payments;
 drop policy if exists "payments_delete" on public.payments;
+drop policy if exists "payments_insert_blocked" on public.payments;
+drop policy if exists "payments_update_blocked" on public.payments;
 create policy "payments_select" on public.payments
   for select using (agency_id = public.get_agency_id());
-create policy "payments_insert" on public.payments
-  for insert with check (
-    agency_id = public.get_agency_id()
-    and exists (
-      select 1
-      from public.clients c
-      where c.id = client_id
-        and c.agency_id = public.get_agency_id()
-    )
-  );
-create policy "payments_update" on public.payments
-  for update using (agency_id = public.get_agency_id())
-  with check (
-    agency_id = public.get_agency_id()
-    and exists (
-      select 1
-      from public.clients c
-      where c.id = client_id
-        and c.agency_id = public.get_agency_id()
-    )
-  );
+create policy "payments_insert_blocked" on public.payments
+  for insert with check (false);
+create policy "payments_update_blocked" on public.payments
+  for update using (false)
+  with check (false);
 create policy "payments_delete" on public.payments
   for delete using (agency_id = public.get_agency_id());
 

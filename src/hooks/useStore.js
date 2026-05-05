@@ -499,7 +499,10 @@ export function useStore(agencyId, onToast) {
     if (clientsChanged)  setClients(normalizedClients);
     if (paymentsChanged) replacePayments(normalizedPayments);
     if (!isSupabaseEnabled || !agencyId) return;
-    if (!programsToSync.length && !clientsToSync.length && !paymentsToSync.length) return;
+    if (paymentsToSync.length) {
+      console.warn("[Store] Skipped legacy payment upsert in Supabase mode; payments must be created through create_payment_with_receipt.");
+    }
+    if (!programsToSync.length && !clientsToSync.length) return;
     sync(async () => {
       const upsertSeq = async (records, handler) => {
         for (const record of records) {
@@ -512,7 +515,6 @@ export function useStore(agencyId, onToast) {
       if (error) return { error };
       error = await upsertSeq(clientsToSync, (record, agency) => saveClient(record, agency));
       if (error) return { error };
-      error = await upsertSeq(paymentsToSync, (record, agency) => savePayment(record, agency));
       return { error };
     });
   }, [programs, clients, payments, setPrograms, setClients, replacePayments, isSupabaseEnabled, agencyId, sync]);
@@ -1312,9 +1314,11 @@ export function useStore(agencyId, onToast) {
       await Promise.all([
         ...programs.map(p => saveProgram(p, agencyId)),
         ...clients.map(c  => saveClient(c, agencyId)),
-        ...payments.map(p => savePayment(p, agencyId)),
         db.agency.update(agencyId, agency),
       ]);
+      if (payments.length) {
+        console.warn("[Store] Skipped payment upsert during forceSync in Supabase mode; payments are managed through create_payment_with_receipt.");
+      }
       const now = new Date();
       setLastSynced(now);
       try { localStorage.setItem(`umrah_last_synced_${ns}`, now.toISOString()); } catch {}
