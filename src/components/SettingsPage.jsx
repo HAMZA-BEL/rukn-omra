@@ -6,6 +6,7 @@ import { isSupabaseEnabled } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
+import { ContractTemplatesSettings } from "../features/contracts";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 
 const t2 = theme.colors;
@@ -67,6 +68,8 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [agencyOpen, setAgencyOpen] = React.useState(false);
   const [logoOpen, setLogoOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
+  const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
+  const [contractTemplatesOpen, setContractTemplatesOpen] = React.useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
@@ -193,6 +196,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const normalizedRole = String(currentUserRole || "").toLowerCase();
   const canManageUsers = normalizedRole === "manager" || normalizedRole === "owner";
   const canManageBackups = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
+  const canManageContractTemplates = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
 
   const backupWarningText = (
     lang === "fr"
@@ -214,6 +218,26 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       : "تحميل النسخة الاحتياطية"
   );
   const cancelLabel = lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء";
+  const badgeTemplatesTitle = t.badgeTemplatesTitle || (
+    lang === "fr" ? "Modèles de badges" : lang === "en" ? "Badge Templates" : "قوالب الشارات"
+  );
+  const badgeTemplatesDesc = t.badgeTemplatesSubtitle || (
+    lang === "fr"
+      ? "Importez le design du badge, placez les données, puis utilisez-le pour imprimer les badges."
+      : lang === "en"
+      ? "Import the badge design, place the data, then use it to print pilgrim badges."
+      : "ارفع تصميم الشارة، ضع الحقول، ثم استعمله لطباعة شارات المعتمرين."
+  );
+  const contractTemplatesTitle = (
+    lang === "fr" ? "Modèles de contrats" : lang === "en" ? "Contract Templates" : "قوالب العقود"
+  );
+  const contractTemplatesDesc = (
+    lang === "fr"
+      ? "Importez un modèle Word pour Omra et un modèle Word pour Hajj."
+      : lang === "en"
+      ? "Upload one Word template for Umrah and one Word template for Hajj."
+      : "ارفع قالب Word واحد للعمرة وقالب Word واحد للحج."
+  );
 
   const handleBackupExport = () => {
     if (!canManageBackups) return;
@@ -474,7 +498,30 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
         <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
       </div>
 
-      <BadgeTemplatesPage store={store} onToast={onToast} />
+      <SettingsSectionCard
+        title={badgeTemplatesTitle}
+        description={badgeTemplatesDesc}
+        open={badgeTemplatesOpen}
+        onToggle={() => setBadgeTemplatesOpen((current) => !current)}
+      >
+        <BadgeTemplatesPage store={store} onToast={onToast} embedded />
+      </SettingsSectionCard>
+
+      {canManageContractTemplates && (
+        <SettingsSectionCard
+          title={contractTemplatesTitle}
+          description={contractTemplatesDesc}
+          open={contractTemplatesOpen}
+          onToggle={() => setContractTemplatesOpen((current) => !current)}
+        >
+          <ContractTemplatesSettings
+            store={store}
+            onToast={onToast}
+            canManage={canManageContractTemplates}
+            embedded
+          />
+        </SettingsSectionCard>
+      )}
 
       {/* Cloud connection status */}
       {isSupabaseEnabled && (

@@ -151,6 +151,8 @@ const prepareClientForSave = (data) => {
     cin:       trimString(data.cin || data.nationalId || data.passport?.cin || data.passport?.nationalId),
     city:      trimString(data.city),
     ticketNo:  trimString(data.ticketNo),
+    representedByClientId: trimString(data.representedByClientId || data.represented_by_client_id),
+    representedByRelationship: trimString(data.representedByRelationship || data.represented_by_relationship),
     notes:     typeof data.notes === "string" ? data.notes.trim() : data.notes ?? "",
     gender,
     passport:  {

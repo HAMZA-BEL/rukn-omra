@@ -14,7 +14,7 @@ const isMissingSetupError = (error) => Boolean(error && (
 ));
 const DEFAULT_TEMPLATE_NAMES = new Set(["قالب الشارة", "Modèle de badge", "Badge template"]);
 
-export function BadgeTemplatesPage({ store, onToast }) {
+export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
   const { t } = useLang();
   const agencyId = store?.agencyId || store?.agency?.id || "";
   const [creatorOpen, setCreatorOpen] = React.useState(false);
@@ -210,15 +210,23 @@ export function BadgeTemplatesPage({ store, onToast }) {
     )
     : null;
 
-  return (
-    <GlassCard gold style={{ padding: 18, marginBottom: 20, overflow: "visible" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-        <div>
-          <p style={{ fontSize: 19, fontWeight: 900, color: "var(--rukn-gold)" }}>{t.badgeTemplatesTitle || "Badge templates"}</p>
-          <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", marginTop: 5, lineHeight: 1.7 }}>
-            {t.badgeTemplatesSubtitle || "Import the badge design, place the data, then use it to print pilgrim badges."}
-          </p>
-        </div>
+  const content = (
+    <>
+      <div style={{
+        display: "flex",
+        justifyContent: embedded ? "flex-end" : "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+        marginBottom: 16,
+      }}>
+        {!embedded && (
+          <div>
+            <p style={{ fontSize: 19, fontWeight: 900, color: "var(--rukn-gold)" }}>{t.badgeTemplatesTitle || "Badge templates"}</p>
+            <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", marginTop: 5, lineHeight: 1.7 }}>
+              {t.badgeTemplatesSubtitle || "Import the badge design, place the data, then use it to print pilgrim badges."}
+            </p>
+          </div>
+        )}
         <Button variant="primary" size="sm" icon="plus" onClick={() => setCreatorOpen(true)}>
           {t.badgeNewTemplate || "New template"}
         </Button>
@@ -333,6 +341,16 @@ export function BadgeTemplatesPage({ store, onToast }) {
         onCreate={(template) => handleSave(template, { openEditor: true })}
         onToast={onToast}
       />
+    </>
+  );
+
+  if (embedded) {
+    return <div style={{ overflow: "visible" }}>{content}</div>;
+  }
+
+  return (
+    <GlassCard gold style={{ padding: 18, marginBottom: 20, overflow: "visible" }}>
+      {content}
     </GlassCard>
   );
 }

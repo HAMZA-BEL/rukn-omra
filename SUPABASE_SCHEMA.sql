@@ -116,6 +116,8 @@ create table if not exists public.clients (
   deleted            boolean not null default false,
   deleted_at         timestamptz,
   deleted_batch_id   uuid,
+  represented_by_client_id uuid references public.clients(id) on delete set null,
+  represented_by_relationship text,
   registration_date  date,
   last_modified      date,
   created_at         timestamptz default now()
@@ -127,6 +129,21 @@ alter table public.programs add column if not exists badge_saudi_phone_2 text;
 alter table public.programs add column if not exists badge_note text;
 alter table public.programs add column if not exists badge_template_id text;
 alter table public.clients add column if not exists registration_source text;
+alter table public.clients add column if not exists represented_by_client_id uuid references public.clients(id) on delete set null;
+alter table public.clients add column if not exists represented_by_relationship text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'clients_represented_by_not_self'
+  ) then
+    alter table public.clients
+      add constraint clients_represented_by_not_self
+      check (represented_by_client_id is null or represented_by_client_id <> id);
+  end if;
+end $$;
 
 -- Badge templates
 create table if not exists public.badge_templates (
@@ -145,6 +162,20 @@ create table if not exists public.badge_templates (
 );
 
 alter table public.badge_templates add column if not exists description text;
+
+-- Contract templates
+create table if not exists public.contract_templates (
+  id            uuid primary key default gen_random_uuid(),
+  agency_id     uuid not null references public.agencies(id) on delete cascade,
+  template_type text not null check (template_type in ('umrah', 'hajj')),
+  template_path text not null,
+  file_name     text,
+  file_size     integer,
+  updated_by    uuid references auth.users(id) on delete set null,
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now(),
+  unique (agency_id, template_type)
+);
 
 -- Payments
 create table if not exists public.payments (
@@ -307,6 +338,7 @@ create index if not exists idx_users_agency       on public.users(agency_id);
 create index if not exists idx_programs_agency    on public.programs(agency_id);
 create index if not exists idx_clients_agency     on public.clients(agency_id);
 create index if not exists idx_clients_program    on public.clients(program_id);
+create index if not exists idx_clients_represented_by on public.clients(agency_id, represented_by_client_id);
 create index if not exists idx_clients_archived   on public.clients(agency_id, archived);
 create index if not exists idx_payments_agency    on public.payments(agency_id);
 create index if not exists idx_payments_client    on public.payments(client_id);
@@ -322,6 +354,7 @@ create index if not exists idx_activity_archive_created  on public.activity_log_
 create index if not exists idx_notifications_agency on public.notifications(agency_id);
 create index if not exists idx_notifications_state  on public.notifications(agency_id, is_archived, is_read);
 create index if not exists idx_badge_templates_agency on public.badge_templates(agency_id, is_default, updated_at desc);
+create index if not exists idx_contract_templates_agency on public.contract_templates(agency_id, template_type);
 
 -- ── 3. RLS Helper Function ────────────────────────────────────
 -- Returns the agency_id for the currently authenticated user.
@@ -349,6 +382,7 @@ alter table public.receipt_counters enable row level security;
 alter table public.invoice_counters enable row level security;
 alter table public.invoices enable row level security;
 alter table public.badge_templates enable row level security;
+alter table public.contract_templates enable row level security;
 alter table public.activity_log enable row level security;
 alter table public.activity_log_archive enable row level security;
 alter table public.notifications enable row level security;
@@ -574,6 +608,82 @@ create policy "agency_assets_delete" on storage.objects
     and split_part(name, '/', 2) = public.get_agency_id()::text
   );
 
+-- contract template documents: private bucket, agency-scoped object paths
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'contract-templates',
+  'contract-templates',
+  false,
+  10485760,
+  array['application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+)
+on conflict (id) do update
+set public = false,
+    file_size_limit = 10485760,
+    allowed_mime_types = array['application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+
+drop policy if exists "contract_templates_storage_select" on storage.objects;
+drop policy if exists "contract_templates_storage_insert" on storage.objects;
+drop policy if exists "contract_templates_storage_update" on storage.objects;
+drop policy if exists "contract_templates_storage_delete" on storage.objects;
+create policy "contract_templates_storage_select" on storage.objects
+  for select using (
+    bucket_id = 'contract-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+  );
+create policy "contract_templates_storage_insert" on storage.objects
+  for insert with check (
+    bucket_id = 'contract-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
+create policy "contract_templates_storage_update" on storage.objects
+  for update using (
+    bucket_id = 'contract-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  )
+  with check (
+    bucket_id = 'contract-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
+create policy "contract_templates_storage_delete" on storage.objects
+  for delete using (
+    bucket_id = 'contract-templates'
+    and split_part(name, '/', 1) = 'agencies'
+    and split_part(name, '/', 2) = public.get_agency_id()::text
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
+
 -- badge template rows
 drop policy if exists "badge_templates_select" on public.badge_templates;
 drop policy if exists "badge_templates_insert" on public.badge_templates;
@@ -588,6 +698,57 @@ create policy "badge_templates_update" on public.badge_templates
   with check (agency_id = public.get_agency_id());
 create policy "badge_templates_delete" on public.badge_templates
   for delete using (agency_id = public.get_agency_id());
+
+-- contract template rows
+drop policy if exists "contract_templates_select" on public.contract_templates;
+drop policy if exists "contract_templates_insert" on public.contract_templates;
+drop policy if exists "contract_templates_update" on public.contract_templates;
+drop policy if exists "contract_templates_delete" on public.contract_templates;
+create policy "contract_templates_select" on public.contract_templates
+  for select using (agency_id = public.get_agency_id());
+create policy "contract_templates_insert" on public.contract_templates
+  for insert with check (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
+create policy "contract_templates_update" on public.contract_templates
+  for update using (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  )
+  with check (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
+create policy "contract_templates_delete" on public.contract_templates
+  for delete using (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.users u
+      where u.id = auth.uid()
+        and u.agency_id = public.get_agency_id()
+        and lower(u.role) in ('manager', 'owner', 'admin')
+    )
+  );
 
 -- payments
 revoke insert, update on table public.payments from public, anon, authenticated;

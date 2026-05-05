@@ -139,6 +139,8 @@ const toClient = (c, agencyId) => {
   official_price:    c.officialPrice    ?? 0,
   sale_price:        c.salePrice        ?? c.price ?? 0,
   ticket_no:         cleanString(c.ticketNo),
+  represented_by_client_id: normalizeForeignKey(c.representedByClientId ?? c.represented_by_client_id ?? c.guardianClientId ?? c.guardian_client_id),
+  represented_by_relationship: cleanString(c.representedByRelationship ?? c.represented_by_relationship ?? c.guardianRelationship ?? c.guardian_relationship),
   passport:          passport,
   docs:              { ...(c.docs ?? {}), ...(badgePhotoPath ? { badgePhotoPath } : {}), ...(rooming ? { rooming } : {}) },
   notes:             cleanString(c.notes),
@@ -184,6 +186,10 @@ const fromClient = (row) => {
   officialPrice:    Number(row.official_price ?? 0),
   salePrice:        Number(row.sale_price ?? 0),
   ticketNo:         row.ticket_no,
+  representedByClientId: row.represented_by_client_id || row.docs?.representedByClientId || "",
+  represented_by_client_id: row.represented_by_client_id || row.docs?.representedByClientId || "",
+  representedByRelationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
+  represented_by_relationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
   passport:         row.passport ?? {},
   docs:             row.docs ?? {},
   badgePhotoPath:   row.docs?.badgePhotoPath || "",
@@ -284,6 +290,30 @@ const fromBadgeTemplate = (row) => ({
   heightMm: Number(row.height_mm || 140),
   layout: row.layout || {},
   isDefault: Boolean(row.is_default),
+  createdAt: row.created_at || "",
+  updatedAt: row.updated_at || "",
+});
+
+const toContractTemplate = (template, agencyId) => {
+  const payload = {
+    agency_id: agencyId,
+    template_type: template.templateType || template.type,
+    template_path: cleanString(template.templatePath),
+    file_name: cleanString(template.fileName),
+    file_size: Number(template.fileSize || 0) || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (template.id) payload.id = template.id;
+  return payload;
+};
+
+const fromContractTemplate = (row) => ({
+  id: row.id,
+  templateType: row.template_type,
+  type: row.template_type,
+  templatePath: row.template_path || "",
+  fileName: row.file_name || "",
+  fileSize: Number(row.file_size || 0),
   createdAt: row.created_at || "",
   updatedAt: row.updated_at || "",
 });
@@ -691,6 +721,37 @@ export const db = {
         .delete()
         .eq("agency_id", agencyId)
         .eq("id", id);
+      return { error };
+    },
+  },
+
+  contractTemplates: {
+    async fetchAll(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("contract_templates")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .order("template_type", { ascending: true });
+      return { data: data?.map(fromContractTemplate) ?? [], error };
+    },
+    async upsert(template, agencyId) {
+      if (!agencyId) return { data: null, error: null };
+      const payload = toContractTemplate(template, agencyId);
+      const { data, error } = await supabase
+        .from("contract_templates")
+        .upsert(payload, { onConflict: "agency_id,template_type" })
+        .select("*")
+        .single();
+      return { data: data ? fromContractTemplate(data) : null, error };
+    },
+    async deleteByType(templateType, agencyId) {
+      if (!agencyId || !templateType) return { error: null };
+      const { error } = await supabase
+        .from("contract_templates")
+        .delete()
+        .eq("agency_id", agencyId)
+        .eq("template_type", templateType);
       return { error };
     },
   },

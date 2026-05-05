@@ -195,6 +195,7 @@ export const translateActivityDescription = (description = "", lang = getUiLang(
         "تم تصدير نسخة احتياطية كاملة": "Sauvegarde complète exportée",
         "تم استيراد نسخة احتياطية": "Sauvegarde importée",
         "تمت استعادة معتمر من السلة": "Pèlerin restauré depuis la corbeille",
+        "تم تحميل عقد": "Contrat téléchargé",
       }
     : {
         "تم تسجيل معتمر جديد": "New pilgrim registered",
@@ -206,6 +207,7 @@ export const translateActivityDescription = (description = "", lang = getUiLang(
         "تم تصدير نسخة احتياطية كاملة": "Full backup exported",
         "تم استيراد نسخة احتياطية": "Backup imported",
         "تمت استعادة معتمر من السلة": "Pilgrim restored from trash",
+        "تم تحميل عقد": "Contract downloaded",
       };
   if (dict[text]) return dict[text];
 
@@ -219,6 +221,7 @@ export const translateActivityDescription = (description = "", lang = getUiLang(
     [/^تم حذف برنامج (.+)$/u, lang === "fr" ? "Programme supprimé : $1" : "Program deleted: $1"],
     [/^تم حذف دفعة (.*)$/u, lang === "fr" ? "Paiement supprimé $1" : "Payment deleted $1"],
     [/^دفعة (.+)$/u, lang === "fr" ? "Paiement $1" : "Payment $1"],
+    [/^تم تحميل عقد (.+)$/u, lang === "fr" ? "Contrat téléchargé : $1" : "Contract downloaded: $1"],
     [/^تمت استعادة برنامج (.+)$/u, lang === "fr" ? "Programme restauré : $1" : "Program restored: $1"],
     [/^تمت استعادة (\d+) برامج من سلة المحذوفات$/u, lang === "fr" ? "$1 programme(s) restauré(s) depuis la corbeille" : "$1 program(s) restored from trash"],
     [/^تمت استعادة (\d+) معتمرين من السلة$/u, lang === "fr" ? "$1 pèlerin(s) restauré(s) depuis la corbeille" : "$1 pilgrim(s) restored from trash"],

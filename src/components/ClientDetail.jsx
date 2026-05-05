@@ -9,11 +9,17 @@ import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
-import { translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
+import { translateActivityDescription, translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
+import { downloadSingleContract } from "../features/contracts";
+import {
+  getRepresentedByClientId,
+  isEligibleRepresentative,
+  isClientMinorWithoutCin,
+} from "../utils/clientRepresentation";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -62,6 +68,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
+  const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
 
   const program     = getProgramById(client.programId);
@@ -123,6 +130,94 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       setBadgeBusy(false);
     }
   }, [agency, badgeFileNumber, client, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
+
+  const handleDownloadContract = React.useCallback(async () => {
+    const labels = {
+      noProgram: lang === "fr" ? "Aucun programme n’est lié à ce pèlerin."
+        : lang === "en" ? "No program is linked to this pilgrim."
+        : "لا يوجد برنامج مرتبط بهذا المعتمر.",
+      missingRepresentative: lang === "fr" ? "Impossible de générer le contrat de ce mineur avant de choisir son représentant."
+        : lang === "en" ? "Cannot generate this minor’s contract before selecting a representative."
+        : "لا يمكن إنشاء عقد لهذا القاصر قبل اختيار من ينوب عنه.",
+      representativeNotFound: lang === "fr" ? "Le représentant doit être un pèlerin du même programme."
+        : lang === "en" ? "The representative must be a pilgrim from the same program."
+        : "يجب أن يكون من ينوب عنه معتمرًا من نفس البرنامج.",
+      representativeContract: lang === "fr" ? "Contrat du représentant téléchargé"
+        : lang === "en" ? "Representative contract downloaded"
+        : "تم تحميل عقد من ينوب عنه",
+      missingUmrah: lang === "fr" ? "Aucun modèle de contrat Omra n’est importé."
+        : lang === "en" ? "No Umrah contract template is uploaded."
+        : "لم يتم رفع قالب عقد العمرة.",
+      missingHajj: lang === "fr" ? "Aucun modèle de contrat Hajj n’est importé."
+        : lang === "en" ? "No Hajj contract template is uploaded."
+        : "لم يتم رفع قالب عقد الحج.",
+      error: lang === "fr" ? "Impossible de télécharger le contrat."
+        : lang === "en" ? "Unable to download contract."
+        : "تعذر تحميل العقد.",
+      success: lang === "fr" ? "Contrat téléchargé"
+        : lang === "en" ? "Contract downloaded"
+        : "تم تحميل العقد",
+    };
+    if (!program) {
+      onToast?.(labels.noProgram, "error");
+      return;
+    }
+    setContractBusy(true);
+    try {
+      const representedById = getRepresentedByClientId(client);
+      const shouldUseRepresentative = isClientMinorWithoutCin(client);
+      if (shouldUseRepresentative && !representedById) {
+        onToast?.(labels.missingRepresentative, "error");
+        return null;
+      }
+      const representative = shouldUseRepresentative
+        ? clients.find((item) => item.id === representedById && item.programId === client.programId)
+        : null;
+      if (shouldUseRepresentative && (!representative || !isEligibleRepresentative(representative))) {
+        onToast?.(labels.representativeNotFound, "error");
+        return null;
+      }
+      const contractClient = representative || client;
+      const contractProgram = getProgramById(contractClient.programId) || program;
+      const contractPayments = getClientPayments(contractClient.id);
+      const contractTotalPaid = getClientTotalPaid(contractClient.id);
+      const contractSalePrice = contractClient.salePrice || contractClient.price || 0;
+      const representedMinors = clients.filter((item) => (
+        item.id !== contractClient.id
+        && item.programId === contractClient.programId
+        && getRepresentedByClientId(item) === contractClient.id
+        && isClientMinorWithoutCin(item)
+      ));
+      const result = await downloadSingleContract({
+        agencyId: store.agencyId,
+        client: contractClient,
+        program: contractProgram,
+        payments: contractPayments,
+        totalPaid: contractTotalPaid,
+        salePrice: contractSalePrice,
+        agency,
+        representedMinors,
+        lang,
+      });
+      store.recordActivity?.(
+        "contract_generate",
+        translateActivityDescription(`تم تحميل عقد ${getClientDisplayName(contractClient) || displayName}`),
+        getClientDisplayName(contractClient) || displayName
+      );
+      onToast?.(representative ? labels.representativeContract : labels.success, "success");
+      return result;
+    } catch (error) {
+      if (error?.code === "missing-contract-template") {
+        onToast?.(error.templateType === "hajj" ? labels.missingHajj : labels.missingUmrah, "error");
+      } else {
+        console.error("[Contracts] Download failed:", error);
+        onToast?.(labels.error, "error");
+      }
+      return null;
+    } finally {
+      setContractBusy(false);
+    }
+  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, onToast, program, store]);
 
   const openReceiptSelector = React.useCallback((payment) => {
     if (payment) setReceiptPayment(payment);
@@ -240,6 +335,12 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           disabled={badgeBusy}
           onClick={handleDownloadBadge}>
           {t.downloadBadge || "Download badge"}
+        </Button>
+        <Button variant="secondary" size="sm" icon="file"
+          style={printActionButtonStyle}
+          disabled={contractBusy}
+          onClick={handleDownloadContract}>
+          {lang === "fr" ? "Télécharger contrat" : lang === "en" ? "Download contract" : "تحميل العقد"}
         </Button>
       </div>
 

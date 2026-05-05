@@ -16,6 +16,16 @@ import {
   normalizeRoomTypeKey,
 } from "../utils/programPackages";
 import { translateRoomType } from "../utils/i18nValues";
+import {
+  REPRESENTED_BY_RELATIONSHIPS,
+  clientHasCin,
+  getClientAge,
+  getRepresentativeLabel,
+  getSameProgramRepresentativeOptions,
+  isClientAdultWithoutCin,
+  isClientMinorWithoutCin,
+  normalizeRepresentativeRelationship,
+} from "../utils/clientRepresentation";
 
 const tc = theme.colors;
 
@@ -66,6 +76,40 @@ const getLocalizedValue = (value, map, t) => {
   const key = map[value];
   return key ? (t[key] || value) : value;
 };
+
+const representationText = (lang) => ({
+  title: lang === "fr" ? "Représentation" : lang === "en" ? "Representation" : "النيابة في العقد",
+  hasCin: lang === "fr"
+    ? "Ce pèlerin possède une CIN, un contrat individuel sera généré."
+    : lang === "en"
+    ? "This pilgrim has a national ID, so an individual contract will be generated."
+    : "هذا المعتمر يملك بطاقة وطنية، لذلك سيتم إنشاء عقد منفرد له.",
+  minorNeedsRepresentative: lang === "fr"
+    ? "Ce mineur n’a pas de CIN. Sélectionnez un représentant du même programme."
+    : lang === "en"
+    ? "This minor has no national ID. Select a representative from the same program."
+    : "هذا القاصر لا يملك بطاقة وطنية. اختر من ينوب عنه من نفس البرنامج.",
+  adultNoCin: lang === "fr"
+    ? "Ce pèlerin est adulte mais n’a pas de CIN."
+    : lang === "en"
+    ? "This pilgrim is adult but has no national ID."
+    : "هذا المعتمر بالغ لكنه لا يملك بطاقة وطنية.",
+  waitingForBirthDate: lang === "fr"
+    ? "Ajoutez la date de naissance et la CIN pour déterminer le type de contrat."
+    : lang === "en"
+    ? "Add birth date and national ID to determine the contract type."
+    : "أدخل تاريخ الازدياد والبطاقة الوطنية لتحديد نوع العقد.",
+  representedBy: lang === "fr" ? "Représenté par" : lang === "en" ? "Represented by" : "ينوب عنه",
+  relationship: lang === "fr" ? "Lien de parenté" : lang === "en" ? "Relationship" : "صلة القرابة",
+  searchRepresentative: lang === "fr" ? "Rechercher dans les pèlerins du même programme" : lang === "en" ? "Search same-program pilgrims" : "ابحث داخل معتمري نفس البرنامج",
+  selectRepresentative: lang === "fr" ? "Choisir un représentant" : lang === "en" ? "Select representative" : "اختر من ينوب عنه",
+  noRepresentative: lang === "fr" ? "Aucun représentant éligible dans ce programme" : lang === "en" ? "No eligible representative in this program" : "لا يوجد ممثل مؤهل في هذا البرنامج",
+  representativeRequired: lang === "fr"
+    ? "Choisissez un représentant pour ce mineur."
+    : lang === "en"
+    ? "Select a representative for this minor."
+    : "يرجى اختيار من ينوب عن هذا القاصر.",
+});
 
 const pickString = (...candidates) => {
   for (const candidate of candidates) {
@@ -221,6 +265,8 @@ const buildFormState = (client, defaultProgramId, programs) => {
     officialPrice,
     salePrice,
     ticketNo: pickString(client?.ticketNo, client?.ticket_no, client?.ticketNumber, client?.ticket),
+    representedByClientId: pickString(client?.representedByClientId, client?.represented_by_client_id, client?.guardianClientId, client?.guardian_client_id),
+    representedByRelationship: normalizeRepresentativeRelationship(pickString(client?.representedByRelationship, client?.represented_by_relationship, client?.guardianRelationship, client?.guardian_relationship)),
     badgePhotoPath: pickString(client?.badgePhotoPath, client?.docs?.badgePhotoPath),
     notes:    pickString(client?.notes, client?.note),
     gender,
@@ -248,7 +294,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
 
 export default function ClientForm({ client, store, onSave, onCancel, defaultProgramId, lockProgramId = "" }) {
   const { t, tr, dir, lang } = useLang();
-  const { programs, addClient, updateClient } = store;
+  const { programs, clients = [], addClient, updateClient } = store;
   const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
@@ -272,6 +318,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const [badgePhotoRemoved, setBadgePhotoRemoved] = React.useState(false);
   const [badgePhotoError, setBadgePhotoError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [representativeSearch, setRepresentativeSearch] = React.useState("");
 
   // Update form when client changes (for edit mode)
   React.useEffect(() => {
@@ -285,6 +332,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       setBadgePhotoFile(null);
       setBadgePhotoRemoved(false);
       setBadgePhotoError("");
+      setRepresentativeSearch("");
     }
   }, [client, defaultProgramId, programs]);
 
@@ -307,6 +355,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
   const [errors,  setErrors]  = React.useState({});
   const [autoPriceNote, setAutoPriceNote] = React.useState("");
+  const representationLabels = React.useMemo(() => representationText(lang), [lang]);
   const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
     ...option,
     label: option.value === "male_only"
@@ -317,6 +366,17 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   })), [t]);
 
   const set     = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  const setCin = e => {
+    const value = e.target.value;
+    setForm(f => ({
+      ...f,
+      cin: value,
+      passport: {
+        ...f.passport,
+        cin: value,
+      },
+    }));
+  };
   const setSalePrice = e => {
     salePriceManualRef.current = true;
     setAutoPriceNote("");
@@ -371,6 +431,36 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     () => programs.find(p => p.id === form.programId) ?? null,
     [programs, form.programId]
   );
+  const representationClient = React.useMemo(() => ({
+    ...form,
+    id: client?.id || "",
+    cin: form.cin,
+    nationalId: "",
+    national_id: "",
+    passport: {
+      ...form.passport,
+      cin: form.cin,
+      nationalId: "",
+    },
+  }), [client?.id, form]);
+  const hasCin = clientHasCin(representationClient);
+  const clientAge = getClientAge(representationClient);
+  const minorWithoutCin = isClientMinorWithoutCin(representationClient);
+  const adultWithoutCin = isClientAdultWithoutCin(representationClient);
+  const representativeOptions = React.useMemo(() => (
+    getSameProgramRepresentativeOptions({
+      clients,
+      programId: form.programId,
+      currentClientId: client?.id || "",
+    })
+  ), [client?.id, clients, form.programId]);
+  const filteredRepresentativeOptions = React.useMemo(() => {
+    const term = pickString(representativeSearch).toLowerCase();
+    if (!term) return representativeOptions;
+    return representativeOptions.filter((item) => (
+      getRepresentativeLabel(item, lang).toLowerCase().includes(term)
+    ));
+  }, [lang, representativeOptions, representativeSearch]);
   const programPackages = React.useMemo(
     () => selectedProgram ? normalizeProgramPackages(selectedProgram) : [],
     [selectedProgram]
@@ -386,6 +476,21 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     [selectedPackage, form.roomType]
   );
   const officialPriceMissing = Boolean(selectedPackage && form.roomType && !derivedOfficialPrice);
+
+  React.useEffect(() => {
+    if (!hasCin) return;
+    setForm((prev) => (
+      prev.representedByClientId || prev.representedByRelationship
+        ? { ...prev, representedByClientId: "", representedByRelationship: "" }
+        : prev
+    ));
+  }, [hasCin]);
+
+  React.useEffect(() => {
+    if (!form.representedByClientId) return;
+    if (representativeOptions.some((item) => item.id === form.representedByClientId)) return;
+    setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
+  }, [form.representedByClientId, representativeOptions]);
 
   const handlePackageChange = React.useCallback((e) => {
     const pkg = programPackages.find(item => item.id === e.target.value) || null;
@@ -529,6 +634,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     if (!form.gender) e.gender = t.genderRequired || "يرجى تحديد الجنس";
     if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
     if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
+    if (minorWithoutCin && !form.representedByClientId) e.representedByClientId = representationLabels.representativeRequired;
     return e;
   };
 
@@ -607,6 +713,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         roomingGroupId,
         roomingGroupName,
         roomingGroupSize: groupPeople.length,
+        representedByClientId: "",
+        representedByRelationship: "",
       };
       groupPeople.forEach((person, index) => {
         const personName = buildGroupPersonName(person);
@@ -666,9 +774,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       gender: form.gender,
       passport: {
         ...form.passport,
-        cin: pickString(form.cin, form.passport.cin),
+        cin: pickString(form.cin),
         gender: genderToPassportValue(form.gender),
       },
+      representedByClientId: hasCin ? "" : form.representedByClientId,
+      representedByRelationship: hasCin ? "" : normalizeRepresentativeRelationship(form.representedByRelationship),
     };
     try {
       const targetId = isEdit ? client.id : (badgePhotoFile ? createClientId() : "");
@@ -1064,7 +1174,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <div className="form-grid form-grid--three">
           <Input label={t.passportNo} value={form.passport.number} onChange={setPass("number")}
             placeholder={t.passportPlaceholder} inputStyle={{ textTransform:"uppercase" }} />
-          <Input label={t.cin || "رقم البطاقة الوطنية"} value={form.cin} onChange={set("cin")}
+          <Input label={t.cin || "رقم البطاقة الوطنية"} value={form.cin} onChange={setCin}
             placeholder={lang === "fr" ? "N° CIN" : lang === "en" ? "National ID / CIN" : "رقم البطاقة الوطنية"} />
           <Select label={t.nationality} value={form.passport.nationality} onChange={setPass("nationality")}
             options={NATIONALITIES} />
@@ -1093,6 +1203,70 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         </div>
         {form.passport.issueDate && form.passport.expiry && (
           <p style={{ fontSize:11, color:tc.grey, marginTop:8 }}>{t.expiryAutoHint}</p>
+        )}
+      </GlassCard>
+      )}
+
+      {/* ── Contract Representation ── */}
+      {entryMode === ROOM_ENTRY_MODES.SINGLE && (
+      <GlassCard style={{ padding:16, marginBottom:14 }}>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}>
+          <AppIcon name="users" size={14} color={tc.gold} /> {representationLabels.title}
+        </p>
+        {hasCin ? (
+          <p style={{ fontSize:12, color:tc.greenLight, lineHeight:1.7 }}>
+            {representationLabels.hasCin}
+          </p>
+        ) : minorWithoutCin ? (
+          <div>
+            <p style={{ fontSize:12, color:tc.warning, lineHeight:1.7, marginBottom:12 }}>
+              {representationLabels.minorNeedsRepresentative}
+            </p>
+            <div className="form-grid form-grid--two">
+              <Input
+                label={representationLabels.searchRepresentative}
+                value={representativeSearch}
+                onChange={(event) => setRepresentativeSearch(event.target.value)}
+              />
+              <Select
+                label={representationLabels.representedBy}
+                value={form.representedByClientId}
+                onChange={(event) => setForm((prev) => ({ ...prev, representedByClientId: event.target.value }))}
+                options={[
+                  { value: "", label: filteredRepresentativeOptions.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative },
+                  ...filteredRepresentativeOptions.map((item) => ({
+                    value: item.id,
+                    label: getRepresentativeLabel(item, lang),
+                  })),
+                ]}
+              />
+              <Select
+                label={representationLabels.relationship}
+                value={form.representedByRelationship}
+                onChange={(event) => setForm((prev) => ({ ...prev, representedByRelationship: event.target.value }))}
+                options={[
+                  { value: "", label: "—" },
+                  ...REPRESENTED_BY_RELATIONSHIPS.map((item) => ({ value: item.value, label: item.label[lang] || item.label.ar })),
+                ]}
+              />
+            </div>
+            {errors.representedByClientId && (
+              <p style={{ color:tc.danger, fontSize:11, marginTop:8 }}>{errors.representedByClientId}</p>
+            )}
+          </div>
+        ) : adultWithoutCin ? (
+          <p style={{ fontSize:12, color:tc.warning, lineHeight:1.7 }}>
+            {representationLabels.adultNoCin}
+          </p>
+        ) : (
+          <p style={{ fontSize:12, color:tc.grey, lineHeight:1.7 }}>
+            {representationLabels.waitingForBirthDate}
+          </p>
+        )}
+        {clientAge !== null && (
+          <p style={{ fontSize:11, color:tc.grey, marginTop:8 }}>
+            {lang === "fr" ? "Âge" : lang === "en" ? "Age" : "العمر"}: {clientAge}
+          </p>
         )}
       </GlassCard>
       )}
