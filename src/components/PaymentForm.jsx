@@ -15,6 +15,7 @@ const normalizePaymentMethodKind = (value = "") => {
 export default function PaymentForm({ clientId, clientName, store, onSave, onCancel }) {
   const { getClientTotalPaid, clients, payments } = store;
   const { t, tr, lang } = useLang();
+  const usesServerReceipt = Boolean(store.isSupabaseEnabled && store.agencyId);
   const client    = clients.find(c => c.id === clientId);
   const salePrice = client ? (client.salePrice || client.price || 0) : 0;
   const totalPaid = getClientTotalPaid(clientId);
@@ -33,17 +34,19 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
     note:      "",
   });
   const [errors, setErrors] = React.useState({});
+  const [saving, setSaving] = React.useState(false);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
   const methodKind = normalizePaymentMethodKind(form.method);
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     const e = {};
     if (!form.amount || isNaN(form.amount) || Number(form.amount) <= 0)
       e.amount = t.amountError;
     if (Number(form.amount) > remaining + 1)
       e.amount = (t.amountExceedsError || "").replace("{remaining}", formatCurrency(remaining, lang));
     if (!form.date)      e.date = t.dateError;
-    if (!form.receiptNo) e.receiptNo = t.receiptError;
+    if (!usesServerReceipt && !form.receiptNo) e.receiptNo = t.receiptError;
     if (methodKind === "cheque" && !form.chequeNumber.trim())
       e.chequeNumber = t.chequeNumberRequired || "يرجى إدخال رقم الشيك";
     if ((methodKind === "cheque" || methodKind === "bank") && !form.paidBy.trim())
@@ -51,17 +54,25 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
     if (Object.keys(e).length) { setErrors(e); return; }
     const chequeNumber = form.chequeNumber.trim();
     const paidBy = form.paidBy.trim();
-    store.addPayment({
-      clientId, amount: Number(form.amount),
-      method: form.method, payment_method: form.method, date: form.date,
-      receiptNo: form.receiptNo, receipt_no: form.receiptNo,
-      receiptNumber: form.receiptNo, receipt_number: form.receiptNo,
-      chequeNumber, cheque_number: chequeNumber,
-      checkNumber: chequeNumber, check_number: chequeNumber,
-      paidBy, paid_by: paidBy,
-      note: form.note, notes: form.note,
-    });
-    onSave();
+    setSaving(true);
+    let saved = null;
+    try {
+      saved = await store.addPayment({
+        clientId, amount: Number(form.amount),
+        method: form.method, payment_method: form.method, date: form.date,
+        ...(usesServerReceipt ? {} : {
+          receiptNo: form.receiptNo, receipt_no: form.receiptNo,
+          receiptNumber: form.receiptNo, receipt_number: form.receiptNo,
+        }),
+        chequeNumber, cheque_number: chequeNumber,
+        checkNumber: chequeNumber, check_number: chequeNumber,
+        paidBy, paid_by: paidBy,
+        note: form.note, notes: form.note,
+      });
+    } finally {
+      setSaving(false);
+    }
+    if (saved) onSave();
   };
 
   return (
@@ -97,7 +108,7 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
           placeholder={t.notePlaceholder} style={{ gridColumn:"1/-1" }} />
       </div>
       <div style={{ display:"flex", gap:8 }}>
-        <Button variant="success" onClick={handleSave} icon="save">{t.savePayment}</Button>
+        <Button variant="success" onClick={handleSave} icon="save" disabled={saving}>{t.savePayment}</Button>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
       </div>
     </GlassCard>

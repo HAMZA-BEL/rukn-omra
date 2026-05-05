@@ -29,6 +29,8 @@ export function usePaymentsSlice() {
       receipt_no: receiptNo,
       receiptNumber: receiptNo,
       receipt_number: receiptNo,
+      receiptSequence: row.receipt_sequence ?? null,
+      receipt_sequence: row.receipt_sequence ?? null,
       note,
       notes: note,
       chequeNumber,
@@ -51,7 +53,11 @@ export function usePaymentsSlice() {
   }, []);
 
   const addPaymentLocal = useCallback((payment) => {
-    setPayments((prev) => [...prev, payment]);
+    setPayments((prev) => {
+      const exists = prev.find((p) => p.id === payment.id);
+      if (exists) return prev.map((p) => (p.id === payment.id ? { ...p, ...payment } : p));
+      return [...prev, payment];
+    });
   }, []);
 
   const removePaymentLocal = useCallback((id) => {

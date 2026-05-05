@@ -161,6 +161,32 @@ create table if not exists public.payments (
 
 alter table public.payments add column if not exists cheque_number text;
 alter table public.payments add column if not exists paid_by text;
+alter table public.payments add column if not exists receipt_sequence integer;
+
+create unique index if not exists payments_agency_receipt_sequence_unique
+  on public.payments (agency_id, receipt_sequence)
+  where receipt_sequence is not null;
+
+create table if not exists public.receipt_counters (
+  agency_id   uuid primary key references public.agencies(id) on delete cascade,
+  last_number integer not null default 0,
+  updated_at  timestamptz not null default now()
+);
+
+insert into public.receipt_counters (agency_id, last_number)
+select parsed.agency_id, max(parsed.receipt_number)
+from (
+  select
+    agency_id,
+    substring(trim(receipt_no) from '([0-9]+)$')::integer as receipt_number
+  from public.payments
+  where receipt_no is not null
+    and substring(trim(receipt_no) from '([0-9]+)$') is not null
+) parsed
+group by parsed.agency_id
+on conflict (agency_id) do update
+set last_number = greatest(public.receipt_counters.last_number, excluded.last_number),
+    updated_at = now();
 
 -- Final official invoices
 create table if not exists public.invoice_counters (
@@ -319,6 +345,7 @@ alter table public.users        enable row level security;
 alter table public.programs     enable row level security;
 alter table public.clients      enable row level security;
 alter table public.payments     enable row level security;
+alter table public.receipt_counters enable row level security;
 alter table public.invoice_counters enable row level security;
 alter table public.invoices enable row level security;
 alter table public.badge_templates enable row level security;
@@ -593,6 +620,11 @@ create policy "payments_update" on public.payments
 create policy "payments_delete" on public.payments
   for delete using (agency_id = public.get_agency_id());
 
+-- receipt counters are changed by create_payment_with_receipt.
+drop policy if exists "receipt_counters_select" on public.receipt_counters;
+create policy "receipt_counters_select" on public.receipt_counters
+  for select using (agency_id = public.get_agency_id());
+
 -- invoices
 drop policy if exists "invoices_select" on public.invoices;
 drop policy if exists "invoices_insert" on public.invoices;
@@ -726,6 +758,118 @@ begin
   return inserted_invoice;
 end;
 $$;
+
+create or replace function public.create_payment_with_receipt(
+  p_agency_id uuid,
+  p_client_id uuid,
+  p_amount numeric,
+  p_date date default null,
+  p_method text default null,
+  p_note text default null,
+  p_cheque_number text default null,
+  p_paid_by text default null,
+  p_payment_id uuid default null
+)
+returns public.payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  next_number integer;
+  next_receipt_no text;
+  inserted_payment public.payments;
+begin
+  if p_agency_id is null or p_agency_id <> public.get_agency_id() then
+    raise exception 'invalid agency';
+  end if;
+  if p_client_id is null then
+    raise exception 'client is required';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'amount must be positive';
+  end if;
+  if not exists (
+    select 1
+    from public.clients c
+    where c.id = p_client_id
+      and c.agency_id = p_agency_id
+  ) then
+    raise exception 'invalid client';
+  end if;
+
+  insert into public.receipt_counters (agency_id, last_number)
+  values (p_agency_id, 0)
+  on conflict (agency_id) do nothing;
+
+  select last_number + 1
+  into next_number
+  from public.receipt_counters
+  where agency_id = p_agency_id
+  for update;
+
+  update public.receipt_counters
+  set last_number = next_number,
+      updated_at = now()
+  where agency_id = p_agency_id;
+
+  next_receipt_no := 'REC-' || lpad(next_number::text, 3, '0');
+
+  insert into public.payments (
+    id,
+    agency_id,
+    client_id,
+    amount,
+    date,
+    method,
+    receipt_no,
+    receipt_sequence,
+    note,
+    cheque_number,
+    paid_by
+  )
+  values (
+    coalesce(p_payment_id, gen_random_uuid()),
+    p_agency_id,
+    p_client_id,
+    p_amount,
+    coalesce(p_date, current_date),
+    nullif(trim(p_method), ''),
+    next_receipt_no,
+    next_number,
+    nullif(trim(p_note), ''),
+    nullif(trim(p_cheque_number), ''),
+    nullif(trim(p_paid_by), '')
+  )
+  returning * into inserted_payment;
+
+  return inserted_payment;
+end;
+$$;
+
+revoke all on function public.create_payment_with_receipt(
+  uuid,
+  uuid,
+  numeric,
+  date,
+  text,
+  text,
+  text,
+  text,
+  uuid
+) from public, anon;
+
+grant execute on function public.create_payment_with_receipt(
+  uuid,
+  uuid,
+  numeric,
+  date,
+  text,
+  text,
+  text,
+  text,
+  uuid
+) to authenticated;
 
 -- Activity logging for payments
 drop function if exists public.log_payment_activity cascade;

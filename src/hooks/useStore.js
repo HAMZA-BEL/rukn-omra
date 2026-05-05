@@ -5,6 +5,7 @@ import { db } from "../lib/db";
 import { fetchRecentActivity } from "../services/activityService";
 import { fetchNotifications } from "../services/notificationsService";
 import {
+  createPaymentWithReceipt,
   deletePayment as deletePaymentRemote,
   fetchPayments,
   savePayment,
@@ -1078,7 +1079,7 @@ export function useStore(agencyId, onToast) {
     logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${program?.name || programId}`), "");
   }, [activeClients, programs, archiveClientLocal, logActivity, sync, agencyId]);
 
-  const addPayment = useCallback((data) => {
+  const addPayment = useCallback(async (data) => {
     const id          = genId("PMT");
     const autoReceipt = "REC-" + id.slice(-6).toUpperCase();
     const receiptNo = data.receiptNo || data.receipt_no || data.receiptNumber || data.receipt_number || autoReceipt;
@@ -1101,9 +1102,37 @@ export function useStore(agencyId, onToast) {
       paid_by: paidBy,
       notes: data.notes ?? data.note ?? "",
     };
-    addPaymentLocal(pmt);
     const c   = clients.find(x => x.id === data.clientId);
     const now = new Date().toISOString().split("T")[0];
+
+    if (isSupabaseEnabled && agencyId) {
+      setSyncStatus("syncing");
+      try {
+        const { data: savedPayment, error } = await createPaymentWithReceipt(pmt, agencyId);
+        if (error) throw error;
+        if (!savedPayment) throw new Error("Payment creation did not return a row");
+        addPaymentLocal(savedPayment);
+        setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
+        logActivity(
+          "payment_add",
+          translateActivityDescription(`دفعة ${formatCurrency(savedPayment.amount, getUiLang())} — ${savedPayment.receiptNo}`),
+          c?.name || data.clientId,
+          { skipRemote: true }
+        );
+        const syncedAt = new Date();
+        setLastSynced(syncedAt);
+        try { localStorage.setItem(`umrah_last_synced_${ns}`, syncedAt.toISOString()); } catch {}
+        setSyncStatus("synced");
+        return savedPayment;
+      } catch (err) {
+        console.error("[Store] Payment RPC failed:", err);
+        setSyncStatus("offline");
+        notify(trKey("storeLocalMode") || "يعمل النظام بالوضع المحلي — تعذّر الاتصال بالسحابة", "error");
+        return null;
+      }
+    }
+
+    addPaymentLocal(pmt);
     setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
     logActivity(
       "payment_add",
@@ -1113,7 +1142,7 @@ export function useStore(agencyId, onToast) {
     );
     sync(() => savePayment(pmt, agencyId));
     return pmt;
-  }, [clients, addPaymentLocal, setClients, logActivity, sync, agencyId, isSupabaseEnabled]);
+  }, [clients, addPaymentLocal, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
   const deletePayment = useCallback((id) => {
     const p = payments.find(x => x.id === id);

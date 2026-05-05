@@ -206,6 +206,7 @@ const toPayment = (p, agencyId) => ({
   date:       p.date      ?? null,
   method:     p.method ?? p.paymentMethod ?? p.payment_method ?? null,
   receipt_no: p.receiptNo ?? p.receipt_no ?? p.receiptNumber ?? p.receipt_number ?? null,
+  receipt_sequence: p.receiptSequence ?? p.receipt_sequence ?? null,
   cheque_number: cleanString(p.chequeNumber ?? p.cheque_number ?? p.checkNumber ?? p.check_number),
   paid_by: cleanString(p.paidBy ?? p.paid_by),
   note:       p.note ?? p.notes ?? null,
@@ -228,6 +229,8 @@ const fromPayment = (row) => {
     receipt_no: receiptNo,
     receiptNumber: receiptNo,
     receipt_number: receiptNo,
+    receiptSequence: row.receipt_sequence ?? null,
+    receipt_sequence: row.receipt_sequence ?? null,
     chequeNumber,
     cheque_number: chequeNumber,
     checkNumber: chequeNumber,
@@ -533,6 +536,20 @@ export const db = {
       const { error } = await supabase
         .from("payments").upsert(toPayment(payment, agencyId), { onConflict: "id" });
       return { error };
+    },
+    async createWithReceipt(payment, agencyId) {
+      const { data, error } = await supabase.rpc("create_payment_with_receipt", {
+        p_agency_id: agencyId,
+        p_client_id: normalizeForeignKey(payment.clientId),
+        p_amount: payment.amount,
+        p_date: payment.date ?? null,
+        p_method: payment.method ?? payment.paymentMethod ?? payment.payment_method ?? null,
+        p_note: payment.note ?? payment.notes ?? null,
+        p_cheque_number: cleanString(payment.chequeNumber ?? payment.cheque_number ?? payment.checkNumber ?? payment.check_number),
+        p_paid_by: cleanString(payment.paidBy ?? payment.paid_by),
+        p_payment_id: payment.id ?? null,
+      });
+      return { data: data ? fromPayment(data) : null, error };
     },
     async delete(id, agencyId) {
       const { error } = await supabase

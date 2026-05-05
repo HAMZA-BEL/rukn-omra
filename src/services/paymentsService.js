@@ -8,6 +8,10 @@ export function savePayment(payment, agencyId) {
   return db.payments.upsert(payment, agencyId);
 }
 
+export function createPaymentWithReceipt(payment, agencyId) {
+  return db.payments.createWithReceipt(payment, agencyId);
+}
+
 export function deletePayment(id, agencyId) {
   return db.payments.delete(id, agencyId);
 }
