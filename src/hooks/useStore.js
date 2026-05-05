@@ -7,7 +7,10 @@ import { fetchNotifications } from "../services/notificationsService";
 import {
   createPaymentWithReceipt,
   deletePayment as deletePaymentRemote,
+  deleteTrashedPayment as deleteTrashedPaymentRemote,
   fetchPayments,
+  fetchTrashedPayments,
+  restorePayment as restorePaymentRemote,
   savePayment,
 } from "../services/paymentsService";
 import {
@@ -134,6 +137,20 @@ const getNotificationKey = (notif) => {
   const target = notif.targetId || notif.programId || "none";
   const state = notif.stateHash || (notif.meta && notif.meta.stateHash) || "default";
   return `${type}:${target}:${state}`;
+};
+
+const localizedPaymentTrashMessage = () => {
+  const lang = getUiLang();
+  if (lang === "fr") return "Le paiement a été déplacé vers la corbeille";
+  if (lang === "en") return "Payment moved to Trash";
+  return "تم نقل الدفعة إلى سلة المحذوفات";
+};
+
+const localizedPaymentRestoreMessage = () => {
+  const lang = getUiLang();
+  if (lang === "fr") return "Paiement restauré";
+  if (lang === "en") return "Payment restored";
+  return "تم استرجاع الدفعة";
 };
 
 const prepareClientForSave = (data) => {
@@ -331,12 +348,16 @@ export function useStore(agencyId, onToast) {
   });
   const {
     payments,
+    deletedPayments,
     setInitialPayments,
+    setInitialDeletedPayments,
     replacePayments,
     handleRealtimeUpsert: handlePaymentRealtimeUpsert,
     handleRealtimeDelete: handlePaymentRealtimeDelete,
     addPaymentLocal,
-    removePaymentLocal,
+    trashPaymentLocal,
+    restorePaymentLocal,
+    purgePaymentLocal,
     removePaymentsByClient,
     getClientPayments,
     getClientTotalPaid,
@@ -563,11 +584,12 @@ export function useStore(agencyId, onToast) {
       fetchDeletedPrograms(agencyId),
       fetchDeletedClients(agencyId),
       fetchPayments(agencyId),
+      fetchTrashedPayments(agencyId),
       db.agency.fetch(agencyId),
       fetchNotifications(agencyId),
       fetchAgencyUsers(agencyId),
       fetchRecentActivity(agencyId, 5),
-    ]).then(([p, c, dp, dc, pay, ag, notif, usersResp, act]) => {
+    ]).then(([p, c, dp, dc, pay, trashedPay, ag, notif, usersResp, act]) => {
       const programData  = !p.error  && p.data  ? p.data  : [];
       const clientData   = !c.error  && c.data  ? c.data  : [];
       const trashPrograms = !dp.error && dp.data ? dp.data : [];
@@ -579,6 +601,9 @@ export function useStore(agencyId, onToast) {
       if (!pay.error && pay.data) {
         const clientIds = new Set(clientData.map(cl => cl.id));
         setInitialPayments(pay.data.filter(pmt => clientIds.has(pmt.clientId)));
+      }
+      if (!trashedPay.error && trashedPay.data) {
+        setInitialDeletedPayments(trashedPay.data);
       }
       setAgencyUsers(usersResp?.data ?? []);
       if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
@@ -1216,15 +1241,41 @@ export function useStore(agencyId, onToast) {
 
   const deletePayment = useCallback((id) => {
     const p = payments.find(x => x.id === id);
-    removePaymentLocal(id);
+    trashPaymentLocal(id);
     logActivity(
-      "payment_delete",
-      translateActivityDescription(`تم حذف دفعة ${p?.receiptNo || ""}`),
+      "payment_trash",
+      translateActivityDescription(`تم نقل دفعة ${p?.receiptNo || ""} إلى سلة المحذوفات`),
       "",
       { skipRemote: isSupabaseEnabled }
     );
+    notify(localizedPaymentTrashMessage(), "success");
     sync(() => deletePaymentRemote(id, agencyId));
-  }, [payments, removePaymentLocal, logActivity, sync, agencyId, isSupabaseEnabled]);
+  }, [payments, trashPaymentLocal, logActivity, notify, sync, agencyId, isSupabaseEnabled]);
+
+  const restorePaymentFromTrash = useCallback(async (id) => {
+    const p = deletedPayments.find(x => x.id === id);
+    restorePaymentLocal(id);
+    logActivity(
+      "payment_restore",
+      translateActivityDescription(`تم استرجاع دفعة ${p?.receiptNo || ""}`),
+      "",
+      { skipRemote: isSupabaseEnabled }
+    );
+    notify(localizedPaymentRestoreMessage(), "success");
+    await sync(() => restorePaymentRemote(id, agencyId));
+  }, [agencyId, deletedPayments, isSupabaseEnabled, logActivity, notify, restorePaymentLocal, sync]);
+
+  const deletePaymentFromTrash = useCallback(async (id) => {
+    const p = deletedPayments.find(x => x.id === id);
+    purgePaymentLocal(id);
+    logActivity(
+      "payment_delete",
+      translateActivityDescription(`تم حذف دفعة نهائيًا ${p?.receiptNo || ""}`),
+      "",
+      { skipRemote: isSupabaseEnabled }
+    );
+    await sync(() => deleteTrashedPaymentRemote(id, agencyId));
+  }, [agencyId, deletedPayments, isSupabaseEnabled, logActivity, purgePaymentLocal, sync]);
 
   const addProgram = useCallback((data) => {
     const id  = genId("PRG");
@@ -1434,7 +1485,7 @@ export function useStore(agencyId, onToast) {
   return {
     programs, clients, payments, agency, agencyId, activityLog, stats,
     agencyUsers,
-    deletedPrograms, deletedClients,
+    deletedPrograms, deletedClients, deletedPayments,
     activeClients, archivedClients,
     invoiceApi,
     badgePhotoApi,
@@ -1450,7 +1501,7 @@ export function useStore(agencyId, onToast) {
     createAgencyUser,
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
-    addPayment, deletePayment,
+    addPayment, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
     addProgram, updateProgram, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,

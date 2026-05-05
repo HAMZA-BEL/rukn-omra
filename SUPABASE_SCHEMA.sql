@@ -193,10 +193,18 @@ create table if not exists public.payments (
 alter table public.payments add column if not exists cheque_number text;
 alter table public.payments add column if not exists paid_by text;
 alter table public.payments add column if not exists receipt_sequence integer;
+alter table public.payments add column if not exists status text default 'active';
+alter table public.payments add column if not exists trashed_at timestamptz;
+alter table public.payments add column if not exists deleted_at timestamptz;
 
 create unique index if not exists payments_agency_receipt_sequence_unique
   on public.payments (agency_id, receipt_sequence)
   where receipt_sequence is not null;
+create index if not exists payments_agency_status_idx
+  on public.payments (agency_id, status);
+create index if not exists payments_agency_trashed_at_idx
+  on public.payments (agency_id, trashed_at)
+  where status = 'trashed';
 
 create table if not exists public.receipt_counters (
   agency_id   uuid primary key references public.agencies(id) on delete cascade,
@@ -751,7 +759,7 @@ create policy "contract_templates_delete" on public.contract_templates
   );
 
 -- payments
-revoke insert, update on table public.payments from public, anon, authenticated;
+revoke insert, update, delete on table public.payments from public, anon, authenticated;
 
 drop policy if exists "payments_select" on public.payments;
 drop policy if exists "payments_insert" on public.payments;
@@ -759,6 +767,7 @@ drop policy if exists "payments_update" on public.payments;
 drop policy if exists "payments_delete" on public.payments;
 drop policy if exists "payments_insert_blocked" on public.payments;
 drop policy if exists "payments_update_blocked" on public.payments;
+drop policy if exists "payments_delete_blocked" on public.payments;
 create policy "payments_select" on public.payments
   for select using (agency_id = public.get_agency_id());
 create policy "payments_insert_blocked" on public.payments
@@ -766,8 +775,8 @@ create policy "payments_insert_blocked" on public.payments
 create policy "payments_update_blocked" on public.payments
   for update using (false)
   with check (false);
-create policy "payments_delete" on public.payments
-  for delete using (agency_id = public.get_agency_id());
+create policy "payments_delete_blocked" on public.payments
+  for delete using (false);
 
 -- receipt counters are changed by create_payment_with_receipt.
 drop policy if exists "receipt_counters_select" on public.receipt_counters;
@@ -1070,6 +1079,154 @@ grant execute on function public.create_payment_with_receipt(
   text,
   uuid
 ) to authenticated;
+
+create or replace function public.trash_payment(
+  p_agency_id uuid,
+  p_payment_id uuid
+)
+returns public.payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_payment public.payments;
+  client_name text;
+  desc_text text;
+begin
+  if p_agency_id is null or p_agency_id <> public.get_agency_id() then
+    raise exception 'invalid agency';
+  end if;
+  if p_payment_id is null then
+    raise exception 'payment is required';
+  end if;
+
+  update public.payments
+  set status = 'trashed',
+      trashed_at = now(),
+      deleted_at = null
+  where id = p_payment_id
+    and agency_id = p_agency_id
+    and coalesce(status, 'active') <> 'deleted'
+  returning * into updated_payment;
+
+  if updated_payment.id is null then
+    raise exception 'payment not found';
+  end if;
+
+  select name into client_name
+  from public.clients
+  where id = updated_payment.client_id
+    and agency_id = updated_payment.agency_id;
+
+  desc_text := 'تم نقل دفعة ' || coalesce(updated_payment.receipt_no, '') || ' إلى سلة المحذوفات';
+  insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
+  values (gen_random_uuid(), updated_payment.agency_id, auth.uid(), 'payment_trash', desc_text, client_name, now());
+
+  return updated_payment;
+end;
+$$;
+
+create or replace function public.restore_payment(
+  p_agency_id uuid,
+  p_payment_id uuid
+)
+returns public.payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_payment public.payments;
+  client_name text;
+  desc_text text;
+begin
+  if p_agency_id is null or p_agency_id <> public.get_agency_id() then
+    raise exception 'invalid agency';
+  end if;
+  if p_payment_id is null then
+    raise exception 'payment is required';
+  end if;
+
+  update public.payments
+  set status = 'active',
+      trashed_at = null,
+      deleted_at = null
+  where id = p_payment_id
+    and agency_id = p_agency_id
+    and coalesce(status, 'active') = 'trashed'
+  returning * into updated_payment;
+
+  if updated_payment.id is null then
+    raise exception 'payment not found';
+  end if;
+
+  select name into client_name
+  from public.clients
+  where id = updated_payment.client_id
+    and agency_id = updated_payment.agency_id;
+
+  desc_text := 'تم استرجاع دفعة ' || coalesce(updated_payment.receipt_no, '');
+  insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
+  values (gen_random_uuid(), updated_payment.agency_id, auth.uid(), 'payment_restore', desc_text, client_name, now());
+
+  return updated_payment;
+end;
+$$;
+
+create or replace function public.delete_trashed_payment(
+  p_agency_id uuid,
+  p_payment_id uuid
+)
+returns public.payments
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_payment public.payments;
+  client_name text;
+  desc_text text;
+begin
+  if p_agency_id is null or p_agency_id <> public.get_agency_id() then
+    raise exception 'invalid agency';
+  end if;
+  if p_payment_id is null then
+    raise exception 'payment is required';
+  end if;
+
+  update public.payments
+  set status = 'deleted',
+      deleted_at = now()
+  where id = p_payment_id
+    and agency_id = p_agency_id
+    and coalesce(status, 'active') = 'trashed'
+  returning * into updated_payment;
+
+  if updated_payment.id is null then
+    raise exception 'payment not found';
+  end if;
+
+  select name into client_name
+  from public.clients
+  where id = updated_payment.client_id
+    and agency_id = updated_payment.agency_id;
+
+  desc_text := 'تم حذف دفعة نهائيًا ' || coalesce(updated_payment.receipt_no, '');
+  insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
+  values (gen_random_uuid(), updated_payment.agency_id, auth.uid(), 'payment_delete', desc_text, client_name, now());
+
+  return updated_payment;
+end;
+$$;
+
+revoke all on function public.trash_payment(uuid, uuid) from public, anon;
+revoke all on function public.restore_payment(uuid, uuid) from public, anon;
+revoke all on function public.delete_trashed_payment(uuid, uuid) from public, anon;
+
+grant execute on function public.trash_payment(uuid, uuid) to authenticated;
+grant execute on function public.restore_payment(uuid, uuid) to authenticated;
+grant execute on function public.delete_trashed_payment(uuid, uuid) to authenticated;
 
 -- Activity logging for payments
 drop function if exists public.log_payment_activity cascade;

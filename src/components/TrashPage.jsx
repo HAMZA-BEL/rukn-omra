@@ -10,6 +10,7 @@ import {
   restoreSavedInvoiceSnapshot,
   deleteSavedInvoiceSnapshot,
 } from "../utils/invoices";
+import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
 
@@ -18,6 +19,7 @@ const FILTERS = [
   { id: "programs", key: "trashFilter_programs" },
   { id: "clients", key: "trashFilter_clients" },
   { id: "invoices", key: "trashFilter_invoices" },
+  { id: "payments", key: "trashFilter_payments" },
 ];
 
 export default function TrashPage({ store, onToast }) {
@@ -36,6 +38,7 @@ export default function TrashPage({ store, onToast }) {
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
+  const paymentLabel = lang === "fr" ? "Paiements" : lang === "en" ? "Payments" : "الدفعات";
   const formatDate = React.useCallback((value) => {
     if (!value) return "--";
     const date = new Date(value);
@@ -45,6 +48,7 @@ export default function TrashPage({ store, onToast }) {
 
   const deletedPrograms = store.deletedPrograms || [];
   const deletedClients = store.deletedClients || [];
+  const deletedPayments = store.deletedPayments || [];
 
   const refreshTrashedInvoices = React.useCallback(async () => {
     if (invoicesAreRemote) {
@@ -117,6 +121,15 @@ export default function TrashPage({ store, onToast }) {
     return map;
   }, [store.programs, deletedPrograms]);
 
+  const clientNameMap = React.useMemo(() => {
+    const map = new Map();
+    [...(store.clients || []), ...deletedClients].forEach((client) => {
+      if (!client?.id || map.has(client.id)) return;
+      map.set(client.id, getClientDisplayName(client, client.name || client.id));
+    });
+    return map;
+  }, [store.clients, deletedClients]);
+
   const clientsByBatch = React.useMemo(() => {
     const map = new Map();
     deletedClients.forEach((client) => {
@@ -167,19 +180,33 @@ export default function TrashPage({ store, onToast }) {
       deletedAt: invoice.trashedAt || invoice.deletedAt || invoice.issueDate,
       meta: t.trashFilter_invoices || "Invoices",
     }));
-    const merged = [...programItems, ...clientItems, ...invoiceItems];
+    const paymentItems = deletedPayments.map((payment) => ({
+      key: `payment-${payment.id}`,
+      id: payment.id,
+      type: "payment",
+      name: payment.receiptNo || payment.receipt_no || payment.receiptNumber || payment.receipt_number || paymentLabel,
+      subtitle: [
+        clientNameMap.get(payment.clientId || payment.client_id),
+        Number.isFinite(Number(payment.amount)) ? formatCurrency(Number(payment.amount), lang) : null,
+        payment.method || payment.paymentMethod || payment.payment_method,
+      ].filter(Boolean).join(" • "),
+      deletedAt: payment.trashedAt || payment.trashed_at || payment.deletedAt || payment.deleted_at || payment.date,
+      meta: paymentLabel,
+    }));
+    const merged = [...programItems, ...clientItems, ...invoiceItems, ...paymentItems];
     merged.sort((a, b) => {
       const aDate = a.deletedAt ? new Date(a.deletedAt).getTime() : 0;
       const bDate = b.deletedAt ? new Date(b.deletedAt).getTime() : 0;
       return bDate - aDate;
     });
     return merged;
-  }, [deletedPrograms, deletedClients, trashedInvoices, clientsByBatch, programNameMap, formatDate, lang, t.programs, t.clients, t.fullName, t.trashFilter_invoices]);
+  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, formatDate, lang, paymentLabel, t.programs, t.clients, t.fullName, t.trashFilter_invoices]);
 
   const visibleItems = React.useMemo(() => {
     if (filter === "programs") return allItems.filter((item) => item.type === "program");
     if (filter === "clients") return allItems.filter((item) => item.type === "client");
     if (filter === "invoices") return allItems.filter((item) => item.type === "invoice");
+    if (filter === "payments") return allItems.filter((item) => item.type === "payment");
     return allItems;
   }, [allItems, filter]);
 
@@ -216,6 +243,7 @@ export default function TrashPage({ store, onToast }) {
     programIds: selectedItems.filter((item) => item.type === "program").map((item) => item.id),
     clientIds: selectedItems.filter((item) => item.type === "client").map((item) => item.id),
     invoiceIds: selectedItems.filter((item) => item.type === "invoice").map((item) => item.id),
+    paymentIds: selectedItems.filter((item) => item.type === "payment").map((item) => item.id),
   }), [selectedItems]);
 
   const handleRestore = React.useCallback(async () => {
@@ -235,6 +263,9 @@ export default function TrashPage({ store, onToast }) {
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => restoreSavedInvoiceSnapshot(id));
       setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
+    }
+    if (selectionPayload.paymentIds.length && typeof store.restorePaymentFromTrash === "function") {
+      await Promise.all(selectionPayload.paymentIds.map((id) => store.restorePaymentFromTrash(id)));
     }
     setSelection({});
     if (onToast) onToast(t.restoreSuccess || "Restored", "success");
@@ -263,6 +294,9 @@ export default function TrashPage({ store, onToast }) {
       selectionPayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
       setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
     }
+    if (selectionPayload.paymentIds.length && typeof store.deletePaymentFromTrash === "function") {
+      await Promise.all(selectionPayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
+    }
     setSelection({});
     setConfirmOpen(false);
     if (onToast) onToast(t.deleteSuccess || "Deleted", "success");
@@ -274,8 +308,12 @@ export default function TrashPage({ store, onToast }) {
 
   const selectedLabel = (t.trashSelectedCount || "{count}").replace("{count}", selectedCount);
   const confirmMessage = (t.trashConfirmDeleteMessage || "{count}").replace("{count}", selectedCount);
+  const getFilterText = React.useCallback((item) => (
+    item.id === "payments" ? paymentLabel : (t[item.key] || item.id)
+  ), [paymentLabel, t]);
   const selectedFilterLabel = FILTERS.find((item) => item.id === filter)?.key;
-  const selectedFilterText = t[selectedFilterLabel] || t.trashFilter_all;
+  const selectedFilter = FILTERS.find((item) => item.id === filter) || FILTERS[0];
+  const selectedFilterText = getFilterText(selectedFilter) || t[selectedFilterLabel] || t.trashFilter_all;
   const filterMenu = filterOpen && filterMenuStyle && typeof document !== "undefined"
     ? createPortal(
       <div
@@ -323,7 +361,7 @@ export default function TrashPage({ store, onToast }) {
                 fontFamily: "'Cairo',sans-serif",
               }}
             >
-              <span>{t[f.key] || f.id}</span>
+              <span>{getFilterText(f)}</span>
               {active && <Check size={14} strokeWidth={2.2} />}
             </button>
           );
@@ -426,6 +464,12 @@ export default function TrashPage({ store, onToast }) {
           visibleItems.map((item) => {
             const checked = !!selection[item.key];
             const isProgram = item.type === "program";
+            const isInvoice = item.type === "invoice";
+            const isPayment = item.type === "payment";
+            const badgeColor = isInvoice ? "#60a5fa" : isPayment ? "#f59e0b" : isProgram ? tc.gold : tc.greenLight;
+            const badgeBorder = isInvoice ? "rgba(96,165,250,.35)" : isPayment ? "rgba(245,158,11,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)";
+            const badgeBackground = isInvoice ? "rgba(96,165,250,.1)" : isPayment ? "rgba(245,158,11,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)";
+            const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
             return (
               <GlassCard
                 key={item.key}
@@ -456,15 +500,15 @@ export default function TrashPage({ store, onToast }) {
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{
                         fontSize: 11.5,
-                        color: item.type === "invoice" ? "#60a5fa" : isProgram ? tc.gold : tc.greenLight,
-                        border: `1px solid ${item.type === "invoice" ? "rgba(96,165,250,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)"}`,
+                        color: badgeColor,
+                        border: `1px solid ${badgeBorder}`,
                         borderRadius: 999,
                         padding: "2px 8px",
-                        background: item.type === "invoice" ? "rgba(96,165,250,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)",
+                        background: badgeBackground,
                         fontWeight: 800,
                         lineHeight: 1.45,
                       }}>
-                        {item.type === "invoice" ? (t.trashFilter_invoices || "Invoices") : isProgram ? t.programs : t.clients}
+                        {badgeText}
                       </span>
                       <strong style={{ fontSize: 15, color: "var(--rukn-text)", lineHeight: 1.35 }}>{item.name}</strong>
                     </div>

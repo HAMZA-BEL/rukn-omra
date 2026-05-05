@@ -216,6 +216,9 @@ const toPayment = (p, agencyId) => ({
   cheque_number: cleanString(p.chequeNumber ?? p.cheque_number ?? p.checkNumber ?? p.check_number),
   paid_by: cleanString(p.paidBy ?? p.paid_by),
   note:       p.note ?? p.notes ?? null,
+  status: p.status ?? "active",
+  trashed_at: p.trashedAt ?? p.trashed_at ?? null,
+  deleted_at: p.deletedAt ?? p.deleted_at ?? null,
 });
 
 const fromPayment = (row) => {
@@ -245,6 +248,11 @@ const fromPayment = (row) => {
     paid_by: row.paid_by || "",
     note,
     notes: note,
+    status: row.status || "active",
+    trashedAt: row.trashed_at || "",
+    trashed_at: row.trashed_at || "",
+    deletedAt: row.deleted_at || "",
+    deleted_at: row.deleted_at || "",
   };
 };
 
@@ -559,8 +567,19 @@ export const db = {
       const { data, error } = await supabase
         .from("payments").select("*")
         .eq("agency_id", agencyId)
+        .or("status.is.null,status.eq.active")
         .order("created_at", { ascending: true });
       return { data: data?.map(fromPayment) ?? null, error };
+    },
+    async fetchTrashed(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("payments").select("*")
+        .eq("agency_id", agencyId)
+        .eq("status", "trashed")
+        .order("trashed_at", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false });
+      return { data: data?.map(fromPayment) ?? [], error };
     },
     async upsert(payment, agencyId) {
       const { error } = await supabase
@@ -582,9 +601,28 @@ export const db = {
       return { data: data ? fromPayment(data) : null, error };
     },
     async delete(id, agencyId) {
-      const { error } = await supabase
-        .from("payments").delete().eq("id", id).eq("agency_id", agencyId);
-      return { error };
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase.rpc("trash_payment", {
+        p_agency_id: agencyId,
+        p_payment_id: id,
+      });
+      return { data: data ? fromPayment(data) : null, error };
+    },
+    async restore(id, agencyId) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase.rpc("restore_payment", {
+        p_agency_id: agencyId,
+        p_payment_id: id,
+      });
+      return { data: data ? fromPayment(data) : null, error };
+    },
+    async deleteTrashed(id, agencyId) {
+      if (!agencyId || !id) return { data: null, error: null };
+      const { data, error } = await supabase.rpc("delete_trashed_payment", {
+        p_agency_id: agencyId,
+        p_payment_id: id,
+      });
+      return { data: data ? fromPayment(data) : null, error };
     },
   },
 
