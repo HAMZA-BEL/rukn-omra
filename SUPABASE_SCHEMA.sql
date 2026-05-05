@@ -218,12 +218,11 @@ create table if not exists public.activity_log_archive (
 );
 
 drop view if exists public.activity_log_all;
-create view public.activity_log_all as
+create view public.activity_log_all
+with (security_invoker = true) as
   select id, agency_id, user_id, type, description, client_name, created_at, false as is_archived
   from public.activity_log
-  union all
-  select id, agency_id, user_id, type, description, client_name, created_at, true as is_archived
-  from public.activity_log_archive;
+  where agency_id = public.get_agency_id();
 
 -- Notifications
 create table if not exists public.notifications (
@@ -335,7 +334,8 @@ drop policy if exists "agencies_update" on public.agencies;
 create policy "agencies_select" on public.agencies
   for select using (id = public.get_agency_id());
 create policy "agencies_update" on public.agencies
-  for update using (id = public.get_agency_id());
+  for update using (id = public.get_agency_id())
+  with check (id = public.get_agency_id());
 
 -- users: each user sees their own profile row and users in the same agency
 drop policy if exists "users_select" on public.users;
@@ -345,8 +345,11 @@ create policy "users_select" on public.users
     id = auth.uid()
     or agency_id = public.get_agency_id()
   );
-create policy "users_update" on public.users
-  for update using (id = auth.uid());
+
+-- User management must go through trusted server-side functions that use the
+-- service role. Normal authenticated clients must not update users directly,
+-- because role/status/agency_id changes would be privilege-sensitive.
+revoke update on public.users from authenticated;
 
 -- programs
 drop policy if exists "programs_select" on public.programs;
@@ -358,7 +361,8 @@ create policy "programs_select" on public.programs
 create policy "programs_insert" on public.programs
   for insert with check (agency_id = public.get_agency_id());
 create policy "programs_update" on public.programs
-  for update using (agency_id = public.get_agency_id());
+  for update using (agency_id = public.get_agency_id())
+  with check (agency_id = public.get_agency_id());
 create policy "programs_delete" on public.programs
   for delete using (agency_id = public.get_agency_id());
 
@@ -370,9 +374,32 @@ drop policy if exists "clients_delete" on public.clients;
 create policy "clients_select" on public.clients
   for select using (agency_id = public.get_agency_id());
 create policy "clients_insert" on public.clients
-  for insert with check (agency_id = public.get_agency_id());
+  for insert with check (
+    agency_id = public.get_agency_id()
+    and (
+      program_id is null
+      or exists (
+        select 1
+        from public.programs p
+        where p.id = program_id
+          and p.agency_id = public.get_agency_id()
+      )
+    )
+  );
 create policy "clients_update" on public.clients
-  for update using (agency_id = public.get_agency_id());
+  for update using (agency_id = public.get_agency_id())
+  with check (
+    agency_id = public.get_agency_id()
+    and (
+      program_id is null
+      or exists (
+        select 1
+        from public.programs p
+        where p.id = program_id
+          and p.agency_id = public.get_agency_id()
+      )
+    )
+  );
 create policy "clients_delete" on public.clients
   for delete using (agency_id = public.get_agency_id());
 
@@ -543,9 +570,26 @@ drop policy if exists "payments_delete" on public.payments;
 create policy "payments_select" on public.payments
   for select using (agency_id = public.get_agency_id());
 create policy "payments_insert" on public.payments
-  for insert with check (agency_id = public.get_agency_id());
+  for insert with check (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.clients c
+      where c.id = client_id
+        and c.agency_id = public.get_agency_id()
+    )
+  );
 create policy "payments_update" on public.payments
-  for update using (agency_id = public.get_agency_id());
+  for update using (agency_id = public.get_agency_id())
+  with check (
+    agency_id = public.get_agency_id()
+    and exists (
+      select 1
+      from public.clients c
+      where c.id = client_id
+        and c.agency_id = public.get_agency_id()
+    )
+  );
 create policy "payments_delete" on public.payments
   for delete using (agency_id = public.get_agency_id());
 
@@ -697,14 +741,22 @@ declare
   desc_text   text;
 begin
   if TG_OP = 'INSERT' then
-    select name into client_name from public.clients where id = NEW.client_id;
+    select name into client_name
+    from public.clients
+    where id = NEW.client_id
+      and agency_id = NEW.agency_id;
+
     amount_text := trim(to_char(NEW.amount, 'FM999G999G990D00'));
     desc_text   := 'دفعة ' || amount_text || ' د.م — ' || coalesce(NEW.receipt_no, '');
     insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
     values (gen_random_uuid(), NEW.agency_id, auth.uid(), 'payment_add', desc_text, client_name, now());
     return NEW;
   elsif TG_OP = 'DELETE' then
-    select name into client_name from public.clients where id = OLD.client_id;
+    select name into client_name
+    from public.clients
+    where id = OLD.client_id
+      and agency_id = OLD.agency_id;
+
     desc_text := 'تم حذف دفعة ' || coalesce(OLD.receipt_no, '');
     insert into public.activity_log (id, agency_id, user_id, type, description, client_name, created_at)
     values (gen_random_uuid(), OLD.agency_id, auth.uid(), 'payment_delete', desc_text, client_name, now());
@@ -729,7 +781,8 @@ create policy "notifications_select" on public.notifications
 create policy "notifications_insert" on public.notifications
   for insert with check (agency_id = public.get_agency_id());
 create policy "notifications_update" on public.notifications
-  for update using (agency_id = public.get_agency_id());
+  for update using (agency_id = public.get_agency_id())
+  with check (agency_id = public.get_agency_id());
 create policy "notifications_delete" on public.notifications
   for delete using (agency_id = public.get_agency_id());
 
@@ -810,6 +863,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_auth_user();
 
+-- This trigger function must not be directly callable by browser clients.
+-- The auth.users trigger can still execute it as the function owner.
+revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
+
 -- ── 7. Onboarding helper ───────────────────────────────────────
 -- Use this function (via Supabase dashboard) to create a new agency
 -- and get its UUID to use when creating the first owner user.
@@ -836,6 +893,10 @@ begin
   return v_id;
 end;
 $$;
+
+-- Agency creation is an administrative operation. Do not expose it as a
+-- directly callable RPC to public, anonymous, or authenticated browser users.
+revoke all on function public.create_new_agency(text, text) from public, anon, authenticated;
 
 -- ── Done ──────────────────────────────────────────────────────
 -- Summary of steps after running this SQL:

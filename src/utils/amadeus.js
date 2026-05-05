@@ -5,6 +5,7 @@
  */
 import { getProgramAirline, normalizeAirlineCode } from "./airlines";
 import { getAmadeusPassengerTypeCode } from "./age";
+import { escapeHtml } from "./escapeHtml";
 
 const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 
@@ -107,14 +108,6 @@ export function downloadAmadeusExcel(clients, program) {
 
   // Missing passport warning list
   const missing = clients.filter(c => !c.passport?.number);
-
-  // Excel-compatible HTML table: keeps DOCS and PAX in separate columns
-  const escapeHtml = (value) =>
-    String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   const excelHtml = `
 <html>

@@ -23,6 +23,7 @@ import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
 import { formatAirlineLabel, getProgramAirline } from "../utils/airlines";
+import { escapeHtml } from "../utils/escapeHtml";
 import { printProgramPDF } from "../utils/exportPdf";
 import {
   calculateHotelStayDates,
@@ -552,13 +553,6 @@ const buildPilgrimsListSheet = (clients = [], lang = "ar", labels = {}) => {
   });
   return { data, merges };
 };
-
-const escapeHtml = (value) => String(value ?? "")
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;")
-  .replace(/'/g, "&#039;");
 
 const parseStyleValue = (value) => {
   if (!value) return {};
@@ -3627,7 +3621,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
         <section class="hotel-section">
           <div class="hotel-title">
             <h2>${escapeHtml(hotel)}</h2>
-            <span>${hotelRooms.length} ${t.roomingRoomsUnit || "غرف"} · ${assigned} ${t.pilgrimUnit || "معتمر"}</span>
+            <span>${escapeHtml(hotelRooms.length)} ${escapeHtml(t.roomingRoomsUnit || "غرف")} · ${escapeHtml(assigned)} ${escapeHtml(t.pilgrimUnit || "معتمر")}</span>
           </div>
           <div class="rooms-grid">
             ${hotelRooms.map((room) => {
@@ -3647,7 +3641,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
                   </div>
                   <div class="room-meta">
                     <strong>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</strong>
-                    <span class="occupancy">${occupants.length}/${capacity}</span>
+                    <span class="occupancy">${escapeHtml(occupants.length)}/${escapeHtml(capacity)}</span>
                   </div>
                   <div class="hotel-name">${escapeHtml(room.hotel || hotel)}</div>
                   <ol>${names}</ol>
@@ -5706,13 +5700,15 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
       if (hidden.has(`${x}:${y}`)) return "";
       const cell = getCellName(x, y);
       const merge = mergeMap[cell];
-      const attrs = merge ? ` colspan="${merge[0]}" rowspan="${merge[1]}"` : "";
+      const colspan = Math.max(1, Math.min(200, Number.parseInt(merge?.[0], 10) || 1));
+      const rowspan = Math.max(1, Math.min(2000, Number.parseInt(merge?.[1], 10) || 1));
+      const attrs = merge ? ` colspan="${colspan}" rowspan="${rowspan}"` : "";
       const style = payload.style?.[cell] || "";
       return `<td${attrs} style="${escapeHtml(style)}">${escapeHtml(value).replace(/\n/g, "<br/>")}</td>`;
     }).join("")}</tr>`).join("");
     const win = window.open("", "_blank");
     if (!win) return;
-    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${ROOMING_CITY_LABELS[city]}</title>
+    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${escapeHtml(ROOMING_CITY_LABELS[city])}</title>
       <style>
         @page{size:A4 landscape;margin:10mm}
         body{font-family:Arial,sans-serif;color:#111;background:#fff}

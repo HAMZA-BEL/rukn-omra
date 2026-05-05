@@ -248,16 +248,25 @@ const migrateLegacyIds = (programs = [], clients = [], payments = []) => {
 };
 
 // ── localStorage helper ───────────────────────────────────────────────────────
-function useLS(key, init) {
+const stripAgencyRuntimeFields = (agency = {}) => {
+  if (!agency || typeof agency !== "object") return agency;
+  const { logoUrl, logo_url, ...persisted } = agency;
+  return persisted;
+};
+
+function useLS(key, init, sanitize = (value) => value) {
   const [val, setVal] = useState(() => {
-    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : init; }
-    catch { return init; }
+    try {
+      const s = localStorage.getItem(key);
+      return sanitize(s ? JSON.parse(s) : init);
+    }
+    catch { return sanitize(init); }
   });
   useEffect(() => {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {
+    try { localStorage.setItem(key, JSON.stringify(sanitize(val))); } catch (e) {
       console.warn("[useLS] Failed to write localStorage:", key, e);
     }
-  }, [key, val]);
+  }, [key, sanitize, val]);
   return [val, setVal];
 }
 
@@ -287,7 +296,7 @@ export function useStore(agencyId, onToast) {
     softDeleteClientsLocal,
     transferClientsLocal,
   } = useClientsSlice();
-  const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY);
+  const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY, stripAgencyRuntimeFields);
   const {
     activityLog,
     setInitialActivity,
@@ -639,6 +648,7 @@ export function useStore(agencyId, onToast) {
     });
 
     const channel = db.subscribeAll({
+      agencyId,
       onProgram: ({ eventType, new: row, old }) => {
         // Extra check: ignore rows that don't belong to this agency
         if (row?.agency_id && row.agency_id !== agencyId) return;

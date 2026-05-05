@@ -1,5 +1,7 @@
 import { db } from "../../../lib/db";
 import { isSupabaseEnabled } from "../../../lib/supabase";
+import { DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
+import { removeBadgeTemplateImage } from "../utils/badgeStorage";
 import { toBadgeTemplatePayload } from "../utils/badgeTemplateMapping";
 
 const LOCAL_KEY = "rukn_badge_templates_local_v1";
@@ -45,8 +47,18 @@ export async function saveBadgeTemplate({ agencyId, template } = {}) {
   return { data: nextTemplate, error: null };
 }
 
-export async function deleteBadgeTemplate({ agencyId, id } = {}) {
-  if (isSupabaseEnabled && agencyId) return db.badgeTemplates.delete(id, agencyId);
+export async function deleteBadgeTemplate({ agencyId, id, templatePath = "" } = {}) {
+  if (isSupabaseEnabled && agencyId) {
+    const { error } = await db.badgeTemplates.delete(id, agencyId);
+    if (error) return { error };
+
+    const path = String(templatePath || "").trim();
+    if (path && path !== DEFAULT_BADGE_TEMPLATE_PATH) {
+      const { error: storageError } = await removeBadgeTemplateImage(path);
+      return { error: null, storageError };
+    }
+    return { error: null };
+  }
   const next = readLocal().filter((item) => item.id !== id);
   writeLocal(next);
   return { error: null };

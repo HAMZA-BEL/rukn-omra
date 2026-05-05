@@ -714,7 +714,8 @@ export const db = {
             is_archived: false,
             created_at: createdAt,
           })
-          .eq("id", existing.id);
+          .eq("id", existing.id)
+          .eq("agency_id", agencyId);
         return { error: updateError };
       }
 
@@ -723,20 +724,32 @@ export const db = {
         .insert(payload);
       return { error };
     },
-    async markRead(id, isRead = true) {
-      const { error } = await supabase
-        .from("notifications").update({ is_read: isRead }).eq("id", id);
+    async markRead(id, isRead = true, agencyId = null) {
+      let query = supabase
+        .from("notifications")
+        .update({ is_read: isRead })
+        .eq("id", id);
+      if (agencyId) query = query.eq("agency_id", agencyId);
+      const { error } = await query;
       return { error };
     },
-    async markManyRead(ids) {
+    async markManyRead(ids, agencyId = null) {
       if (!ids || ids.length === 0) return { error: null };
-      const { error } = await supabase
-        .from("notifications").update({ is_read: true }).in("id", ids);
+      let query = supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .in("id", ids);
+      if (agencyId) query = query.eq("agency_id", agencyId);
+      const { error } = await query;
       return { error };
     },
-    async markArchived(id, archived = true) {
-      const { error } = await supabase
-        .from("notifications").update({ is_archived: archived }).eq("id", id);
+    async markArchived(id, archived = true, agencyId = null) {
+      let query = supabase
+        .from("notifications")
+        .update({ is_archived: archived })
+        .eq("id", id);
+      if (agencyId) query = query.eq("agency_id", agencyId);
+      const { error } = await query;
       return { error };
     },
     async delete(id, agencyId) {
@@ -878,13 +891,26 @@ export const db = {
   },
 
   // Realtime subscriptions
-  subscribeAll({ onProgram = () => {}, onClient = () => {}, onPayment = () => {}, onNotification = () => {} }) {
+  subscribeAll({
+    agencyId = null,
+    onProgram = () => {},
+    onClient = () => {},
+    onPayment = () => {},
+    onNotification = () => {},
+  }) {
+    const agencyScopedChanges = (table) => ({
+      event: "*",
+      schema: "public",
+      table,
+      ...(agencyId ? { filter: `agency_id=eq.${agencyId}` } : {}),
+    });
+
     return supabase
       .channel("db-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "programs" }, onProgram)
-      .on("postgres_changes", { event: "*", schema: "public", table: "clients"  }, onClient)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, onPayment)
-      .on("postgres_changes", { event: "*", schema: "public", table: "notifications" }, onNotification)
+      .on("postgres_changes", agencyScopedChanges("programs"), onProgram)
+      .on("postgres_changes", agencyScopedChanges("clients"), onClient)
+      .on("postgres_changes", agencyScopedChanges("payments"), onPayment)
+      .on("postgres_changes", agencyScopedChanges("notifications"), onNotification)
       .subscribe();
   },
 };

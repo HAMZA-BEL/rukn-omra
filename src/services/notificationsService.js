@@ -12,16 +12,16 @@ export function upsertNotification(notification, agencyId) {
   return db.notifications.upsert(notification, agencyId);
 }
 
-export function markNotificationRead(id, isRead = true) {
-  return db.notifications.markRead(id, isRead);
+export function markNotificationRead(id, isRead = true, agencyId = null) {
+  return db.notifications.markRead(id, isRead, agencyId);
 }
 
-export function markManyNotificationsRead(ids) {
-  return db.notifications.markManyRead(ids);
+export function markManyNotificationsRead(ids, agencyId = null) {
+  return db.notifications.markManyRead(ids, agencyId);
 }
 
-export function markNotificationArchived(id, archived = true) {
-  return db.notifications.markArchived(id, archived);
+export function markNotificationArchived(id, archived = true, agencyId = null) {
+  return db.notifications.markArchived(id, archived, agencyId);
 }
 
 export function deleteNotification(id, agencyId) {

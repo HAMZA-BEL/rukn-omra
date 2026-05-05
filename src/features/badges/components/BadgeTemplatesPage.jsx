@@ -79,10 +79,17 @@ export function BadgeTemplatesPage({ store, onToast }) {
 
   const handleDelete = async (template) => {
     try {
-      await remove(template.id);
+      const result = await remove(template.id);
       setActiveId("");
       setEditorId("");
-      onToast?.(t.badgeDeleteSuccess || "Badge template deleted", "info");
+      if (result?.storageError) {
+        onToast?.(
+          t.badgeTemplateImageDeleteError || "Badge template deleted, but the image could not be removed from Storage.",
+          "error"
+        );
+      } else {
+        onToast?.(t.badgeDeleteSuccess || "Badge template deleted", "info");
+      }
     } catch {
       onToast?.(t.badgeDeleteError || "Unable to delete badge template", "error");
     }

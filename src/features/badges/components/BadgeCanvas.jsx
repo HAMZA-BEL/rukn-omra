@@ -4,6 +4,10 @@ import { normalizeBadgeLayout, sampleBadgeData } from "../utils/badgeLayout";
 import { useLang } from "../../../hooks/useLang";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const isEditableTarget = (target) => {
+  const tag = target?.tagName?.toLowerCase();
+  return target?.isContentEditable || ["input", "textarea", "select"].includes(tag);
+};
 
 export function BadgeCanvas({
   imageUrl = "",
@@ -15,12 +19,14 @@ export function BadgeCanvas({
   onFieldChange,
   onRemoveField,
   onDropField,
+  useDefaultDesign = false,
 }) {
   const { t } = useLang();
   const normalized = React.useMemo(() => normalizeBadgeLayout(layout), [layout]);
   const aspect = Number(widthMm || 90) / Number(heightMm || 140);
   const viewportRef = React.useRef(null);
   const baseRef = React.useRef(null);
+  const stageRef = React.useRef(null);
   const [zoom, setZoom] = React.useState(1);
 
   const fitToScreen = React.useCallback(() => {
@@ -56,6 +62,33 @@ export function BadgeCanvas({
 
   const zoomBy = (delta) => setZoom((current) => clamp(Math.round((current + delta) * 100) / 100, 0.35, 2.5));
   const setActualSize = () => setZoom(1);
+
+  React.useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!selectedFieldId || isEditableTarget(event.target)) return;
+      const directions = {
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+      };
+      const direction = directions[event.key];
+      if (!direction) return;
+      const selected = normalized.fields.find((field) => field.id === selectedFieldId);
+      const stageBox = stageRef.current?.getBoundingClientRect();
+      if (!selected || !stageBox?.width || !stageBox?.height) return;
+      event.preventDefault();
+      const stepPx = event.shiftKey ? 10 : 1;
+      const deltaXPct = (direction[0] * stepPx / stageBox.width) * 100;
+      const deltaYPct = (direction[1] * stepPx / stageBox.height) * 100;
+      onFieldChange?.(selected.id, {
+        xPct: clamp(selected.xPct + deltaXPct, 0, 100 - selected.wPct),
+        yPct: clamp(selected.yPct + deltaYPct, 0, 100 - selected.hPct),
+      });
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [normalized.fields, onFieldChange, selectedFieldId]);
 
   const handleDrop = (event) => {
     const key = event.dataTransfer.getData("application/x-rukn-badge-field") || event.dataTransfer.getData("text/plain");
@@ -121,6 +154,7 @@ export function BadgeCanvas({
           }}>
             <div
               data-badge-stage
+              ref={stageRef}
               onPointerDown={() => onSelectField?.("")}
               style={{
                 position: "relative",
@@ -131,10 +165,46 @@ export function BadgeCanvas({
                 border: "1px solid rgba(212,175,55,.24)",
                 background: imageUrl
                   ? `center / cover no-repeat url("${imageUrl}")`
+                  : useDefaultDesign
+                  ? "linear-gradient(180deg,#f8fafc 0%,#f8fafc 52%,#e8f0fa 52%,#e8f0fa 100%)"
                   : "linear-gradient(135deg,var(--rukn-bg-soft),var(--rukn-bg-card))",
               }}
             >
-              {!imageUrl && (
+              {useDefaultDesign && !imageUrl && (
+                <>
+                  <div style={{
+                    position: "absolute",
+                    insetInlineStart: "7%",
+                    top: "5%",
+                    width: "34%",
+                    height: "7%",
+                    borderRadius: 999,
+                    background: "rgba(212,175,55,.2)",
+                    border: "1px solid rgba(212,175,55,.32)",
+                  }} />
+                  <div style={{
+                    position: "absolute",
+                    insetInlineEnd: "7%",
+                    top: "5%",
+                    width: "18%",
+                    height: "11%",
+                    borderRadius: 14,
+                    background: "rgba(15,23,42,.08)",
+                    border: "1px solid rgba(15,23,42,.12)",
+                  }} />
+                  <div style={{
+                    position: "absolute",
+                    left: "8%",
+                    right: "8%",
+                    bottom: "7%",
+                    height: "14%",
+                    borderRadius: 18,
+                    background: "rgba(255,255,255,.72)",
+                    border: "1px solid rgba(15,23,42,.1)",
+                  }} />
+                </>
+              )}
+              {!imageUrl && !useDefaultDesign && (
                 <div style={{
                   position: "absolute",
                   inset: 0,

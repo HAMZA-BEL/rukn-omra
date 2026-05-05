@@ -148,7 +148,7 @@ export function useNotificationsSlice({
   const markNotificationRead = useCallback(
     (id) => {
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
-      if (isSupabaseEnabled && agencyId) markNotificationReadRemote(id);
+      if (isSupabaseEnabled && agencyId) markNotificationReadRemote(id, true, agencyId);
     },
     [agencyId, isSupabaseEnabled]
   );
@@ -159,7 +159,7 @@ export function useNotificationsSlice({
     setNotifications((prev) =>
       prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n))
     );
-    if (isSupabaseEnabled && agencyId) markManyNotificationsReadRemote(ids);
+    if (isSupabaseEnabled && agencyId) markManyNotificationsReadRemote(ids, agencyId);
   }, [notifications, agencyId, isSupabaseEnabled]);
 
   const archiveNotification = useCallback(
@@ -167,7 +167,7 @@ export function useNotificationsSlice({
       const existing = notifications.find((n) => n.id === id);
       rememberDismissedKey(existing);
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isArchived: true } : n)));
-      if (isSupabaseEnabled && agencyId) markNotificationArchivedRemote(id, true);
+      if (isSupabaseEnabled && agencyId) markNotificationArchivedRemote(id, true, agencyId);
     },
     [agencyId, isSupabaseEnabled, notifications, rememberDismissedKey]
   );
@@ -179,7 +179,7 @@ export function useNotificationsSlice({
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, isArchived: false } : n))
       );
-      if (isSupabaseEnabled && agencyId) markNotificationArchivedRemote(id, false);
+      if (isSupabaseEnabled && agencyId) markNotificationArchivedRemote(id, false, agencyId);
     },
     [agencyId, isSupabaseEnabled, notifications, forgetDismissedKey]
   );

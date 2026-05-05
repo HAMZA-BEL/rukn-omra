@@ -7,6 +7,7 @@ import { BadgePropertiesPanel } from "./BadgePropertiesPanel";
 import { useBadgeDesigner } from "../hooks/useBadgeDesigner";
 import { normalizeBadgeLayout } from "../utils/badgeLayout";
 import { getBadgeTemplateImageUrl } from "../utils/badgeStorage";
+import { DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
 
 const isEditableTarget = (target) => {
   const tag = target?.tagName?.toLowerCase();
@@ -47,7 +48,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
   React.useEffect(() => {
     let cancelled = false;
     setImageUrl("");
-    if (!template?.templatePath) return undefined;
+    if (!template?.templatePath || template.templatePath === DEFAULT_BADGE_TEMPLATE_PATH) return undefined;
     getBadgeTemplateImageUrl(template.templatePath).then((url) => {
       if (!cancelled) setImageUrl(url || "");
     });
@@ -248,6 +249,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
             onFieldChange={designer.updateField}
             onRemoveField={designer.removeField}
             onDropField={designer.addField}
+            useDefaultDesign={draft.templatePath === DEFAULT_BADGE_TEMPLATE_PATH}
           />
         </div>
 

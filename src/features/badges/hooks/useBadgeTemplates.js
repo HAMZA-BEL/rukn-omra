@@ -47,10 +47,16 @@ export function useBadgeTemplates({ agencyId, onError } = {}) {
   }, [agencyId, refresh]);
 
   const remove = React.useCallback(async (id) => {
-    const { error } = await deleteBadgeTemplate({ agencyId, id });
+    const template = templates.find((item) => item.id === id);
+    const { error, storageError } = await deleteBadgeTemplate({
+      agencyId,
+      id,
+      templatePath: template?.templatePath,
+    });
     if (error) throw error;
     await refresh();
-  }, [agencyId, refresh]);
+    return { storageError };
+  }, [agencyId, refresh, templates]);
 
   const makeDefault = React.useCallback(async (id) => {
     const { error } = await setDefaultBadgeTemplate({ agencyId, id });

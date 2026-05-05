@@ -7,41 +7,66 @@ import { AppIcon, IconBubble } from "./Icon";
 const tc = theme.colors;
 
 function PasswordShell({ lbl, children }) {
+  const { lang } = useLang();
+  const isRtl = lang === "ar";
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(26,107,58,.35), #060d1a)",
+      background: "radial-gradient(ellipse 88% 58% at 50% -18%, rgba(212,175,55,0.12), #f8f3e7 62%)",
       padding: "24px",
+      direction: isRtl ? "rtl" : "ltr",
+      color: "#142133",
+      fontFamily: "'Cairo', sans-serif",
     }}>
-      {[160, 280, 420].map((s, i) => (
+      <div style={{
+        position: "fixed",
+        pointerEvents: "none",
+        inset: "-25%",
+        backgroundImage: `
+          linear-gradient(90deg, rgba(212,175,55,0.09) 1px, transparent 1px),
+          linear-gradient(0deg, rgba(15,84,77,0.08) 1px, transparent 1px)
+        `,
+        backgroundSize: "72px 72px",
+        opacity: 0.26,
+      }} />
+      {[180, 320, 480].map((s, i) => (
         <div key={i} style={{
           position: "fixed", top: "50%", left: "50%",
           width: s, height: s, borderRadius: "50%",
-          border: "1px solid rgba(212,175,55,.06)",
+          border: "1px solid rgba(128,91,11,.07)",
           transform: "translate(-50%, -50%)", pointerEvents: "none",
+          opacity: 1 - i * 0.18,
         }} />
       ))}
       <div style={{
         width: "100%", maxWidth: 420,
-        background: "rgba(10,22,45,.85)",
-        border: "1px solid rgba(212,175,55,.2)",
+        background: "rgba(255,255,255,0.96)",
+        border: "1px solid rgba(128,91,11,0.16)",
         borderRadius: 20, padding: "40px 36px",
         backdropFilter: "blur(20px)",
-        boxShadow: "0 24px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(212,175,55,.08)",
+        boxShadow: "0 24px 60px rgba(15,23,42,0.12), 0 0 0 1px rgba(128,91,11,0.06)",
         position: "relative",
+        zIndex: 1,
       }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <IconBubble name="shieldCheck" boxSize={64} size={30} style={{ borderRadius:18, margin:"0 auto 16px", animation:"float 4s ease-in-out infinite" }} />
+          <IconBubble
+            name="shieldCheck"
+            boxSize={64}
+            size={30}
+            color="#b8941e"
+            bg="rgba(212,175,55,.12)"
+            border="rgba(128,91,11,.16)"
+            style={{ borderRadius:18, margin:"0 auto 16px" }}
+          />
           <h1 style={{
             fontSize: 20, fontWeight: 900, fontFamily: "'Amiri', serif",
-            background: "linear-gradient(135deg,#f0d060,#d4af37)",
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+            color: "#142133",
             marginBottom: 6,
           }}>{lbl.title}</h1>
-          <p style={{ fontSize: 12, color: tc.grey }}>{lbl.subtitle}</p>
+          <p style={{ fontSize: 12, color: "#5b6675", lineHeight: 1.7 }}>{lbl.subtitle}</p>
         </div>
         {children}
-        <p style={{ textAlign: "center", marginTop: 24, fontSize: 11, color: "rgba(148,163,184,.3)" }}>
+        <p style={{ textAlign: "center", marginTop: 24, fontSize: 11, color: "#8a96a8" }}>
           RUKN — نظام إدارة المعتمرين
         </p>
       </div>
@@ -53,10 +78,10 @@ const Requirement = React.memo(function Requirement({ ok, label }) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6, fontSize: 11,
-      color: ok ? "#4ade80" : "rgba(148,163,184,.5)",
+      color: ok ? "#15803d" : "#667085",
       transition: "color .25s",
     }}>
-      <AppIcon name={ok ? "check" : "status"} size={13} color={ok ? "#4ade80" : "rgba(148,163,184,.5)"} />
+      <AppIcon name={ok ? "check" : "status"} size={13} color={ok ? "#15803d" : "#98a2b3"} />
       <span>{label}</span>
     </div>
   );
@@ -99,8 +124,28 @@ const LABELS = {
     show:        "Afficher",
     hide:        "Masquer",
   },
+  en: {
+    title:       "Set your password",
+    subtitle:    "Welcome — set your password to access the system",
+    newPass:     "New password",
+    confirmPass: "Confirm password",
+    req8:        "At least 8 characters",
+    reqUpper:    "At least one uppercase letter (A-Z)",
+    reqNum:      "At least one number (0-9)",
+    noMatch:     "Passwords do not match",
+    submit:      "Activate account",
+    submitting:  "Saving...",
+    success:     "Password set successfully — signing you in...",
+    errGeneric:  "Something went wrong — try again",
+    expired:     "Link expired — contact the administrator for a new invitation",
+    preparing:   "Verifying the link...",
+    show:        "Show",
+    hide:        "Hide",
+    backLogin:   "Back to sign in",
+  },
 };
-LABELS.en = LABELS.fr;
+LABELS.ar.backLogin = "العودة لتسجيل الدخول";
+LABELS.fr.backLogin = "Retour à la connexion";
 
 // States: 'preparing' | 'ready' | 'expired' | 'done'
 // authData = { type, accessToken, refreshToken } | null (from App.jsx URL detection)
@@ -190,21 +235,24 @@ export default function SetPasswordPage({ authData }) {
   const inputSt = (redBorder) => ({
     width: "100%", boxSizing: "border-box",
     padding: "11px 14px 11px 44px", borderRadius: 10,
-    background: "rgba(255,255,255,.05)",
-    border: redBorder ? "1px solid rgba(239,68,68,.5)" : "1px solid rgba(212,175,55,.2)",
-    color: "#f8fafc", fontSize: 14,
+    background: "rgba(255,255,255,.98)",
+    border: redBorder ? "1px solid rgba(220,38,38,.72)" : "1px solid rgba(15,23,42,0.16)",
+    color: "#142133", fontSize: 14,
     fontFamily: "'Cairo', sans-serif", direction: "ltr",
-    outline: "none", transition: "border .2s",
+    outline: "none", transition: "border .2s, box-shadow .2s, background .2s",
+    boxShadow: redBorder ? "0 0 0 3px rgba(220,38,38,.08)" : "none",
   });
   const toggleBtn = (onClick, visible) => (
     <button type="button" onClick={onClick} style={{
       position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
       background: "none", border: "none", cursor: "pointer",
-      color: "rgba(148,163,184,.5)", fontSize: 18,
+      color: "#667085", fontSize: 18,
       padding: "4px", lineHeight: 1,
     }}
-    onMouseEnter={e => e.currentTarget.style.color = "#d4af37"}
-    onMouseLeave={e => e.currentTarget.style.color = "rgba(148,163,184,.5)"}
+    aria-label={visible ? lbl.hide : lbl.show}
+    title={visible ? lbl.hide : lbl.show}
+    onMouseEnter={e => e.currentTarget.style.color = "#b8941e"}
+    onMouseLeave={e => e.currentTarget.style.color = "#667085"}
     ><AppIcon name={visible ? "eyeOff" : "eye"} size={18} color="currentColor" /></button>
   );
 
@@ -215,12 +263,12 @@ export default function SetPasswordPage({ authData }) {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "24px 0" }}>
           <div style={{
             width: 36, height: 36,
-            border: "3px solid rgba(212,175,55,.2)",
-            borderTop: "3px solid #d4af37",
+            border: "3px solid rgba(128,91,11,.14)",
+            borderTop: "3px solid #b8941e",
             borderRadius: "50%",
             animation: "spin 1s linear infinite",
           }} />
-          <p style={{ color: tc.grey, fontSize: 13 }}>{lbl.preparing}</p>
+          <p style={{ color: "#5b6675", fontSize: 13 }}>{lbl.preparing}</p>
         </div>
       </PasswordShell>
     );
@@ -236,7 +284,7 @@ export default function SetPasswordPage({ authData }) {
         }}>
           <div style={{
             width: 56, height: 56, borderRadius: "50%",
-            background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)",
+            background: "rgba(239,68,68,.09)", border: "1px solid rgba(239,68,68,.22)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 26,
           }}><AppIcon name="clock" size={26} color={tc.danger} /></div>
@@ -253,14 +301,14 @@ export default function SetPasswordPage({ authData }) {
               marginTop: 4, padding: "10px 24px",
               borderRadius: 10, border: "1px solid rgba(212,175,55,.3)",
               background: "rgba(212,175,55,.08)",
-              color: "#d4af37", fontSize: 13, fontWeight: 700,
+              color: "#805b0b", fontSize: 13, fontWeight: 700,
               fontFamily: "'Cairo', sans-serif", cursor: "pointer",
               transition: "all .2s",
             }}
             onMouseEnter={e => e.currentTarget.style.background = "rgba(212,175,55,.18)"}
             onMouseLeave={e => e.currentTarget.style.background = "rgba(212,175,55,.08)"}
           >
-            {lang === "fr" ? "Retour à la connexion" : "← العودة لتسجيل الدخول"}
+            {lbl.backLogin}
           </button>
         </div>
       </PasswordShell>
@@ -277,11 +325,11 @@ export default function SetPasswordPage({ authData }) {
         }}>
           <div style={{
             width: 56, height: 56, borderRadius: "50%",
-            background: "rgba(74,222,128,.12)", border: "1px solid rgba(74,222,128,.3)",
+            background: "rgba(22,163,74,.09)", border: "1px solid rgba(22,163,74,.22)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 28,
-          }}><AppIcon name="success" size={28} color="#4ade80" /></div>
-          <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700 }}>{lbl.success}</p>
+          }}><AppIcon name="success" size={28} color="#15803d" /></div>
+          <p style={{ color: "#15803d", fontSize: 14, fontWeight: 700 }}>{lbl.success}</p>
         </div>
       </PasswordShell>
     );
@@ -293,7 +341,7 @@ export default function SetPasswordPage({ authData }) {
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* New password */}
         <div>
-          <label style={{ fontSize: 12, color: tc.grey, display: "block", marginBottom: 6 }}>
+          <label style={{ fontSize: 12, color: "#5b6675", display: "block", marginBottom: 6, fontWeight: 700 }}>
             {lbl.newPass}
           </label>
           <div style={inputWrap}>
@@ -305,8 +353,14 @@ export default function SetPasswordPage({ authData }) {
               autoComplete="new-password"
               disabled={loading}
               style={inputSt(false)}
-              onFocus={e => e.target.style.border = "1px solid rgba(212,175,55,.5)"}
-              onBlur={e  => e.target.style.border = "1px solid rgba(212,175,55,.2)"}
+              onFocus={e => {
+                e.target.style.border = "1px solid rgba(212,175,55,.65)";
+                e.target.style.boxShadow = "0 0 0 3px rgba(212,175,55,.15)";
+              }}
+              onBlur={e  => {
+                e.target.style.border = "1px solid rgba(15,23,42,0.16)";
+                e.target.style.boxShadow = "none";
+              }}
             />
             {toggleBtn(() => setShow1(v => !v), show1)}
           </div>
@@ -321,7 +375,7 @@ export default function SetPasswordPage({ authData }) {
 
         {/* Confirm password */}
         <div>
-          <label style={{ fontSize: 12, color: tc.grey, display: "block", marginBottom: 6 }}>
+          <label style={{ fontSize: 12, color: "#5b6675", display: "block", marginBottom: 6, fontWeight: 700 }}>
             {lbl.confirmPass}
           </label>
           <div style={inputWrap}>
@@ -333,10 +387,17 @@ export default function SetPasswordPage({ authData }) {
               autoComplete="new-password"
               disabled={loading}
               style={inputSt(pass2.length > 0 && pass2 !== pass1)}
-              onFocus={e => e.target.style.border = "1px solid rgba(212,175,55,.5)"}
-              onBlur={e  => e.target.style.border = (pass2.length > 0 && pass2 !== pass1)
-                ? "1px solid rgba(239,68,68,.5)"
-                : "1px solid rgba(212,175,55,.2)"}
+              onFocus={e => {
+                e.target.style.border = "1px solid rgba(212,175,55,.65)";
+                e.target.style.boxShadow = "0 0 0 3px rgba(212,175,55,.15)";
+              }}
+              onBlur={e  => {
+                const invalid = pass2.length > 0 && pass2 !== pass1;
+                e.target.style.border = invalid
+                  ? "1px solid rgba(220,38,38,.72)"
+                  : "1px solid rgba(15,23,42,0.16)";
+                e.target.style.boxShadow = invalid ? "0 0 0 3px rgba(220,38,38,.08)" : "none";
+              }}
             />
             {toggleBtn(() => setShow2(v => !v), show2)}
           </div>
@@ -346,7 +407,7 @@ export default function SetPasswordPage({ authData }) {
         {error && (
           <div style={{
             padding: "10px 14px", borderRadius: 10, fontSize: 13,
-            background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)",
+            background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.22)",
             color: tc.danger, fontWeight: 600, textAlign: "center",
           }}>
             <AppIcon name="alert" size={14} color={tc.danger} /> {error}
@@ -361,9 +422,9 @@ export default function SetPasswordPage({ authData }) {
             marginTop: 4, padding: "13px",
             borderRadius: 12, border: "none",
             background: (loading || !strong)
-              ? "rgba(212,175,55,.3)"
+              ? "rgba(128,91,11,.12)"
               : "linear-gradient(135deg,#d4af37,#b8941e)",
-            color: (loading || !strong) ? tc.grey : "#060d1a",
+            color: (loading || !strong) ? "#7a8698" : "#060d1a",
             fontSize: 15, fontWeight: 800,
             fontFamily: "'Cairo', sans-serif",
             cursor: (loading || !strong) ? "not-allowed" : "pointer",

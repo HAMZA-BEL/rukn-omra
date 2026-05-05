@@ -2,21 +2,24 @@ import React from "react";
 import { Button, Input, Modal } from "../../../components/UI";
 import { isSupabaseEnabled } from "../../../lib/supabase";
 import { compressBadgeTemplateImage } from "../utils/badgeImageCompression";
-import { DEFAULT_BADGE_SIZE } from "../utils/badgeDefaults";
+import { DEFAULT_BADGE_SIZE, DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
 import { createDefaultBadgeLayout } from "../utils/badgeLayout";
 import { createBadgeTemplateId } from "../services/badgeTemplatesApi";
 import { uploadBadgeTemplateImage } from "../utils/badgeStorage";
+import { validateBadgeTemplateImageFile } from "../utils/badgeValidation";
 import { useLang } from "../../../hooks/useLang";
 
 export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, onToast }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const inputRef = React.useRef(null);
   const [name, setName] = React.useState(t.badgeDefaultTemplateName || "Badge template");
   const [description, setDescription] = React.useState("");
   const [widthMm, setWidthMm] = React.useState(DEFAULT_BADGE_SIZE.widthMm);
   const [heightMm, setHeightMm] = React.useState(DEFAULT_BADGE_SIZE.heightMm);
   const [file, setFile] = React.useState(null);
+  const [fileError, setFileError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [designPromptOpen, setDesignPromptOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) return;
@@ -25,10 +28,12 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
     setWidthMm(DEFAULT_BADGE_SIZE.widthMm);
     setHeightMm(DEFAULT_BADGE_SIZE.heightMm);
     setFile(null);
+    setFileError("");
     setBusy(false);
+    setDesignPromptOpen(false);
   }, [open, t.badgeDefaultTemplateName]);
 
-  const handleCreate = async () => {
+  const createTemplate = async ({ useDefaultDesign = false } = {}) => {
     if (!name.trim()) return;
     if (!isSupabaseEnabled || !agencyId) {
       onToast?.(t.badgeStorageRequired || "Creating badge templates requires Supabase Storage", "error");
@@ -38,7 +43,15 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
     try {
       const id = createBadgeTemplateId();
       let templatePath = "";
-      if (file) {
+      if (useDefaultDesign) {
+        templatePath = DEFAULT_BADGE_TEMPLATE_PATH;
+      } else if (file) {
+        const validation = validateBadgeTemplateImageFile(file, lang);
+        if (!validation.ok) {
+          setFileError(validation.message);
+          onToast?.(validation.message, "error");
+          return;
+        }
         const compressed = await compressBadgeTemplateImage(file);
         const { data, error } = await uploadBadgeTemplateImage({ agencyId, templateId: id, file: compressed });
         if (error || !data?.path) throw error || new Error("Upload failed");
@@ -60,6 +73,42 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleCreate = async () => {
+    if (!file) {
+      setDesignPromptOpen(true);
+      return;
+    }
+    await createTemplate();
+  };
+
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files?.[0] || null;
+    event.target.value = "";
+    setFileError("");
+    if (!selectedFile) {
+      setFile(null);
+      return;
+    }
+    const validation = validateBadgeTemplateImageFile(selectedFile, lang);
+    if (!validation.ok) {
+      setFile(null);
+      setFileError(validation.message);
+      onToast?.(validation.message, "error");
+      return;
+    }
+    setFile(selectedFile);
+  };
+
+  const handlePromptUpload = () => {
+    setDesignPromptOpen(false);
+    requestAnimationFrame(() => inputRef.current?.click());
+  };
+
+  const handleUseDefaultDesign = async () => {
+    setDesignPromptOpen(false);
+    await createTemplate({ useDefaultDesign: true });
   };
 
   return (
@@ -94,6 +143,11 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
             {t.badgeStorageRequired || "Creating badge templates requires Supabase Storage."}
           </p>
         )}
+        {fileError && (
+          <p style={{ fontSize: 12, color: "var(--rukn-danger)", fontWeight: 700, margin: 0 }}>
+            {fileError}
+          </p>
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <Button variant="ghost" onClick={onClose}>{t.cancel || "Cancel"}</Button>
           <Button variant="primary" icon="plus" onClick={handleCreate} disabled={busy || !isSupabaseEnabled}>
@@ -104,10 +158,33 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
           ref={inputRef}
           type="file"
           accept="image/png,image/jpeg,image/webp"
-          onChange={(event) => setFile(event.target.files?.[0] || null)}
+          onChange={handleFileChange}
           style={{ display: "none" }}
         />
       </div>
+      <Modal
+        open={designPromptOpen}
+        onClose={() => setDesignPromptOpen(false)}
+        title={t.badgeDesignRequiredTitle || t.badgeNewTemplate || "Badge design required"}
+        width={480}
+      >
+        <div style={{ display: "grid", gap: 16 }}>
+          <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, lineHeight: 1.8 }}>
+            {t.badgeDesignRequiredMessage || "You must first upload a badge design or choose the default design before continuing."}
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={() => setDesignPromptOpen(false)}>
+              {t.cancel || "Cancel"}
+            </Button>
+            <Button variant="secondary" icon="upload" onClick={handlePromptUpload} disabled={busy || !isSupabaseEnabled}>
+              {t.badgePromptUploadDesign || t.badgeUploadDesign || "Upload design"}
+            </Button>
+            <Button variant="primary" onClick={handleUseDefaultDesign} disabled={busy || !isSupabaseEnabled}>
+              {t.badgeUseDefaultDesign || "Use default design"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Modal>
   );
 }

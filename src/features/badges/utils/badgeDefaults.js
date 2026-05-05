@@ -1,9 +1,11 @@
 export const BADGE_PHOTO_BUCKET = "pilgrim-photos";
 export const BADGE_TEMPLATE_BUCKET = "badge-templates";
+export const DEFAULT_BADGE_TEMPLATE_PATH = "__rukn_default_badge_design__";
 
 export const BADGE_PHOTO_MAX_DIMENSION = 720;
 export const BADGE_PHOTO_QUALITY = 0.82;
 export const BADGE_PHOTO_MAX_BYTES = 3 * 1024 * 1024;
+export const BADGE_TEMPLATE_MAX_BYTES = 8 * 1024 * 1024;
 
 export const buildBadgePhotoPath = ({ agencyId, clientId, extension = "webp" } = {}) => {
   const safeAgencyId = String(agencyId || "").trim();

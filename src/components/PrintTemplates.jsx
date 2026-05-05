@@ -5,6 +5,7 @@ import { TRANSLATIONS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
 import { amountInWordsSentence } from "../utils/amountToWords";
 import { getClientDisplayName } from "../utils/clientNames";
+import { escapeHtml } from "../utils/escapeHtml";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
@@ -25,12 +26,6 @@ const cleanDisplay = (value, fallback = "—") => {
   const text = trimValue(value);
   return text || fallback;
 };
-const escapeHtml = (value) => String(value ?? "")
-  .replaceAll("&", "&amp;")
-  .replaceAll("<", "&lt;")
-  .replaceAll(">", "&gt;")
-  .replaceAll('"', "&quot;")
-  .replaceAll("'", "&#039;");
 const openPrintWindow = (features, lang = "ar") => {
   const printWindow = window.open("", "_blank", features);
   return printWindow || null;
@@ -316,10 +311,10 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
     : terms.receiptTitle;
   const html = `<!DOCTYPE html>
-<html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
+<html dir="${isAr?"rtl":"ltr"}" lang="${escapeHtml(lang)}">
 <head>
 <meta charset="UTF-8"/>
-<title>${receiptTitle}</title>
+<title>${escapeHtml(receiptTitle)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; color:#111; background:#fff; }
@@ -340,24 +335,24 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
 <body>
 <div class="page">
   ${agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
-  <div class="receipt-title">${receiptTitle}</div>
-  <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${receiptNo}</strong></div>
+  <div class="receipt-title">${escapeHtml(receiptTitle)}</div>
+  <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${escapeHtml(receiptNo)}</strong></div>
   <table>
-    <tr><td>${terms.singular}</td><td>${clientName}${client.nameLatin && client.nameLatin !== clientName ? " — "+client.nameLatin : ""}</td></tr>
-    <tr><td>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</td><td>${cleanDisplay(cin, "")}</td></tr>
-    <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${program?.name || "—"}</td></tr>
-    <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${translatePaymentMethod(paymentMethod, lang)}</td></tr>
-    ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${extraDetails}</td></tr>` : ""}
-    <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${payment.date}</td></tr>
-    ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${note}</td></tr>` : ""}
+    <tr><td>${escapeHtml(terms.singular)}</td><td>${escapeHtml(clientName)}${client.nameLatin && client.nameLatin !== clientName ? ` — ${escapeHtml(client.nameLatin)}` : ""}</td></tr>
+    <tr><td>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</td><td>${escapeHtml(cleanDisplay(cin, ""))}</td></tr>
+    <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${escapeHtml(program?.name || "—")}</td></tr>
+    <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${escapeHtml(translatePaymentMethod(paymentMethod, lang))}</td></tr>
+    ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${escapeHtml(extraDetails)}</td></tr>` : ""}
+    <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${escapeHtml(payment.date)}</td></tr>
+    ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${escapeHtml(note)}</td></tr>` : ""}
     <tr class="amount-row">
       <td>${label(lang, "المبلغ المستلم", "MONTANT REÇU", "AMOUNT RECEIVED")}</td>
-      <td>${money(payment.amount)}</td>
+      <td>${escapeHtml(money(payment.amount))}</td>
     </tr>
   </table>
   <div class="signature">
     <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
-    <div style="text-align:center"><div class="signature-box"></div>${terms.signatureLabel}</div>
+    <div style="text-align:center"><div class="signature-box"></div>${escapeHtml(terms.signatureLabel)}</div>
   </div>
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
@@ -379,10 +374,10 @@ export function printClientCard({ client, program, agency, lang = "ar", programC
   const level = client.packageLevel || client.hotelLevel || "";
   const notes = trimValue(client.note || client.notes);
   const html = `<!DOCTYPE html>
-<html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
+<html dir="${isAr?"rtl":"ltr"}" lang="${escapeHtml(lang)}">
 <head>
 <meta charset="UTF-8"/>
-<title>${terms.cardTitle}</title>
+<title>${escapeHtml(terms.cardTitle)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:Arial,sans-serif; font-size:12px; background:#fff; color:#111; }
@@ -405,28 +400,28 @@ export function printClientCard({ client, program, agency, lang = "ar", programC
 </head>
 <body>
   <div class="page">
-  <div class="title">${terms.cardTitle}</div>
-  <div class="file-no">${label(lang, "ملف رقم", "Dossier N°", "File No.")}: ${fileNumber}</div>
-  <div class="name">${clientName}</div>
-  ${latinName ? `<div class="name-latin">${latinName}</div>` : ""}
+  <div class="title">${escapeHtml(terms.cardTitle)}</div>
+  <div class="file-no">${label(lang, "ملف رقم", "Dossier N°", "File No.")}: ${escapeHtml(fileNumber)}</div>
+  <div class="name">${escapeHtml(clientName)}</div>
+  ${latinName ? `<div class="name-latin">${escapeHtml(latinName)}</div>` : ""}
   <div class="grid">
-    <div class="item"><label>${label(lang, "الهاتف", "Téléphone", "Phone")}</label><span>${client.phone || "—"}</span></div>
-    <div class="item"><label>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</label><span>${cleanDisplay(cin, "—")}</span></div>
-    ${p.number ? `<div class="item"><label>${label(lang, "رقم الجواز", "Passeport", "Passport")}</label><span>${p.number}</span></div>` : ""}
-    <div class="item"><label>${label(lang, "البرنامج", "Programme", "Program")}</label><span>${program?.name || "—"}</span></div>
-    <div class="item"><label>${label(lang, "الذهاب", "Départ", "Departure")}</label><span>${program?.departure || "—"}</span></div>
-    <div class="item"><label>${label(lang, "العودة", "Retour", "Return")}</label><span>${program?.returnDate || "—"}</span></div>
-    <div class="item"><label>${label(lang, "المستوى", "Niveau", "Level/package")}</label><span>${cleanDisplay(level, "—")}</span></div>
-    <div class="item"><label>${label(lang, "نوع الغرفة", "Chambre", "Room Type")}</label><span>${translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—"}</span></div>
-    <div class="item"><label>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}</label><span>${cleanDisplay(carrier, "—")}</span></div>
-    ${p.expiry ? `<div class="item"><label>${label(lang, "انتهاء الجواز", "Expiration", "Expiry")}</label><span>${p.expiry}</span></div>` : ""}
-    ${client.ticketNo ? `<div class="item"><label>${label(lang, "رقم التذكرة", "N° billet", "Ticket No.")}</label><span>${client.ticketNo}</span></div>` : ""}
+    <div class="item"><label>${label(lang, "الهاتف", "Téléphone", "Phone")}</label><span>${escapeHtml(client.phone || "—")}</span></div>
+    <div class="item"><label>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</label><span>${escapeHtml(cleanDisplay(cin, "—"))}</span></div>
+    ${p.number ? `<div class="item"><label>${label(lang, "رقم الجواز", "Passeport", "Passport")}</label><span>${escapeHtml(p.number)}</span></div>` : ""}
+    <div class="item"><label>${label(lang, "البرنامج", "Programme", "Program")}</label><span>${escapeHtml(program?.name || "—")}</span></div>
+    <div class="item"><label>${label(lang, "الذهاب", "Départ", "Departure")}</label><span>${escapeHtml(program?.departure || "—")}</span></div>
+    <div class="item"><label>${label(lang, "العودة", "Retour", "Return")}</label><span>${escapeHtml(program?.returnDate || "—")}</span></div>
+    <div class="item"><label>${label(lang, "المستوى", "Niveau", "Level/package")}</label><span>${escapeHtml(cleanDisplay(level, "—"))}</span></div>
+    <div class="item"><label>${label(lang, "نوع الغرفة", "Chambre", "Room Type")}</label><span>${escapeHtml(translateRoomType(client.roomType || client.roomTypeLabel, lang) || "—")}</span></div>
+    <div class="item"><label>${label(lang, "الشركة الناقلة", "Compagnie", "Carrier company")}</label><span>${escapeHtml(cleanDisplay(carrier, "—"))}</span></div>
+    ${p.expiry ? `<div class="item"><label>${label(lang, "انتهاء الجواز", "Expiration", "Expiry")}</label><span>${escapeHtml(p.expiry)}</span></div>` : ""}
+    ${client.ticketNo ? `<div class="item"><label>${label(lang, "رقم التذكرة", "N° billet", "Ticket No.")}</label><span>${escapeHtml(client.ticketNo)}</span></div>` : ""}
   </div>
   ${client.docs ? `<div class="docs">
     ${[["passportCopy",label(lang, "صورة الجواز", "Passeport", "Passport")],["photo",label(lang, "صورة", "Photo", "Photo")],["vaccine",label(lang, "تطعيم", "Vaccin", "Vaccine")],["contract",label(lang, "عقد", "Contrat", "Contract")]].map(([k,l])=>`
-	    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"OK":"NO"} ${l}</span>`).join("")}
+	    <span class="doc-badge ${client.docs[k]?"doc-ok":"doc-no"}">${client.docs[k]?"OK":"NO"} ${escapeHtml(l)}</span>`).join("")}
 	  </div>` : ""}
-  ${notes ? `<div class="notes">${label(lang, "ملاحظات", "Notes", "Notes")}: ${notes}</div>` : ""}
+  ${notes ? `<div class="notes">${label(lang, "ملاحظات", "Notes", "Notes")}: ${escapeHtml(notes)}</div>` : ""}
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
@@ -576,18 +571,18 @@ async function printInvoiceDocument({
     ? `<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1200);}</script>`
     : "";
   const html = `<!DOCTYPE html>
-<html dir="${isAr?"rtl":"ltr"}" lang="${lang}">
+<html dir="${isAr?"rtl":"ltr"}" lang="${escapeHtml(lang)}">
 <head>
 <meta charset="UTF-8"/>
-<title>${title}</title>
+<title>${escapeHtml(title)}</title>
 <style>
 ${commonPrintCSS}
 </style>
 </head>
 <body>
   <div class="page">
-  <div class="issue-date">${dateLine}</div>
-  <div class="title">${title}</div>
+  <div class="issue-date">${escapeHtml(dateLine)}</div>
+  <div class="title">${escapeHtml(title)}</div>
   <div class="grid">
     <div class="box">
       <h3>${issuedToCompany ? label(lang, "الفاتورة باسم", "Facturée à", "Issued to") : label(lang, "المعتمر", "Client / Pèlerin", "Client / Pilgrim")}</h3>
@@ -626,22 +621,22 @@ ${commonPrintCSS}
       <tr>
         <td class="qty">1</td>
         <td class="designation">${descriptionLines.map(escapeHtml).join("<br/>")}</td>
-        <td class="price amount">${money(salePrice)}</td>
-        <td class="price amount">${money(salePrice)}</td>
+        <td class="price amount">${escapeHtml(money(salePrice))}</td>
+        <td class="price amount">${escapeHtml(money(salePrice))}</td>
       </tr>
       <tr class="total-line">
         <td colspan="3" class="total-label">${label(lang, "المجموع شامل الرسوم", "TOTAL TTC", "TOTAL incl. tax")}</td>
-        <td class="price amount">${money(salePrice)}</td>
+        <td class="price amount">${escapeHtml(money(salePrice))}</td>
       </tr>
     </tbody>
   </table>
   ${isProforma ? `<div class="summary-box">
-    <div class="summary-row"><span>${label(lang, "إجمالي سعر البرنامج", "Prix total du programme", "Program total")}</span><span>${money(salePrice)}</span></div>
-    <div class="summary-row"><span>${label(lang, "المبلغ المدفوع", "Montant payé", "Paid amount")}</span><span>${money(totalPaid)}</span></div>
-    <div class="summary-row summary-final"><span>${label(lang, "المبلغ المتبقي", "Reste à payer", "Remaining amount")}</span><span>${money(remaining)}</span></div>
+    <div class="summary-row"><span>${label(lang, "إجمالي سعر البرنامج", "Prix total du programme", "Program total")}</span><span>${escapeHtml(money(salePrice))}</span></div>
+    <div class="summary-row"><span>${label(lang, "المبلغ المدفوع", "Montant payé", "Paid amount")}</span><span>${escapeHtml(money(totalPaid))}</span></div>
+    <div class="summary-row summary-final"><span>${label(lang, "المبلغ المتبقي", "Reste à payer", "Remaining amount")}</span><span>${escapeHtml(money(remaining))}</span></div>
   </div>` : ""}
   <div class="words">${escapeHtml(totalWords)}</div>
-  ${paymentReference ? `<div class="payment-ref">${label(lang, "مرجع الدفع", "Référence de paiement", "Payment reference")}: ${paymentReference}</div>` : ""}
+  ${paymentReference ? `<div class="payment-ref">${label(lang, "مرجع الدفع", "Référence de paiement", "Payment reference")}: ${escapeHtml(paymentReference)}</div>` : ""}
   ${isProforma && bankDetails.length ? `<div class="bank">
     <h3>${label(lang, "المعلومات البنكية", "Coordonnées bancaires", "Bank details")}</h3>
     <div class="bank-grid">

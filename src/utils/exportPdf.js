@@ -1,4 +1,5 @@
 import { getParticipantTerminology } from "./participantTerminology";
+import { escapeHtml } from "./escapeHtml";
 
 /**
  * Generates a print-ready HTML page for a program's pilgrim list
@@ -60,26 +61,26 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     return `
       <tr>
         <td style="text-align:center;font-weight:700">${i + 1}</td>
-        <td style="font-weight:600">${name}</td>
-        <td style="font-family:monospace;font-size:10px">${c.passport?.number || "—"}</td>
-        <td style="text-align:center">${c.passport?.birthDate || "—"}</td>
-        <td style="text-align:center">${gLabel}</td>
-        <td>${c.roomType || "—"}</td>
-        <td style="text-align:center"><span class="status ${sClass}">${sLabel}</span></td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? fmt(rem) : "OK"}</td>
+        <td style="font-weight:600">${escapeHtml(name)}</td>
+        <td style="font-family:monospace;font-size:10px">${escapeHtml(c.passport?.number || "—")}</td>
+        <td style="text-align:center">${escapeHtml(c.passport?.birthDate || "—")}</td>
+        <td style="text-align:center">${escapeHtml(gLabel)}</td>
+        <td>${escapeHtml(c.roomType || "—")}</td>
+        <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "OK"}</td>
       </tr>`;
   }).join("");
 
   // ── Column headers ───────────────────────────────────────────────────────
   const headers = [L.num, L.fullName, L.passportNo, L.birthDate, L.gender, L.roomType, L.status, L.remaining]
-    .map(h => `<th>${h}</th>`).join("");
+    .map(h => `<th>${escapeHtml(h)}</th>`).join("");
 
   // ── Full HTML ─────────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html>
-<html dir="${dir}" lang="${lang}">
+<html dir="${dir}" lang="${escapeHtml(lang)}">
 <head>
   <meta charset="UTF-8">
-  <title>${program.name}</title>
+  <title>${escapeHtml(program.name)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     @page { size: A4 landscape; margin: 12mm 14mm; }
@@ -232,27 +233,27 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
 </head>
 <body>
 
-  <button class="print-btn no-print" onclick="window.print()">${lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة"}</button>
+  <button class="print-btn no-print" onclick="window.print()">${escapeHtml(lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة")}</button>
 
   <!-- Header -->
   <div class="page-header">
     <div class="agency-block">
-      <div class="agency-name">${L.agencyName}</div>
-      ${L.phones ? `<div class="agency-phones">${L.phones}</div>` : ""}
+      <div class="agency-name">${escapeHtml(L.agencyName)}</div>
+      ${L.phones ? `<div class="agency-phones">${escapeHtml(L.phones)}</div>` : ""}
     </div>
     <div class="print-meta">
-      <div>${L.printedOn}: <strong>${today}</strong></div>
-      <div>${L.totalClients}: <strong>${clients.length}</strong></div>
+      <div>${escapeHtml(L.printedOn)}: <strong>${escapeHtml(today)}</strong></div>
+      <div>${escapeHtml(L.totalClients)}: <strong>${escapeHtml(clients.length)}</strong></div>
     </div>
   </div>
 
   <!-- Program bar -->
   <div class="prog-bar">
-    <div class="prog-name">${program.name}</div>
-    <div class="info-item"><strong>${L.departure}:</strong>${program.departure || "—"}</div>
-    <div class="info-item"><strong>${L.returnDate}:</strong>${program.returnDate || "—"}</div>
-    <div class="info-item"><strong>${L.hotelMecca}:</strong>${program.hotelMecca || "—"}</div>
-    <div class="info-item"><strong>${L.hotelMadina}:</strong>${program.hotelMadina || "—"}</div>
+    <div class="prog-name">${escapeHtml(program.name)}</div>
+    <div class="info-item"><strong>${escapeHtml(L.departure)}:</strong>${escapeHtml(program.departure || "—")}</div>
+    <div class="info-item"><strong>${escapeHtml(L.returnDate)}:</strong>${escapeHtml(program.returnDate || "—")}</div>
+    <div class="info-item"><strong>${escapeHtml(L.hotelMecca)}:</strong>${escapeHtml(program.hotelMecca || "—")}</div>
+    <div class="info-item"><strong>${escapeHtml(L.hotelMadina)}:</strong>${escapeHtml(program.hotelMadina || "—")}</div>
   </div>
 
   <!-- Table -->
@@ -265,15 +266,15 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
   <div class="footer">
     <div class="footer-card">
       <div class="fc-val">${clients.length}</div>
-      <div class="fc-lbl">${L.totalClients}</div>
+      <div class="fc-lbl">${escapeHtml(L.totalClients)}</div>
     </div>
     <div class="footer-card">
-      <div class="fc-val">${fmt(totalPaid)}</div>
-      <div class="fc-lbl">${L.collected}</div>
+      <div class="fc-val">${escapeHtml(fmt(totalPaid))}</div>
+      <div class="fc-lbl">${escapeHtml(L.collected)}</div>
     </div>
     <div class="footer-card">
-      <div class="fc-val" style="color:${totalRem > 0 ? "#b91c1c" : "#15803d"}">${fmt(totalRem)}</div>
-      <div class="fc-lbl">⏳ ${L.remaining}</div>
+      <div class="fc-val" style="color:${totalRem > 0 ? "#b91c1c" : "#15803d"}">${escapeHtml(fmt(totalRem))}</div>
+      <div class="fc-lbl">⏳ ${escapeHtml(L.remaining)}</div>
     </div>
   </div>
 
@@ -342,25 +343,25 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
     const sClass = c.status === "cleared" ? "cleared" : c.status === "partial" ? "partial" : "unpaid";
     return `
       <tr>
-        <td style="font-family:monospace;font-size:9px;color:#555">${(c.displayRef || c.id || "—").toString()}</td>
-        <td style="font-weight:600">${c.name || "—"}</td>
-        <td style="font-size:10px;color:#444">${c.prog?.name || "—"}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#0d4a1a">${fmt(c.salePrice)}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};color:#15803d;font-weight:600">${fmt(c.paid)}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? fmt(c.remaining) : "OK"}</td>
-        <td style="text-align:center"><span class="status ${sClass}">${sLabel}</span></td>
+        <td style="font-family:monospace;font-size:9px;color:#555">${escapeHtml((c.displayRef || c.id || "—").toString())}</td>
+        <td style="font-weight:600">${escapeHtml(c.name || "—")}</td>
+        <td style="font-size:10px;color:#444">${escapeHtml(c.prog?.name || "—")}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#0d4a1a">${escapeHtml(fmt(c.salePrice))}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};color:#15803d;font-weight:600">${escapeHtml(fmt(c.paid))}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? escapeHtml(fmt(c.remaining)) : "OK"}</td>
+        <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
       </tr>`;
   }).join("");
 
   const headers = [L.fileId, L.name, L.program, L.salePrice, L.paid, L.remaining, L.status]
-    .map(h => `<th>${h}</th>`).join("");
+    .map(h => `<th>${escapeHtml(h)}</th>`).join("");
 
   // ── HTML ──────────────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html>
-<html dir="${dir}" lang="${lang}">
+<html dir="${dir}" lang="${escapeHtml(lang)}">
 <head>
   <meta charset="UTF-8">
-  <title>${L.title}</title>
+  <title>${escapeHtml(L.title)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     @page { size: A4 portrait; margin: 13mm 14mm; }
@@ -526,27 +527,27 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
 </head>
 <body>
 
-  <button class="print-btn no-print" onclick="window.print()">${L.printBtn}</button>
+  <button class="print-btn no-print" onclick="window.print()">${escapeHtml(L.printBtn)}</button>
 
   <!-- Page header -->
   <div class="page-header">
     <div>
-      <div class="agency-name">${L.agencyName}</div>
+      <div class="agency-name">${escapeHtml(L.agencyName)}</div>
       <div class="agency-sub">
-        ${L.phones ? `${L.phones}` : ""}
-        ${L.address ? `<br>${L.address}` : ""}
+        ${L.phones ? `${escapeHtml(L.phones)}` : ""}
+        ${L.address ? `<br>${escapeHtml(L.address)}` : ""}
       </div>
     </div>
     <div class="report-meta">
-      <div>${L.printedOn}: <strong>${today}</strong></div>
-      <div>${L.totalClients}: <strong>${data.length}</strong></div>
+      <div>${escapeHtml(L.printedOn)}: <strong>${escapeHtml(today)}</strong></div>
+      <div>${escapeHtml(L.totalClients)}: <strong>${escapeHtml(data.length)}</strong></div>
     </div>
   </div>
 
   <!-- Title + filter -->
   <div class="title-row">
-    <div class="report-title">${L.title}</div>
-    <span class="filter-badge">${L.filter}: ${filterLabel}</span>
+    <div class="report-title">${escapeHtml(L.title)}</div>
+    <span class="filter-badge">${escapeHtml(L.filter)}: ${escapeHtml(filterLabel)}</span>
   </div>
 
   <!-- Table -->
@@ -558,20 +559,20 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
   <!-- Financial summary -->
   <div class="totals-row">
     <div class="total-card">
-      <div class="tc-val">${fmt(totals.rev)}</div>
-      <div class="tc-lbl">${L.totalRevenue}</div>
+      <div class="tc-val">${escapeHtml(fmt(totals.rev))}</div>
+      <div class="tc-lbl">${escapeHtml(L.totalRevenue)}</div>
     </div>
     <div class="total-card">
-      <div class="tc-val" style="color:#15803d">${fmt(totals.paid)}</div>
-      <div class="tc-lbl">${L.collected}</div>
+      <div class="tc-val" style="color:#15803d">${escapeHtml(fmt(totals.paid))}</div>
+      <div class="tc-lbl">${escapeHtml(L.collected)}</div>
     </div>
     <div class="total-card">
-      <div class="tc-val" style="color:${totals.rem > 0 ? "#b91c1c" : "#15803d"}">${fmt(totals.rem)}</div>
-      <div class="tc-lbl">⏳ ${L.totalRem}</div>
+      <div class="tc-val" style="color:${totals.rem > 0 ? "#b91c1c" : "#15803d"}">${escapeHtml(fmt(totals.rem))}</div>
+      <div class="tc-lbl">⏳ ${escapeHtml(L.totalRem)}</div>
     </div>
     <div class="total-card">
-      <div class="tc-val" style="color:#b45309">${fmt(totals.disc)}</div>
-      <div class="tc-lbl">${L.discounts}</div>
+      <div class="tc-val" style="color:#b45309">${escapeHtml(fmt(totals.disc))}</div>
+      <div class="tc-lbl">${escapeHtml(L.discounts)}</div>
     </div>
   </div>
 
@@ -582,22 +583,22 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
       <div class="pie-total">${total}</div>
     </div>
     <div class="legend">
-      <div class="legend-title">${L.chartTitle}</div>
+      <div class="legend-title">${escapeHtml(L.chartTitle)}</div>
       <div class="legend-item">
         <div class="dot cleared"></div>
-        <div style="flex:1">${L.cleared}</div>
+        <div style="flex:1">${escapeHtml(L.cleared)}</div>
         <div class="pct" style="color:#15803d">${pCleared}%</div>
         <div style="color:#555">(${cleared})</div>
       </div>
       <div class="legend-item">
         <div class="dot partial"></div>
-        <div style="flex:1">${L.partial}</div>
+        <div style="flex:1">${escapeHtml(L.partial)}</div>
         <div class="pct" style="color:#b45309">${pPartial}%</div>
         <div style="color:#555">(${partial})</div>
       </div>
       <div class="legend-item">
         <div class="dot unpaid"></div>
-        <div style="flex:1">${L.unpaid}</div>
+        <div style="flex:1">${escapeHtml(L.unpaid)}</div>
         <div class="pct" style="color:#b91c1c">${pUnpaid}%</div>
         <div style="color:#555">(${unpaid})</div>
       </div>
