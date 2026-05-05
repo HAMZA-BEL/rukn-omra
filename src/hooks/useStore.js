@@ -945,6 +945,42 @@ export function useStore(agencyId, onToast) {
     return id;
   }, [addClientLocal, logActivity, sync, agencyId]);
 
+  const addClientFromPassportImport = useCallback(async (data) => {
+    const id  = trimString(data.id) || genId("CL");
+    const now = new Date().toISOString().split("T")[0];
+    const prepared = prepareClientForSave(data);
+    const newClient = {
+      ...prepared,
+      id,
+      registrationDate: now,
+      lastModified:     now,
+      archived:         false,
+      archivedAt:       null,
+    };
+    if (isSupabaseEnabled && agencyId) {
+      const { error } = await saveClient(newClient, agencyId);
+      if (error) return { data: null, error };
+    }
+    addClientLocal(newClient);
+    logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
+    if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(newClient, agencyId));
+    return { data: newClient, error: null };
+  }, [addClientLocal, agencyId, logActivity, sync]);
+
+  const updateClientFromPassportImport = useCallback(async (id, data) => {
+    const now      = new Date().toISOString().split("T")[0];
+    const prepared = prepareClientForSave(data);
+    const updated  = { ...prepared, id, lastModified: now };
+    if (isSupabaseEnabled && agencyId) {
+      const { error } = await saveClient(updated, agencyId);
+      if (error) return { data: null, error };
+    }
+    updateClientLocal(id, updated);
+    logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
+    if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(updated, agencyId));
+    return { data: updated, error: null };
+  }, [agencyId, logActivity, sync, updateClientLocal]);
+
   const updateClient = useCallback((id, data) => {
     const now      = new Date().toISOString().split("T")[0];
     const prepared = prepareClientForSave(data);
@@ -1409,7 +1445,7 @@ export function useStore(agencyId, onToast) {
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
     getClientPayments, getClientTotalPaid, getClientStatus,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
-    addClient, updateClient, deleteClient, deleteClientsBulk,
+    addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, deleteClient, deleteClientsBulk,
     transferClients,
     createAgencyUser,
     updateAgencyUser,
