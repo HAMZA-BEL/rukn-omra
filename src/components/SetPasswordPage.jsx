@@ -103,8 +103,8 @@ const LABELS = {
     errGeneric:  "حدث خطأ — حاول مرة أخرى",
     expired:     "انتهت صلاحية الرابط — تواصل مع المسؤول لإعادة الدعوة",
     preparing:   "جاري التحقق من الرابط...",
-    show:        "إظهار",
-    hide:        "إخفاء",
+    show:        "إظهار كلمة المرور",
+    hide:        "إخفاء كلمة المرور",
   },
   fr: {
     title:       "Définir le mot de passe",
@@ -121,8 +121,8 @@ const LABELS = {
     errGeneric:  "Une erreur s'est produite — réessayez",
     expired:     "Lien expiré — contactez l'administrateur pour une nouvelle invitation",
     preparing:   "Vérification du lien...",
-    show:        "Afficher",
-    hide:        "Masquer",
+    show:        "Afficher le mot de passe",
+    hide:        "Masquer le mot de passe",
   },
   en: {
     title:       "Set your password",
@@ -139,8 +139,8 @@ const LABELS = {
     errGeneric:  "Something went wrong — try again",
     expired:     "Link expired — contact the administrator for a new invitation",
     preparing:   "Verifying the link...",
-    show:        "Show",
-    hide:        "Hide",
+    show:        "Show password",
+    hide:        "Hide password",
     backLogin:   "Back to sign in",
   },
 };
@@ -152,6 +152,7 @@ LABELS.fr.backLogin = "Retour à la connexion";
 export default function SetPasswordPage({ authData }) {
   const { lang } = useLang();
   const lbl = LABELS[lang] || LABELS.ar;
+  const isRTL = lang === "ar";
 
   const [status,  setStatus]  = React.useState("preparing");
   const [pass1,   setPass1]   = React.useState("");
@@ -234,7 +235,7 @@ export default function SetPasswordPage({ authData }) {
   const inputWrap = { position: "relative" };
   const inputSt = (redBorder) => ({
     width: "100%", boxSizing: "border-box",
-    padding: "11px 14px 11px 44px", borderRadius: 10,
+    padding: isRTL ? "11px 14px 11px 44px" : "11px 44px 11px 14px", borderRadius: 10,
     background: "rgba(255,255,255,.98)",
     border: redBorder ? "1px solid rgba(220,38,38,.72)" : "1px solid rgba(15,23,42,0.16)",
     color: "#142133", fontSize: 14,
@@ -244,16 +245,41 @@ export default function SetPasswordPage({ authData }) {
   });
   const toggleBtn = (onClick, visible) => (
     <button type="button" onClick={onClick} style={{
-      position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
-      background: "none", border: "none", cursor: "pointer",
+      position: "absolute", ...(isRTL ? { left: 8 } : { right: 8 }), top: "50%", transform: "translateY(-50%)",
+      width: 32, height: 32, borderRadius: 9,
+      background: "transparent", border: "1px solid transparent", cursor: "pointer",
       color: "#667085", fontSize: 18,
-      padding: "4px", lineHeight: 1,
+      padding: 0, lineHeight: 1,
+      display: "grid", placeItems: "center",
+      transition: "color .18s ease, background .18s ease, border-color .18s ease",
     }}
     aria-label={visible ? lbl.hide : lbl.show}
     title={visible ? lbl.hide : lbl.show}
-    onMouseEnter={e => e.currentTarget.style.color = "#b8941e"}
-    onMouseLeave={e => e.currentTarget.style.color = "#667085"}
-    ><AppIcon name={visible ? "eyeOff" : "eye"} size={18} color="currentColor" /></button>
+    aria-pressed={visible}
+    onFocus={e => {
+      e.currentTarget.style.color = "#b8941e";
+      e.currentTarget.style.background = "rgba(212,175,55,.1)";
+      e.currentTarget.style.borderColor = "rgba(212,175,55,.22)";
+    }}
+    onBlur={e => {
+      e.currentTarget.style.color = "#667085";
+      e.currentTarget.style.background = "transparent";
+      e.currentTarget.style.borderColor = "transparent";
+    }}
+    onMouseEnter={e => {
+      e.currentTarget.style.color = "#b8941e";
+      e.currentTarget.style.background = "rgba(212,175,55,.1)";
+      e.currentTarget.style.borderColor = "rgba(212,175,55,.22)";
+    }}
+    onMouseLeave={e => {
+      if (document.activeElement === e.currentTarget) return;
+      e.currentTarget.style.color = "#667085";
+      e.currentTarget.style.background = "transparent";
+      e.currentTarget.style.borderColor = "transparent";
+    }}
+    >
+      <AppIcon name={visible ? "eyeOff" : "eye"} size={18} color="currentColor" />
+    </button>
   );
 
   // ── Preparing (waiting for Supabase to process token) ─────────────────────

@@ -459,6 +459,7 @@ export default function ClearancePage({ store }) {
     agency,
     invoiceApi,
   } = store;
+  const invoicesAreRemote = Boolean(invoiceApi?.isRemote);
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
   const [paymentMethodFilter, setPaymentMethodFilter] = React.useState("all");
@@ -472,7 +473,9 @@ export default function ClearancePage({ store }) {
   const [currentPage, setCurrentPage] = React.useState(1);
   const [invoiceClient, setInvoiceClient] = React.useState(null);
   const [activeTab, setActiveTab] = React.useState("clearance");
-  const [savedInvoices, setSavedInvoices] = React.useState(() => readSavedInvoices());
+  const [savedInvoices, setSavedInvoices] = React.useState(() => (
+    invoicesAreRemote ? [] : readSavedInvoices()
+  ));
   const paymentMethodRef = React.useRef(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
@@ -486,7 +489,7 @@ export default function ClearancePage({ store }) {
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
   const refreshSavedInvoices = React.useCallback(async () => {
-    if (invoiceApi?.isRemote) {
+    if (invoicesAreRemote) {
       const { data, error } = await invoiceApi.fetchFinalInvoices();
       if (!error) setSavedInvoices(data || []);
       return data || [];
@@ -494,7 +497,7 @@ export default function ClearancePage({ store }) {
     const localInvoices = readSavedInvoices();
     setSavedInvoices(localInvoices);
     return localInvoices;
-  }, [invoiceApi]);
+  }, [invoiceApi, invoicesAreRemote]);
 
   React.useEffect(() => {
     if (activeTab === "invoices") refreshSavedInvoices();

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, isSupabaseEnabled } from "../lib/supabase";
 import { db } from "../lib/db";
+import { clearSupabaseLogoutAppStorage } from "../utils/localStorageHardening";
 
 /**
  * useAuth — handles Supabase authentication and user profile loading.
@@ -35,7 +36,10 @@ export function useAuth() {
         setUser(null);
         setAgencyId(null);
         setProfileError("disabled");
-        try { await supabase.auth.signOut(); } catch {}
+        try {
+          await supabase.auth.signOut();
+          clearSupabaseLogoutAppStorage(data.agency_id);
+        } catch {}
       } else {
         setProfileError(null);
         setUser({ ...authUser, profile: data });
@@ -109,10 +113,12 @@ export function useAuth() {
   }, [loadProfile]);
 
   const logout = useCallback(async () => {
+    const currentAgencyId = agencyId;
     await supabase.auth.signOut();
+    clearSupabaseLogoutAppStorage(currentAgencyId);
     setUser(null);
     setAgencyId(null);
-  }, []);
+  }, [agencyId]);
 
   return { user, agencyId, loading, login, logout, needsPasswordSet, profileError };
 }

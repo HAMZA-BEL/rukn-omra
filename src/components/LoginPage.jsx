@@ -2,6 +2,7 @@ import React from "react";
 import { theme } from "./styles";
 import { supabase } from "../lib/supabase";
 import { AppIcon, IconBubble } from "./Icon";
+import { useLang } from "../hooks/useLang";
 
 const tc = theme.colors;
 
@@ -136,6 +137,35 @@ html[data-theme="dark"] .login-page {
   opacity: 0.7;
   cursor: not-allowed;
 }
+.login-password-wrap {
+  position: relative;
+}
+.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--login-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+.login-password-toggle:hover:not(:disabled),
+.login-password-toggle:focus-visible {
+  color: #b8941e;
+  background: rgba(212,175,55,0.1);
+  border-color: rgba(212,175,55,0.22);
+  outline: none;
+}
+.login-password-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .login-button {
   position: relative;
   overflow: hidden;
@@ -177,9 +207,26 @@ html[data-theme="dark"] .login-page {
 }
 `
 
+const PASSWORD_TOGGLE_LABELS = {
+  ar: {
+    show: "إظهار كلمة السر",
+    hide: "إخفاء كلمة السر",
+  },
+  fr: {
+    show: "Afficher le mot de passe",
+    hide: "Masquer le mot de passe",
+  },
+  en: {
+    show: "Show password",
+    hide: "Hide password",
+  },
+};
+
 export default function LoginPage({ onLogin }) {
+  const { lang, dir } = useLang();
   const [email,    setEmail]    = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [loading,  setLoading]  = React.useState(false);
   const [error,    setError]    = React.useState("");
   const styleInjected = React.useRef(false);
@@ -265,6 +312,8 @@ export default function LoginPage({ onLogin }) {
     // setLoading(false) not needed here — the component will unmount
   };
 
+  const isRTL = dir === "rtl" || lang === "ar";
+  const passwordLabels = PASSWORD_TOGGLE_LABELS[lang] || PASSWORD_TOGGLE_LABELS.ar;
   const inputBaseStyle = {
     width: "100%", boxSizing: "border-box",
     padding: "12px 14px", borderRadius: 12,
@@ -272,6 +321,11 @@ export default function LoginPage({ onLogin }) {
     fontFamily: "'Cairo', sans-serif", direction: "ltr",
     outline: "none",
   };
+  const passwordInputStyle = {
+    ...inputBaseStyle,
+    padding: isRTL ? "12px 14px 12px 48px" : "12px 48px 12px 14px",
+  };
+  const passwordToggleStyle = isRTL ? { left: 8 } : { right: 8 };
 
   const buttonStyle = {
     marginTop: 4, padding: "13px",
@@ -350,16 +404,30 @@ export default function LoginPage({ onLogin }) {
             <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
               كلمة السر
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-              disabled={loading}
-              className="login-input"
-              style={inputBaseStyle}
-            />
+            <div className="login-password-wrap">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                disabled={loading}
+                className="login-input"
+                style={passwordInputStyle}
+              />
+              <button
+                type="button"
+                className="login-password-toggle"
+                style={passwordToggleStyle}
+                onClick={() => setShowPassword((visible) => !visible)}
+                disabled={loading}
+                aria-label={showPassword ? passwordLabels.hide : passwordLabels.show}
+                title={showPassword ? passwordLabels.hide : passwordLabels.show}
+                aria-pressed={showPassword}
+              >
+                <AppIcon name={showPassword ? "eyeOff" : "eye"} size={18} color="currentColor" />
+              </button>
+            </div>
           </div>
 
           {/* Error message */}

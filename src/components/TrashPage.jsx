@@ -21,12 +21,13 @@ const FILTERS = [
 
 export default function TrashPage({ store, onToast }) {
   const { t, lang, dir } = useLang();
+  const invoicesAreRemote = Boolean(store.invoiceApi?.isRemote);
   const [filter, setFilter] = React.useState("all");
   const [selection, setSelection] = React.useState({});
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [trashedInvoices, setTrashedInvoices] = React.useState(() => (
-    readSavedInvoices().filter((invoice) => invoice.status === "trashed")
+    invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
   ));
   const filterRef = React.useRef(null);
   const filterButtonRef = React.useRef(null);
@@ -45,8 +46,12 @@ export default function TrashPage({ store, onToast }) {
   const deletedClients = store.deletedClients || [];
 
   React.useEffect(() => {
+    if (invoicesAreRemote) {
+      setTrashedInvoices([]);
+      return;
+    }
     setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
-  }, []);
+  }, [invoicesAreRemote]);
 
   React.useEffect(() => {
     if (!filterOpen) return undefined;
@@ -205,13 +210,13 @@ export default function TrashPage({ store, onToast }) {
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.restoreTrashItems === "function") {
       store.restoreTrashItems(selectionPayload);
     }
-    if (selectionPayload.invoiceIds.length) {
+    if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => restoreSavedInvoiceSnapshot(id));
       setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
     }
     setSelection({});
     if (onToast) onToast(t.restoreSuccess || "Restored", "success");
-  }, [selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
+  }, [invoicesAreRemote, selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
 
   const handleDelete = React.useCallback(() => {
     if (!selectedCount) return;
@@ -223,14 +228,14 @@ export default function TrashPage({ store, onToast }) {
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
       store.purgeTrashItems(selectionPayload);
     }
-    if (selectionPayload.invoiceIds.length) {
+    if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
       setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
     }
     setSelection({});
     setConfirmOpen(false);
     if (onToast) onToast(t.deleteSuccess || "Deleted", "success");
-  }, [selectedCount, selectionPayload, store, onToast, t.deleteSuccess]);
+  }, [invoicesAreRemote, selectedCount, selectionPayload, store, onToast, t.deleteSuccess]);
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);
