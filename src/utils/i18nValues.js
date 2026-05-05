@@ -192,6 +192,8 @@ export const translateActivityDescription = (description = "", lang = getUiLang(
         "تم أرشفة المعتمر": "Pèlerin archivé",
         "تمت استعادة المعتمر من الأرشيف": "Pèlerin restauré depuis les archives",
         "تم استيراد بيانات من ملف": "Données importées depuis un fichier",
+        "تم تصدير نسخة احتياطية كاملة": "Sauvegarde complète exportée",
+        "تم استيراد نسخة احتياطية": "Sauvegarde importée",
         "تمت استعادة معتمر من السلة": "Pèlerin restauré depuis la corbeille",
       }
     : {
@@ -201,6 +203,8 @@ export const translateActivityDescription = (description = "", lang = getUiLang(
         "تم أرشفة المعتمر": "Pilgrim archived",
         "تمت استعادة المعتمر من الأرشيف": "Pilgrim restored from archive",
         "تم استيراد بيانات من ملف": "Data imported from file",
+        "تم تصدير نسخة احتياطية كاملة": "Full backup exported",
+        "تم استيراد نسخة احتياطية": "Backup imported",
         "تمت استعادة معتمر من السلة": "Pilgrim restored from trash",
       };
   if (dict[text]) return dict[text];

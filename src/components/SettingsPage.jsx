@@ -1,5 +1,5 @@
 import React from "react";
-import { Input, Button, GlassCard, Divider } from "./UI";
+import { Input, Button, GlassCard, Divider, Modal } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled } from "../lib/supabase";
@@ -69,7 +69,10 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [bankOpen, setBankOpen] = React.useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
   const [logoBusy, setLogoBusy] = React.useState(false);
+  const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
+  const [pendingImportFile, setPendingImportFile] = React.useState(null);
   const logoInputRef = React.useRef(null);
+  const backupInputRef = React.useRef(null);
   React.useEffect(() => {
     setForm(agency);
   }, [agency]);
@@ -189,6 +192,74 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
 
   const normalizedRole = String(currentUserRole || "").toLowerCase();
   const canManageUsers = normalizedRole === "manager" || normalizedRole === "owner";
+  const canManageBackups = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
+
+  const backupWarningText = (
+    lang === "fr"
+      ? "Attention : la sauvegarde contient des données sensibles telles que les pèlerins, passeports, paiements, factures et informations de l’agence. Conservez ce fichier en lieu sûr et ne le partagez qu’avec une personne de confiance."
+      : lang === "en"
+      ? "Warning: this backup contains sensitive data such as pilgrims, passports, payments, invoices, and agency information. Store it securely and share it only with trusted people."
+      : "تنبيه: النسخة الاحتياطية تحتوي على بيانات حساسة مثل معلومات المعتمرين، الجوازات، الدفعات، الفواتير، وبيانات الوكالة. احفظ هذا الملف في مكان آمن ولا تشاركه إلا مع شخص موثوق."
+  );
+  const importWarningText = (
+    lang === "fr"
+      ? "Attention : l’importation d’une sauvegarde peut modifier les données actuelles. Assurez-vous de faire confiance à ce fichier avant de continuer."
+      : lang === "en"
+      ? "Warning: importing a backup may change current data. Make sure you trust this file before continuing."
+      : "تنبيه: استيراد نسخة احتياطية قد يغيّر البيانات الحالية. تأكد أنك تثق بهذا الملف قبل المتابعة."
+  );
+  const backupDownloadLabel = (
+    lang === "fr" ? "Télécharger la sauvegarde"
+      : lang === "en" ? "Download backup"
+      : "تحميل النسخة الاحتياطية"
+  );
+  const cancelLabel = lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء";
+
+  const handleBackupExport = () => {
+    if (!canManageBackups) return;
+    setBackupConfirmMode("export");
+  };
+
+  const handleBackupImportClick = () => {
+    if (!canManageBackups) return;
+    backupInputRef.current?.click();
+  };
+
+  const handleBackupImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !canManageBackups) return;
+    setPendingImportFile(file);
+    setBackupConfirmMode("import");
+  };
+
+  const closeBackupConfirm = () => {
+    setBackupConfirmMode(null);
+    setPendingImportFile(null);
+  };
+
+  const confirmBackupAction = async () => {
+    if (!canManageBackups) return;
+    if (backupConfirmMode === "export") {
+      store.exportData();
+      onToast(t.exportSuccess, "success");
+      closeBackupConfirm();
+      return;
+    }
+    const file = pendingImportFile;
+    if (!file) {
+      closeBackupConfirm();
+      return;
+    }
+    try {
+      await store.importData(file);
+      onToast(t.importSuccess, "success");
+    } catch {
+      onToast(t.importError, "error");
+    } finally {
+      closeBackupConfirm();
+    }
+  };
 
   return (
     <div className="page-body settings-page" style={{ padding:"24px 32px" }}>
@@ -452,17 +523,29 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       )}
 
       {/* Backup */}
-      <GlassCard style={{ padding:20 }}>
-        <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:14 }}>{t.backupTitle}</p>
-        <p style={{ fontSize:12, color:t2.grey, marginBottom:16, lineHeight:1.7 }}>
-          {t.backupHint}
-        </p>
-        <div className="page-actions" style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-          <Button variant="success" icon="download" onClick={() => { store.exportData(); onToast(t.exportSuccess, "success"); }}>
-            {t.exportAllData}
-          </Button>
-        </div>
-      </GlassCard>
+      {canManageBackups && (
+        <GlassCard style={{ padding:20 }}>
+          <p style={{ fontSize:13, fontWeight:700, color:t2.gold, marginBottom:14 }}>{t.backupTitle}</p>
+          <p style={{ fontSize:12, color:t2.grey, marginBottom:16, lineHeight:1.7 }}>
+            {t.backupHint}
+          </p>
+          <div className="page-actions" style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <Button variant="success" icon="download" onClick={handleBackupExport}>
+              {backupDownloadLabel}
+            </Button>
+            <Button variant="secondary" icon="upload" onClick={handleBackupImportClick}>
+              {t.importData}
+            </Button>
+            <input
+              ref={backupInputRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={handleBackupImportFile}
+              style={{ display: "none" }}
+            />
+          </div>
+        </GlassCard>
+      )}
 
       {canManageUsers && (
         <div style={{ marginTop: 24 }}>
@@ -475,6 +558,29 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           />
         </div>
       )}
+
+      <Modal
+        open={Boolean(backupConfirmMode)}
+        onClose={closeBackupConfirm}
+        title={t.backupTitle}
+        width={560}
+      >
+        <p style={{ fontSize:14, color:"var(--rukn-text)", lineHeight:1.75, marginBottom:22 }}>
+          {backupConfirmMode === "import" ? importWarningText : backupWarningText}
+        </p>
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+          <Button variant="ghost" onClick={closeBackupConfirm}>
+            {cancelLabel}
+          </Button>
+          <Button
+            variant={backupConfirmMode === "import" ? "warning" : "success"}
+            icon={backupConfirmMode === "import" ? "upload" : "download"}
+            onClick={confirmBackupAction}
+          >
+            {backupConfirmMode === "import" ? t.importData : backupDownloadLabel}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

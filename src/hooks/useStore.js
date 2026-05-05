@@ -1370,6 +1370,7 @@ export function useStore(agencyId, onToast) {
     a.style.display = "none";
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
+    logActivity("backup_export", translateActivityDescription("تم تصدير نسخة احتياطية كاملة"), "");
   };
 
   const importData = (file) => new Promise((res, rej) => {
@@ -1383,7 +1384,7 @@ export function useStore(agencyId, onToast) {
         setDeletedClients([]);
         replacePayments(parsed.payments);
         if (parsed.agency) setAgency(parsed.agency);
-        logActivity("import_excel", translateActivityDescription("تم استيراد بيانات من ملف"), "");
+        logActivity("backup_import", translateActivityDescription("تم استيراد نسخة احتياطية"), "");
         res();
       } catch(err) { rej(err); }
     };
