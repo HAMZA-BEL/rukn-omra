@@ -573,6 +573,20 @@ export const db = {
         error,
       };
     },
+    async fetchTrashed(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .eq("status", "trashed")
+        .order("trashed_at", { ascending: false, nullsFirst: false })
+        .order("issue_date", { ascending: false });
+      return {
+        data: data?.map(fromInvoice) ?? [],
+        error,
+      };
+    },
     async issueFinal(agencyId, draft = {}) {
       if (!agencyId) return { data: null, error: null };
       const { data, error } = await supabase.rpc("issue_final_invoice", {
@@ -607,7 +621,7 @@ export const db = {
       if (!agencyId || !id) return { data: null, error: null };
       const { data, error } = await supabase
         .from("invoices")
-        .update({ status: "issued", trashed_at: null })
+        .update({ status: "issued", trashed_at: null, deleted_at: null })
         .eq("agency_id", agencyId)
         .eq("id", id)
         .select("*")

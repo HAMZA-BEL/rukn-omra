@@ -4,6 +4,7 @@ import { Check, ChevronDown, Filter } from "lucide-react";
 import { GlassCard, Button, EmptyState, Modal } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
+import { formatCurrency } from "../utils/currency";
 import {
   readSavedInvoices,
   restoreSavedInvoiceSnapshot,
@@ -45,13 +46,24 @@ export default function TrashPage({ store, onToast }) {
   const deletedPrograms = store.deletedPrograms || [];
   const deletedClients = store.deletedClients || [];
 
-  React.useEffect(() => {
+  const refreshTrashedInvoices = React.useCallback(async () => {
     if (invoicesAreRemote) {
-      setTrashedInvoices([]);
-      return;
+      const { data, error } = await (store.invoiceApi?.fetchTrashedFinalInvoices?.() || Promise.resolve({ data: [], error: null }));
+      if (error) {
+        if (onToast) onToast(error.message || "Failed to load trashed invoices", "error");
+        return [];
+      }
+      setTrashedInvoices(data || []);
+      return data || [];
     }
-    setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
-  }, [invoicesAreRemote]);
+    const localInvoices = readSavedInvoices().filter((invoice) => invoice.status === "trashed");
+    setTrashedInvoices(localInvoices);
+    return localInvoices;
+  }, [invoicesAreRemote, onToast, store.invoiceApi]);
+
+  React.useEffect(() => {
+    refreshTrashedInvoices();
+  }, [refreshTrashedInvoices]);
 
   React.useEffect(() => {
     if (!filterOpen) return undefined;
@@ -150,6 +162,7 @@ export default function TrashPage({ store, onToast }) {
       subtitle: [
         invoice.invoiceDisplayNumber,
         invoice.programSnapshot?.programName,
+        invoice.amountSnapshot?.total ? formatCurrency(invoice.amountSnapshot.total, lang) : null,
       ].filter(Boolean).join(" • "),
       deletedAt: invoice.trashedAt || invoice.deletedAt || invoice.issueDate,
       meta: t.trashFilter_invoices || "Invoices",
@@ -205,10 +218,19 @@ export default function TrashPage({ store, onToast }) {
     invoiceIds: selectedItems.filter((item) => item.type === "invoice").map((item) => item.id),
   }), [selectedItems]);
 
-  const handleRestore = React.useCallback(() => {
+  const handleRestore = React.useCallback(async () => {
     if (!selectedCount) return;
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.restoreTrashItems === "function") {
       store.restoreTrashItems(selectionPayload);
+    }
+    if (invoicesAreRemote && selectionPayload.invoiceIds.length && store.invoiceApi?.restoreFinalInvoice) {
+      const responses = await Promise.all(selectionPayload.invoiceIds.map((id) => store.invoiceApi.restoreFinalInvoice(id)));
+      const error = responses.find((response) => response?.error)?.error;
+      if (error) {
+        if (onToast) onToast(error.message || "Restore failed", "error");
+        return;
+      }
+      await refreshTrashedInvoices();
     }
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => restoreSavedInvoiceSnapshot(id));
@@ -216,17 +238,26 @@ export default function TrashPage({ store, onToast }) {
     }
     setSelection({});
     if (onToast) onToast(t.restoreSuccess || "Restored", "success");
-  }, [invoicesAreRemote, selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
+  }, [invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
 
   const handleDelete = React.useCallback(() => {
     if (!selectedCount) return;
     setConfirmOpen(true);
   }, [selectedCount]);
 
-  const confirmDelete = React.useCallback(() => {
+  const confirmDelete = React.useCallback(async () => {
     if (!selectedCount) return;
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
       store.purgeTrashItems(selectionPayload);
+    }
+    if (invoicesAreRemote && selectionPayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
+      const responses = await Promise.all(selectionPayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
+      const error = responses.find((response) => response?.error)?.error;
+      if (error) {
+        if (onToast) onToast(error.message || "Delete failed", "error");
+        return;
+      }
+      await refreshTrashedInvoices();
     }
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
@@ -235,7 +266,7 @@ export default function TrashPage({ store, onToast }) {
     setSelection({});
     setConfirmOpen(false);
     if (onToast) onToast(t.deleteSuccess || "Deleted", "success");
-  }, [invoicesAreRemote, selectedCount, selectionPayload, store, onToast, t.deleteSuccess]);
+  }, [invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, t.deleteSuccess]);
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);

@@ -614,13 +614,16 @@ create policy "receipt_counters_select" on public.receipt_counters
   for select using (agency_id = public.get_agency_id());
 
 -- invoices
+revoke insert on table public.invoices from public, anon, authenticated;
+
 drop policy if exists "invoices_select" on public.invoices;
 drop policy if exists "invoices_insert" on public.invoices;
 drop policy if exists "invoices_update" on public.invoices;
+drop policy if exists "invoices_insert_blocked" on public.invoices;
 create policy "invoices_select" on public.invoices
   for select using (agency_id = public.get_agency_id());
-create policy "invoices_insert" on public.invoices
-  for insert with check (agency_id = public.get_agency_id());
+create policy "invoices_insert_blocked" on public.invoices
+  for insert with check (false);
 create policy "invoices_update" on public.invoices
   for update using (agency_id = public.get_agency_id())
   with check (agency_id = public.get_agency_id());
@@ -644,6 +647,28 @@ drop trigger if exists trg_invoices_updated_at on public.invoices;
 create trigger trg_invoices_updated_at
 before update on public.invoices
 for each row execute function public.touch_invoice_updated_at();
+
+create or replace function public.prevent_invoice_numbering_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.agency_id is distinct from old.agency_id
+    or new.invoice_number is distinct from old.invoice_number
+    or new.invoice_display_number is distinct from old.invoice_display_number
+    or new.invoice_year is distinct from old.invoice_year
+    or new.invoice_key is distinct from old.invoice_key
+  then
+    raise exception 'invoice numbering fields are immutable';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_prevent_invoice_numbering_update on public.invoices;
+create trigger trg_prevent_invoice_numbering_update
+before update on public.invoices
+for each row execute function public.prevent_invoice_numbering_update();
 
 create or replace function public.issue_final_invoice(
   p_agency_id uuid,
@@ -746,6 +771,32 @@ begin
   return inserted_invoice;
 end;
 $$;
+
+revoke all on function public.issue_final_invoice(
+  uuid,
+  text,
+  text,
+  text,
+  date,
+  text,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb
+) from public, anon;
+
+grant execute on function public.issue_final_invoice(
+  uuid,
+  text,
+  text,
+  text,
+  date,
+  text,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb
+) to authenticated;
 
 create or replace function public.create_payment_with_receipt(
   p_agency_id uuid,

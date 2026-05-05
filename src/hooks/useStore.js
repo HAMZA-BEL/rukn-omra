@@ -408,20 +408,48 @@ export function useStore(agencyId, onToast) {
     return db.invoices.fetch(agencyId);
   }, [agencyId]);
 
+  const fetchTrashedFinalInvoices = useCallback(() => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
+    return db.invoices.fetchTrashed(agencyId);
+  }, [agencyId]);
+
   const issueFinalInvoiceSnapshot = useCallback((draft) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     return db.invoices.issueFinal(agencyId, draft);
   }, [agencyId]);
 
-  const trashFinalInvoice = useCallback((id) => {
-    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
-    return db.invoices.trash(agencyId, id);
-  }, [agencyId]);
+  const getInvoiceActivityName = useCallback((invoice) => {
+    const recipient = invoice?.recipientSnapshot || {};
+    return invoice?.recipientType === "company"
+      ? recipient.companyName || recipient.name || invoice?.invoiceDisplayNumber || ""
+      : recipient.clientName || recipient.name || invoice?.invoiceDisplayNumber || "";
+  }, []);
 
-  const restoreFinalInvoice = useCallback((id) => {
+  const trashFinalInvoice = useCallback(async (id) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
-    return db.invoices.restore(agencyId, id);
-  }, [agencyId]);
+    const result = await db.invoices.trash(agencyId, id);
+    if (!result.error && result.data) {
+      logActivity(
+        "invoice_trash",
+        translateActivityDescription(`تم نقل فاتورة ${result.data.invoiceDisplayNumber || id} إلى سلة المحذوفات`),
+        getInvoiceActivityName(result.data)
+      );
+    }
+    return result;
+  }, [agencyId, getInvoiceActivityName, logActivity]);
+
+  const restoreFinalInvoice = useCallback(async (id) => {
+    if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
+    const result = await db.invoices.restore(agencyId, id);
+    if (!result.error && result.data) {
+      logActivity(
+        "invoice_restore",
+        translateActivityDescription(`تمت استعادة فاتورة ${result.data.invoiceDisplayNumber || id}`),
+        getInvoiceActivityName(result.data)
+      );
+    }
+    return result;
+  }, [agencyId, getInvoiceActivityName, logActivity]);
 
   const deleteFinalInvoice = useCallback((id) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
@@ -433,6 +461,7 @@ export function useStore(agencyId, onToast) {
       ? {
           isRemote: true,
           fetchFinalInvoices,
+          fetchTrashedFinalInvoices,
           issueFinalInvoiceSnapshot,
           trashFinalInvoice,
           restoreFinalInvoice,
@@ -443,6 +472,7 @@ export function useStore(agencyId, onToast) {
     agencyId,
     deleteFinalInvoice,
     fetchFinalInvoices,
+    fetchTrashedFinalInvoices,
     issueFinalInvoiceSnapshot,
     restoreFinalInvoice,
     trashFinalInvoice,
