@@ -4,6 +4,10 @@ export function fetchClients(agencyId) {
   return db.clients.fetchAll(agencyId);
 }
 
+export function fetchClientsPage(agencyId, options) {
+  return db.clients.fetchPage(agencyId, options);
+}
+
 export function fetchDeletedClients(agencyId) {
   return db.clients.fetchDeleted(agencyId);
 }

@@ -12,9 +12,11 @@ import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { getParticipantTerminology } from "../utils/participantTerminology";
+import { fetchClientsPage } from "../services/clientsService";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
+const CLIENTS_PAGE_SIZE = 10;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REF_KEYS = [
   "fileRef", "file_ref",
@@ -64,8 +66,8 @@ export default function ClientsPage({ store, onToast }) {
   const [search,     setSearch]     = React.useState("");
   const [filter,     setFilter]     = React.useState("all");
   const [filterProg, setFilterProg] = React.useState("all");
-  const ITEMS_PER_PAGE = 50;
   const [currentPage, setCurrentPage] = React.useState(1);
+  const [remotePage, setRemotePage] = React.useState({ data: [], count: 0, loading: false, error: null, page: 1 });
   const [selected,   setSelected]   = React.useState(null);
   const [editing,    setEditing]    = React.useState(null);
   const [showAdd,    setShowAdd]    = React.useState(false);
@@ -101,37 +103,108 @@ export default function ClientsPage({ store, onToast }) {
     { key:"unpaid",  label:t.unpaidFilter,  icon:"unpaid" },
   ];
 
-  const sourceList = tab === "active" ? activeClients : archivedClients;
+  const fallbackClients = tab === "active" ? activeClients : archivedClients;
+  const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all");
+  const shouldUseFullFallback = !useRemotePaging || Boolean(remotePage.error);
 
-  const filtered = React.useMemo(() => sourceList.filter(c => {
-    const status = getClientStatus(c);
-    const ok1 = tab === "archived" || filter === "all" || status === filter;
-    const ok2 = filterProg === "all" || c.programId === filterProg;
-    const q   = search.toLowerCase();
-    const displayName = getClientDisplayName(c, "");
-    const ok3 = !q || displayName.toLowerCase().includes(q) ||
-      (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
-      (c.ticketNo||"").toLowerCase().includes(q);
-    return ok1 && ok2 && ok3;
-  }), [sourceList, filter, filterProg, search, getClientStatus, tab]);
+  // The full store list is only used for payment-status filters and local mode.
+  // When remote paging is available, the visible page comes from Supabase range().
+  const fallbackFilteredClients = React.useMemo(() => {
+    if (!shouldUseFullFallback) return [];
+    return fallbackClients.filter(c => {
+      const status = getClientStatus(c);
+      const ok1 = tab === "archived" || filter === "all" || status === filter;
+      const ok2 = filterProg === "all" || c.programId === filterProg;
+      const q   = search.toLowerCase();
+      const displayName = getClientDisplayName(c, "");
+      const ok3 = !q || displayName.toLowerCase().includes(q) ||
+        (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
+        (c.ticketNo||"").toLowerCase().includes(q);
+      return ok1 && ok2 && ok3;
+    });
+  }, [fallbackClients, filter, filterProg, search, getClientStatus, tab, shouldUseFullFallback]);
 
   // Reset to page 1 whenever filters or tab change
   React.useEffect(() => { setCurrentPage(1); }, [search, filter, filterProg, tab]);
 
-  const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
-  const paginated  = filtered.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE
-  );
+  React.useEffect(() => {
+    if (!useRemotePaging) {
+      setRemotePage((current) => (
+        current.loading || current.error || current.data.length || current.count
+          ? { data: [], count: 0, loading: false, error: null, page: 1 }
+          : current
+      ));
+      return undefined;
+    }
+
+    let cancelled = false;
+    setRemotePage((current) => ({
+      data: current.page === currentPage ? current.data : [],
+      count: current.count,
+      loading: true,
+      error: null,
+      page: currentPage,
+    }));
+    fetchClientsPage(store.agencyId, {
+      page: currentPage,
+      pageSize: CLIENTS_PAGE_SIZE,
+      archived: tab === "archived",
+      programId: filterProg === "all" ? null : filterProg,
+      search,
+    }).then((result) => {
+      if (cancelled) return;
+      setRemotePage({
+        data: result?.data || [],
+        count: result?.count || 0,
+        loading: false,
+        error: result?.error || null,
+        page: result?.page || currentPage,
+      });
+    }).catch((error) => {
+      if (cancelled) return;
+      setRemotePage({ data: [], count: 0, loading: false, error, page: currentPage });
+    });
+
+    return () => { cancelled = true; };
+  }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, tab, filterProg, search]);
+
+  const useRemoteResults = useRemotePaging && !remotePage.error;
+  const filteredCount = useRemoteResults ? remotePage.count : fallbackFilteredClients.length;
+  const displayedTotalCount = useRemoteResults ? filteredCount : fallbackClients.length;
+  const totalPages = Math.max(1, Math.ceil(filteredCount / CLIENTS_PAGE_SIZE));
+  const remotePageMatchesCurrentPage = remotePage.page === currentPage;
+  const isPageLoading = useRemoteResults && (remotePage.loading || !remotePageMatchesCurrentPage);
+  const paginatedClients = useRemoteResults
+    ? (remotePageMatchesCurrentPage ? remotePage.data : [])
+    : fallbackFilteredClients.slice(
+      (currentPage - 1) * CLIENTS_PAGE_SIZE,
+      currentPage * CLIENTS_PAGE_SIZE
+    );
+  const pageSelectionScope = paginatedClients;
+
+  React.useEffect(() => {
+    if (!isPageLoading && currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages, isPageLoading]);
 
   const toggleCheck = (id) => setCheckedIds(prev => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
+  const removeFromRemotePage = React.useCallback((ids) => {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    const idSet = new Set(idList.filter(Boolean));
+    if (!idSet.size) return;
+    setRemotePage((current) => {
+      const nextData = current.data.filter((client) => !idSet.has(client.id));
+      const removedCount = current.data.length - nextData.length;
+      if (!removedCount) return current;
+      return { ...current, data: nextData, count: Math.max(0, current.count - removedCount) };
+    });
+  }, []);
   const selectAllFiltered = React.useCallback(() => {
-    if (!filtered.length) return;
-    setCheckedIds(new Set(filtered.map(c => c.id)));
-  }, [filtered, setCheckedIds]);
+    if (!pageSelectionScope.length) return;
+    setCheckedIds(new Set(pageSelectionScope.map(c => c.id)));
+  }, [pageSelectionScope, setCheckedIds]);
   const exitSelectMode = React.useCallback(() => {
     setSelectMode(false);
     clearSelection();
@@ -145,17 +218,20 @@ export default function ClientsPage({ store, onToast }) {
     if (!window.confirm(tr("confirmBulkDelete", { count: ids.length }))) return;
     const removed = deleteClientsBulk(ids);
     if (removed) {
+      removeFromRemotePage(ids);
       onToast(tr("bulkDeleteSuccess", { count: removed }), "info");
     } else {
       onToast(t.noClientsSelected || "لم يتم اختيار أي معتمر", "info");
     }
     exitSelectMode();
-  }, [checkedIds, deleteClientsBulk, exitSelectMode, onToast, tr, t.noClientsSelected]);
+  }, [checkedIds, deleteClientsBulk, exitSelectMode, onToast, removeFromRemotePage, tr, t.noClientsSelected]);
 
   const handleBulkArchive = () => {
     if (!checkedIds.size) return;
     if (!window.confirm(tr("confirmBulkArchive", { count: checkedIds.size }))) return;
-    archiveClients([...checkedIds]);
+    const ids = [...checkedIds];
+    archiveClients(ids);
+    removeFromRemotePage(ids);
     onToast(tr("bulkArchiveSuccess", { count: checkedIds.size }), "success");
     exitSelectMode();
   };
@@ -171,6 +247,7 @@ export default function ClientsPage({ store, onToast }) {
   const handleSingleDelete = (client) => {
     if (!window.confirm(tr("confirmDeleteClient", { name: client.name }))) return;
     deleteClient(client.id);
+    removeFromRemotePage(client.id);
     setSelected(null);
     onToast(t.deleteSuccess, "info");
   };
@@ -178,27 +255,35 @@ export default function ClientsPage({ store, onToast }) {
   const handleSingleArchive = (client) => {
     if (!window.confirm(tr("confirmArchive", { name: client.name }))) return;
     archiveClient(client.id);
+    removeFromRemotePage(client.id);
     setSelected(null);
     onToast(t.archiveSuccess, "success");
   };
 
   const handleSingleRestore = (client) => {
     restoreClient(client.id);
+    removeFromRemotePage(client.id);
     setSelected(null);
     onToast(t.restoreSuccess, "success");
   };
 
-  const allChecked = checkedIds.size === filtered.length && filtered.length > 0;
+  const allChecked = pageSelectionScope.length > 0 && pageSelectionScope.every(c => checkedIds.has(c.id));
   const hasSelection = checkedIds.size > 0;
+  const paginationLabels = React.useMemo(() => {
+    if (lang === "fr") return { previous: "Précédent", next: "Suivant", loading: "Chargement...", page: "Page" };
+    if (lang === "en") return { previous: "Previous", next: "Next", loading: "Loading...", page: "Page" };
+    return { previous: "السابق", next: "التالي", loading: "جاري التحميل...", page: "صفحة" };
+  }, [lang]);
 
   const programOccupancy = React.useMemo(() => {
+    if (!selectMode) return new Map();
     const counts = new Map();
     activeClients.forEach(c => {
       if (!c.programId) return;
       counts.set(c.programId, (counts.get(c.programId) || 0) + 1);
     });
     return counts;
-  }, [activeClients]);
+  }, [activeClients, selectMode]);
 
   const [isMobileCardLayout, setIsMobileCardLayout] = React.useState(() => {
     if (typeof window === "undefined") return false;
@@ -269,7 +354,7 @@ export default function ClientsPage({ store, onToast }) {
         <div>
           <h1 style={{ fontSize:21, fontWeight:800, color:tc.white }}>{t.clients}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>
-            {tr("clientsTotal", { total: sourceList.length, filtered: filtered.length })}
+            {tr("clientsTotal", { total: displayedTotalCount, filtered: filteredCount })}
           </p>
         </div>
         {tab === "active" && (
@@ -289,8 +374,8 @@ export default function ClientsPage({ store, onToast }) {
         background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-section-border)",
         borderRadius:12, padding:4, width:"fit-content" }}>
         {[
-          { key:"active",   icon:"users", label:`${t.activeTab} (${activeClients.length})` },
-          { key:"archived", icon:"archive", label:`${t.archiveTab} (${archivedClients.length})` },
+          { key:"active",   icon:"users", label:useRemoteResults ? t.activeTab : `${t.activeTab} (${activeClients.length})` },
+          { key:"archived", icon:"archive", label:useRemoteResults ? t.archiveTab : `${t.archiveTab} (${archivedClients.length})` },
         ].map(({ key, icon, label }) => {
           const showIcon = icon && !startsWithIcon(label, icon);
           return (
@@ -357,12 +442,12 @@ export default function ClientsPage({ store, onToast }) {
           placeholder={t.searchClients}
           style={{ flex:"1 1 320px", minWidth:220, maxWidth:520 }}
         />
-        {tab === "active" && filtered.length > 0 && (
+        {tab === "active" && filteredCount > 0 && (
           <Button
             variant={selectMode ? "warning" : "ghost"}
             size="sm"
             icon="checked"
-            disabled={!filtered.length}
+            disabled={!filteredCount}
             onClick={() => {
               if (selectMode) {
                 exitSelectMode();
@@ -397,7 +482,7 @@ export default function ClientsPage({ store, onToast }) {
                 variant="secondary"
                 size="sm"
                 onClick={selectAllFiltered}
-                disabled={allChecked || filtered.length === 0}
+                disabled={allChecked || pageSelectionScope.length === 0}
               >
                 {t.selectAll}
               </Button>
@@ -440,13 +525,17 @@ export default function ClientsPage({ store, onToast }) {
       )}
 
       {/* List */}
-      {filtered.length === 0 ? (
+      {isPageLoading ? (
+        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+          {paginationLabels.loading}
+        </GlassCard>
+      ) : filteredCount === 0 ? (
         tab === "archived"
           ? <EmptyState title={t.archiveTabEmpty} sub={t.archiveTabEmptySub} />
           : <EmptyState title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
-          {paginated.map((c,i) => {
+          {paginatedClients.map((c,i) => {
             const prog      = store.getProgramById(c.programId);
             const paid      = getClientTotalPaid(c.id);
             const price     = c.salePrice || c.price || 0;
@@ -488,32 +577,32 @@ export default function ClientsPage({ store, onToast }) {
         }}>
           <button
             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage === 1}
+            disabled={currentPage === 1 || isPageLoading}
             style={{
               padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
               background: "rgba(212,175,55,.08)", border: "1px solid rgba(212,175,55,.25)",
-              color: currentPage === 1 ? "rgba(212,175,55,.3)" : "#d4af37",
-              cursor: currentPage === 1 ? "default" : "pointer",
+              color: currentPage === 1 || isPageLoading ? "rgba(212,175,55,.3)" : "#d4af37",
+              cursor: currentPage === 1 || isPageLoading ? "default" : "pointer",
               fontFamily: "'Cairo',sans-serif", transition: "all .18s",
             }}
           >
-            {isRTL ? "›" : "‹"}
+            {paginationLabels.previous}
           </button>
           <span style={{ fontSize: 13, color: tc.grey, fontFamily: "'Cairo',sans-serif", minWidth: 80, textAlign: "center" }}>
-            {currentPage} / {totalPages}
+            {paginationLabels.page} {currentPage} / {totalPages}
           </span>
           <button
             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage === totalPages}
+            disabled={currentPage === totalPages || isPageLoading}
             style={{
               padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
               background: "rgba(212,175,55,.08)", border: "1px solid rgba(212,175,55,.25)",
-              color: currentPage === totalPages ? "rgba(212,175,55,.3)" : "#d4af37",
-              cursor: currentPage === totalPages ? "default" : "pointer",
+              color: currentPage === totalPages || isPageLoading ? "rgba(212,175,55,.3)" : "#d4af37",
+              cursor: currentPage === totalPages || isPageLoading ? "default" : "pointer",
               fontFamily: "'Cairo',sans-serif", transition: "all .18s",
             }}
           >
-            {isRTL ? "‹" : "›"}
+            {paginationLabels.next}
           </button>
         </div>
       )}

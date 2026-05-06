@@ -10,7 +10,7 @@ import { translateActivityDescription } from "../utils/i18nValues";
 const tc = theme.colors;
 
 export default function Dashboard({ store, onNavigate, onSelectClient, headerActions, onBrandNavigate }) {
-  const { t, tr, dir, lang } = useLang();
+  const { t, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { stats, clients, programs, activityLog,
           getClientStatus, getClientTotalPaid, getProgramClients, getProgramById,
@@ -100,6 +100,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
   }, [search, clients, programs]);
 
   const maxActivityPage = Math.max(0, Math.ceil(activityTotal / ACTIVITY_PAGE_SIZE) - 1);
+  const programClientCounts = stats.programClientCounts || {};
 
   const newerLabel = t.newerUpdates || (lang === "fr" ? "Plus récent" : lang === "en" ? "Newer" : "الأحدث");
   const olderLabel = t.olderUpdates || (lang === "fr" ? "Plus ancien" : lang === "en" ? "Older" : "الأقدم");
@@ -217,7 +218,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             {/* KPIs */}
             <div className="kpi-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))", gap:12, marginBottom:26 }}>
               {[
-                { label:t.totalClients,  val:stats.archivedCount > 0 ? `${stats.totalClients} ${tr("archivedCountLabel",{n:stats.archivedCount})}` : stats.totalClients,  icon:"users", color:tc.gold,       delay:0    },
+                { label:t.totalClients,  val:stats.totalClients,  icon:"users", color:tc.gold,       delay:0    },
                 { label:t.totalPrograms, val:stats.totalPrograms, icon:"program", color:tc.gold,       delay:.04  },
                 { label:t.cleared,       val:stats.cleared,       icon:"success", color:tc.greenLight, delay:.08  },
                 { label:t.partial,       val:stats.partial,       icon:"partial", color:tc.warning,    delay:.12  },
@@ -234,10 +235,12 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             <SectionHeader title={t.availablePrograms} onMore={()=>onNavigate("programs")} btnLabel={t.viewAll} />
             <div className="program-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:12, marginBottom:26 }}>
               {programs.map((p,i)=>{
-                const pc = getProgramClients(p.id);
-                const pct= Math.min((pc.length/p.seats)*100,100);
+                const registered = Object.prototype.hasOwnProperty.call(programClientCounts, p.id)
+                  ? programClientCounts[p.id]
+                  : getProgramClients(p.id).length;
+                const pct= Math.min((registered/p.seats)*100,100);
                 return <ProgramMini key={p.id} program={p} t={t}
-                  registered={pc.length} pct={pct} remaining={p.seats-pc.length}
+                  registered={registered} pct={pct} remaining={p.seats-registered}
                   delay={i*.05} onClick={()=>onNavigate("programs")} />;
               })}
             </div>

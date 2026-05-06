@@ -12,10 +12,32 @@ const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
 );
 
+const UUID_SEARCH_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const cleanString = (value) => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
+};
+
+const cleanPostgrestSearch = (value) => (
+  typeof value === "string"
+    ? value.trim().replace(/[(),]/g, " ").replace(/\s+/g, " ")
+    : ""
+);
+
+const fetchPagedRows = async (buildQuery, pageSize = 1000) => {
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) return { data: rows, error };
+    const batch = Array.isArray(data) ? data : [];
+    rows.push(...batch);
+    if (batch.length < pageSize) return { data: rows, error: null };
+    from += pageSize;
+  }
 };
 
 const composeClientName = (row) => {
@@ -437,6 +459,94 @@ const fromAgency = (row) => ({
 
 export const db = {
 
+  dashboard: {
+    async fetchStats(agencyId) {
+      if (!agencyId) return { data: null, error: null };
+
+      const [clientsResult, paymentsResult, programsResult] = await Promise.all([
+        fetchPagedRows(() => supabase
+          .from("clients")
+          .select("id, program_id, official_price, sale_price")
+          .eq("agency_id", agencyId)
+          .or("deleted.is.null,deleted.eq.false")
+          .or("archived.is.null,archived.eq.false")
+          .order("id", { ascending: true })),
+        fetchPagedRows(() => supabase
+          .from("payments")
+          .select("id, client_id, amount")
+          .eq("agency_id", agencyId)
+          .or("status.is.null,status.eq.active")
+          .order("id", { ascending: true })),
+        supabase
+          .from("programs")
+          .select("id", { count: "exact", head: true })
+          .eq("agency_id", agencyId)
+          .or("deleted.is.null,deleted.eq.false"),
+      ]);
+
+      const error = clientsResult.error || paymentsResult.error || programsResult.error;
+      if (error) return { data: null, error };
+
+      const activeClients = clientsResult.data || [];
+      const activeClientIds = new Set(activeClients.map((client) => client.id));
+      const paidMap = new Map();
+
+      (paymentsResult.data || []).forEach((payment) => {
+        if (!activeClientIds.has(payment.client_id)) return;
+        paidMap.set(
+          payment.client_id,
+          (paidMap.get(payment.client_id) || 0) + Number(payment.amount || 0)
+        );
+      });
+
+      const programClientCounts = {};
+      let cleared = 0;
+      let partial = 0;
+      let unpaid = 0;
+      let totalRevenue = 0;
+      let totalCollected = 0;
+      let totalRemaining = 0;
+      let totalDiscount = 0;
+
+      activeClients.forEach((client) => {
+        const paid = paidMap.get(client.id) || 0;
+        const salePrice = Number(client.sale_price ?? 0);
+        const officialPrice = Number(client.official_price ?? 0);
+
+        if (client.program_id) {
+          programClientCounts[client.program_id] = (programClientCounts[client.program_id] || 0) + 1;
+        }
+
+        if (paid === 0) unpaid += 1;
+        else if (paid >= salePrice) cleared += 1;
+        else partial += 1;
+
+        totalRevenue += salePrice;
+        totalCollected += paid;
+        totalRemaining += Math.max(0, salePrice - paid);
+        totalDiscount += Math.max(0, officialPrice - salePrice);
+      });
+
+      return {
+        data: {
+          totalClients: activeClients.length,
+          archivedCount: 0,
+          totalPrograms: programsResult.count ?? 0,
+          cleared,
+          partial,
+          unpaid,
+          totalRevenue,
+          totalCollected,
+          totalRemaining,
+          totalDiscount,
+          docsIncomplete: 0,
+          programClientCounts,
+        },
+        error: null,
+      };
+    },
+  },
+
   programs: {
     async fetchAll(agencyId) {
       const { data, error } = await supabase
@@ -507,6 +617,59 @@ export const db = {
         .or("deleted.is.null,deleted.eq.false")
         .order("registration_date", { ascending: true });
       return { data: data?.map(fromClient) ?? null, error };
+    },
+    async fetchPage(agencyId, {
+      page = 1,
+      pageSize = 10,
+      archived = false,
+      programId = null,
+      search = "",
+    } = {}) {
+      if (!agencyId) return { data: [], count: 0, error: null };
+      const safePage = Math.max(1, Number(page) || 1);
+      const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 10));
+      const from = (safePage - 1) * safePageSize;
+      const to = from + safePageSize - 1;
+
+      let query = supabase
+        .from("clients")
+        .select("*", { count: "exact" })
+        .eq("agency_id", agencyId)
+        .eq("deleted", false);
+
+      if (archived) {
+        query = query.eq("archived", true);
+      } else {
+        query = query.eq("archived", false);
+      }
+
+      if (programId) query = query.eq("program_id", programId);
+
+      const term = cleanPostgrestSearch(search);
+      if (term) {
+        const pattern = `%${term}%`;
+        const filters = [
+          `name.ilike.${pattern}`,
+          `phone.ilike.${pattern}`,
+          `ticket_no.ilike.${pattern}`,
+          `passport->>number.ilike.${pattern}`,
+        ];
+        if (UUID_SEARCH_REGEX.test(term)) filters.push(`id.eq.${term}`);
+        query = query.or(filters.join(","));
+      }
+
+      const { data, error, count } = await query
+        .order("registration_date", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
+        .range(from, to);
+
+      return {
+        data: data?.map(fromClient) ?? [],
+        count: count ?? 0,
+        page: safePage,
+        pageSize: safePageSize,
+        error,
+      };
     },
     async fetchDeleted(agencyId) {
       const { data, error } = await supabase

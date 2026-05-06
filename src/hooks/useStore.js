@@ -53,6 +53,21 @@ import {
   uploadAgencyLogo,
 } from "../utils/agencyLogo";
 
+const EMPTY_DASHBOARD_STATS = {
+  totalClients: 0,
+  archivedCount: 0,
+  totalPrograms: 0,
+  cleared: 0,
+  partial: 0,
+  unpaid: 0,
+  totalRevenue: 0,
+  totalCollected: 0,
+  totalRemaining: 0,
+  totalDiscount: 0,
+  docsIncomplete: 0,
+  programClientCounts: {},
+};
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -375,6 +390,7 @@ export function useStore(agencyId, onToast) {
     } catch { return null; }
   });
   const [agencyUsers, setAgencyUsers] = useState([]);
+  const [dashboardStats, setDashboardStats] = useState(null);
 
   // Prevent double-fetch in React StrictMode
   const fetchedRef = useRef(false);
@@ -383,6 +399,22 @@ export function useStore(agencyId, onToast) {
     if (onToast) onToast(msg, type);
     else console.warn("[Store]", msg);
   }, [onToast]);
+
+  const refreshDashboardStats = useCallback(async () => {
+    if (!isSupabaseEnabled || !agencyId) {
+      setDashboardStats(null);
+      return { data: null, error: null };
+    }
+    const result = await db.dashboard.fetchStats(agencyId);
+    if (!result.error && result.data) {
+      setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...result.data });
+    }
+    return result;
+  }, [agencyId, isSupabaseEnabled]);
+
+  useEffect(() => {
+    refreshDashboardStats();
+  }, [refreshDashboardStats, lastSynced]);
 
   // ── Archived / Active split ───────────────────────────────────────────────
   const archivedClients      = useMemo(() => clients.filter(c => !!c.archived),  [clients]);
@@ -794,8 +826,9 @@ export function useStore(agencyId, onToast) {
   const getProgramById    = useCallback((id) => programs.find(p => p.id === id), [programs]);
   const getProgramClients = useCallback((id) => clients.filter(c => c.programId === id), [clients]);
 
-  // ── Stats (active clients only) ───────────────────────────────────────────
-  const stats = useMemo(() => {
+  // ── Stats (operational clients only) ──────────────────────────────────────
+  const localStats = useMemo(() => {
+    if (isSupabaseEnabled && dashboardStats) return null;
     // Build paid lookup map once — O(n) over payments instead of O(n²)
     const paidMap = new Map();
     payments.forEach(p => {
@@ -809,20 +842,31 @@ export function useStore(agencyId, onToast) {
       if (paid >= price) return "cleared";
       return "partial";
     };
+    const operationalClients = activeClients.filter(c => !c.deleted);
     return {
-      totalClients:   activeClients.length,
-      archivedCount:  archivedClients.length,
+      totalClients:   operationalClients.length,
+      archivedCount:  0,
       totalPrograms:  programs.length,
-      cleared:        activeClients.filter(c => getStatus(c) === "cleared").length,
-      partial:        activeClients.filter(c => getStatus(c) === "partial").length,
-      unpaid:         activeClients.filter(c => getStatus(c) === "unpaid").length,
-      totalRevenue:   activeClients.reduce((s,c) => s+(c.salePrice??c.price??0), 0),
-      totalCollected: activeClients.reduce((s,c) => s+getPaid(c.id), 0),
-      totalRemaining: activeClients.reduce((s,c) => s+Math.max(0,(c.salePrice??c.price??0)-getPaid(c.id)), 0),
-      totalDiscount:  activeClients.reduce((s,c) => s+Math.max(0,(c.officialPrice??0)-(c.salePrice??c.officialPrice??0)), 0),
-      docsIncomplete: activeClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
+      cleared:        operationalClients.filter(c => getStatus(c) === "cleared").length,
+      partial:        operationalClients.filter(c => getStatus(c) === "partial").length,
+      unpaid:         operationalClients.filter(c => getStatus(c) === "unpaid").length,
+      totalRevenue:   operationalClients.reduce((s,c) => s+(c.salePrice??c.price??0), 0),
+      totalCollected: operationalClients.reduce((s,c) => s+getPaid(c.id), 0),
+      totalRemaining: operationalClients.reduce((s,c) => s+Math.max(0,(c.salePrice??c.price??0)-getPaid(c.id)), 0),
+      totalDiscount:  operationalClients.reduce((s,c) => s+Math.max(0,(c.officialPrice??0)-(c.salePrice??c.officialPrice??0)), 0),
+      docsIncomplete: operationalClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
+      programClientCounts: operationalClients.reduce((acc, client) => {
+        if (client.programId) acc[client.programId] = (acc[client.programId] || 0) + 1;
+        return acc;
+      }, {}),
     };
-  }, [activeClients, archivedClients, programs, payments]);
+  }, [activeClients, programs, payments, isSupabaseEnabled, dashboardStats]);
+
+  const stats = useMemo(() => (
+    isSupabaseEnabled && dashboardStats
+      ? { ...EMPTY_DASHBOARD_STATS, ...dashboardStats }
+      : (localStats || EMPTY_DASHBOARD_STATS)
+  ), [dashboardStats, isSupabaseEnabled, localStats]);
 
   // ── Archive suggestions ───────────────────────────────────────────────────
   const getArchiveSuggestions = useCallback(() => {
