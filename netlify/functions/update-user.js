@@ -68,6 +68,9 @@ exports.handler = async (event) => {
     if (requesterProfileError || !requesterProfile?.agency_id) {
       return { statusCode: 403, body: JSON.stringify({ error: "Forbidden" }) };
     }
+    if ((requesterProfile.status || "").toLowerCase() !== "active") {
+      return { statusCode: 403, body: JSON.stringify({ error: "Inactive account" }) };
+    }
 
     const requesterRole = (requesterProfile.role || "").toLowerCase();
     if (!ADMIN_ROLES.has(requesterRole)) {

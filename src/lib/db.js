@@ -1005,7 +1005,7 @@ export const db = {
   users: {
     async fetchProfile(userId) {
       const { data, error } = await supabase
-        .from("users").select("id, agency_id, role, full_name")
+        .from("users").select("id, agency_id, role, full_name, status")
         .eq("id", userId).single();
       return { data, error };
     },

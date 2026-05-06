@@ -908,15 +908,18 @@ function AuthGate() {
           <IconBubble name="alert" boxSize={56} size={26} color="#f59e0b" bg="rgba(245,158,11,.12)" border="rgba(245,158,11,.28)" style={{ margin:"0 auto 16px" }} />
           <h2 style={{ color: "#d4af37", marginBottom: 12 }}>الحساب غير مرتبط بوكالة</h2>
           <p style={{ color: "rgba(148,163,184,.8)", fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
-            تم تسجيل الدخول بنجاح لكن لا يوجد ملف تعريف لهذا المستخدم في قاعدة البيانات.
-            <br />شغّل هذا في Supabase SQL Editor:
+            تم تسجيل الدخول بنجاح، لكن هذا الحساب لا يملك ملف وكالة مرتبطًا في قاعدة البيانات.
+            <br />تواصل مع مسؤول النظام لإكمال الربط بشكل آمن.
           </p>
           <pre style={{
             background: "rgba(0,0,0,.4)", border: "1px solid rgba(212,175,55,.2)",
             borderRadius: 10, padding: 16, fontSize: 11, textAlign: "left",
             color: "#4ade80", overflowX: "auto", marginBottom: 24,
             whiteSpace: "pre-wrap", direction: "ltr",
-          }}>{`INSERT INTO public.users (id, agency_id, role, full_name)\nSELECT au.id,\n  (SELECT id FROM public.agencies LIMIT 1),\n  'owner', split_part(au.email,'@',1)\nFROM auth.users au\nWHERE au.email = '${user.email}';`}</pre>
+          }}>{`System administrator action required:
+- Create or select the correct agency UUID explicitly: <agency_uuid>
+- Link only the intended owner email: <owner_email>
+- Never use SELECT id FROM public.agencies LIMIT 1 in production.`}</pre>
           <button
             onClick={async () => { await logout(); window.location.reload(); }}
             style={{

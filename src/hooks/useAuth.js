@@ -40,6 +40,11 @@ export function useAuth() {
           await supabase.auth.signOut();
           clearSupabaseLogoutAppStorage(data.agency_id);
         } catch {}
+      } else if ((data.status || "").toLowerCase() === "invited") {
+        setUser({ ...authUser, profile: data });
+        setAgencyId(null);
+        setProfileError(null);
+        setNeedsPasswordSet(true);
       } else {
         setProfileError(null);
         setUser({ ...authUser, profile: data });

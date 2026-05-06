@@ -101,6 +101,7 @@ const LABELS = {
     submitting:  "جاري الحفظ...",
     success:     "تم تعيين كلمة المرور بنجاح — جاري الدخول...",
     errGeneric:  "حدث خطأ — حاول مرة أخرى",
+    activationFailed: "تم حفظ كلمة المرور، لكن تعذّر تفعيل الحساب. تواصل مع المسؤول.",
     expired:     "انتهت صلاحية الرابط — تواصل مع المسؤول لإعادة الدعوة",
     preparing:   "جاري التحقق من الرابط...",
     show:        "إظهار كلمة المرور",
@@ -119,6 +120,7 @@ const LABELS = {
     submitting:  "Enregistrement...",
     success:     "Mot de passe défini — Connexion en cours...",
     errGeneric:  "Une erreur s'est produite — réessayez",
+    activationFailed: "Le mot de passe a été enregistré, mais le compte n’a pas pu être activé. Contactez l’administrateur.",
     expired:     "Lien expiré — contactez l'administrateur pour une nouvelle invitation",
     preparing:   "Vérification du lien...",
     show:        "Afficher le mot de passe",
@@ -137,6 +139,7 @@ const LABELS = {
     submitting:  "Saving...",
     success:     "Password set successfully — signing you in...",
     errGeneric:  "Something went wrong — try again",
+    activationFailed: "Password saved, but the account could not be activated. Contact the administrator.",
     expired:     "Link expired — contact the administrator for a new invitation",
     preparing:   "Verifying the link...",
     show:        "Show password",
@@ -213,10 +216,38 @@ export default function SetPasswordPage({ authData }) {
     setError("");
     setLoading(true);
     const { error: err } = await supabase.auth.updateUser({ password: pass1 });
-    setLoading(false);
     if (err) {
+      setLoading(false);
       setError(err.message || lbl.errGeneric);
     } else {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        setLoading(false);
+        setError(lbl.activationFailed || lbl.errGeneric);
+        return;
+      }
+      const userId = userData?.user?.id;
+      if (userId) {
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("status")
+          .eq("id", userId)
+          .maybeSingle();
+        if (profileError && profileError.code !== "PGRST116") {
+          setLoading(false);
+          setError(lbl.activationFailed || lbl.errGeneric);
+          return;
+        }
+        if ((profile?.status || "").toLowerCase() === "invited") {
+          const { error: activationError } = await supabase.rpc("activate_own_invited_user");
+          if (activationError) {
+            setLoading(false);
+            setError(lbl.activationFailed || lbl.errGeneric);
+            return;
+          }
+        }
+      }
+      setLoading(false);
       setStatus("done");
       window.history.replaceState(null, "", window.location.pathname);
       // Give onAuthStateChange (USER_UPDATED) time to fire first.

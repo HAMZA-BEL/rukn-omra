@@ -65,11 +65,14 @@ exports.handler = async (event) => {
     const requesterId = requesterData.user.id;
     const { data: requesterProfile, error: profileError } = await supabase
       .from("users")
-      .select("agency_id, role")
+      .select("agency_id, role, status")
       .eq("id", requesterId)
       .single();
     if (profileError || !requesterProfile?.agency_id) {
       return { statusCode: 403, body: JSON.stringify({ error: "Forbidden" }) };
+    }
+    if ((requesterProfile.status || "").toLowerCase() !== "active") {
+      return { statusCode: 403, body: JSON.stringify({ error: "Inactive account" }) };
     }
     const requesterRole = (requesterProfile.role || "").toLowerCase();
     if (!ADMIN_ROLES.has(requesterRole)) {
