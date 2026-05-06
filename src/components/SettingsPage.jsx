@@ -2,7 +2,7 @@ import React from "react";
 import { Input, Button, GlassCard, Divider, Modal } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
-import { isSupabaseEnabled } from "../lib/supabase";
+import { isSupabaseEnabled, supabase } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
@@ -68,12 +68,16 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [agencyOpen, setAgencyOpen] = React.useState(false);
   const [logoOpen, setLogoOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
+  const [securityOpen, setSecurityOpen] = React.useState(false);
   const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
   const [contractTemplatesOpen, setContractTemplatesOpen] = React.useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
   const [pendingImportFile, setPendingImportFile] = React.useState(null);
+  const [passwordForm, setPasswordForm] = React.useState({ newPassword: "", confirmPassword: "" });
+  const [passwordBusy, setPasswordBusy] = React.useState(false);
+  const [passwordMessage, setPasswordMessage] = React.useState({ type: "", text: "" });
   const logoInputRef = React.useRef(null);
   const backupInputRef = React.useRef(null);
   React.useEffect(() => {
@@ -113,6 +117,92 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const handleSave = () => {
     updateAgency(form);
     onToast(t.saveSettingsSuccess, "success");
+  };
+
+  const passwordLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        title: "Sécurité et mot de passe",
+        desc: "Changez le mot de passe temporaire après la première connexion.",
+        helper: "Utilisez un mot de passe fort d’au moins 8 caractères.",
+        newPassword: "Nouveau mot de passe",
+        confirmPassword: "Confirmer le nouveau mot de passe",
+        save: "Mettre à jour le mot de passe",
+        saving: "Mise à jour...",
+        tooShort: "Le mot de passe doit contenir au moins 8 caractères.",
+        mismatch: "Les deux mots de passe ne correspondent pas.",
+        success: "Mot de passe mis à jour avec succès.",
+        failed: "Impossible de mettre à jour le mot de passe.",
+        unavailable: "La connexion Supabase Auth n’est pas configurée.",
+      };
+    }
+    if (lang === "en") {
+      return {
+        title: "Security and password",
+        desc: "Change temporary passwords after first login.",
+        helper: "Use a strong password with at least 8 characters.",
+        newPassword: "New password",
+        confirmPassword: "Confirm new password",
+        save: "Update password",
+        saving: "Updating...",
+        tooShort: "Password must be at least 8 characters.",
+        mismatch: "New password and confirmation do not match.",
+        success: "Password updated successfully.",
+        failed: "Unable to update password.",
+        unavailable: "Supabase Auth is not configured.",
+      };
+    }
+    return {
+      title: "الأمان وكلمة المرور",
+      desc: "غيّر كلمة المرور المؤقتة بعد أول تسجيل دخول.",
+      helper: "استعمل كلمة مرور قوية لا تقل عن 8 أحرف.",
+      newPassword: "كلمة المرور الجديدة",
+      confirmPassword: "تأكيد كلمة المرور الجديدة",
+      save: "تحديث كلمة المرور",
+      saving: "جاري التحديث...",
+      tooShort: "يجب أن تكون كلمة المرور 8 أحرف على الأقل.",
+      mismatch: "كلمة المرور الجديدة وتأكيدها غير متطابقين.",
+      success: "تم تحديث كلمة المرور بنجاح.",
+      failed: "تعذر تحديث كلمة المرور.",
+      unavailable: "Supabase Auth غير مفعّل.",
+    };
+  }, [lang]);
+
+  const setPasswordField = (key) => (event) => {
+    setPasswordMessage({ type: "", text: "" });
+    setPasswordForm((current) => ({ ...current, [key]: event.target.value }));
+  };
+
+  const handlePasswordUpdate = async () => {
+    const newPassword = passwordForm.newPassword;
+    const confirmPassword = passwordForm.confirmPassword;
+    if (newPassword.length < 8) {
+      setPasswordMessage({ type: "error", text: passwordLabels.tooShort });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordMessage({ type: "error", text: passwordLabels.mismatch });
+      return;
+    }
+    if (!isSupabaseEnabled) {
+      setPasswordMessage({ type: "error", text: passwordLabels.unavailable });
+      return;
+    }
+
+    setPasswordBusy(true);
+    setPasswordMessage({ type: "", text: "" });
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setPasswordForm({ newPassword: "", confirmPassword: "" });
+      setPasswordMessage({ type: "success", text: passwordLabels.success });
+      onToast?.(passwordLabels.success, "success");
+    } catch {
+      setPasswordMessage({ type: "error", text: passwordLabels.failed });
+      onToast?.(passwordLabels.failed, "error");
+    } finally {
+      setPasswordBusy(false);
+    }
   };
 
   const logoUnavailableMessage = t.agencyLogoStorageUnavailable || (
@@ -369,6 +459,58 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           </div>
         </div>
       </GlassCard>
+
+      <SettingsSectionCard
+        title={passwordLabels.title}
+        description={passwordLabels.desc}
+        open={securityOpen}
+        onToggle={() => setSecurityOpen((current) => !current)}
+      >
+        <div style={{ display:"flex", flexDirection:"column", gap:14, maxWidth:560 }}>
+          <p style={{ margin:0, fontSize:12, color:"var(--rukn-text-muted)", lineHeight:1.7 }}>
+            {passwordLabels.helper}
+          </p>
+          <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
+            <Input
+              label={passwordLabels.newPassword}
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={setPasswordField("newPassword")}
+              autoComplete="new-password"
+              disabled={passwordBusy}
+            />
+            <Input
+              label={passwordLabels.confirmPassword}
+              type="password"
+              value={passwordForm.confirmPassword}
+              onChange={setPasswordField("confirmPassword")}
+              autoComplete="new-password"
+              disabled={passwordBusy}
+            />
+          </div>
+          {passwordMessage.text && (
+            <p style={{
+              margin:0,
+              fontSize:12,
+              fontWeight:700,
+              color: passwordMessage.type === "success" ? t2.greenLight : "var(--rukn-danger)",
+              lineHeight:1.7,
+            }}>
+              {passwordMessage.text}
+            </p>
+          )}
+          <div>
+            <Button
+              variant="secondary"
+              icon="shieldCheck"
+              disabled={passwordBusy}
+              onClick={handlePasswordUpdate}
+            >
+              {passwordBusy ? passwordLabels.saving : passwordLabels.save}
+            </Button>
+          </div>
+        </div>
+      </SettingsSectionCard>
 
       {/* Agency info */}
       <SettingsSectionCard
