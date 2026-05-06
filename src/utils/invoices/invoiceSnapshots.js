@@ -15,6 +15,7 @@ const invoiceYearFromDisplay = (displayNumber = "") => {
 };
 
 const paymentReferenceSnapshot = (payment = {}) => ({
+  id: trimInvoiceValue(payment.id || payment.paymentId || payment.payment_id),
   receiptNumber: trimInvoiceValue(payment.receiptNo || payment.receiptNumber),
   date: trimInvoiceValue(payment.date),
   amount: safeAmount(payment.amount),
