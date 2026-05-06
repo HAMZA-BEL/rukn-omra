@@ -599,6 +599,12 @@ export const db = {
     },
     async deleteMany(ids, agencyId) {
       if (!ids || !ids.length) return { error: null };
+      const { error: notificationError } = await supabase
+        .from("notifications")
+        .update({ program_id: null })
+        .in("program_id", ids)
+        .eq("agency_id", agencyId);
+      if (notificationError) return { error: notificationError };
       const { error } = await supabase
         .from("programs")
         .delete()

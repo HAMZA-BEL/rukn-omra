@@ -123,6 +123,9 @@ const sanitizeDocs = (docs = {}) => ({
   contract:     Boolean(docs.contract),
   ...(trimString(docs.badgePhotoPath) ? { badgePhotoPath: trimString(docs.badgePhotoPath) } : {}),
   ...(docs.rooming ? { rooming: docs.rooming } : {}),
+  ...(docs.deletedProgramSnapshot && typeof docs.deletedProgramSnapshot === "object"
+    ? { deletedProgramSnapshot: docs.deletedProgramSnapshot }
+    : {}),
 });
 
 const sanitizeRoomingMeta = (data = {}, docs = {}) => {
@@ -167,6 +170,27 @@ const localizedPaymentRestoreMessage = () => {
   if (lang === "en") return "Payment restored";
   return "تم استرجاع الدفعة";
 };
+
+const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new Date().toISOString()) => ({
+  snapshotVersion: 1,
+  kind: "deleted_program",
+  originalProgramId: program.id || client.programId || "",
+  programName: program.name || "",
+  programNameFr: program.nameFr || "",
+  programType: program.type || "",
+  transport: program.transport || "",
+  departure: program.departure || "",
+  returnDate: program.returnDate || "",
+  packageLevel: client.packageLevel || client.hotelLevel || "",
+  hotelLevel: client.hotelLevel || client.packageLevel || "",
+  hotelMecca: client.hotelMecca || program.hotelMecca || "",
+  hotelMadina: client.hotelMadina || program.hotelMadina || "",
+  roomType: client.roomType || "",
+  roomTypeLabel: client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "",
+  salePrice: Number(client.salePrice ?? client.price ?? 0),
+  officialPrice: Number(client.officialPrice ?? client.salePrice ?? client.price ?? 0),
+  deletedAt,
+});
 
 const prepareClientForSave = (data) => {
   const gender = normalizeClientGender(data.gender || data.passport?.gender);
@@ -1441,28 +1465,71 @@ export function useStore(agencyId, onToast) {
         .map(p => p.deletedBatchId)
         .filter(Boolean)
     );
-    const clientsFromPrograms = deletedClients
-      .filter(c => c.deletedBatchId && batchIds.has(c.deletedBatchId))
-      .map(c => c.id);
-    const finalClientIds = Array.from(new Set([...clientIds, ...clientsFromPrograms]));
+    const programById = new Map(programsToPurge.map((program) => [program.id, program]));
+    const programByBatchId = new Map(
+      programsToPurge
+        .filter((program) => program.deletedBatchId)
+        .map((program) => [program.deletedBatchId, program])
+    );
+    const linkedDeletedClients = deletedClients.filter((client) => (
+      (client.deletedBatchId && batchIds.has(client.deletedBatchId))
+      || programIds.includes(client.programId)
+    ));
+    const linkedActiveClients = clients.filter((client) => programIds.includes(client.programId));
+    const linkedClientsById = new Map();
+    [...linkedDeletedClients, ...linkedActiveClients].forEach((client) => {
+      if (client?.id) linkedClientsById.set(client.id, client);
+    });
+    const preservedProgramClientIds = new Set(linkedClientsById.keys());
+    const finalClientIds = Array.from(new Set(clientIds)).filter((id) => !preservedProgramClientIds.has(id));
+    const snapshotDeletedAt = new Date().toISOString();
+    const clientsToPreserve = Array.from(linkedClientsById.values()).map((client) => {
+      const program = programById.get(client.programId)
+        || programByBatchId.get(client.deletedBatchId)
+        || {};
+      return {
+        ...client,
+        programId: null,
+        deleted: false,
+        deletedAt: null,
+        deletedBatchId: null,
+        docs: {
+          ...(client.docs || {}),
+          deletedProgramSnapshot: buildDeletedProgramSnapshot(program, client, snapshotDeletedAt),
+        },
+      };
+    });
 
     setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
     setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
-    setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
-    setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+    if (clientsToPreserve.length) {
+      const preservedIds = new Set(clientsToPreserve.map((client) => client.id));
+      setClients(prev => [
+        ...prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)),
+        ...clientsToPreserve,
+      ]);
+      setDeletedClients(prev => prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)));
+    } else {
+      setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+      setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+    }
 
     sync(async () => {
-      const responses = [];
+      for (const client of clientsToPreserve) {
+        const response = await saveClient(client, agencyId);
+        if (response?.error) return { error: response.error };
+      }
       if (programIds.length) {
-        responses.push(await deleteProgramsPermanent(programIds, agencyId));
+        const response = await deleteProgramsPermanent(programIds, agencyId);
+        if (response?.error) return { error: response.error };
       }
       if (finalClientIds.length) {
-        responses.push(await deleteClientsPermanent(finalClientIds, agencyId));
+        const response = await deleteClientsPermanent(finalClientIds, agencyId);
+        if (response?.error) return { error: response.error };
       }
-      const error = responses.find(r => r?.error)?.error ?? null;
-      return { error };
+      return { error: null };
     });
-  }, [agencyId, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, sync]);
+  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));

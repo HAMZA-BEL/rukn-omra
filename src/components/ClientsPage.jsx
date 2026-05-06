@@ -274,6 +274,11 @@ export default function ClientsPage({ store, onToast }) {
     if (lang === "en") return { previous: "Previous", next: "Next", loading: "Loading...", page: "Page" };
     return { previous: "السابق", next: "التالي", loading: "جاري التحميل...", page: "صفحة" };
   }, [lang]);
+  const deletedProgramShortLabel = React.useMemo(() => {
+    if (lang === "fr") return "supprimé";
+    if (lang === "en") return "deleted";
+    return "محذوف";
+  }, [lang]);
 
   const programOccupancy = React.useMemo(() => {
     if (!selectMode) return new Map();
@@ -536,7 +541,11 @@ export default function ClientsPage({ store, onToast }) {
       ) : (
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
           {paginatedClients.map((c,i) => {
-            const prog      = store.getProgramById(c.programId);
+            const deletedProgramSnapshot = c.docs?.deletedProgramSnapshot;
+            const prog      = store.getProgramById(c.programId)
+              || (deletedProgramSnapshot?.programName
+                ? { name: `${deletedProgramSnapshot.programName} (${deletedProgramShortLabel})` }
+                : null);
             const paid      = getClientTotalPaid(c.id);
             const price     = c.salePrice || c.price || 0;
             const status    = getClientStatus(c);

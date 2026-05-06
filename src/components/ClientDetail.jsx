@@ -84,6 +84,8 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
   const p           = client.passport || {};
   const docs        = client.docs || {};
+  const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
+  const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
   const displayName = getClientDisplayName(client);
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
@@ -104,6 +106,16 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       String(text || "")
     );
   }, []);
+  const deletedProgramLabel = React.useMemo(() => {
+    if (lang === "fr") return "Programme supprimé";
+    if (lang === "en") return "Deleted program";
+    return "برنامج محذوف";
+  }, [lang]);
+  const historicalProgramLabel = React.useMemo(() => {
+    if (lang === "fr") return "Informations historiques du programme";
+    if (lang === "en") return "Historical program information";
+    return "معلومات البرنامج المحفوظة";
+  }, [lang]);
 
   const handleDownloadBadge = React.useCallback(async () => {
     if (!program) {
@@ -345,22 +357,34 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       </div>
 
       {/* Program */}
-      {program && (
+      {(program || showDeletedProgramSnapshot) && (
         <GlassCard gold style={{ padding:14, marginBottom:14 }}>
-          <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> {t.program}</p>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:10 }}>
+            <p style={{ fontSize:11, color:tc.grey, fontWeight:700, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="program" size={14} color={tc.gold} /> {showDeletedProgramSnapshot ? historicalProgramLabel : t.program}</p>
+            {showDeletedProgramSnapshot && (
+              <span style={{
+                fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20,
+                background:"rgba(245,158,11,.12)", border:"1px solid rgba(245,158,11,.3)",
+                color:tc.warning,
+              }}>
+                {deletedProgramLabel}
+              </span>
+            )}
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {[
-              [t.program,     program.name],
-              [t.level || "المستوى",  translateClientLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "—"],
-              [t.hotelMecca,  client.hotelMecca||"—"],
-              [t.hotelMadina, client.hotelMadina||"—"],
-              [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "—"],
-              [t.transport,   translateProgramAirline(program, lang) || program.transport || "—"],
-              ...(program.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
-              ...(program.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
-              ...(program.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
-              [t.departure,   program.departure||"—"],
-              [t.returnDate,  program.returnDate||"—"],
+              [t.program,     program?.name || deletedProgramSnapshot?.programName || deletedProgramSnapshot?.programNameFr || "—"],
+              ...(showDeletedProgramSnapshot && deletedProgramSnapshot?.originalProgramId ? [[lang === "fr" ? "ID original" : lang === "en" ? "Original ID" : "المعرّف الأصلي", deletedProgramSnapshot.originalProgramId]] : []),
+              [t.level || "المستوى",  translateClientLevel(client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel, lang) || client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel || "—"],
+              [t.hotelMecca,  client.hotelMecca || deletedProgramSnapshot?.hotelMecca || "—"],
+              [t.hotelMadina, client.hotelMadina || deletedProgramSnapshot?.hotelMadina || "—"],
+              [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType || deletedProgramSnapshot?.roomTypeLabel || deletedProgramSnapshot?.roomType, lang) || getRoomTypeLabel(client.roomType || deletedProgramSnapshot?.roomType) || "—"],
+              [t.transport,   program ? (translateProgramAirline(program, lang) || program.transport || "—") : (deletedProgramSnapshot?.transport || "—")],
+              ...(program?.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
+              ...(program?.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
+              ...(program?.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
+              [t.departure,   program?.departure || deletedProgramSnapshot?.departure || "—"],
+              [t.returnDate,  program?.returnDate || deletedProgramSnapshot?.returnDate || "—"],
             ].map(([k,v]) => (
               <div key={k}>
                 <p style={{ fontSize:10, color:tc.grey }}>{k}</p>
