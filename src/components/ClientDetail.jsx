@@ -72,7 +72,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const [receiptPayment, setReceiptPayment] = React.useState(null);
 
   const program     = getProgramById(client.programId);
-  const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const docs        = client.docs || {};
+  const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
+  const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
+  const participantTerms = React.useMemo(() => getParticipantTerminology(program, client, lang), [client, program, lang]);
   const payments    = getClientPayments(client.id);
   const totalPaid   = getClientTotalPaid(client.id);
   const salePrice   = client.salePrice   || client.price || 0;
@@ -83,9 +86,6 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
   const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
   const p           = client.passport || {};
-  const docs        = client.docs || {};
-  const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
-  const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
   const displayName = getClientDisplayName(client);
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
@@ -241,9 +241,9 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
   const handleReceiptTypeSelect = React.useCallback((receiptType) => {
     if (!receiptPayment) return;
-    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType });
+    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments });
     setReceiptPayment(null);
-  }, [agency, client, lang, program, receiptPayment]);
+  }, [agency, client, lang, payments, program, receiptPayment]);
 
   React.useEffect(() => {
     let cancelled = false;

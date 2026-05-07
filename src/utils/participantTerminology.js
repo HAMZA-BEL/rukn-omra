@@ -1,22 +1,58 @@
 const normalizeText = (value) => String(value || "").trim().toLowerCase();
 
-export const getProgramKind = (program = {}) => {
-  const direct = normalizeText(
-    program.type
-    || program.program_type
-    || program.programType
-    || program.category
-    || program.programCategory
-    || program.program_category
-  );
-  const source = direct || normalizeText(program.name);
-  if (source.includes("عمرة") || source.includes("umrah") || source.includes("omra") || source.includes("omrah")) return "umrah";
-  if (source.includes("حج") || source.includes("hajj") || source.includes("hadj")) return "hajj";
-  return "umrah";
+const getDeletedProgramSnapshot = (program, client) => (
+  client?.docs?.deletedProgramSnapshot
+  || program?.docs?.deletedProgramSnapshot
+  || null
+);
+
+const normalizeProgramKind = (value) => {
+  const text = normalizeText(value);
+  if (!text) return "";
+  if (text === "hajj" || text === "hadj" || text === "حج" || text === "الحج") return "hajj";
+  if (text === "umrah" || text === "omra" || text === "omrah" || text === "عمرة" || text === "العمرة") return "umrah";
+  if (text.includes("حج") || text.includes("hajj") || text.includes("hadj")) return "hajj";
+  if (text.includes("عمرة") || text.includes("umrah") || text.includes("omra") || text.includes("omrah")) return "umrah";
+  return "";
 };
 
-export const getParticipantTerminology = (program = {}, lang = "ar") => {
-  const kind = getProgramKind(program);
+export const getProgramKind = (program = null, client = null) => {
+  const snapshot = getDeletedProgramSnapshot(program, client);
+  const type = (
+    program?.type
+    || program?.program_type
+    || program?.programType
+    || program?.programKind
+    || program?.programCategory
+    || program?.program_category
+    || program?.category
+    || snapshot?.type
+    || snapshot?.program_type
+    || snapshot?.programType
+    || snapshot?.programKind
+    || snapshot?.programCategory
+    || snapshot?.program_category
+    || snapshot?.category
+  );
+
+  const directKind = normalizeProgramKind(type);
+  if (directKind) return directKind;
+
+  const sourceKind = normalizeProgramKind(
+    program?.name
+    || program?.nameFr
+    || program?.name_fr
+    || snapshot?.name
+    || snapshot?.programName
+    || snapshot?.programNameFr
+  );
+  return sourceKind || "umrah";
+};
+
+export const getParticipantTerminology = (program = null, clientOrLang = "ar", maybeLang) => {
+  const client = typeof clientOrLang === "string" ? null : clientOrLang;
+  const lang = typeof clientOrLang === "string" ? clientOrLang : (maybeLang || "ar");
+  const kind = getProgramKind(program, client);
   const isHajj = kind === "hajj";
 
   if (lang === "fr") {

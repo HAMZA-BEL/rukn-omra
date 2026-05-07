@@ -1857,6 +1857,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const packageById = React.useMemo(() => new Map(packages.map((pkg) => [pkg.id, pkg])), [packages]);
   const packageByLevel = React.useMemo(() => new Map(packages.map((pkg) => [pkg.level, pkg])), [packages]);
   const headerActionsLabel = lang === "fr" ? "Actions" : lang === "en" ? "Actions" : "إجراءات";
+  const allLevelsExportLabel = React.useMemo(() => {
+    if (lang === "fr") return "Tous les niveaux";
+    if (lang === "en") return "All levels";
+    return "كل المستويات";
+  }, [lang]);
+  const amadeusExportLabel = React.useMemo(() => {
+    if (lang === "fr") return "Exporter Amadeus Excel";
+    if (lang === "en") return "Export Amadeus Excel";
+    return "تصدير Amadeus Excel";
+  }, [lang]);
   const closeHeaderActions = React.useCallback(() => {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
@@ -1879,22 +1889,43 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       agency,
     });
   }, [agency, closeHeaderActions, getClientStatus, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
-  const handleAmadeusExport = React.useCallback(() => {
+  const handleAmadeusExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
-    const airline = getProgramAirline(program);
-    if (!airline?.code) {
-      onToast("يرجى اختيار شركة الطيران قبل تصدير Amadeus", "error");
-      return;
+    try {
+      const selectedLevelLabel = packageFilter === "all"
+        ? allLevelsExportLabel
+        : (activePackageChip?.label || packageFilter || allLevelsExportLabel);
+      const result = await downloadAmadeusExcel(exportClients, program, {
+        agency,
+        lang,
+        selectedLevelLabel,
+      });
+      const reviewText = result.reviewCount
+        ? (lang === "fr"
+          ? ` — ${result.reviewCount} ligne(s) à vérifier`
+          : lang === "en"
+            ? ` — ${result.reviewCount} row(s) need review`
+            : ` — ${result.reviewCount} سطر يحتاج للمراجعة`)
+        : "";
+      const successText = lang === "fr"
+        ? `Export Amadeus prêt — ${result.total} pèlerin(s)${reviewText}`
+        : lang === "en"
+          ? `Amadeus export ready — ${result.total} pilgrim(s)${reviewText}`
+          : `تم تصدير ملف Amadeus — ${result.total} معتمر${reviewText}`;
+      onToast(successText, result.reviewCount ? "info" : "success");
+    } catch (error) {
+      onToast(
+        lang === "fr"
+          ? "Impossible de générer le fichier Amadeus"
+          : lang === "en"
+            ? "Unable to generate Amadeus file"
+            : "تعذر إنشاء ملف Amadeus",
+        "error"
+      );
     }
-    const missing = exportClients.filter(c => !c.passport?.number);
-    if (missing.length > 0) {
-      onToast(`${missing.length} معتمر بدون رقم جواز — سيُصدَّر الملف مع بيانات ناقصة`, "info");
-    }
-    downloadAmadeusExcel(exportClients, program);
-    onToast(`تم تصدير ملف Amadeus — ${exportClients.length} معتمر`, "success");
-  }, [closeHeaderActions, getCurrentExportClients, notifyNoExportClients, onToast, program]);
+  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program]);
   const handleBadgePdfExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -2034,7 +2065,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     {
       key: "amadeus",
       icon: "clearance",
-      label: "Amadeus Excel",
+      label: amadeusExportLabel,
       onClick: handleAmadeusExport,
     },
     {
@@ -2049,7 +2080,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
+  ]), [amadeusExportLabel, badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
 
   return (
     <div style={{ padding:"28px 32px" }}>

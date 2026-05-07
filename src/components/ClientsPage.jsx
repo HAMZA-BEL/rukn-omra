@@ -81,7 +81,7 @@ export default function ClientsPage({ store, onToast }) {
     [programs]
   );
   const getClientTerms = React.useCallback(
-    (client) => getParticipantTerminology(getClientProgram(client), lang),
+    (client) => getParticipantTerminology(getClientProgram(client), client, lang),
     [getClientProgram, lang]
   );
 
@@ -278,6 +278,11 @@ export default function ClientsPage({ store, onToast }) {
     if (lang === "fr") return "supprimé";
     if (lang === "en") return "deleted";
     return "محذوف";
+  }, [lang]);
+  const unspecifiedProgramLabel = React.useMemo(() => {
+    if (lang === "fr") return "Non défini";
+    if (lang === "en") return "Not specified";
+    return "غير محدد";
   }, [lang]);
 
   const programOccupancy = React.useMemo(() => {
@@ -542,10 +547,14 @@ export default function ClientsPage({ store, onToast }) {
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
           {paginatedClients.map((c,i) => {
             const deletedProgramSnapshot = c.docs?.deletedProgramSnapshot;
-            const prog      = store.getProgramById(c.programId)
-              || (deletedProgramSnapshot?.programName
-                ? { name: `${deletedProgramSnapshot.programName} (${deletedProgramShortLabel})` }
-                : null);
+            const liveProgram = c.programId ? store.getProgramById(c.programId) : null;
+            const prog      = liveProgram
+              || (deletedProgramSnapshot?.programName || deletedProgramSnapshot?.programNameFr
+                ? {
+                    ...deletedProgramSnapshot,
+                    name: `${deletedProgramSnapshot.programName || deletedProgramSnapshot.programNameFr} (${deletedProgramShortLabel})`,
+                  }
+                : { name: unspecifiedProgramLabel });
             const paid      = getClientTotalPaid(c.id);
             const price     = c.salePrice || c.price || 0;
             const status    = getClientStatus(c);

@@ -10,6 +10,7 @@ import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import {
   deleteSavedInvoiceSnapshot,
+  downloadInvoiceWordSnapshot,
   readSavedInvoices,
   restoreSavedInvoiceSnapshot,
   trashSavedInvoiceSnapshot,
@@ -367,6 +368,7 @@ const invoiceTabText = (lang) => {
       company: "Société",
       preview: "Voir",
       reprint: "Réimprimer",
+      downloadWord: "Télécharger Word",
       trash: "Supprimer",
       restore: "Restaurer",
       deletePermanent: "Supprimer définitivement",
@@ -399,6 +401,7 @@ const invoiceTabText = (lang) => {
       company: "Company",
       preview: "View",
       reprint: "Reprint",
+      downloadWord: "Download Word",
       trash: "Delete",
       restore: "Restore",
       deletePermanent: "Delete permanently",
@@ -430,6 +433,7 @@ const invoiceTabText = (lang) => {
     company: "شركة",
     preview: "عرض / معاينة",
     reprint: "إعادة طباعة",
+    downloadWord: "تحميل Word",
     trash: "حذف",
     restore: "استعادة",
     deletePermanent: "حذف نهائي",
@@ -1204,6 +1208,7 @@ export default function ClearancePage({ store }) {
           money={money}
           onPreview={(invoice) => previewInvoiceSnapshot({ snapshot: invoice, lang })}
           onReprint={(invoice) => printInvoiceSnapshot({ snapshot: invoice, lang })}
+          onDownloadWord={(invoice) => downloadInvoiceWordSnapshot({ snapshot: invoice, lang })}
           onTrash={handleTrashInvoice}
           onRestore={handleRestoreInvoice}
           onDelete={handleDeleteInvoice}
@@ -1221,7 +1226,7 @@ export default function ClearancePage({ store }) {
   );
 }
 
-function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, onPreview, onReprint, onTrash, onRestore, onDelete }) {
+function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, onPreview, onReprint, onDownloadWord, onTrash, onRestore, onDelete }) {
   const [yearFilter, setYearFilter] = React.useState("all");
   const [programFilter, setProgramFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
@@ -1338,6 +1343,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, o
               ? [
                 { key: "preview", label: labels.preview, icon: "eye", onClick: () => onPreview?.(invoice) },
                 { key: "reprint", label: labels.reprint, icon: "print", onClick: () => onReprint?.(invoice) },
+                { key: "word", label: labels.downloadWord, icon: "file", onClick: () => onDownloadWord?.(invoice) },
                 { key: "trash", label: labels.trash, icon: "trash", tone: "danger", onClick: () => onTrash?.(invoice) },
               ]
               : [

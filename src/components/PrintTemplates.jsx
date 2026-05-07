@@ -66,6 +66,54 @@ const getPaymentValue = (payment = {}, keys = []) => {
   }
   return "";
 };
+const toAmount = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+const getPaymentAmount = (payment = {}) => toAmount(payment.amount);
+const getPaymentReceiptNumber = (payment = {}) => getPaymentValue(payment, ["receiptNo", "receipt_no", "receiptNumber", "receipt_number"]);
+const isSamePayment = (a = {}, b = {}) => {
+  if (a.id && b.id && a.id === b.id) return true;
+  const aReceipt = getPaymentReceiptNumber(a);
+  const bReceipt = getPaymentReceiptNumber(b);
+  return Boolean(aReceipt && bReceipt && aReceipt === bReceipt);
+};
+const getReceiptSequence = (payment = {}) => {
+  const sequence = Number(payment.receiptSequence ?? payment.receipt_sequence);
+  return Number.isFinite(sequence) ? sequence : null;
+};
+const getPaymentTime = (payment = {}) => {
+  const time = new Date(payment.date || payment.createdAt || payment.created_at || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+};
+const sortPaymentsForReceipt = (items = []) => (
+  items
+    .map((payment, index) => ({ payment, index }))
+    .sort((a, b) => {
+      const sequenceA = getReceiptSequence(a.payment);
+      const sequenceB = getReceiptSequence(b.payment);
+      if (sequenceA !== null && sequenceB !== null && sequenceA !== sequenceB) return sequenceA - sequenceB;
+      const timeDiff = getPaymentTime(a.payment) - getPaymentTime(b.payment);
+      if (timeDiff) return timeDiff;
+      return a.index - b.index;
+    })
+    .map(({ payment }) => payment)
+);
+const calculateReceiptAmounts = ({ payment = {}, client = {}, payments = [] } = {}) => {
+  const salePrice = toAmount(client.salePrice ?? client.price);
+  const paymentAmount = getPaymentAmount(payment);
+  const sameClientPayments = Array.isArray(payments)
+    ? payments.filter((item) => !client.id || !item.clientId || item.clientId === client.id)
+    : [];
+  const sortedPayments = sortPaymentsForReceipt(sameClientPayments);
+  const selectedIndex = sortedPayments.findIndex((item) => isSamePayment(item, payment));
+  const paidThroughReceipt = selectedIndex >= 0
+    ? sortedPayments.slice(0, selectedIndex + 1)
+    : (sortedPayments.length ? sortedPayments : [payment]);
+  const totalPaidSoFar = paidThroughReceipt.reduce((sum, item) => sum + getPaymentAmount(item), 0);
+  const remaining = salePrice > 0 ? Math.max(0, salePrice - totalPaidSoFar) : 0;
+  return { salePrice, paymentAmount, totalPaidSoFar, remaining };
+};
 const paymentExtraDetails = (payment = {}, lang = "ar", { includeInternal = false } = {}) => {
   if (!includeInternal) return "";
   const details = [];
@@ -294,18 +342,20 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
   );
 }
 
-export function printReceipt({ payment, client, program, agency, lang = "ar", receiptType = "client" }) {
+export function printReceipt({ payment, client, program, agency, lang = "ar", receiptType = "client", payments = [] }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
   const isAgencyReceipt = receiptType === "agency";
-  const terms = getParticipantTerminology(program, lang);
+  const terms = getParticipantTerminology(program, client, lang);
   const clientName = getClientDisplayName(client, terms.singular || t.pilgrimFallback || "—", lang);
   const money = (value) => formatCurrency(value, lang);
   const cin = getClientCin(client);
   const paymentMethod = getPaymentValue(payment, ["method", "paymentMethod", "payment_method"]);
   const receiptNo = getPaymentValue(payment, ["receiptNo", "receipt_no", "receiptNumber", "receipt_number"]);
+  const chequeNumber = getPaymentValue(payment, ["chequeNumber", "cheque_number", "checkNumber", "check_number"]);
   const note = getPaymentValue(payment, ["note", "notes"]);
   const extraDetails = paymentExtraDetails(payment, lang, { includeInternal: isAgencyReceipt });
+  const receiptAmounts = calculateReceiptAmounts({ payment, client, payments });
   const agencyLogoUrl = cleanDisplay(agency?.logoUrl || agency?.logo_url, "");
   const receiptTitle = isAgencyReceipt
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
@@ -342,13 +392,17 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
     <tr><td>${label(lang, "رقم البطاقة الوطنية", "N° CIN", "National ID / CIN")}</td><td>${escapeHtml(cleanDisplay(cin, ""))}</td></tr>
     <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${escapeHtml(program?.name || "—")}</td></tr>
     <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${escapeHtml(translatePaymentMethod(paymentMethod, lang))}</td></tr>
+    ${!isAgencyReceipt && chequeNumber ? `<tr><td>${label(lang, "رقم الشيك", "N° chèque", "Cheque number")}</td><td>${escapeHtml(chequeNumber)}</td></tr>` : ""}
     ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${escapeHtml(extraDetails)}</td></tr>` : ""}
     <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${escapeHtml(payment.date)}</td></tr>
-    ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظة", "Note", "Note")}</td><td>${escapeHtml(note)}</td></tr>` : ""}
+    ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظات", "Notes", "Notes")}</td><td>${escapeHtml(note)}</td></tr>` : ""}
+    ${receiptAmounts.salePrice > 0 ? `<tr><td>${label(lang, "إجمالي السعر", "Prix total", "Total price")}</td><td>${escapeHtml(money(receiptAmounts.salePrice))}</td></tr>` : ""}
     <tr class="amount-row">
       <td>${label(lang, "المبلغ المستلم", "MONTANT REÇU", "AMOUNT RECEIVED")}</td>
-      <td>${escapeHtml(money(payment.amount))}</td>
+      <td>${escapeHtml(money(receiptAmounts.paymentAmount))}</td>
     </tr>
+    <tr><td>${label(lang, "إجمالي المدفوع", "Total payé", "Total paid so far")}</td><td>${escapeHtml(money(receiptAmounts.totalPaidSoFar))}</td></tr>
+    <tr class="amount-row"><td>${label(lang, "المبلغ المتبقي", "Montant restant", "Remaining amount")}</td><td>${escapeHtml(money(receiptAmounts.remaining))}</td></tr>
   </table>
   <div class="signature">
     <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
@@ -365,7 +419,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
 
 export function printClientCard({ client, program, agency, lang = "ar", programClients = [] }) {
   const isAr = lang === "ar";  const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;  const p = client.passport || {};
-  const terms = getParticipantTerminology(program, lang);
+  const terms = getParticipantTerminology(program, client, lang);
   const clientName = getClientDisplayName(client, terms.singular || t.pilgrimFallback || "—", lang);
   const latinName = client.nameLatin && client.nameLatin !== clientName ? client.nameLatin : "";
   const fileNumber = getReadableFileNumber(client, programClients);
