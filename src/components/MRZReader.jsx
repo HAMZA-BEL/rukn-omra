@@ -18,9 +18,11 @@ import {
   normalizeRoomTypeKey,
 } from "../utils/programPackages";
 import { translateHotelLevel, translateRoomCategory, translateRoomType } from "../utils/i18nValues";
+import { validateLatinName } from "../utils/passportMrzEngine";
 
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
+const MRZ_DEV = process.env.NODE_ENV !== "production";
 const ROW_STATUS = {
   READY: "ready",
   MANUALLY_ACCEPTED: "manually_accepted",
@@ -38,6 +40,12 @@ const REVIEW_REASON = {
   SUSPICIOUS_NAME: "suspicious_name",
   MISSING_REQUIRED_FIELD: "missing_required_field",
   DUPLICATE_EXISTING: "duplicate_existing",
+  INVALID_DATE: "invalid_date",
+  PARTIAL_BIRTH_DATE: "partial_birth_date",
+  INVALID_PASSPORT_NUMBER: "invalid_passport_number",
+  NO_MRZ_TEXT: "no_mrz_text",
+  PARSER_FAILED: "parser_failed",
+  LOW_CONFIDENCE: "low_confidence",
 };
 
 const LABELS = {
@@ -82,6 +90,9 @@ const LABELS = {
     cropHint: "حدد سطرَي MRZ أسفل الجواز ثم أعد القراءة.",
     readCrop: "إعادة القراءة من المنطقة المحددة",
     cropFailed: "تعذر استخراج MRZ بشكل صحيح من المنطقة المحددة",
+    checksumAcceptHint: "بيانات MRZ غير مطابقة للتحقق الآلي، يمكنك قبولها بعد مراجعة الحقول.",
+    requiredFieldsHardBlock: "لا يمكن الحفظ لأن بعض الحقول المطلوبة ناقصة.",
+    manualAcceptToast: "تم قبول الصف بعد المراجعة اليدوية.",
     notes: "ملاحظات",
     accept: "قبول بعد المراجعة",
     duplicateAction: "التكرار",
@@ -100,10 +111,16 @@ const LABELS = {
       partial_mrz_read: "تمت قراءة MRZ جزئيًا فقط",
       missing_required_field: "بعض الحقول المطلوبة ناقصة",
       duplicate_existing: "هذا الجواز يبدو موجودًا مسبقًا",
+      invalid_date: "تاريخ غير صالح ويحتاج مراجعة",
+      partial_birth_date: "تاريخ الميلاد غير كامل في الجواز وتم اعتماده تقريبياً",
+      invalid_passport_number: "رقم الجواز غير صالح ويحتاج مراجعة",
+      no_mrz_text: "لم يتم العثور على نص MRZ في المنطقة المحددة",
+      parser_failed: "تم العثور على نص، لكن لم يتم التعرف على صيغة MRZ",
+      low_confidence: "نتيجة القراءة غير مؤكدة وتحتاج مراجعة",
     },
     ocrNotFound: "لم يتم العثور على نص في المنطقة المحددة. تأكد من وضوح الصورة ومن تحديد سطرَي MRZ فقط.",
     ocrNoText: "لم يتم العثور على نص في المنطقة المحددة. تأكد من وضوح الصورة ومن تحديد سطرَي MRZ فقط.",
-    mrzFormatNotRecognized: "تم العثور على نص، لكن لم يتم التعرف على صيغة MRZ. جرّب تحديد السطرين فقط أسفل الجواز أو أدخل البيانات يدويًا.",
+    mrzFormatNotRecognized: "تم العثور على نص، لكن لم يتم التعرف على صيغة MRZ. جرّب تحديد السطرين فقط أسفل الجواز أو صحح الحقول في جدول المراجعة.",
     imageTooSmall: "جودة الصورة غير كافية لقراءة الجواز. جرّب صورة أوضح.",
     mrzLine1NotFound: "لم يتم العثور على السطر الأول من MRZ",
     mrzLine2NotFound: "لم يتم العثور على السطر الثاني من MRZ",
@@ -177,6 +194,9 @@ const LABELS = {
     cropHint: "Sélectionnez les deux lignes MRZ en bas du passeport puis relancez la lecture.",
     readCrop: "Relire la zone sélectionnée",
     cropFailed: "Impossible d'extraire une MRZ valide depuis la zone sélectionnée",
+    checksumAcceptHint: "Les contrôles MRZ ne correspondent pas, vous pouvez accepter après vérification des champs.",
+    requiredFieldsHardBlock: "Enregistrement impossible, des champs obligatoires sont manquants.",
+    manualAcceptToast: "Ligne acceptée après vérification manuelle.",
     notes: "Notes",
     accept: "Accepter après vérification",
     duplicateAction: "Doublon",
@@ -195,10 +215,16 @@ const LABELS = {
       partial_mrz_read: "La MRZ n’a été lue que partiellement",
       missing_required_field: "Certains champs obligatoires sont manquants",
       duplicate_existing: "Ce passeport semble déjà exister",
+      invalid_date: "Une date est invalide et doit être vérifiée",
+      partial_birth_date: "Date de naissance incomplète dans le passeport, adoptée approximativement",
+      invalid_passport_number: "Le numéro de passeport est invalide et doit être vérifié",
+      no_mrz_text: "Aucun texte MRZ n’a été trouvé dans la zone sélectionnée",
+      parser_failed: "Du texte a été trouvé, mais le format MRZ n’a pas été reconnu",
+      low_confidence: "La lecture n’est pas certaine et doit être vérifiée",
     },
     ocrNotFound: "Aucun texte n’a été détecté dans la zone sélectionnée. Vérifiez la netteté de l’image et sélectionnez uniquement les deux lignes MRZ.",
     ocrNoText: "Aucun texte n’a été détecté dans la zone sélectionnée. Vérifiez la netteté de l’image et sélectionnez uniquement les deux lignes MRZ.",
-    mrzFormatNotRecognized: "Du texte a été détecté, mais le format MRZ n’a pas été reconnu. Sélectionnez uniquement les deux lignes en bas du passeport ou saisissez les données manuellement.",
+    mrzFormatNotRecognized: "Du texte a été détecté, mais le format MRZ n’a pas été reconnu. Sélectionnez uniquement les deux lignes en bas du passeport ou corrigez les champs dans le tableau de vérification.",
     imageTooSmall: "La qualité de l’image est insuffisante pour lire le passeport. Essayez une image plus nette.",
     mrzLine1NotFound: "Première ligne MRZ introuvable",
     mrzLine2NotFound: "Deuxième ligne MRZ introuvable",
@@ -272,6 +298,9 @@ const LABELS = {
     cropHint: "Select the two MRZ lines at the bottom of the passport, then read the selected area again.",
     readCrop: "Read selected area again",
     cropFailed: "Could not extract a valid MRZ from the selected area",
+    checksumAcceptHint: "The MRZ checks do not match; you can accept it after reviewing the fields.",
+    requiredFieldsHardBlock: "Cannot save because some required fields are missing.",
+    manualAcceptToast: "Row accepted after manual review.",
     notes: "Notes",
     accept: "Accept after review",
     duplicateAction: "Duplicate",
@@ -290,10 +319,16 @@ const LABELS = {
       partial_mrz_read: "The MRZ was only partially read",
       missing_required_field: "Some required fields are missing",
       duplicate_existing: "This passport appears to already exist",
+      invalid_date: "A date is invalid and needs review",
+      partial_birth_date: "Birth date is incomplete in the passport and was approximated",
+      invalid_passport_number: "The passport number is invalid and needs review",
+      no_mrz_text: "No MRZ text was found in the selected area",
+      parser_failed: "Text was found, but the MRZ format was not recognized",
+      low_confidence: "The read result is uncertain and needs review",
     },
     ocrNotFound: "No text was detected in the selected area. Make sure the image is clear and select only the two MRZ lines.",
     ocrNoText: "No text was detected in the selected area. Make sure the image is clear and select only the two MRZ lines.",
-    mrzFormatNotRecognized: "Text was detected, but the MRZ format was not recognized. Select only the two bottom MRZ lines or enter the data manually.",
+    mrzFormatNotRecognized: "Text was detected, but the MRZ format was not recognized. Select only the two bottom MRZ lines or correct the fields in the review table.",
     imageTooSmall: "The image quality is not sufficient to read the passport. Try a clearer image.",
     mrzLine1NotFound: "MRZ first line was not found",
     mrzLine2NotFound: "MRZ second line was not found",
@@ -345,16 +380,12 @@ const formatMessage = (template, vars) => Object.entries(vars).reduce((text, [ke
 const normalizePassportNo = (value = "") => String(value).trim().toUpperCase().replace(/\s+/g, "");
 const normalizeGender = (value) => value === "F" || value === "female" ? "female" : value === "M" || value === "male" ? "male" : "";
 const getReviewReasonLabel = (l, reason) => l.reviewReasonMessages?.[reason] || reason;
+const labeledReviewReason = (reason) => Object.values(REVIEW_REASON).includes(reason);
 
 const getSuspiciousLatinNameReason = (value = "") => {
-  const clean = String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
-  if (!clean) return "";
-  if (/[^A-Z\s'-]/.test(clean)) return REVIEW_REASON.SUSPICIOUS_NAME;
-  if (/(.)\1{3,}/.test(clean.replace(/\s/g, ""))) return REVIEW_REASON.SUSPICIOUS_NAME;
-  if (/\b[A-Z]\b/.test(clean)) return REVIEW_REASON.SUSPICIOUS_NAME;
-  if (/\b[A-Z]{1,2}$/.test(clean) && clean.includes(" ")) return REVIEW_REASON.SUSPICIOUS_NAME;
-  if (/(?:CL+|KL+|CI+|IC+|CC+|KK+|LL+)$/i.test(clean.replace(/\s/g, ""))) return REVIEW_REASON.SUSPICIOUS_NAME;
-  return "";
+  const validation = validateLatinName(value);
+  if (!String(value || "").trim()) return "";
+  return validation.ok ? "" : REVIEW_REASON.SUSPICIOUS_NAME;
 };
 
 const getExistingArabic = (client = {}) => ({
@@ -362,16 +393,145 @@ const getExistingArabic = (client = {}) => ({
   arabicFirstName: client.firstName || client.arabicFirstName || client.first_name || "",
 });
 
+const normalizeLatinToken = (value = "") => String(value || "").toUpperCase().replace(/[^A-Z]/g, "");
+
+const getLine1RawVariantsFromOutcome = (outcome = {}, parsed = {}) => {
+  const attempts = outcome?.debug?.attempts || [];
+  return Array.from(new Set([
+    parsed?.raw?.line1,
+    parsed?.engineResult?.raw?.line1,
+    parsed?.engineResult?.diagnostics?.line1?.originalLine1,
+    ...attempts.map((attempt) => attempt.detectedLine1),
+    ...attempts
+      .filter((attempt) => attempt.cropType === "line1")
+      .flatMap((attempt) => attempt.normalizedOcrText || []),
+  ].filter(Boolean)));
+};
+
+const getGivenNameCandidatesFromOutcome = (outcome = {}, parsed = {}) => {
+  const attempts = outcome?.debug?.attempts || [];
+  const line1Diag = parsed?.engineResult?.diagnostics?.line1 || {};
+  return Array.from(new Set([
+    parsed?.data?.latinFirstName,
+    parsed?.data?.firstName,
+    parsed?.engineResult?.fields?.firstNameLatin,
+    line1Diag.finalGivenNames,
+    line1Diag.cleanedGivenName,
+    ...attempts.flatMap((attempt) => [
+      attempt.parser?.fields?.firstNameLatin,
+      attempt.parser?.fields?.latinFirstName,
+      attempt.parser?.fields?.firstName,
+      attempt.parser?.line1?.finalGivenNames,
+      attempt.parser?.line1?.cleanedGivenName,
+    ]),
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
+};
+
+const getGivenNameFillerContexts = ({ value = "", parsed = {}, outcome = {} } = {}) => {
+  const token = normalizeLatinToken(value);
+  const line1Diag = parsed?.engineResult?.diagnostics?.line1 || {};
+  const contexts = [
+    line1Diag.contextAfterGivenCandidate,
+    line1Diag.rawGivenNameCandidate,
+    ...getLine1RawVariantsFromOutcome(outcome, parsed),
+  ].filter(Boolean);
+  if (!token) return contexts;
+  return contexts.flatMap((context) => {
+    const clean = String(context || "").toUpperCase().replace(/[^A-Z0-9<]/g, "");
+    const index = clean.indexOf(token);
+    return index >= 0 ? [clean.slice(index + token.length, index + token.length + 16)] : [clean];
+  });
+};
+
+const hasGivenNameFillerContext = ({ value = "", parsed = {}, outcome = {} } = {}) => (
+  getGivenNameFillerContexts({ value, parsed, outcome }).some((context) => (
+    /<{2,}/.test(context) || /[CLKI<]{4,}/.test(context)
+  ))
+);
+
+export const resolveFinalMrzGivenName = ({
+  parserGivenName = "",
+  fallbackGivenName = "",
+  oldGivenName = "",
+  parsed = {},
+  outcome = {},
+} = {}) => {
+  const rawParser = String(parserGivenName || "").trim().toUpperCase();
+  const fallback = String(fallbackGivenName || "").trim().toUpperCase();
+  const oldValue = String(oldGivenName || "").trim().toUpperCase();
+  const candidateValues = getGivenNameCandidatesFromOutcome(outcome, parsed);
+  const candidateSupport = candidateValues.reduce((acc, value) => {
+    const token = normalizeLatinToken(value);
+    if (token) acc[token] = (acc[token] || 0) + 1;
+    return acc;
+  }, {});
+  const sourceBeforeCleanup = rawParser ? "mrz_parser" : fallback ? "fallback" : oldValue ? "old_row" : "empty";
+  let finalValue = rawParser || fallback || oldValue || "";
+  let finalSource = sourceBeforeCleanup;
+  let overwrittenBy = "";
+  let trailingNoiseRemoved = "";
+  const currentToken = normalizeLatinToken(finalValue);
+  const shorterSupported = Object.keys(candidateSupport)
+    .filter((candidate) => currentToken.length === candidate.length + 1 && currentToken.startsWith(candidate))
+    .sort((a, b) => (candidateSupport[b] || 0) - (candidateSupport[a] || 0) || b.length - a.length)[0] || "";
+
+  if (rawParser && shorterSupported && /[CKLI]$/.test(currentToken)) {
+    finalValue = shorterSupported;
+    finalSource = "mrz_parser_consensus";
+    trailingNoiseRemoved = currentToken.slice(-1);
+    overwrittenBy = "cleaner_mrz_given_name_candidate";
+  } else if (rawParser && currentToken && /[CKLI]$/.test(currentToken)) {
+    const shortened = currentToken.slice(0, -1);
+    const terminal = currentToken.slice(-1);
+    const fillerContext = hasGivenNameFillerContext({ value: currentToken, parsed, outcome });
+    const clearMoroccanGivenTail = /AN$/.test(shortened);
+    const supportedShorter = Boolean(candidateSupport[shortened]);
+    const canRemove = fillerContext && (
+      (/[CKL]/.test(terminal) && (clearMoroccanGivenTail || supportedShorter))
+      || (terminal === "I" && supportedShorter)
+    );
+    if (canRemove) {
+      finalValue = shortened;
+      finalSource = "mrz_parser_context_cleanup";
+      trailingNoiseRemoved = terminal;
+      overwrittenBy = "trailing_mrz_filler_noise";
+    }
+  }
+
+  if (rawParser && finalValue !== fallback && fallback && normalizeLatinToken(fallback).startsWith(normalizeLatinToken(finalValue))) {
+    overwrittenBy = overwrittenBy || "mrz_parser_over_fallback";
+  }
+  if (rawParser && finalValue !== oldValue && oldValue && normalizeLatinToken(oldValue).startsWith(normalizeLatinToken(finalValue))) {
+    overwrittenBy = overwrittenBy || "mrz_parser_over_old_row";
+  }
+
+  return {
+    finalValue,
+    finalSource,
+    parserGivenNameBeforeCleanup: rawParser,
+    fallbackGivenName: fallback,
+    oldRowGivenName: oldValue,
+    candidateValues,
+    candidateSupport,
+    fillerContexts: getGivenNameFillerContexts({ value: currentToken, parsed, outcome }),
+    trailingNoiseRemoved,
+    overwrittenBy,
+  };
+};
+
 const issueText = (issues = [], l, raw = {}) => {
   if (!issues.length) return "";
   return issues.map((issue) => {
+    if (l.reviewReasonMessages?.[issue]) return getReviewReasonLabel(l, issue);
     if (issue === "MRZ_MISSING") return l.ocrNotFound;
-    if (["LINE1_INVALID_CHARS", "LINE2_INVALID_CHARS", "LINE1_LENGTH", "LINE2_LENGTH", "NOT_TD3_PASSPORT", "PARSE_ERROR"].includes(issue)) {
+    if (["LINE1_INVALID_CHARS", "LINE2_INVALID_CHARS", "LINE1_LENGTH", "LINE2_LENGTH", "LINE_LENGTH", "NOT_TD3_PASSPORT", "PARSE_ERROR"].includes(issue)) {
       const count = issue === "LINE1_LENGTH" ? ` (${mrzCount(raw.line1)}/44)` : issue === "LINE2_LENGTH" ? ` (${mrzCount(raw.line2)}/44)` : "";
       return `${getReviewReasonLabel(l, REVIEW_REASON.PARTIAL_MRZ_READ)}${count}`;
     }
     if (["PASSPORT_CHECK", "BIRTH_CHECK", "EXPIRY_CHECK"].includes(issue)) return getReviewReasonLabel(l, REVIEW_REASON.CHECKSUM_FAILED);
     if (issue === "NAME_FILLER_NOISE") return getReviewReasonLabel(l, REVIEW_REASON.SUSPICIOUS_NAME);
+    if (issue === "INVALID_DATE") return getReviewReasonLabel(l, REVIEW_REASON.INVALID_DATE);
+    if (issue === "LOW_CONFIDENCE") return getReviewReasonLabel(l, REVIEW_REASON.LOW_CONFIDENCE);
     if (["LAST_NAME_MISSING", "FIRST_NAME_MISSING", "NATIONALITY_MISSING", "GENDER_MISSING", "PASSPORT_MISSING"].includes(issue)) {
       return getReviewReasonLabel(l, REVIEW_REASON.MISSING_REQUIRED_FIELD);
     }
@@ -380,6 +540,8 @@ const issueText = (issues = [], l, raw = {}) => {
 };
 
 const ocrFailureText = (error, l) => {
+  if (error === REVIEW_REASON.NO_MRZ_TEXT || error === "no_mrz_text") return l.ocrNoText;
+  if (error === REVIEW_REASON.PARSER_FAILED || error === "parser_failed") return l.mrzFormatNotRecognized;
   if (error === "OCR_NO_TEXT") return l.ocrNoText;
   if (error === "IMAGE_TOO_SMALL") return l.imageTooSmall;
   if (error === "MRZ_LINE1_NOT_FOUND") return l.mrzFormatNotRecognized || l.mrzLine1NotFound;
@@ -395,9 +557,108 @@ const setFieldWarning = (warnings, field, reason) => {
   warnings[field] = Array.from(new Set([...(warnings[field] || []), reason]));
 };
 
+const removeReasonFromFieldWarnings = (warnings = {}, reason) => {
+  Object.keys(warnings).forEach((field) => {
+    warnings[field] = (warnings[field] || []).filter((item) => item !== reason);
+    if (!warnings[field].length) delete warnings[field];
+  });
+};
+
+const PARTIAL_BIRTH_PRECISIONS = new Set(["year", "month"]);
+
+const hasApproximatedBirthDate = (row = {}) => Boolean(
+  row.birthDateApproximated
+  && row.mrzBirthDateRaw
+  && PARTIAL_BIRTH_PRECISIONS.has(row.birthDatePrecision)
+);
+
+const hasPartialBirthDateOnly = (row = {}) => Boolean(
+  !String(row.birthDate || "").trim()
+  && row.mrzBirthDateRaw
+  && PARTIAL_BIRTH_PRECISIONS.has(row.birthDatePrecision)
+);
+
+const birthDateRequirementValue = (row = {}) => (
+  String(row.birthDate || "").trim() || (hasPartialBirthDateOnly(row) ? row.mrzBirthDateRaw : "")
+);
+
+const normalizeOptionalNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const getMrzBirthDateMetaFromParsed = (parsed = {}) => {
+  const data = parsed?.data || {};
+  const engineFields = parsed?.engineResult?.fields || {};
+  const line2Birth = parsed?.engineResult?.diagnostics?.line2?.birthDate || {};
+  const fixedBirthRaw = parsed?.engineResult?.diagnostics?.line2?.fixedPositions?.birthDate?.value || "";
+  return {
+    mrzBirthDateRaw: data.birthDateRaw || engineFields.birthDateRaw || line2Birth.raw || fixedBirthRaw || "",
+    birthDatePrecision: data.birthDatePrecision || engineFields.birthDatePrecision || line2Birth.precision || "",
+    birthYear: normalizeOptionalNumber(data.birthYear ?? engineFields.birthYear ?? line2Birth.year),
+    birthMonth: normalizeOptionalNumber(data.birthMonth ?? engineFields.birthMonth ?? line2Birth.month),
+    birthDay: normalizeOptionalNumber(data.birthDay ?? engineFields.birthDay ?? line2Birth.day),
+    birthDateApproximated: Boolean(data.birthDateApproximated ?? engineFields.birthDateApproximated ?? line2Birth.approximated),
+    birthDateApproximationRule: data.birthDateApproximationRule || engineFields.birthDateApproximationRule || line2Birth.approximationRule || "",
+  };
+};
+
+const getRequiredFieldsCheck = (row = {}, { programMode = false, packageRequired = false } = {}) => ({
+  lastName: Boolean(String(row.latinLastName || row.arabicLastName || "").trim()),
+  firstName: Boolean(String(row.latinFirstName || row.arabicFirstName || "").trim()),
+  passportNumber: Boolean(normalizePassportNo(row.passportNo)),
+  nationality: Boolean(String(row.nationality || "").trim()),
+  birthDate: Boolean(birthDateRequirementValue(row)),
+  expiryDate: Boolean(String(row.passportExpiry || "").trim()),
+  gender: Boolean(String(row.gender || "").trim()),
+  programLevelRoom: !programMode || Boolean(
+    row.programId
+    && (!packageRequired || row.packageId)
+    && normalizeRoomTypeKey(row.roomType)
+    && row.roomCategory
+  ),
+});
+
+const requiredPassportFieldsPresent = (row = {}) => {
+  const check = getRequiredFieldsCheck(row);
+  return check.lastName
+    && check.firstName
+    && check.passportNumber
+    && check.nationality
+    && check.birthDate
+    && check.expiryDate
+    && check.gender;
+};
+
+const onlySoftMrzWarnings = (reasons = []) => reasons.every((reason) => [
+  REVIEW_REASON.CHECKSUM_FAILED,
+  REVIEW_REASON.PARTIAL_MRZ_READ,
+  REVIEW_REASON.PARTIAL_BIRTH_DATE,
+  REVIEW_REASON.LOW_CONFIDENCE,
+].includes(reason));
+
 const buildParsedReviewState = ({ parsed, duplicate = false } = {}) => {
   const reasons = new Set();
   const fieldWarnings = {};
+  const fieldMap = {
+    lastNameLatin: "latinLastName",
+    firstNameLatin: "latinFirstName",
+    passportNumber: "passportNo",
+    expiryDate: "passportExpiry",
+  };
+  (parsed?.reviewReasons || []).forEach((reason) => {
+    if (labeledReviewReason(reason)) reasons.add(reason);
+  });
+  Object.entries(parsed?.fieldWarnings || {}).forEach(([field, warningReasons]) => {
+    const targetField = fieldMap[field] || field;
+    (warningReasons || []).forEach((reason) => {
+      if (labeledReviewReason(reason)) {
+        reasons.add(reason);
+        setFieldWarning(fieldWarnings, targetField, reason);
+      }
+    });
+  });
   const issues = parsed?.issues || [];
   issues.forEach((issue) => {
     if (issue === "PASSPORT_CHECK") {
@@ -433,6 +694,7 @@ const buildParsedReviewState = ({ parsed, duplicate = false } = {}) => {
     }
   });
   const data = parsed?.data || {};
+  const birthDateMeta = getMrzBirthDateMetaFromParsed(parsed);
   [
     ["latinLastName", data.latinLastName || data.lastName || ""],
     ["latinFirstName", data.latinFirstName || data.firstName || ""],
@@ -442,6 +704,32 @@ const buildParsedReviewState = ({ parsed, duplicate = false } = {}) => {
       setFieldWarning(fieldWarnings, field, REVIEW_REASON.SUSPICIOUS_NAME);
     }
   });
+  const parsedRow = {
+    latinLastName: data.latinLastName || data.lastName || "",
+    latinFirstName: data.latinFirstName || data.firstName || "",
+    passportNo: data.passportNo || "",
+    nationality: data.nationality || "",
+    birthDate: data.birthDate || "",
+    passportExpiry: data.expiryDate || "",
+    gender: normalizeGender(data.gender),
+    ...birthDateMeta,
+  };
+  if (hasPartialBirthDateOnly(parsedRow) || hasApproximatedBirthDate(parsedRow)) {
+    reasons.add(REVIEW_REASON.PARTIAL_BIRTH_DATE);
+    setFieldWarning(fieldWarnings, "birthDate", REVIEW_REASON.PARTIAL_BIRTH_DATE);
+  }
+  if (requiredPassportFieldsPresent(parsedRow)) {
+    reasons.delete(REVIEW_REASON.MISSING_REQUIRED_FIELD);
+    removeReasonFromFieldWarnings(fieldWarnings, REVIEW_REASON.MISSING_REQUIRED_FIELD);
+    if (onlySoftMrzWarnings(Array.from(reasons))) {
+      reasons.delete(REVIEW_REASON.LOW_CONFIDENCE);
+      removeReasonFromFieldWarnings(fieldWarnings, REVIEW_REASON.LOW_CONFIDENCE);
+    }
+  }
+  if (!getSuspiciousLatinNameReason(parsedRow.latinLastName) && !getSuspiciousLatinNameReason(parsedRow.latinFirstName)) {
+    reasons.delete(REVIEW_REASON.SUSPICIOUS_NAME);
+    removeReasonFromFieldWarnings(fieldWarnings, REVIEW_REASON.SUSPICIOUS_NAME);
+  }
   if (duplicate) reasons.add(REVIEW_REASON.DUPLICATE_EXISTING);
   return {
     reviewReasons: Array.from(reasons),
@@ -458,7 +746,7 @@ const buildRowReviewState = (row = {}) => {
     ["latinLastName", String(row.latinLastName || "").trim()],
     ["latinFirstName", String(row.latinFirstName || "").trim()],
     ["nationality", String(row.nationality || "").trim()],
-    ["birthDate", String(row.birthDate || "").trim()],
+    ["birthDate", birthDateRequirementValue(row)],
     ["passportExpiry", String(row.passportExpiry || "").trim()],
     ["gender", String(row.gender || "").trim()],
   ].forEach(([field, value]) => {
@@ -467,6 +755,10 @@ const buildRowReviewState = (row = {}) => {
       setFieldWarning(fieldWarnings, field, REVIEW_REASON.MISSING_REQUIRED_FIELD);
     }
   });
+  if (hasPartialBirthDateOnly(row) || hasApproximatedBirthDate(row)) {
+    reasons.add(REVIEW_REASON.PARTIAL_BIRTH_DATE);
+    setFieldWarning(fieldWarnings, "birthDate", REVIEW_REASON.PARTIAL_BIRTH_DATE);
+  }
   ["latinLastName", "latinFirstName"].forEach((field) => {
     if (getSuspiciousLatinNameReason(row[field])) {
       reasons.add(REVIEW_REASON.SUSPICIOUS_NAME);
@@ -498,7 +790,12 @@ const buildEditedRowReviewState = (row = {}, patch = {}, previousRow = {}) => {
       reason !== REVIEW_REASON.DUPLICATE_EXISTING
       && reason !== REVIEW_REASON.MISSING_REQUIRED_FIELD
       && reason !== REVIEW_REASON.PARTIAL_MRZ_READ
+      && reason !== REVIEW_REASON.PARTIAL_BIRTH_DATE
       && reason !== REVIEW_REASON.SUSPICIOUS_NAME
+      && reason !== REVIEW_REASON.CHECKSUM_FAILED
+      && reason !== REVIEW_REASON.INVALID_DATE
+      && reason !== REVIEW_REASON.INVALID_PASSPORT_NUMBER
+      && reason !== REVIEW_REASON.LOW_CONFIDENCE
     )),
   );
 
@@ -508,7 +805,7 @@ const buildEditedRowReviewState = (row = {}, patch = {}, previousRow = {}) => {
     ["latinLastName", String(row.latinLastName || "").trim()],
     ["latinFirstName", String(row.latinFirstName || "").trim()],
     ["nationality", String(row.nationality || "").trim()],
-    ["birthDate", String(row.birthDate || "").trim()],
+    ["birthDate", birthDateRequirementValue(row)],
     ["passportExpiry", String(row.passportExpiry || "").trim()],
     ["gender", String(row.gender || "").trim()],
   ].forEach(([field, value]) => {
@@ -517,6 +814,10 @@ const buildEditedRowReviewState = (row = {}, patch = {}, previousRow = {}) => {
       setFieldWarning(fieldWarnings, field, REVIEW_REASON.MISSING_REQUIRED_FIELD);
     }
   });
+  if (hasPartialBirthDateOnly(row) || hasApproximatedBirthDate(row)) {
+    reasons.add(REVIEW_REASON.PARTIAL_BIRTH_DATE);
+    setFieldWarning(fieldWarnings, "birthDate", REVIEW_REASON.PARTIAL_BIRTH_DATE);
+  }
   ["latinLastName", "latinFirstName"].forEach((field) => {
     if (getSuspiciousLatinNameReason(row[field])) {
       reasons.add(REVIEW_REASON.SUSPICIOUS_NAME);
@@ -539,7 +840,17 @@ const buildEditedRowReviewState = (row = {}, patch = {}, previousRow = {}) => {
   };
 };
 
-const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOverride, hasImage = false, extractionSource = EXTRACTION_SOURCE.AUTOMATIC_MRZ }) => {
+const makeRowFromParsed = ({
+  parsed,
+  source,
+  existing,
+  l,
+  statusOverride,
+  noteOverride,
+  hasImage = false,
+  extractionSource = EXTRACTION_SOURCE.AUTOMATIC_MRZ,
+  debugInfo = null,
+}) => {
   const data = parsed?.data || {};
   const duplicate = Boolean(existing);
   const existingArabic = duplicate ? getExistingArabic(existing) : {};
@@ -547,11 +858,20 @@ const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOv
   const isTrustedMRZ = Boolean(parsed?.ok && parsed?.data);
   const reviewState = buildParsedReviewState({ parsed, duplicate });
   const status = statusOverride || (!hasParsedData ? ROW_STATUS.FAILED : isTrustedMRZ && !reviewState.reviewRequiredGeneral ? ROW_STATUS.READY : ROW_STATUS.NEEDS_REVIEW);
-  const note = noteOverride || [
-    issueText(parsed?.issues || [], l, parsed?.raw),
-    duplicate ? l.duplicate : "",
-  ].filter(Boolean).join(" · ");
-  return {
+  const parsedIssueNote = issueText(parsed?.issues || [], l, parsed?.raw);
+  const birthDateMeta = getMrzBirthDateMetaFromParsed(parsed);
+  const line2Mapping = buildMRZPriorityRowFields({
+    parserFields: getMrzLine2FieldsFromParsed(parsed),
+    fallbackFields: parsed?.fallbackFields || {},
+  });
+  const givenNameDecision = resolveFinalMrzGivenName({
+    parserGivenName: hasParsedData ? (data.latinFirstName || data.firstName || "") : "",
+    fallbackGivenName: parsed?.fallbackFields?.latinFirstName || parsed?.fallbackFields?.firstName || "",
+    oldGivenName: debugInfo?.oldRow?.latinFirstName || "",
+    parsed,
+    outcome: debugInfo?.outcome || {},
+  });
+  const row = {
     id: `mrz-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     source,
     mrzLine1: parsed?.raw?.line1 || "",
@@ -560,46 +880,100 @@ const makeRowFromParsed = ({ parsed, source, existing, l, statusOverride, noteOv
     accepted: status === ROW_STATUS.READY && !duplicate,
     manualAccepted: false,
     extractionSource,
-    confidence: status === ROW_STATUS.READY ? (extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? 0.98 : 0.9) : hasParsedData ? (extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? 0.78 : 0.62) : 0,
+    confidence: typeof parsed?.confidence === "number"
+      ? parsed.confidence
+      : status === ROW_STATUS.READY
+        ? (extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? 0.98 : 0.9)
+        : hasParsedData
+          ? (extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? 0.78 : 0.62)
+          : 0,
     ...reviewState,
     duplicateAction: duplicate ? "skip" : "add",
     existingClientId: existing?.id || "",
-    note,
     latinLastName: hasParsedData ? (data.latinLastName || data.lastName || "") : "",
-    latinFirstName: hasParsedData ? (data.latinFirstName || data.firstName || "") : "",
+    latinFirstName: hasParsedData ? givenNameDecision.finalValue : "",
     arabicLastName: existingArabic.arabicLastName || "",
     arabicFirstName: existingArabic.arabicFirstName || "",
-    passportNo: hasParsedData ? (data.passportNo || "") : "",
-    nationality: hasParsedData ? (data.nationality || "") : "",
-    birthDate: hasParsedData ? (data.birthDate || "") : "",
-    gender: hasParsedData ? normalizeGender(data.gender) : "",
-    passportExpiry: hasParsedData ? (data.expiryDate || "") : "",
+    passportNo: hasParsedData ? line2Mapping.finalFields.passportNo : "",
+    nationality: hasParsedData ? line2Mapping.finalFields.nationality : "",
+    birthDate: hasParsedData ? line2Mapping.finalFields.birthDate : "",
+    gender: hasParsedData ? line2Mapping.finalFields.gender : "",
+    passportExpiry: hasParsedData ? line2Mapping.finalFields.passportExpiry : "",
+    ...birthDateMeta,
     raw: data.raw || parsed?.raw || {},
     hasImage,
   };
+  if (process.env.NODE_ENV !== "production") {
+    const attempts = debugInfo?.outcome?.debug?.attempts || [];
+    console.debug("[MRZ given final trace]", {
+      allLine1OcrVariants: getLine1RawVariantsFromOutcome(debugInfo?.outcome || {}, parsed),
+      selectedLine1Candidate: parsed?.engineResult?.raw?.line1 || parsed?.raw?.line1 || "",
+      parsedGivenNameBeforeCleanup: givenNameDecision.parserGivenNameBeforeCleanup,
+      givenNameAfterCleanup: givenNameDecision.finalValue,
+      fullMrzParsedGivenName: attempts.find((attempt) => attempt.cropType === "full_mrz")?.parser?.fields?.firstNameLatin || "",
+      line1CropParsedGivenName: attempts.find((attempt) => attempt.cropType === "line1")?.parser?.fields?.firstNameLatin || "",
+      fallbackGivenName: givenNameDecision.fallbackGivenName,
+      oldRowGivenName: givenNameDecision.oldRowGivenName,
+      finalLatinFirstName: row.latinFirstName,
+      finalSource: givenNameDecision.finalSource,
+      overwrittenBy: givenNameDecision.overwrittenBy,
+      trailingNoiseRemoved: givenNameDecision.trailingNoiseRemoved,
+      fillerContexts: givenNameDecision.fillerContexts,
+      consensusSupport: givenNameDecision.candidateSupport,
+    });
+    console.debug("[MRZ row mapping]", {
+      source,
+      extractionSource,
+      rawOcrLine2: parsed?.engineResult?.raw?.inputLines?.[1] || parsed?.raw?.line2 || "",
+      normalizedLine2: parsed?.engineResult?.diagnostics?.line2?.normalizedLine2 || "",
+      selectedLine2Candidate: parsed?.engineResult?.diagnostics?.line2?.selected44CharLine || parsed?.raw?.line2 || "",
+      parserFields: line2Mapping.parserFields,
+      parserFieldSources: parsed?.engineResult?.diagnostics?.line2?.fieldSources || {},
+      fallbackOcrFields: line2Mapping.fallbackFields,
+      oldRowFieldsBeforeMerge: null,
+      finalRowFieldsAfterMerge: {
+        passportNo: row.passportNo,
+        nationality: row.nationality,
+        birthDate: row.birthDate,
+        gender: row.gender,
+        passportExpiry: row.passportExpiry,
+      },
+      ...line2Mapping.sources,
+      checks: parsed?.checks || parsed?.engineResult?.checks || {},
+      reviewReasons: parsed?.reviewReasons || parsed?.engineResult?.reviewReasons || [],
+    });
+  }
+  const finalNote = noteOverride
+    || [
+      reviewState.reviewReasons.includes(REVIEW_REASON.MISSING_REQUIRED_FIELD)
+        ? l.requiredFieldsHardBlock
+        : onlySoftMrzWarnings(reviewState.reviewReasons) && reviewState.reviewReasons.includes(REVIEW_REASON.CHECKSUM_FAILED)
+          ? l.checksumAcceptHint
+          : parsedIssueNote,
+      duplicate ? l.duplicate : "",
+    ].filter(Boolean).join(" · ");
+  const rowWithNote = { ...row, note: finalNote };
+  if (MRZ_DEV && debugInfo) {
+    rowWithNote.mrzDebug = buildMrzDebugInfo({
+      parsed,
+      outcome: debugInfo.outcome,
+      row: rowWithNote,
+      oldRow: debugInfo.oldRow,
+      originalImageUrl: debugInfo.originalImageUrl,
+      mode: debugInfo.mode,
+      cropRect: debugInfo.cropRect,
+    });
+  }
+  return rowWithNote;
 };
 
 const rowHasRequiredPassportData = (row = {}) => Boolean(
-  normalizePassportNo(row.passportNo)
-  && String(row.latinLastName || "").trim()
-  && String(row.latinFirstName || "").trim()
+  requiredPassportFieldsPresent(row)
   && !getSuspiciousLatinNameReason(row.latinLastName)
   && !getSuspiciousLatinNameReason(row.latinFirstName)
-  && String(row.nationality || "").trim()
-  && String(row.birthDate || "").trim()
-  && String(row.passportExpiry || "").trim()
-  && String(row.gender || "").trim()
 );
 
-const rowHasEssentialPassportData = (row = {}) => Boolean(
-  normalizePassportNo(row.passportNo)
-  && (String(row.latinLastName || "").trim() || String(row.arabicLastName || "").trim())
-  && (String(row.latinFirstName || "").trim() || String(row.arabicFirstName || "").trim())
-  && String(row.nationality || "").trim()
-  && String(row.birthDate || "").trim()
-  && String(row.passportExpiry || "").trim()
-  && String(row.gender || "").trim()
-);
+const rowHasEssentialPassportData = (row = {}) => requiredPassportFieldsPresent(row);
 
 const rowCanBeManuallyAccepted = (row = {}) => row.status !== ROW_STATUS.FAILED && rowHasEssentialPassportData(row);
 
@@ -621,6 +995,213 @@ const deriveRowStatus = (row = {}, previousStatus = ROW_STATUS.NEEDS_REVIEW, rev
 };
 
 const appendNote = (current, addition) => [current, addition].filter(Boolean).join(" · ");
+
+const sanitizeDebugValue = (value) => {
+  if (Array.isArray(value)) return value.map(sanitizeDebugValue);
+  if (typeof value === "string") return value.startsWith("data:image/") || value.startsWith("blob:") ? "[image omitted]" : value;
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !["originalImageUrl", "fullMrz", "visualPassportNumber", "previews"].includes(key))
+      .map(([key, item]) => [key, sanitizeDebugValue(item)]),
+  );
+};
+
+const getMrzLine2FieldsFromParsed = (parsed = {}) => {
+  const engineFields = parsed?.engineResult?.fields || {};
+  const data = parsed?.data || {};
+  const birthDateMeta = getMrzBirthDateMetaFromParsed(parsed);
+  return {
+    passportNo: engineFields.passportNumber || data.passportNo || data.passportNumber || "",
+    nationality: engineFields.nationality || data.nationality || "",
+    birthDate: engineFields.birthDate || data.birthDate || data.birth_date || data.dateOfBirth || "",
+    ...birthDateMeta,
+    gender: normalizeGender(engineFields.gender || data.gender || data.sex || ""),
+    passportExpiry: engineFields.expiryDate || data.expiryDate || data.passportExpiry || data.expiry_date || "",
+  };
+};
+
+const buildMrzFinalMapping = ({ row = {}, oldRow = {}, parserFields = {}, fallbackFields = {}, sources = {} } = {}) => {
+  const map = [
+    ["latinLastName", "lastNameSource", row.latinLastName, oldRow.latinLastName, parserFields.latinLastName, fallbackFields.latinLastName || fallbackFields.lastName],
+    ["latinFirstName", "firstNameSource", row.latinFirstName, oldRow.latinFirstName, parserFields.latinFirstName, fallbackFields.latinFirstName || fallbackFields.firstName],
+    ["passportNo", "passportNumberSource", row.passportNo, oldRow.passportNo, parserFields.passportNo || parserFields.passportNumber, fallbackFields.passportNo || fallbackFields.passportNumber],
+    ["nationality", "nationalitySource", row.nationality, oldRow.nationality, parserFields.nationality, fallbackFields.nationality || fallbackFields.country],
+    ["birthDate", "birthDateSource", row.birthDate, oldRow.birthDate, parserFields.birthDate, fallbackFields.birthDate || fallbackFields.dateOfBirth],
+    ["gender", "genderSource", row.gender, oldRow.gender, parserFields.gender, fallbackFields.gender || fallbackFields.sex],
+    ["passportExpiry", "expiryDateSource", row.passportExpiry, oldRow.passportExpiry, parserFields.passportExpiry || parserFields.expiryDate, fallbackFields.passportExpiry || fallbackFields.expiryDate],
+  ];
+  return map.map(([field, sourceField, finalValue, oldValue, parserValue, fallbackValue]) => ({
+    field,
+    finalValue: finalValue || "",
+    source: sources[sourceField] || (parserValue && finalValue === parserValue ? "mrz_line1" : finalValue ? "row" : "empty"),
+    confidence: row.confidence || 0,
+    oldValue: oldValue || "",
+    fallbackValue: fallbackValue || "",
+    mrzParserValue: parserValue || "",
+    overwritten: Boolean(oldValue && finalValue && oldValue !== finalValue),
+    manuallyEdited: false,
+  }));
+};
+
+const buildMrzDebugInfo = ({
+  parsed = {},
+  outcome = {},
+  row = {},
+  oldRow = {},
+  originalImageUrl = "",
+  mode = "automatic",
+  cropRect = null,
+} = {}) => {
+  if (!MRZ_DEV) return null;
+  const parserFields = {
+    latinLastName: parsed?.data?.latinLastName || parsed?.data?.lastName || "",
+    latinFirstName: parsed?.data?.latinFirstName || parsed?.data?.firstName || "",
+    ...getMrzLine2FieldsFromParsed(parsed),
+  };
+  const line2Mapping = buildMRZPriorityRowFields({
+    parserFields,
+    fallbackFields: parsed?.fallbackFields || outcome?.fallbackFields || {},
+    oldRow,
+  });
+  return {
+    mode,
+    sourceFile: row.source || "",
+    originalImageUrl,
+    cropRect,
+    attempts: outcome?.debug?.attempts || [],
+    selectedVariant: outcome?.debug?.variant || outcome?.variant || "",
+    selectionScore: outcome?.debug?.selectionScore ?? outcome?.selectionScore ?? null,
+    rawOcrText: outcome?.ocrText || parsed?.raw?.ocrText || "",
+    normalizedOcrText: normalizeMRZOCRText(outcome?.ocrText || parsed?.raw?.ocrText || ""),
+    parser: {
+      line1: parsed?.engineResult?.diagnostics?.line1 || {},
+      line2: parsed?.engineResult?.diagnostics?.line2 || {},
+      fields: parsed?.engineResult?.fields || parsed?.data || {},
+      checks: parsed?.engineResult?.checks || parsed?.checks || {},
+      reviewReasons: parsed?.engineResult?.reviewReasons || parsed?.reviewReasons || [],
+    },
+    finalMapping: buildMrzFinalMapping({
+      row,
+      oldRow,
+      parserFields,
+      fallbackFields: line2Mapping.fallbackFields,
+      sources: line2Mapping.sources,
+    }),
+    finalRow: {
+      lastNameLatin: row.latinLastName || "",
+      firstNameLatin: row.latinFirstName || "",
+      passportNo: row.passportNo || "",
+      nationality: row.nationality || "",
+      birthDate: row.birthDate || "",
+      mrzBirthDateRaw: row.mrzBirthDateRaw || "",
+      birthDatePrecision: row.birthDatePrecision || "",
+      birthYear: row.birthYear || null,
+      birthMonth: row.birthMonth || null,
+      birthDateApproximated: Boolean(row.birthDateApproximated),
+      birthDateApproximationRule: row.birthDateApproximationRule || "",
+      gender: row.gender || "",
+      passportExpiry: row.passportExpiry || "",
+      status: row.status || "",
+      reviewReasons: row.reviewReasons || [],
+    },
+  };
+};
+
+export const buildMRZPriorityRowFields = ({ parserFields = {}, fallbackFields = {}, oldRow = {} } = {}) => {
+  const normalizedParser = {
+    passportNo: parserFields.passportNo || parserFields.passportNumber || "",
+    nationality: parserFields.nationality || "",
+    birthDate: parserFields.birthDate || "",
+    gender: normalizeGender(parserFields.gender || parserFields.sex || ""),
+    passportExpiry: parserFields.passportExpiry || parserFields.expiryDate || "",
+  };
+  const normalizedFallback = {
+    passportNo: fallbackFields.passportNo || fallbackFields.passportNumber || fallbackFields.passport_number || fallbackFields.documentNumber || "",
+    nationality: fallbackFields.nationality || fallbackFields.country || "",
+    birthDate: fallbackFields.birthDate || fallbackFields.birth_date || fallbackFields.dateOfBirth || "",
+    gender: normalizeGender(fallbackFields.gender || fallbackFields.sex || ""),
+    passportExpiry: fallbackFields.passportExpiry || fallbackFields.expiryDate || fallbackFields.expiry_date || "",
+  };
+  const finalFields = {};
+  const sources = {};
+  [
+    ["passportNo", "passportNumberSource"],
+    ["nationality", "nationalitySource"],
+    ["birthDate", "birthDateSource"],
+    ["gender", "genderSource"],
+    ["passportExpiry", "expiryDateSource"],
+  ].forEach(([field, sourceField]) => {
+    if (normalizedParser[field]) {
+      finalFields[field] = normalizedParser[field];
+      sources[sourceField] = "mrz_line2";
+    } else if (normalizedFallback[field]) {
+      finalFields[field] = normalizedFallback[field];
+      sources[sourceField] = "fallback_ocr";
+    } else {
+      finalFields[field] = oldRow[field] || "";
+      sources[sourceField] = finalFields[field] ? "old_row" : "empty";
+    }
+  });
+  return {
+    finalFields,
+    sources,
+    parserFields: normalizedParser,
+    fallbackFields: normalizedFallback,
+  };
+};
+
+export const runMRZRowMappingSelfTest = () => {
+  const result = buildMRZPriorityRowFields({
+    parserFields: {
+      passportNumber: "D04379674",
+      nationality: "MAR",
+      birthDate: "1979-03-24",
+      gender: "M",
+      expiryDate: "2030-10-10",
+    },
+    fallbackFields: {
+      passportNumber: "4L3796765",
+      nationality: "ART",
+      birthDate: "1971-03-24",
+    },
+  });
+  const givenNameResult = resolveFinalMrzGivenName({
+    parserGivenName: "HASSAN",
+    fallbackGivenName: "HASSANK",
+    oldGivenName: "HASSANK",
+    parsed: {
+      data: { latinFirstName: "HASSAN" },
+      engineResult: {
+        diagnostics: {
+          line1: {
+            finalGivenNames: "HASSAN",
+            rawGivenNameCandidate: "HASSAN<<<LLLL",
+            contextAfterGivenCandidate: "<<<LLLL",
+          },
+        },
+      },
+    },
+  });
+  const expected = {
+    passportNo: "D04379674",
+    nationality: "MAR",
+    birthDate: "1979-03-24",
+    gender: "male",
+    passportExpiry: "2030-10-10",
+  };
+  const expectedGivenName = "HASSAN";
+  return {
+    ok: Object.entries(expected).every(([field, value]) => result.finalFields[field] === value)
+      && givenNameResult.finalValue === expectedGivenName,
+    expected,
+    actual: result.finalFields,
+    sources: result.sources,
+    expectedGivenName,
+    actualGivenName: givenNameResult.finalValue,
+    givenNameDecision: givenNameResult,
+  };
+};
 
 function ReviewRow({
   row,
@@ -852,6 +1433,245 @@ function ReviewRow({
   );
 }
 
+function DebugText({ children, maxHeight = 90 }) {
+  return (
+    <pre style={{
+      margin: 0,
+      maxHeight,
+      overflow: "auto",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      direction: "ltr",
+      textAlign: "left",
+      color: "var(--rukn-text)",
+      background: "var(--rukn-bg-soft)",
+      border: "1px solid var(--rukn-border-soft)",
+      borderRadius: 8,
+      padding: 8,
+      fontSize: 10,
+      lineHeight: 1.45,
+    }}>
+      {typeof children === "string" ? children : JSON.stringify(children || null, null, 2)}
+    </pre>
+  );
+}
+
+function DebugKvTable({ rows = [] }) {
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
+      <tbody>
+        {rows.map(([label, value]) => (
+          <tr key={label} style={{ borderTop: "1px solid var(--rukn-border-soft)" }}>
+            <th style={{ width: 190, padding: 7, color: "var(--rukn-text-muted)", fontSize: 10, textAlign: "start", verticalAlign: "top" }}>{label}</th>
+            <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10, verticalAlign: "top" }}>
+              {typeof value === "string" || typeof value === "number" ? String(value || "—") : <DebugText>{value}</DebugText>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function CropPreview({ title, src, meta }) {
+  return (
+    <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 10, overflow: "hidden", background: "var(--rukn-bg-card)" }}>
+      <div style={{ padding: "7px 9px", color: "var(--rukn-gold)", fontWeight: 900, fontSize: 11, borderBottom: "1px solid var(--rukn-border-soft)" }}>{title}</div>
+      {src ? (
+        <img src={src} alt="" style={{ display: "block", width: "100%", maxHeight: 160, objectFit: "contain", background: "#fff" }} />
+      ) : (
+        <div style={{ minHeight: 70, display: "grid", placeItems: "center", color: "var(--rukn-text-muted)", fontSize: 11 }}>Not generated by current pipeline</div>
+      )}
+      {meta && (
+        <div style={{ padding: 8 }}>
+          <DebugText maxHeight={70}>{meta}</DebugText>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MRZDiagnosticLab({ rows = [], onCopyDebug }) {
+  if (!MRZ_DEV) return null;
+  const debugRows = rows.filter((row) => row.mrzDebug);
+  if (!debugRows.length) return null;
+  return (
+    <details style={{
+      marginTop: 12,
+      border: "1px solid rgba(96,165,250,.35)",
+      borderRadius: 12,
+      background: "rgba(37,99,235,.08)",
+      overflow: "hidden",
+    }}>
+      <summary style={{ cursor: "pointer", padding: "10px 12px", color: "#93c5fd", fontWeight: 900, fontSize: 12 }}>
+        MRZ Diagnostic Lab
+      </summary>
+      <div style={{ padding: 12, display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ color: "var(--rukn-text-muted)", fontSize: 11 }}>
+            Development-only OCR acquisition, parser, and row mapping diagnostics.
+          </div>
+          <button
+            type="button"
+            onClick={onCopyDebug}
+            style={{
+              border: "1px solid rgba(147,197,253,.45)",
+              background: "rgba(37,99,235,.16)",
+              color: "#bfdbfe",
+              borderRadius: 9,
+              padding: "7px 10px",
+              fontSize: 11,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Copy MRZ Debug JSON
+          </button>
+        </div>
+
+        {debugRows.map((row, rowIndex) => {
+          const debug = row.mrzDebug || {};
+          const attempts = debug.attempts || [];
+          const selectedAttempt = attempts.find((attempt) => attempt.variant === debug.selectedVariant)
+            || attempts.find((attempt) => attempt.accepted)
+            || attempts[0]
+            || {};
+          const fullAttempt = attempts.find((attempt) => attempt.cropType === "full_mrz" && attempt.variant === debug.selectedVariant)
+            || attempts.find((attempt) => attempt.cropType === "full_mrz" && attempt.accepted)
+            || attempts.find((attempt) => attempt.cropType === "full_mrz")
+            || selectedAttempt;
+          const line1Attempt = attempts.find((attempt) => attempt.cropType === "line1" && attempt.variant?.includes(String(fullAttempt.variant || "").replace(/-line[12]$/, "")))
+            || attempts.find((attempt) => attempt.cropType === "line1");
+          const line2Attempt = attempts.find((attempt) => attempt.cropType === "line2" && attempt.variant?.includes(String(fullAttempt.variant || "").replace(/-line[12]$/, "")))
+            || attempts.find((attempt) => attempt.cropType === "line2");
+          const previews = fullAttempt.cropDebug?.previews || selectedAttempt.cropDebug?.previews || {};
+          const cropMeta = {
+            variant: selectedAttempt.variant || debug.selectedVariant || "",
+            cropType: selectedAttempt.cropType || selectedAttempt.cropDebug?.cropType || "",
+            width: selectedAttempt.cropDebug?.canvas?.width,
+            height: selectedAttempt.cropDebug?.canvas?.height,
+            scaleFactor: selectedAttempt.cropDebug?.scaleFactor,
+            marginExpanded: selectedAttempt.cropDebug?.marginExpanded,
+            marginPercent: selectedAttempt.cropDebug?.marginPercent,
+            sourceCrop: selectedAttempt.cropDebug?.source,
+          };
+          const line1Diag = debug.parser?.line1 || {};
+          const line2Diag = debug.parser?.line2 || {};
+          return (
+            <details key={row.id} open={rowIndex === 0} style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 12, background: "var(--rukn-bg-modal)", overflow: "hidden" }}>
+              <summary style={{ padding: "9px 10px", cursor: "pointer", color: "var(--rukn-text)", fontWeight: 900, fontSize: 12 }}>
+                {row.source || `passport-${rowIndex + 1}`} · {row.passportNo || "no passport no"} · {row.status}
+              </summary>
+              <div style={{ padding: 10, display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
+                  <CropPreview title="Original image preview" src={debug.originalImageUrl} />
+                  <CropPreview title="Full MRZ crop sent to OCR" src={previews.fullMrz} meta={{ ...cropMeta, sentToOcr: fullAttempt.cropDebug?.sentToOcr ?? true }} />
+                  <CropPreview title="Line 1 crop sent to OCR" src={line1Attempt?.cropDebug?.previews?.fullMrz || previews.line1} meta={{ variant: line1Attempt?.variant || "", cropType: "line1", sentToOcr: Boolean(line1Attempt), rawOcrText: line1Attempt?.rawOcrText || "" }} />
+                  <CropPreview title="Line 2 crop sent to OCR" src={line2Attempt?.cropDebug?.previews?.fullMrz || previews.line2} meta={{ variant: line2Attempt?.variant || "", cropType: "line2", sentToOcr: Boolean(line2Attempt), rawOcrText: line2Attempt?.rawOcrText || "", selectedCandidate: line2Attempt?.selected44CharCandidate || "" }} />
+                  <CropPreview title="Visual passport number crop" src={previews.visualPassportNumber} meta={{ used: false, note: "visual number is extracted from OCR text candidates, no separate crop is currently OCRed" }} />
+                </div>
+
+                <div style={{ overflow: "auto", border: "1px solid var(--rukn-border-soft)", borderRadius: 10 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
+                    <thead>
+                      <tr>
+                        {["variant", "crop type", "raw OCR text", "normalized OCR text", "detected line1", "detected line2", "selected 44-char candidate", "score", "reasons", "accepted"].map((head) => (
+                          <th key={head} style={{ padding: 7, color: "var(--rukn-text-muted)", fontSize: 10, textAlign: "start", borderBottom: "1px solid var(--rukn-border-soft)" }}>{head}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attempts.map((attempt, index) => (
+                        <tr key={`${attempt.variant}-${index}`} style={{ borderTop: "1px solid var(--rukn-border-soft)" }}>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{attempt.variant || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{attempt.cropType || "full_mrz"}</td>
+                          <td style={{ padding: 7, minWidth: 210 }}><DebugText>{attempt.rawOcrText || ""}</DebugText></td>
+                          <td style={{ padding: 7, minWidth: 170 }}><DebugText>{(attempt.normalizedOcrText || []).join("\n")}</DebugText></td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10, direction: "ltr" }}>{attempt.detectedLine1 || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10, direction: "ltr" }}>{attempt.detectedLine2 || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10, direction: "ltr" }}>{attempt.selected44CharCandidate || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{attempt.score ?? "—"}</td>
+                          <td style={{ padding: 7, minWidth: 160 }}><DebugText>{attempt.reasons || []}</DebugText></td>
+                          <td style={{ padding: 7, color: attempt.accepted ? tc.greenLight : "var(--rukn-warning)", fontSize: 10, fontWeight: 900 }}>{attempt.accepted ? "accepted" : "rejected"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 10 }}>
+                  <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 10, overflow: "auto" }}>
+                    <div style={{ padding: 8, color: "var(--rukn-gold)", fontWeight: 900, fontSize: 11 }}>Parser output · Line 1</div>
+                    <DebugKvTable rows={[
+                      ["raw line1", line1Diag.originalLine1 || debug.parser?.line1?.rawLine1 || row.mrzLine1 || ""],
+                      ["normalized line1", line1Diag.normalizedLine1 || ""],
+                      ["surname", line1Diag.finalSurname || row.latinLastName || ""],
+                      ["given name", line1Diag.finalGivenNames || row.latinFirstName || ""],
+                      ["leading filler noise removed", line1Diag.leadingSeparatorNoiseRemoved || ""],
+                      ["trailing filler noise removed", String(Boolean(line1Diag.trailingFillerNoiseRemoved))],
+                      ["warnings", line1Diag.warnings || []],
+                    ]} />
+                  </div>
+                  <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 10, overflow: "auto" }}>
+                    <div style={{ padding: 8, color: "var(--rukn-gold)", fontWeight: 900, fontSize: 11 }}>Parser output · Line 2</div>
+                    <DebugKvTable rows={[
+                      ["raw line2", line2Diag.rawLine2 || row.mrzLine2 || ""],
+                      ["selected 44-char line2", line2Diag.selected44CharLine || ""],
+                      ["slice(0,9) passport field", line2Diag.fixedPositions?.passportNumberField?.value || ""],
+                      ["line2[9] passport check digit", line2Diag.fixedPositions?.passportNumberCheckDigit?.value || ""],
+                      ["slice(10,13) nationality", line2Diag.fixedPositions?.nationality?.value || ""],
+                      ["slice(13,19) birth date", line2Diag.fixedPositions?.birthDate?.value || ""],
+                      ["birth date raw", line2Diag.birthDate?.raw || line2Diag.fixedPositions?.birthDate?.value || ""],
+                      ["birth date value", line2Diag.birthDate?.value || ""],
+                      ["birth date precision", line2Diag.birthDate?.precision || ""],
+                      ["birth year", line2Diag.birthDate?.year || ""],
+                      ["birth date approximated", String(Boolean(line2Diag.birthDate?.approximated))],
+                      ["birth date approximation rule", line2Diag.birthDate?.approximationRule || ""],
+                      ["birth warning", line2Diag.birthDate?.warning || ""],
+                      ["line2[20] gender", line2Diag.fixedPositions?.sex?.value || ""],
+                      ["slice(21,27) expiry date", line2Diag.fixedPositions?.expiryDate?.value || ""],
+                      ["check digit results", debug.parser?.checks || line2Diag.checkDigitResults || {}],
+                      ["warnings", debug.parser?.reviewReasons || []],
+                    ]} />
+                  </div>
+                </div>
+
+                <div style={{ overflow: "auto", border: "1px solid var(--rukn-border-soft)", borderRadius: 10 }}>
+                  <div style={{ padding: 8, color: "var(--rukn-gold)", fontWeight: 900, fontSize: 11 }}>Final row mapping</div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                    <thead>
+                      <tr>
+                        {["field", "final value", "source", "confidence", "old value", "fallback value", "MRZ parser value", "overwritten", "manually edited"].map((head) => (
+                          <th key={head} style={{ padding: 7, color: "var(--rukn-text-muted)", fontSize: 10, textAlign: "start", borderBottom: "1px solid var(--rukn-border-soft)" }}>{head}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(debug.finalMapping || []).map((item) => (
+                        <tr key={item.field} style={{ borderTop: "1px solid var(--rukn-border-soft)" }}>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10, fontWeight: 900 }}>{item.field}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{item.finalValue || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{item.source || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{item.confidence ?? "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text-muted)", fontSize: 10 }}>{item.oldValue || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text-muted)", fontSize: 10 }}>{item.fallbackValue || "—"}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text)", fontSize: 10 }}>{item.mrzParserValue || "—"}</td>
+                          <td style={{ padding: 7, color: item.overwritten ? "var(--rukn-warning)" : "var(--rukn-text-muted)", fontSize: 10 }}>{String(Boolean(item.overwritten))}</td>
+                          <td style={{ padding: 7, color: "var(--rukn-text-muted)", fontSize: 10 }}>{String(Boolean(item.manuallyEdited))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 export default function MRZReader({ store, onToast, onResult, onClose, programContext = null }) {
   const { t, lang } = useLang();
   const l = LABELS[lang] || LABELS.ar;
@@ -895,10 +1715,33 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const fileRef = React.useRef(null);
   const bulkRef = React.useRef(null);
   const rowFilesRef = React.useRef(new Map());
+  const debugUrlsRef = React.useRef(new Set());
   const cropBoxRef = React.useRef(null);
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
+
+  const createDebugOriginalImageUrl = React.useCallback((file) => {
+    if (!MRZ_DEV || !file) return "";
+    const url = URL.createObjectURL(file);
+    debugUrlsRef.current.add(url);
+    return url;
+  }, []);
+
+  const revokeDebugUrl = React.useCallback((url) => {
+    if (!url || !debugUrlsRef.current.has(url)) return;
+    URL.revokeObjectURL(url);
+    debugUrlsRef.current.delete(url);
+  }, []);
+
+  const revokeAllDebugUrls = React.useCallback(() => {
+    debugUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    debugUrlsRef.current.clear();
+  }, []);
+
+  React.useEffect(() => () => {
+    revokeAllDebugUrls();
+  }, [revokeAllDebugUrls]);
 
   const rowProgramDefaults = React.useCallback(() => importProgramId ? ({
     programId: importProgramId,
@@ -946,20 +1789,27 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
 
   const processImageFile = React.useCallback(async (file, index = 0) => {
     const outcome = await extractMRZFromImage(file, () => {});
+    const originalImageUrl = createDebugOriginalImageUrl(file);
     let row;
     if (outcome.success) {
-      const parsed = parseMRZDetailed(outcome.raw?.line1 || outcome.data?.raw?.line1, outcome.raw?.line2 || outcome.data?.raw?.line2);
+      const parsed = outcome.parsed || parseMRZDetailed(
+        outcome.raw?.line1 || outcome.data?.raw?.line1,
+        outcome.raw?.line2 || outcome.data?.raw?.line2,
+        { ocrText: outcome.ocrText || "" },
+      );
       row = addParsedRow(parsed, file.name || `image-${index + 1}`, {
         hasImage: true,
         extractionSource: EXTRACTION_SOURCE.AUTOMATIC_MRZ,
+        debugInfo: { outcome, originalImageUrl, mode: "automatic" },
       });
     } else if (outcome.raw?.line1 || outcome.raw?.line2) {
-      const parsed = parseMRZDetailed(outcome.raw?.line1 || "", outcome.raw?.line2 || "");
+      const parsed = parseMRZDetailed(outcome.raw?.line1 || "", outcome.raw?.line2 || "", { ocrText: outcome.ocrText || "" });
       row = addParsedRow(parsed, file.name || `image-${index + 1}`, {
         statusOverride: parsed.data ? ROW_STATUS.NEEDS_REVIEW : ROW_STATUS.FAILED,
         noteOverride: issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw),
         hasImage: true,
         extractionSource: EXTRACTION_SOURCE.FALLBACK_OCR,
+        debugInfo: { outcome, originalImageUrl, mode: "automatic_failed" },
       });
     } else {
       row = addParsedRow({ ok: false, data: null, issues: [outcome.error || "OCR_FAILED"] }, file.name || `image-${index + 1}`, {
@@ -967,11 +1817,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         noteOverride: ocrFailureText(outcome.error, l),
         hasImage: true,
         extractionSource: EXTRACTION_SOURCE.FALLBACK_OCR,
+        debugInfo: { outcome, originalImageUrl, mode: "automatic_failed" },
       });
     }
     if (row?.id) rowFilesRef.current.set(row.id, file);
     return row;
-  }, [addParsedRow, l]);
+  }, [addParsedRow, createDebugOriginalImageUrl, l]);
 
   const openCropModal = React.useCallback((id) => {
     const file = rowFilesRef.current.get(id);
@@ -998,6 +1849,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     setRows([]);
     setSelectedRowIds(new Set());
     rowFilesRef.current.clear();
+    revokeAllDebugUrls();
     setProgress({ done: 0, total: files.length, active: true });
     for (let index = 0; index < files.length; index += 1) {
       setProgress({ done: index, total: files.length, active: true });
@@ -1005,7 +1857,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       await new Promise((resolve) => setTimeout(resolve, 40));
       setProgress({ done: index + 1, total: files.length, active: index + 1 < files.length });
     }
-  }, [processImageFile]);
+  }, [processImageFile, revokeAllDebugUrls]);
 
   const readSinglePassport = React.useCallback(() => {
     if (!singleFile) {
@@ -1024,6 +1876,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   }, [bulkFiles, l.noImageSelected, processFilesSequentially]);
 
   const updateRow = React.useCallback((id, patch) => {
+    const manualAcceptRequested = Boolean(patch.accepted && patch.manualAccepted);
     setRows((current) => current.map((row) => {
       if (row.id !== id) return row;
       const next = { ...row, ...patch };
@@ -1031,6 +1884,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       const status = deriveRowStatus(next, row.status, reviewState);
       const manualAccepted = status === ROW_STATUS.MANUALLY_ACCEPTED ? true : status === ROW_STATUS.READY ? false : Boolean(next.manualAccepted) && rowHasEssentialPassportData(next);
       const accepted = (status === ROW_STATUS.READY || status === ROW_STATUS.MANUALLY_ACCEPTED) ? Boolean(next.accepted || next.duplicateAction === "update") : false;
+      const updatedRow = { ...next, ...reviewState, status, accepted, manualAccepted };
       if (
         process.env.NODE_ENV !== "production"
         && (Object.prototype.hasOwnProperty.call(patch, "accepted") || Object.prototype.hasOwnProperty.call(patch, "duplicateAction"))
@@ -1039,16 +1893,20 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
           rowId: id,
           statusBefore: row.status,
           statusAfter: status,
-          reviewReasons: next.reviewReasons || row.reviewReasons || [],
+          reviewReasonsBefore: row.reviewReasons || [],
+          reviewReasonsAfter: updatedRow.reviewReasons || [],
           manualAccepted,
           accepted,
-          requiredFieldsValid: rowHasEssentialPassportData(next),
-          cleanFieldsValid: rowHasRequiredPassportData(next),
+          requiredFieldsCheck: getRequiredFieldsCheck(updatedRow, { programMode: Boolean(importProgramId), packageRequired: packageOptions.length > 0 }),
+          requiredFieldsValid: rowHasEssentialPassportData(updatedRow),
+          cleanFieldsValid: rowHasRequiredPassportData(updatedRow),
+          saveEligible: isRowSaveEligible(updatedRow),
         });
       }
-      return { ...next, ...reviewState, status, accepted, manualAccepted };
+      return updatedRow;
     }));
-  }, []);
+    if (manualAcceptRequested) onToast?.(l.manualAcceptToast, "success");
+  }, [importProgramId, l.manualAcceptToast, onToast, packageOptions.length]);
 
   const toggleReviewSelection = React.useCallback((id, checked) => {
     setSelectedRowIds((current) => {
@@ -1105,14 +1963,18 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
 
   const removeRow = React.useCallback((id) => {
     rowFilesRef.current.delete(id);
-    setRows((current) => current.filter((row) => row.id !== id));
+    setRows((current) => {
+      const removed = current.find((row) => row.id === id);
+      revokeDebugUrl(removed?.mrzDebug?.originalImageUrl);
+      return current.filter((row) => row.id !== id);
+    });
     setSelectedRowIds((current) => {
       if (!current.has(id)) return current;
       const next = new Set(current);
       next.delete(id);
       return next;
     });
-  }, []);
+  }, [revokeDebugUrl]);
 
   const closeCropModal = React.useCallback(() => {
     setCropModal((current) => {
@@ -1205,6 +2067,125 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     };
   }, [getCropPoint]);
 
+  const applyParsedToCropRow = React.useCallback(({ parsed, raw = {}, outcome = {}, sourceType = EXTRACTION_SOURCE.MANUAL_MRZ, statusOverride, noteOverride }) => {
+    const hasParsedData = Boolean(parsed.data);
+    const succeeded = Boolean(parsed.ok && parsed.data);
+    const existing = parsed?.data?.passportNo ? findExisting(parsed.data.passportNo) : null;
+    setRows((current) => current.map((row) => {
+      if (row.id !== cropModal.rowId) return row;
+      const oldReviewReasons = row.reviewReasons || [];
+      const next = makeRowFromParsed({
+        parsed,
+        source: row.source,
+        existing,
+        l,
+        statusOverride: statusOverride ?? (succeeded ? undefined : hasParsedData ? ROW_STATUS.NEEDS_REVIEW : ROW_STATUS.FAILED),
+        noteOverride: noteOverride ?? (succeeded ? undefined : (!raw.line1 && !raw.line2 ? ocrFailureText(outcome.error, l) : undefined)),
+        hasImage: true,
+        extractionSource: sourceType,
+        debugInfo: {
+          outcome,
+          oldRow: row,
+          originalImageUrl: row.mrzDebug?.originalImageUrl || "",
+          mode: sourceType,
+          cropRect,
+        },
+      });
+      const merged = {
+        ...row,
+        ...next,
+        id: row.id,
+        source: row.source,
+        hasImage: true,
+        arabicLastName: row.arabicLastName || next.arabicLastName,
+        arabicFirstName: row.arabicFirstName || next.arabicFirstName,
+      };
+      if (MRZ_DEV) {
+        merged.mrzDebug = buildMrzDebugInfo({
+          parsed,
+          outcome,
+          row: merged,
+          oldRow: row,
+          originalImageUrl: row.mrzDebug?.originalImageUrl || "",
+          mode: sourceType,
+          cropRect,
+        });
+      }
+      const requiredFieldsCheck = getRequiredFieldsCheck(merged, {
+        programMode: Boolean(importProgramId),
+        packageRequired: packageOptions.length > 0,
+      });
+      if (process.env.NODE_ENV !== "production") {
+        const line2Mapping = buildMRZPriorityRowFields({
+          parserFields: getMrzLine2FieldsFromParsed(parsed),
+          fallbackFields: parsed?.fallbackFields || outcome?.fallbackFields || {},
+          oldRow: row,
+        });
+        console.debug("[MRZ row mapping]", {
+          rowId: row.id,
+          sourceType,
+          rawOcrLine2: raw.line2 || parsed.raw?.line2 || "",
+          normalizedLine2: parsed?.engineResult?.diagnostics?.line2?.normalizedLine2 || "",
+          selectedLine2Candidate: parsed?.engineResult?.diagnostics?.line2?.selected44CharLine || parsed.raw?.line2 || "",
+          parserFields: line2Mapping.parserFields,
+          parserFieldSources: parsed?.engineResult?.diagnostics?.line2?.fieldSources || {},
+          fallbackOcrFields: line2Mapping.fallbackFields,
+          oldRowFieldsBeforeMerge: {
+            passportNo: row.passportNo,
+            nationality: row.nationality,
+            birthDate: row.birthDate,
+            gender: row.gender,
+            passportExpiry: row.passportExpiry,
+          },
+          finalRowFieldsAfterMerge: {
+            passportNo: merged.passportNo,
+            nationality: merged.nationality,
+            birthDate: merged.birthDate,
+            gender: merged.gender,
+            passportExpiry: merged.passportExpiry,
+          },
+          ...line2Mapping.sources,
+          checks: parsed?.checks || parsed?.engineResult?.checks || {},
+          reviewReasons: parsed?.reviewReasons || parsed?.engineResult?.reviewReasons || [],
+        });
+        console.debug("[MRZ] manual-mrz-row-decision", {
+          rowId: row.id,
+          rowIndex: current.findIndex((item) => item.id === row.id),
+          sourceType,
+          crop: cropRect,
+          cropImage: outcome.cropDebug || null,
+          statusBefore: row.status,
+          statusAfter: merged.status,
+          rawOcrText: outcome.ocrText || "",
+          normalizedOcrText: normalizeMRZOCRText(outcome.ocrText || ""),
+          detectedMrzLine1: raw.line1 || parsed.raw?.line1 || "",
+          detectedMrzLine2: raw.line2 || parsed.raw?.line2 || "",
+          parsedFields: parsed.data ? {
+            passportNo: parsed.data.passportNo,
+            latinLastName: parsed.data.latinLastName,
+            latinFirstName: parsed.data.latinFirstName,
+            nationality: parsed.data.nationality,
+            birthDate: parsed.data.birthDate,
+            expiryDate: parsed.data.expiryDate,
+            gender: parsed.data.gender,
+          } : null,
+          checkDigitResults: parsed.checks || parsed.engineResult?.checks || {},
+          oldReviewReasons,
+          newReviewReasons: merged.reviewReasons || [],
+          fieldWarnings: merged.reviewWarningFieldLevel || {},
+          requiredFieldsCheck,
+          requiredFieldsValid: rowHasEssentialPassportData(merged),
+          cleanFieldsValid: rowHasRequiredPassportData(merged),
+          finalSaveEligibility: isRowSaveEligible(merged),
+          parseIssues: parsed.issues || [],
+          outcomeError: outcome.error || "",
+        });
+      }
+      return merged;
+    }));
+    return { hasParsedData, succeeded };
+  }, [cropModal.rowId, cropRect, findExisting, importProgramId, l, packageOptions.length]);
+
   const readSelectedCrop = React.useCallback(async () => {
     const file = rowFilesRef.current.get(cropModal.rowId);
     if (!file || cropRect.width < 5 || cropRect.height < 5) return;
@@ -1236,64 +2217,13 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     const outcome = await extractMRZFromImageRegion(file, cropRect, () => {});
     const raw = outcome.raw || {};
     const parsed = outcome.success
-      ? parseMRZDetailed(raw.line1 || outcome.data?.raw?.line1, raw.line2 || outcome.data?.raw?.line2)
-      : parseMRZDetailed(raw.line1 || "", raw.line2 || "");
-    const hasParsedData = Boolean(parsed.data);
-    const succeeded = Boolean(parsed.ok && parsed.data);
-    const existing = parsed?.data?.passportNo ? findExisting(parsed.data.passportNo) : null;
-    setRows((current) => current.map((row) => {
-      if (row.id !== cropModal.rowId) return row;
-      const oldReviewReasons = row.reviewReasons || [];
-      const next = makeRowFromParsed({
-        parsed,
-        source: row.source,
-        existing,
-        l,
-        statusOverride: succeeded ? undefined : hasParsedData ? ROW_STATUS.NEEDS_REVIEW : ROW_STATUS.FAILED,
-        noteOverride: succeeded ? undefined : (!raw.line1 && !raw.line2 ? ocrFailureText(outcome.error, l) : issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw || raw)),
-        hasImage: true,
-        extractionSource: EXTRACTION_SOURCE.MANUAL_MRZ,
-      });
-      const merged = {
-        ...row,
-        ...next,
-        id: row.id,
-        source: row.source,
-        hasImage: true,
-        arabicLastName: row.arabicLastName || next.arabicLastName,
-        arabicFirstName: row.arabicFirstName || next.arabicFirstName,
-      };
-      if (process.env.NODE_ENV !== "production") {
-        console.debug("[MRZ] manual-selection-row-update", {
-          rowId: row.id,
-          rowIndex: current.findIndex((item) => item.id === row.id),
-          crop: cropRect,
-          statusBefore: row.status,
-          statusAfter: merged.status,
-          oldReviewReasons,
-          newReviewReasons: merged.reviewReasons || [],
-          review_required_general: merged.reviewRequiredGeneral,
-          review_warning_field_level: merged.reviewWarningFieldLevel,
-          parseIssues: parsed.issues || [],
-          parsedData: parsed.data ? {
-            passportNo: parsed.data.passportNo,
-            latinLastName: parsed.data.latinLastName,
-            latinFirstName: parsed.data.latinFirstName,
-            nationality: parsed.data.nationality,
-            birthDate: parsed.data.birthDate,
-            expiryDate: parsed.data.expiryDate,
-            gender: parsed.data.gender,
-          } : null,
-          outcomeError: outcome.error || "",
-          rawOcrText: outcome.ocrText || "",
-          normalizedMrzLines: normalizeMRZOCRText(outcome.ocrText || ""),
-          rawMrzLines: raw,
-          rawLinesPresent: Boolean(raw.line1 || raw.line2),
-          ocrTextLength: String(outcome.ocrText || "").length,
-        });
-      }
-      return merged;
-    }));
+      ? outcome.parsed || parseMRZDetailed(
+        raw.line1 || outcome.data?.raw?.line1,
+        raw.line2 || outcome.data?.raw?.line2,
+        { ocrText: outcome.ocrText || "" },
+      )
+      : parseMRZDetailed(raw.line1 || "", raw.line2 || "", { ocrText: outcome.ocrText || "" });
+    const { hasParsedData, succeeded } = applyParsedToCropRow({ parsed, raw, outcome });
     setCropReading(false);
     if (succeeded) {
       onToast?.(l.success, "success");
@@ -1304,7 +2234,19 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     } else {
       onToast?.(ocrFailureText(outcome.error || (raw.line1 || raw.line2 ? "PARSE_FAILED" : "MRZ_NOT_FOUND"), l), "error");
     }
-  }, [closeCropModal, cropModal.rowId, cropRect, findExisting, l, onToast]);
+  }, [applyParsedToCropRow, closeCropModal, cropModal.rowId, cropRect, l, onToast]);
+
+  const buildPartialBirthDateDocs = React.useCallback((row = {}) => {
+    if (!hasPartialBirthDateOnly(row) && !hasApproximatedBirthDate(row)) return {};
+    return {
+      mrzBirthDateRaw: row.mrzBirthDateRaw || "",
+      birthDatePrecision: row.birthDatePrecision || "",
+      ...(row.birthYear ? { birthYear: row.birthYear } : {}),
+      ...(row.birthMonth ? { birthMonth: row.birthMonth } : {}),
+      birthDateApproximated: Boolean(row.birthDateApproximated),
+      birthDateApproximationRule: row.birthDateApproximationRule || "",
+    };
+  }, []);
 
   const toClientPayload = React.useCallback((row) => {
     const selectedPackage = packageOptions.find((pkg) => pkg.id === row.packageId) || null;
@@ -1318,6 +2260,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       size: row.roomingGroupSize || 0,
       seatIndex: row.roomingSeatIndex || 0,
     } : null;
+    const partialBirthDateDocs = buildPartialBirthDateDocs(row);
     return {
       firstName: row.arabicFirstName || "",
       lastName: row.arabicLastName || "",
@@ -1356,10 +2299,13 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         expiry: row.passportExpiry || "",
         gender: row.gender === "female" ? "F" : row.gender === "male" ? "M" : "",
       },
-      docs: roomingData ? { rooming: roomingData } : {},
+      docs: {
+        ...(roomingData ? { rooming: roomingData } : {}),
+        ...partialBirthDateDocs,
+      },
       notes: row.note || "",
     };
-  }, [defaultRoomType, importProgramId, l, lang, packageOptions]);
+  }, [buildPartialBirthDateDocs, defaultRoomType, importProgramId, l, lang, packageOptions]);
 
   const saveAccepted = React.useCallback(async () => {
     if (!importProgramId) {
@@ -1375,6 +2321,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         manualAccepted: Boolean(row.manualAccepted),
         duplicateAction: row.duplicateAction,
         reviewReasons: row.reviewReasons || [],
+        requiredFieldsCheck: getRequiredFieldsCheck(row, { programMode: Boolean(importProgramId), packageRequired: packageOptions.length > 0 }),
         requiredFieldsValid: rowHasEssentialPassportData(row),
         cleanFieldsValid: rowHasRequiredPassportData(row),
         saveEligible: isRowSaveEligible(row),
@@ -1389,7 +2336,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       return;
     }
     if (accepted.some((row) => !rowHasEssentialPassportData(row))) {
-      onToast?.(l.saveBlockedRows, "error");
+      onToast?.(l.requiredFieldsHardBlock, "error");
       return;
     }
     if (
@@ -1407,7 +2354,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       const payload = toClientPayload(row);
       if (row.existingClientId && row.duplicateAction === "update") {
         const existing = clients.find((client) => client.id === row.existingClientId) || {};
-        const nextPayload = { ...existing, ...payload, passport: { ...(existing.passport || {}), ...payload.passport } };
+        const nextPayload = {
+          ...existing,
+          ...payload,
+          passport: { ...(existing.passport || {}), ...payload.passport },
+          docs: { ...(existing.docs || {}), ...(payload.docs || {}) },
+        };
         const result = store?.updateClientFromPassportImport
           ? await store.updateClientFromPassportImport(row.existingClientId, nextPayload)
           : (store?.updateClient?.(row.existingClientId, nextPayload), { error: null });
@@ -1452,6 +2404,26 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       gender: firstAccepted.gender === "female" ? "F" : "M",
     });
   }, [firstAccepted, onResult]);
+
+  const copyMrzDebugJson = React.useCallback(async () => {
+    if (!MRZ_DEV) return;
+    const payload = rows
+      .filter((row) => row.mrzDebug)
+      .map((row) => sanitizeDebugValue({
+        rowId: row.id,
+        source: row.source,
+        status: row.status,
+        debug: row.mrzDebug,
+      }));
+    const json = JSON.stringify(payload, null, 2);
+    try {
+      await navigator.clipboard.writeText(json);
+      onToast?.("MRZ debug JSON copied", "success");
+    } catch (error) {
+      console.debug("[MRZ Diagnostic Lab] copy failed", error);
+      onToast?.("Could not copy MRZ debug JSON", "error");
+    }
+  }, [onToast, rows]);
 
   const modeButtons = [
     ["image", l.image],
@@ -1686,6 +2658,8 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
             </tbody>
           </table>
         </div>
+
+        <MRZDiagnosticLab rows={rows} onCopyDebug={copyMrzDebugJson} />
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
           <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>

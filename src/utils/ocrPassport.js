@@ -1,20 +1,8 @@
 import { createWorker } from "tesseract.js";
 import { parseMRZDetailed } from "./mrzReader";
+import { detectMrzCandidateLines, normalizeOcrText, scoreTd3Line1Candidate } from "./passportMrzEngine";
 
 const MRZ_DEBUG = process.env.NODE_ENV !== "production";
-const cleanOCRLine = (value = "") => String(value).toUpperCase().replace(/[^A-Z0-9<]/g, "");
-const MRZ_ALLOWED = /^[A-Z0-9<]{44}$/;
-const NUMERIC_OCR_FIXES = {
-  O: "0",
-  Q: "0",
-  D: "0",
-  I: "1",
-  L: "1",
-  Z: "2",
-  S: "5",
-  G: "6",
-  B: "8",
-};
 const DEFAULT_MRZ_CROPS = [
   { x: 0, y: 72, width: 100, height: 28 },
   { x: 0, y: 65, width: 100, height: 35 },
@@ -23,6 +11,10 @@ const DEFAULT_MRZ_CROPS = [
 
 const logMRZDebug = (label, payload) => {
   if (MRZ_DEBUG) console.debug(`[MRZ] ${label}`, payload);
+};
+
+const logMRZRecoveryDecision = (payload) => {
+  if (MRZ_DEBUG) console.debug("[MRZ recovery decision]", payload);
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -36,10 +28,15 @@ export function convertDisplayedCropToNaturalRect({
   const displayedHeight = Number(displayed.height) || 1;
   const naturalWidth = Number(natural.width) || 1;
   const naturalHeight = Number(natural.height) || 1;
-  const x = (Number(selection.x) || 0) * naturalWidth / displayedWidth;
-  const y = (Number(selection.y) || 0) * naturalHeight / displayedHeight;
-  const width = (Number(selection.width) || 0) * naturalWidth / displayedWidth;
-  const height = (Number(selection.height) || 0) * naturalHeight / displayedHeight;
+  const scale = Math.min(displayedWidth / naturalWidth, displayedHeight / naturalHeight);
+  const renderedWidth = naturalWidth * scale;
+  const renderedHeight = naturalHeight * scale;
+  const offsetX = Math.max(0, (displayedWidth - renderedWidth) / 2);
+  const offsetY = Math.max(0, (displayedHeight - renderedHeight) / 2);
+  const x = ((Number(selection.x) || 0) - offsetX) * naturalWidth / renderedWidth;
+  const y = ((Number(selection.y) || 0) - offsetY) * naturalHeight / renderedHeight;
+  const width = (Number(selection.width) || 0) * naturalWidth / renderedWidth;
+  const height = (Number(selection.height) || 0) * naturalHeight / renderedHeight;
   const clampedX = clamp(x, 0, naturalWidth - 1);
   const clampedY = clamp(y, 0, naturalHeight - 1);
   return {
@@ -104,6 +101,104 @@ const enhanceMRZCanvas = (canvas) => {
   ctx.putImageData(imageData, 0, 0);
 };
 
+const grayscaleMRZCanvas = (canvas) => {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    data[i] = gray;
+    data[i + 1] = gray;
+    data[i + 2] = gray;
+  }
+  ctx.putImageData(imageData, 0, 0);
+};
+
+const thresholdMRZCanvas = (canvas) => {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    const value = gray > 142 ? 255 : 0;
+    data[i] = value;
+    data[i + 1] = value;
+    data[i + 2] = value;
+  }
+  ctx.putImageData(imageData, 0, 0);
+};
+
+const sharpenMRZCanvas = (canvas) => {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const source = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const output = ctx.createImageData(canvas.width, canvas.height);
+  const { width, height } = canvas;
+  const kernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      [0, 1, 2].forEach((channel) => {
+        let value = 0;
+        for (let ky = -1; ky <= 1; ky += 1) {
+          for (let kx = -1; kx <= 1; kx += 1) {
+            const px = clamp(x + kx, 0, width - 1);
+            const py = clamp(y + ky, 0, height - 1);
+            value += source.data[(py * width + px) * 4 + channel] * kernel[(ky + 1) * 3 + (kx + 1)];
+          }
+        }
+        output.data[offset + channel] = clamp(value, 0, 255);
+      });
+      output.data[offset + 3] = source.data[offset + 3];
+    }
+  }
+  ctx.putImageData(output, 0, 0);
+};
+
+const cloneCanvasWithTransform = (sourceCanvas, transform) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = sourceCanvas.width;
+  canvas.height = sourceCanvas.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(sourceCanvas, 0, 0);
+  transform?.(canvas);
+  return canvas;
+};
+
+const cropCanvasRegion = (sourceCanvas, { x = 0, y = 0, width = sourceCanvas.width, height = sourceCanvas.height } = {}) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(sourceCanvas, x, y, width, height, 0, 0, canvas.width, canvas.height);
+  return canvas;
+};
+
+const buildDebugPreviews = (canvas) => {
+  if (!MRZ_DEBUG) return {};
+  const halfHeight = Math.max(1, Math.floor(canvas.height / 2));
+  return {
+    fullMrz: canvas.toDataURL("image/png"),
+    line1: cropCanvasRegion(canvas, { x: 0, y: 0, width: canvas.width, height: halfHeight }).toDataURL("image/png"),
+    line2: cropCanvasRegion(canvas, { x: 0, y: halfHeight, width: canvas.width, height: canvas.height - halfHeight }).toDataURL("image/png"),
+  };
+};
+
+const buildCropDebug = ({ source, canvas, crop, variant, information, cropType = "full_mrz", sentToOcr = true }) => {
+  const margin = crop.margin ?? 1.2;
+  return {
+    source,
+    canvas: { width: canvas.width, height: canvas.height },
+    cropType,
+    variant,
+    sentToOcr,
+    scaleFactor: source.width ? canvas.width / source.width : 1,
+    marginExpanded: margin > 0,
+    marginPercent: margin,
+    information,
+    previews: buildDebugPreviews(canvas),
+  };
+};
+
 const createImageCropVariants = (imageFile, crop = { x: 0, y: 66, width: 100, height: 34 }) => new Promise((resolve, reject) => {
   const url = URL.createObjectURL(imageFile);
   const img = new Image();
@@ -142,15 +237,49 @@ const createImageCropVariants = (imageFile, crop = { x: 0, y: 66, width: 100, he
         information,
       });
 
-      Promise.all([
-        canvasToBlob(processedCanvas),
-        canvasToBlob(rawCanvas),
-      ]).then(([processedBlob, rawBlob]) => {
+      const grayCanvas = cloneCanvasWithTransform(rawCanvas, grayscaleMRZCanvas);
+      const thresholdCanvas = cloneCanvasWithTransform(rawCanvas, thresholdMRZCanvas);
+      const sharpenedCanvas = cloneCanvasWithTransform(processedCanvas, sharpenMRZCanvas);
+
+      const fullVariants = [
+        { canvas: processedCanvas, variant: "processed-contrast", cropType: "full_mrz" },
+        { canvas: rawCanvas, variant: "original-upscaled", cropType: "full_mrz" },
+        { canvas: grayCanvas, variant: "grayscale-upscaled", cropType: "full_mrz" },
+        { canvas: thresholdCanvas, variant: "threshold-upscaled", cropType: "full_mrz" },
+        { canvas: sharpenedCanvas, variant: "sharpened-contrast", cropType: "full_mrz" },
+      ];
+      const lineCropVariants = fullVariants.flatMap((item) => {
+        const halfHeight = Math.max(1, Math.floor(item.canvas.height / 2));
+        return [
+          {
+            canvas: cropCanvasRegion(item.canvas, { x: 0, y: 0, width: item.canvas.width, height: halfHeight }),
+            variant: `${item.variant}-line1`,
+            cropType: "line1",
+          },
+          {
+            canvas: cropCanvasRegion(item.canvas, { x: 0, y: halfHeight, width: item.canvas.width, height: item.canvas.height - halfHeight }),
+            variant: `${item.variant}-line2`,
+            cropType: "line2",
+          },
+        ];
+      });
+      const variants = [...fullVariants, ...lineCropVariants];
+
+      Promise.all(variants.map((item) => canvasToBlob(item.canvas))).then((blobs) => {
         URL.revokeObjectURL(url);
-        resolve([
-          { blob: processedBlob, variant: "processed", debug: { source, canvas: { width: canvasWidth, height: canvasHeight }, information } },
-          { blob: rawBlob, variant: "raw", debug: { source, canvas: { width: canvasWidth, height: canvasHeight }, information } },
-        ]);
+        resolve(variants.map((item, index) => ({
+          blob: blobs[index],
+          variant: item.variant,
+          debug: buildCropDebug({
+            source,
+            canvas: item.canvas,
+            crop,
+            variant: item.variant,
+            cropType: item.cropType,
+            sentToOcr: true,
+            information,
+          }),
+        })));
       }).catch((error) => {
         URL.revokeObjectURL(url);
         reject(error);
@@ -172,177 +301,39 @@ const createMRZCropBlobs = async (imageFile) => {
   return groups.flat();
 };
 
-const candidateScore = (line = "", isLine1 = false) => {
-  if (!MRZ_ALLOWED.test(line)) return -100;
-  let score = 0;
-  if (isLine1 && line.startsWith("P<")) score += 60;
-  if (!isLine1 && /^[A-Z0-9<]{9}[0-9<][A-Z<]{3}\d{6}[0-9<][MF<]\d{6}/.test(line)) score += 60;
-  score += Math.min(20, (line.match(/</g) || []).length);
-  if (/\d{6}/.test(line)) score += 8;
-  return score;
-};
-
-const fixNumericChar = (char) => NUMERIC_OCR_FIXES[char] || char;
-
-const repairLine1 = (value = "") => {
-  let line = cleanOCRLine(value);
-  if (line.length < 2) return line;
-  if (line[0] !== "P" && ["F", "R"].includes(line[0])) line = `P${line.slice(1)}`;
-  if (line[0] === "P" && ["<", "L", "I", "1"].includes(line[1])) {
-    line = `P<${line.slice(2)}`;
-  }
-  if (line.length < 5) return line;
-
-  let nameField = line.slice(5);
-  nameField = nameField.replace(/[I1]{2,}/g, (match) => "<".repeat(match.length));
-  if (!nameField.includes("<<")) {
-    nameField = nameField.replace(/([A-Z]{2,})([<I1]{2,}|L{2,})([A-Z]{2,})/, (_, surname, sep, given) => `${surname}${"<".repeat(Math.max(2, sep.length))}${given}`);
-  }
-  const separatorIndex = nameField.indexOf("<<");
-  if (separatorIndex >= 0) {
-    const before = nameField.slice(0, separatorIndex);
-    let after = nameField.slice(separatorIndex);
-    after = after.replace(/[<LI1]{3,}$/g, (match) => "<".repeat(match.length));
-    after = after.replace(/([A-Z])([LI1]{3,})$/g, (_, char, filler) => `${char}${"<".repeat(filler.length)}`);
-    nameField = `${before}${after}`;
-  }
-
-  return `${line.slice(0, 5)}${nameField}`.padEnd(44, "<").slice(0, 44);
-};
-
-const repairLine2 = (value = "") => {
-  const chars = cleanOCRLine(value).padEnd(44, "<").slice(0, 44).split("");
-  [9, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27].forEach((index) => {
-    chars[index] = fixNumericChar(chars[index]);
-  });
-  if (chars[20] === "1" || chars[20] === "I" || chars[20] === "L") chars[20] = "<";
-  return chars.join("");
-};
-
-const lineWindows = (value = "") => {
-  const clean = cleanOCRLine(value);
-  if (clean.length < 44) return clean ? [clean] : [];
-  if (clean.length === 44) return [clean];
-  const windows = [];
-  for (let i = 0; i <= clean.length - 44; i += 1) {
-    windows.push(clean.slice(i, i + 44));
-  }
-  return windows;
-};
-
-const unique = (items) => Array.from(new Set(items.filter(Boolean)));
-
-export const normalizeMRZOCRText = (text = "") => String(text || "")
-  .toUpperCase()
-  .split(/\n/)
-  .map((line) => line.replace(/[^A-Z0-9<]/g, ""))
-  .filter(Boolean);
+export const normalizeMRZOCRText = (text = "") => normalizeOcrText(text);
 
 export const extractMRZCandidate = (text = "") => {
-  const cleanedLines = text
-    .split(/\n/)
-    .map(cleanOCRLine)
-    .filter((line) => line.length >= 8);
-  const compact = cleanOCRLine(cleanedLines.join(""));
-  const line1Candidates = [];
-  const line2Candidates = [];
-  const rawCandidates = [];
-  let bestParsedWithIssues = null;
-
+  const candidate = detectMrzCandidateLines(text);
   logMRZDebug("ocr:normalized-lines", {
-    lines: cleanedLines,
-    compactLength: compact.length,
+    lines: candidate.normalizedLines || normalizeOcrText(text),
+    candidates: candidate.candidates,
   });
-
-  cleanedLines.forEach((line, index) => {
-    lineWindows(line).forEach((candidate) => {
-      const repairedLine1 = repairLine1(candidate);
-      const repairedLine2 = repairLine2(candidate);
-      rawCandidates.push(candidate, repairedLine1, repairedLine2);
-      if (repairedLine1.startsWith("P<") && MRZ_ALLOWED.test(repairedLine1)) {
-        line1Candidates.push({ line: repairedLine1, index, score: candidateScore(repairedLine1, true) });
-      }
-      if (MRZ_ALLOWED.test(repairedLine2)) {
-        line2Candidates.push({ line: repairedLine2, index, score: candidateScore(repairedLine2, false) });
-      }
-    });
-  });
-
-  for (let start = compact.indexOf("P<"); start >= 0; start = compact.indexOf("P<", start + 1)) {
-    const line1 = repairLine1(compact.slice(start, start + 44));
-    const line2 = repairLine2(compact.slice(start + 44, start + 88));
-    if (line1.length === 44) line1Candidates.push({ line: line1, index: -1, score: candidateScore(line1, true) + 8 });
-    if (line2.length === 44) line2Candidates.push({ line: line2, index: -1, score: candidateScore(line2, false) + 8 });
-  }
-
-  for (let start = compact.indexOf("P"); start >= 0; start = compact.indexOf("P", start + 1)) {
-    const line1 = repairLine1(compact.slice(start, start + 44));
-    const line2 = repairLine2(compact.slice(start + 44, start + 88));
-    if (line1.startsWith("P<") && line1.length === 44) line1Candidates.push({ line: line1, index: -1, score: candidateScore(line1, true) + 4 });
-    if (line2.length === 44) line2Candidates.push({ line: line2, index: -1, score: candidateScore(line2, false) + 4 });
-  }
-
-  const orderedLine1 = unique(line1Candidates.map((item) => item.line))
-    .map((line) => line1Candidates.find((item) => item.line === line))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score);
-  const orderedLine2 = unique(line2Candidates.map((item) => item.line))
-    .map((line) => line2Candidates.find((item) => item.line === line))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  for (const first of orderedLine1) {
-    const nearby = orderedLine2
-      .slice()
-      .sort((a, b) => {
-        const aDistance = first.index >= 0 && a.index >= 0 ? Math.abs(a.index - first.index - 1) : 0;
-        const bDistance = first.index >= 0 && b.index >= 0 ? Math.abs(b.index - first.index - 1) : 0;
-        return aDistance - bDistance || b.score - a.score;
-    });
-    for (const second of nearby) {
-      const parsed = parseMRZDetailed(first.line, second.line);
-      if (parsed.ok && parsed.data) {
-        return { ok: true, lines: { line1: first.line, line2: second.line }, parsed };
-      }
-      if (parsed.data) {
-        const score = first.score + second.score - (parsed.issues?.length || 0) * 8;
-        if (!bestParsedWithIssues || score > bestParsedWithIssues.score) {
-          bestParsedWithIssues = {
-            score,
-            lines: { line1: first.line, line2: second.line },
-            parsed,
-          };
-        }
-      }
-    }
-  }
-
-  if (bestParsedWithIssues?.parsed?.data) {
-    logMRZDebug("parser:accepted-with-warnings", {
-      issues: bestParsedWithIssues.parsed.issues,
-      raw: bestParsedWithIssues.lines,
-    });
+  if (!candidate.ok) {
     return {
-      ok: true,
-      lines: bestParsedWithIssues.lines,
-      parsed: bestParsedWithIssues.parsed,
+      ok: false,
+      error: candidate.error || "MRZ_NOT_FOUND",
+      raw: {
+        line1: candidate.lines?.[0] || "",
+        line2: candidate.lines?.[1] || "",
+      },
+      normalizedLines: candidate.normalizedLines || [],
     };
   }
-
-  const bestLine1 = orderedLine1[0]?.line || rawCandidates.find((line) => line.startsWith("P")) || "";
-  const bestLine2 = orderedLine2[0]?.line || rawCandidates.find((line) => line !== bestLine1 && line.length >= 30) || "";
-  let reason = "MRZ_LINE1_NOT_FOUND";
-  if (bestLine1 && !bestLine2) reason = "MRZ_LINE2_NOT_FOUND";
-  if (bestLine1 && bestLine2 && (bestLine1.length !== 44 || bestLine2.length !== 44)) reason = "MRZ_LENGTH";
-  if (bestLine1 && bestLine2 && bestLine1.length === 44 && bestLine2.length === 44) reason = "PARSE_FAILED";
-
+  const [line1, line2] = candidate.lines || [];
+  const parsed = parseMRZDetailed(line1, line2, { ocrText: text });
+  if (parsed.data && !parsed.ok) {
+    logMRZDebug("parser:accepted-with-warnings", {
+      issues: parsed.issues,
+      reviewReasons: parsed.reviewReasons,
+      raw: { line1, line2 },
+    });
+  }
   return {
-    ok: false,
-    error: reason,
-    raw: {
-      line1: bestLine1,
-      line2: bestLine2,
-    },
+    ok: Boolean(parsed.data),
+    lines: { line1, line2 },
+    parsed,
+    normalizedLines: candidate.normalizedLines || [],
   };
 };
 
@@ -372,6 +363,11 @@ const configureMRZWorker = async (worker) => {
 const recognizeMRZBlob = async (worker, croppedMRZ) => {
   const blob = croppedMRZ?.blob || croppedMRZ;
   logMRZDebug("ocr:start", { variant: croppedMRZ?.variant, debug: croppedMRZ?.debug });
+  if (croppedMRZ?.debug?.cropType === "line1" || croppedMRZ?.debug?.cropType === "line2") {
+    await worker.setParameters({ tessedit_pageseg_mode: "7" });
+  } else {
+    await worker.setParameters({ tessedit_pageseg_mode: "6" });
+  }
   const recognition = worker.recognize(blob);
   const { data: { text } } = await Promise.race([
     recognition,
@@ -381,10 +377,163 @@ const recognizeMRZBlob = async (worker, croppedMRZ) => {
     variant: croppedMRZ?.variant,
     text,
   });
-  if (!String(text || "").trim()) return { success: false, error: "OCR_NO_TEXT", raw: { line1: "", line2: "" }, ocrText: text || "" };
+  if (!String(text || "").trim()) return { success: false, error: "OCR_NO_TEXT", raw: { line1: "", line2: "" }, ocrText: text || "", cropDebug: croppedMRZ?.debug, variant: croppedMRZ?.variant };
   const candidate = extractMRZCandidate(text);
-  if (!candidate.ok) return { success: false, error: candidate.error || "MRZ_NOT_FOUND", raw: candidate.raw, ocrText: text || "" };
-  return { success: true, data: candidate.parsed.data, raw: candidate.lines, issues: candidate.parsed.issues || [], ocrText: text || "" };
+  if (!candidate.ok) {
+    if (croppedMRZ?.debug?.cropType === "line2") {
+      const normalizedLines = normalizeOcrText(text);
+      const line2 = candidate.raw?.line2 || normalizedLines.find((line) => line.length >= 20) || normalizedLines[0] || "";
+      const inferredIssuer = line2.includes("MAR") ? "MAR" : /^[A-Z]{3}$/.test(line2.slice(10, 13)) ? line2.slice(10, 13) : "UTO";
+      const syntheticLine1 = `P<${inferredIssuer}LINEONLY<<DEBUG<<<<<<<<<<<<<<<<<<`;
+      const parsed = line2 ? parseMRZDetailed(syntheticLine1, line2, { ocrText: text, source: "line2_crop_debug" }) : null;
+      return {
+        success: false,
+        lineOnly: true,
+        error: candidate.error || "MRZ_NOT_FOUND",
+        raw: { line1: "", line2 },
+        parsed,
+        ocrText: text || "",
+        cropDebug: croppedMRZ?.debug,
+        variant: croppedMRZ?.variant,
+      };
+    }
+    return { success: false, error: candidate.error || "MRZ_NOT_FOUND", raw: candidate.raw, ocrText: text || "", cropDebug: croppedMRZ?.debug, variant: croppedMRZ?.variant };
+  }
+  logMRZDebug("parser:result", {
+    variant: croppedMRZ?.variant,
+    raw: candidate.lines,
+    issues: candidate.parsed?.issues || [],
+    reviewReasons: candidate.parsed?.reviewReasons || [],
+    confidence: candidate.parsed?.confidence,
+    checks: candidate.parsed?.checks,
+  });
+  return { success: true, data: candidate.parsed.data, raw: candidate.lines, issues: candidate.parsed.issues || [], parsed: candidate.parsed, ocrText: text || "", cropDebug: croppedMRZ?.debug, variant: croppedMRZ?.variant };
+};
+
+const scoreRecognizedMRZResult = (result = {}) => {
+  if (!result.success || !result.parsed?.data) return -1000;
+  const parsed = result.parsed || {};
+  const data = parsed.data || {};
+  const checks = parsed.checks || {};
+  let score = Math.round((Number(parsed.confidence) || 0) * 100);
+  ["passportNo", "nationality", "birthDate", "expiryDate", "gender"].forEach((field) => {
+    if (data[field]) score += 8;
+  });
+  if (data.birthDateApproximated && data.birthDateRaw && data.birthDatePrecision) score += 6;
+  if (checks.passportNumberCheck?.valid) score += 18;
+  if (checks.birthDateCheck?.valid) score += 18;
+  if (checks.expiryDateCheck?.valid) score += 18;
+  if (checks.compositeCheck?.valid) score += 12;
+  if (/^[A-Z]{3}$/.test(data.nationality || "")) score += 10;
+  if (/^[A-Z0-9]{3,9}$/.test(data.passportNo || "")) score += 10;
+  const line1Score = scoreTd3Line1Candidate(parsed.raw?.line1 || result.raw?.line1 || "").score;
+  if (line1Score > 0) score += Math.min(28, Math.round(line1Score / 6));
+  score -= (parsed.reviewReasons?.length || 0) * 6;
+  return score;
+};
+
+const buildRecoveryAttemptDebug = ({ croppedMRZ = {}, result = {}, selectionScore = null } = {}) => ({
+  variant: croppedMRZ?.variant || result.variant || "",
+  cropType: croppedMRZ?.debug?.cropType || "full_mrz",
+  cropDebug: result.cropDebug || croppedMRZ?.debug || null,
+  rawOcrText: result.ocrText || "",
+  normalizedOcrText: normalizeOcrText(result.ocrText || ""),
+  detectedLine1: result.raw?.line1 || "",
+  detectedLine2: result.raw?.line2 || "",
+  selected44CharCandidate: result.parsed?.engineResult?.diagnostics?.line2?.selected44CharLine || "",
+  score: selectionScore,
+  reasons: result.parsed?.reviewReasons || (result.error ? [result.error] : []),
+  accepted: Boolean(result.success),
+  error: result.error || "",
+  parser: {
+    line1: result.parsed?.engineResult?.diagnostics?.line1 || null,
+    line2: result.parsed?.engineResult?.diagnostics?.line2 || null,
+    fields: result.parsed?.engineResult?.fields || result.parsed?.data || result.data || null,
+    checks: result.parsed?.engineResult?.checks || result.parsed?.checks || null,
+    reviewReasons: result.parsed?.engineResult?.reviewReasons || result.parsed?.reviewReasons || [],
+  },
+});
+
+const getLine2Fields = (parsed = {}) => {
+  const data = parsed?.data || {};
+  return {
+    passportNo: data.passportNo || "",
+    nationality: data.nationality || "",
+    birthDate: data.birthDate || "",
+    birthDateRaw: data.birthDateRaw || "",
+    birthDatePrecision: data.birthDatePrecision || "",
+    birthYear: data.birthYear || null,
+    birthDateApproximated: Boolean(data.birthDateApproximated),
+    birthDateApproximationRule: data.birthDateApproximationRule || "",
+    gender: data.gender || "",
+    passportExpiry: data.expiryDate || data.passportExpiry || "",
+  };
+};
+
+const hasUsableBirthDate = (fields = {}) => Boolean(
+  fields.birthDate
+  || (fields.birthDateRaw && ["year", "month"].includes(fields.birthDatePrecision))
+);
+
+const hasCompleteLine2Fields = (parsed = {}) => {
+  const fields = getLine2Fields(parsed);
+  return Boolean(fields.passportNo && fields.nationality && hasUsableBirthDate(fields) && fields.gender && fields.passportExpiry);
+};
+
+const mergeLine2CropResult = (baseResult, line2Result) => {
+  if (!baseResult?.parsed?.data || !line2Result?.parsed?.data || !line2Result.raw?.line2) return baseResult;
+  const line1 = baseResult.raw?.line1 || baseResult.parsed?.raw?.line1 || "";
+  if (!line1) return baseResult;
+  const parserLine2Used = line2Result.raw.line2;
+  const combinedOcrText = [baseResult.ocrText, line2Result.ocrText].filter(Boolean).join("\n");
+  const parsed = parseMRZDetailed(line1, parserLine2Used, {
+    ocrText: combinedOcrText,
+    source: "line2_crop_mrz",
+  });
+  if (!parsed.data || !hasCompleteLine2Fields(parsed)) return baseResult;
+
+  const line2Diag = parsed.engineResult?.diagnostics?.line2 || {};
+  const passportField = line2Diag.fixedPositions?.passportNumberField?.value || parserLine2Used.slice(0, 9);
+  const passportCheck = line2Diag.fixedPositions?.passportNumberCheckDigit?.value || parserLine2Used[9] || "";
+  const finalPassportNo = parsed.data.passportNo || "";
+  if (process.env.NODE_ENV !== "production") {
+    console.debug("[MRZ passport final trace]", {
+      line2CropSelectedCandidate: parserLine2Used,
+      fullMrzSelectedCandidate: baseResult.raw?.line2 || baseResult.parsed?.raw?.line2 || "",
+      parserLine2Used,
+      passportFieldSlice0_9: passportField,
+      passportCheckDigit: passportCheck,
+      passportNoBeforeRepair: passportField,
+      passportNoAfterRepair: finalPassportNo,
+      visualPassportCandidate: line2Diag.passportNumberSelection?.source?.includes("visual")
+        ? line2Diag.passportNumberSelection?.value
+        : "",
+      finalPassportNo,
+      finalPassportNoSource: "line2_crop_mrz",
+      overwrittenBy: finalPassportNo !== (baseResult.data?.passportNo || baseResult.parsed?.data?.passportNo)
+        ? "line2_crop_selected_candidate"
+        : "",
+      line2CropVariant: line2Result.variant || "",
+      fullMrzVariant: baseResult.variant || "",
+    });
+  }
+
+  return {
+    ...baseResult,
+    data: parsed.data,
+    parsed,
+    raw: { line1, line2: parserLine2Used },
+    ocrText: combinedOcrText,
+    variant: `${baseResult.variant || "full_mrz"}+${line2Result.variant || "line2_crop"}`,
+    line2CropOverride: {
+      variant: line2Result.variant || "",
+      raw: line2Result.raw,
+      previousLine2: baseResult.raw?.line2 || "",
+      selectedLine2: parserLine2Used,
+      finalPassportNo,
+      source: "line2_crop_mrz",
+    },
+  };
 };
 
 const runMRZOCR = async (croppedMRZ, onProgress) => {
@@ -414,16 +563,62 @@ export async function extractMRZFromImage(imageFile, onProgress) {
     worker = await createMRZWorker(onProgress);
     await configureMRZWorker(worker);
     let bestFailure = { success: false, error: "MRZ_NOT_FOUND", raw: { line1: "", line2: "" } };
+    let bestSuccess = null;
+    let bestLine2Crop = null;
+    const recoveryAttempts = [];
     for (const croppedMRZ of croppedMRZs) {
       const result = await recognizeMRZBlob(worker, croppedMRZ);
-      if (result.success) return result;
+      const selectionScore = result.success
+        ? scoreRecognizedMRZResult(result)
+        : result.lineOnly && result.parsed?.data
+          ? scoreRecognizedMRZResult({ ...result, success: true }) - 60
+          : null;
+      recoveryAttempts.push(buildRecoveryAttemptDebug({ croppedMRZ, result, selectionScore }));
+      if (
+        croppedMRZ?.debug?.cropType === "line2"
+        && result.parsed?.data
+        && hasCompleteLine2Fields(result.parsed)
+        && (!bestLine2Crop || Number(selectionScore || -1000) > Number(bestLine2Crop.selectionScore || -1000))
+      ) {
+        bestLine2Crop = { ...result, selectionScore };
+      }
+      if (result.success) {
+        const score = selectionScore;
+        const scored = { ...result, selectionScore: score };
+        if (!bestSuccess || score > bestSuccess.selectionScore) bestSuccess = scored;
+        continue;
+      }
       if ((result.raw?.line1 || result.raw?.line2) && !(bestFailure.raw?.line1 || bestFailure.raw?.line2)) {
         bestFailure = result;
       } else if (result.error && bestFailure.error === "MRZ_NOT_FOUND") {
         bestFailure = result;
       }
     }
-    return bestFailure;
+    if (bestSuccess) {
+      const selectedSuccess = bestLine2Crop ? mergeLine2CropResult(bestSuccess, bestLine2Crop) : bestSuccess;
+      const debug = {
+        mode: "automatic",
+        attempts: recoveryAttempts,
+        variant: selectedSuccess.variant,
+        selectionScore: selectedSuccess.selectionScore,
+        raw: selectedSuccess.raw,
+        fields: selectedSuccess.parsed?.data,
+        checks: selectedSuccess.parsed?.checks,
+        reviewReasons: selectedSuccess.parsed?.reviewReasons,
+        line2CropOverride: selectedSuccess.line2CropOverride || null,
+      };
+      logMRZRecoveryDecision(debug);
+      return { ...selectedSuccess, debug };
+    }
+    const debug = {
+      mode: "automatic",
+      attempts: recoveryAttempts,
+      selected: null,
+      safeModeClearedFields: true,
+      reason: bestFailure.error || "MRZ_NOT_FOUND",
+    };
+    logMRZRecoveryDecision(debug);
+    return { ...bestFailure, debug };
   } catch (err) {
     return { success: false, error: err.message };
   } finally {
@@ -435,16 +630,62 @@ export async function extractMRZFromImageRegion(imageFile, crop, onProgress) {
   try {
     const croppedMRZs = await createImageCropVariants(imageFile, crop);
     let bestFailure = { success: false, error: "MRZ_NOT_FOUND", raw: { line1: "", line2: "" } };
+    let bestSuccess = null;
+    let bestLine2Crop = null;
+    const recoveryAttempts = [];
     for (const croppedMRZ of croppedMRZs) {
       const result = await runMRZOCR(croppedMRZ, onProgress);
-      if (result.success) return result;
+      const selectionScore = result.success
+        ? scoreRecognizedMRZResult(result)
+        : result.lineOnly && result.parsed?.data
+          ? scoreRecognizedMRZResult({ ...result, success: true }) - 60
+          : null;
+      recoveryAttempts.push(buildRecoveryAttemptDebug({ croppedMRZ, result, selectionScore }));
+      if (
+        croppedMRZ?.debug?.cropType === "line2"
+        && result.parsed?.data
+        && hasCompleteLine2Fields(result.parsed)
+        && (!bestLine2Crop || Number(selectionScore || -1000) > Number(bestLine2Crop.selectionScore || -1000))
+      ) {
+        bestLine2Crop = { ...result, selectionScore };
+      }
+      if (result.success) {
+        const score = selectionScore;
+        const scored = { ...result, selectionScore: score };
+        if (!bestSuccess || score > bestSuccess.selectionScore) bestSuccess = scored;
+        continue;
+      }
       if ((result.raw?.line1 || result.raw?.line2) && !(bestFailure.raw?.line1 || bestFailure.raw?.line2)) {
         bestFailure = result;
       } else if (result.error && bestFailure.error === "MRZ_NOT_FOUND") {
         bestFailure = result;
       }
     }
-    return bestFailure;
+    if (bestSuccess) {
+      const selectedSuccess = bestLine2Crop ? mergeLine2CropResult(bestSuccess, bestLine2Crop) : bestSuccess;
+      const debug = {
+        mode: "manual_crop",
+        attempts: recoveryAttempts,
+        variant: selectedSuccess.variant,
+        selectionScore: selectedSuccess.selectionScore,
+        raw: selectedSuccess.raw,
+        fields: selectedSuccess.parsed?.data,
+        checks: selectedSuccess.parsed?.checks,
+        reviewReasons: selectedSuccess.parsed?.reviewReasons,
+        line2CropOverride: selectedSuccess.line2CropOverride || null,
+      };
+      logMRZRecoveryDecision(debug);
+      return { ...selectedSuccess, debug };
+    }
+    const debug = {
+      mode: "manual_crop",
+      attempts: recoveryAttempts,
+      selected: null,
+      safeModeClearedFields: true,
+      reason: bestFailure.error || "MRZ_NOT_FOUND",
+    };
+    logMRZRecoveryDecision(debug);
+    return { ...bestFailure, debug };
   } catch (err) {
     return { success: false, error: err.message };
   }
