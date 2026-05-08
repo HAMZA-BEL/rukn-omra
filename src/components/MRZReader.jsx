@@ -10,14 +10,6 @@ import {
 } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
 import { AppIcon } from "./Icon";
-import {
-  getPackageRoomPrice,
-  getRoomTypeLabel,
-  getRoomTypeOptions,
-  normalizeProgramPackages,
-  normalizeRoomTypeKey,
-} from "../utils/programPackages";
-import { translateHotelLevel, translateRoomCategory, translateRoomType } from "../utils/i18nValues";
 import { validateLatinName } from "../utils/passportMrzEngine";
 
 const tc = theme.colors;
@@ -130,6 +122,8 @@ const LABELS = {
     male: "ذكر",
     female: "أنثى",
     programContext: "سيتم إضافة المعتمرين إلى برنامج: {program}",
+    programIncompleteNotice: "سيتم حفظ المعتمرين داخل هذا البرنامج دون مستوى أو غرفة. يرجى إكمال المعلومات لاحقًا.",
+    unassignedImportNotice: "سيتم حفظ المعتمرين دون ربطهم بأي برنامج.",
     packageLabel: "المستوى",
     roomType: "نوع الغرفة",
     roomCategory: "تصنيف الغرفة",
@@ -143,11 +137,11 @@ const LABELS = {
     groupInRoom: "جمع في غرفة واحدة",
     groupHint: "اختر معتمرين من جدول المراجعة ثم اجمعهم في غرفة واحدة.",
     selectedRows: "المحددون",
-    programRequired: "يجب اختيار البرنامج والمستوى ونوع الغرفة قبل حفظ الجوازات المستوردة.",
+    programRequired: "يمكن حفظ الجوازات دون برنامج عند فتح الاستيراد من تبويب المعتمرين.",
     packageRequired: "يرجى تحديد المستوى قبل الحفظ",
     roomTypeRequired: "يرجى تحديد نوع الغرفة قبل الحفظ",
-    assignmentRequired: "يجب اختيار البرنامج والمستوى ونوع الغرفة قبل حفظ الجوازات المستوردة.",
-    assignmentNotice: "سيتم حفظ جميع المعتمرين المستوردين بهذا المستوى ونوع الغرفة.",
+    assignmentRequired: "يمكن إكمال معلومات المستوى والغرفة لاحقًا.",
+    assignmentNotice: "سيتم حفظ المعتمرين دون مستوى أو غرفة.",
     saveRowFailed: "فشل حفظ هذا الصف",
     savedRow: "تم حفظ هذا الصف",
     grouped: "تم إنشاء مجموعة غرفة واحدة للمعتمرين المحددين",
@@ -234,6 +228,8 @@ const LABELS = {
     male: "Masculin",
     female: "Féminin",
     programContext: "Les pèlerins seront ajoutés au programme : {program}",
+    programIncompleteNotice: "Les pèlerins seront enregistrés dans ce programme sans niveau ni chambre. Informations à compléter ensuite.",
+    unassignedImportNotice: "Les pèlerins seront enregistrés sans affectation à un programme.",
     packageLabel: "Niveau",
     roomType: "Type chambre",
     roomCategory: "Classification chambre",
@@ -247,11 +243,11 @@ const LABELS = {
     groupInRoom: "Grouper dans la même chambre",
     groupHint: "Sélectionnez des pèlerins dans la revue puis groupez-les dans la même chambre.",
     selectedRows: "Sélectionnés",
-    programRequired: "Vous devez choisir le programme, le niveau et le type de chambre avant d’enregistrer les passeports importés.",
+    programRequired: "Les passeports peuvent être enregistrés sans programme depuis l’onglet pèlerins.",
     packageRequired: "Veuillez choisir le niveau avant l'enregistrement",
     roomTypeRequired: "Veuillez choisir le type de chambre avant l'enregistrement",
-    assignmentRequired: "Vous devez choisir le programme, le niveau et le type de chambre avant d’enregistrer les passeports importés.",
-    assignmentNotice: "Tous les pèlerins importés seront enregistrés avec ce niveau et ce type de chambre.",
+    assignmentRequired: "Les informations de niveau et de chambre peuvent être complétées ensuite.",
+    assignmentNotice: "Les pèlerins seront enregistrés sans niveau ni chambre.",
     saveRowFailed: "Échec de l’enregistrement de cette ligne",
     savedRow: "Ligne enregistrée",
     grouped: "Groupe même chambre créé pour les pèlerins sélectionnés",
@@ -338,6 +334,8 @@ const LABELS = {
     male: "Male",
     female: "Female",
     programContext: "Pilgrims will be added to program: {program}",
+    programIncompleteNotice: "Pilgrims will be saved in this program without package or room details. Complete the information later.",
+    unassignedImportNotice: "Pilgrims will be saved without a program assignment.",
     packageLabel: "Package",
     roomType: "Room type",
     roomCategory: "Room classification",
@@ -351,11 +349,11 @@ const LABELS = {
     groupInRoom: "Group in one room",
     groupHint: "Select pilgrims in the review table, then group them in one room.",
     selectedRows: "Selected",
-    programRequired: "You must select the program, level, and room type before saving imported passports.",
+    programRequired: "Passports can be saved without a program from the pilgrims tab.",
     packageRequired: "Select a package before saving",
     roomTypeRequired: "Select a room type before saving",
-    assignmentRequired: "You must select the program, level, and room type before saving imported passports.",
-    assignmentNotice: "All imported pilgrims will be saved with this level and room type.",
+    assignmentRequired: "Package and room information can be completed later.",
+    assignmentNotice: "Pilgrims will be saved without package or room details.",
     saveRowFailed: "This row could not be saved",
     savedRow: "Row saved",
     grouped: "One-room group created for the selected pilgrims",
@@ -604,7 +602,7 @@ const getMrzBirthDateMetaFromParsed = (parsed = {}) => {
   };
 };
 
-const getRequiredFieldsCheck = (row = {}, { programMode = false, packageRequired = false } = {}) => ({
+const getRequiredFieldsCheck = (row = {}, { programMode = false } = {}) => ({
   lastName: Boolean(String(row.latinLastName || row.arabicLastName || "").trim()),
   firstName: Boolean(String(row.latinFirstName || row.arabicFirstName || "").trim()),
   passportNumber: Boolean(normalizePassportNo(row.passportNo)),
@@ -612,12 +610,7 @@ const getRequiredFieldsCheck = (row = {}, { programMode = false, packageRequired
   birthDate: Boolean(birthDateRequirementValue(row)),
   expiryDate: Boolean(String(row.passportExpiry || "").trim()),
   gender: Boolean(String(row.gender || "").trim()),
-  programLevelRoom: !programMode || Boolean(
-    row.programId
-    && (!packageRequired || row.packageId)
-    && normalizeRoomTypeKey(row.roomType)
-    && row.roomCategory
-  ),
+  programLevelRoom: !programMode || Boolean(row.programId),
 });
 
 const requiredPassportFieldsPresent = (row = {}) => {
@@ -1210,27 +1203,11 @@ function ReviewRow({
   onChange,
   onRemove,
   onSelectMRZ,
-  programMode = false,
-  packages = [],
-  roomTypeOptions = [],
-  roomCategoryOptions = [],
-  selected = false,
-  onToggleSelected,
 }) {
   const statusColor = row.status === ROW_STATUS.READY || row.status === ROW_STATUS.MANUALLY_ACCEPTED ? tc.greenLight : row.status === ROW_STATUS.FAILED ? "var(--rukn-danger)" : "var(--rukn-warning)";
   const canManuallyAccept = rowCanBeManuallyAccepted(row);
   return (
     <tr style={{ borderTop: "1px solid var(--rukn-border-soft)" }}>
-      {programMode && (
-        <td style={{ padding: 8 }}>
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={(event) => onToggleSelected?.(row.id, event.target.checked)}
-            aria-label={labels.groupInRoom}
-          />
-        </td>
-      )}
       <td style={{ padding: 8, color: "var(--rukn-text-muted)", fontWeight: 800 }}>{index + 1}</td>
       <td style={{ padding: 8, color: "var(--rukn-text)", fontSize: 11, maxWidth: 140, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.source || "—"}</td>
       <td style={{ padding: 8 }}>
@@ -1270,64 +1247,13 @@ function ReviewRow({
           </span>
         )}
       </td>
-      {programMode && (
-        <>
-          {packages.length > 0 && (
-            <td style={{ padding: 6 }}>
-              <select
-                value={row.packageId || ""}
-                onChange={(event) => onChange(row.id, { packageId: event.target.value })}
-                style={{ ...fieldStyle, minWidth: 130 }}
-              >
-                <option value="" style={{ color: "#111827" }}>{labels.selectPackage}</option>
-                {packages.map((pkg) => (
-                  <option key={pkg.id} value={pkg.id} style={{ color: "#111827" }}>
-                    {pkg.displayLabel || pkg.level || pkg.id}
-                  </option>
-                ))}
-              </select>
-            </td>
-          )}
-          <td style={{ padding: 6 }}>
-            <select
-              value={row.roomType || ""}
-              onChange={(event) => onChange(row.id, { roomType: event.target.value })}
-              style={{ ...fieldStyle, minWidth: 120 }}
-            >
-              <option value="" style={{ color: "#111827" }}>{labels.selectRoomType}</option>
-              {roomTypeOptions.map((option) => (
-                <option key={option.value} value={option.value} style={{ color: "#111827" }}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </td>
-          <td style={{ padding: 6 }}>
-            <select
-              value={row.roomCategory || ""}
-              onChange={(event) => {
-                const option = roomCategoryOptions.find((item) => item.value === event.target.value);
-                onChange(row.id, { roomCategory: event.target.value, roomCategoryLabel: option?.label || "" });
-              }}
-              style={{ ...fieldStyle, minWidth: 130 }}
-            >
-              <option value="" style={{ color: "#111827" }}>{labels.selectRoomCategory}</option>
-              {roomCategoryOptions.map((option) => (
-                <option key={option.value} value={option.value} style={{ color: "#111827" }}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </td>
-          <td style={{ padding: 6 }}>
-            <input
-              value={row.phone || ""}
-              onChange={(event) => onChange(row.id, { phone: event.target.value })}
-              style={{ ...fieldStyle, minWidth: 110, direction: "ltr" }}
-            />
-          </td>
-        </>
-      )}
+      <td style={{ padding: 6 }}>
+        <input
+          value={row.phone || ""}
+          onChange={(event) => onChange(row.id, { phone: event.target.value })}
+          style={{ ...fieldStyle, minWidth: 110, direction: "ltr" }}
+        />
+      </td>
       {["latinLastName", "latinFirstName", "arabicLastName", "arabicFirstName", "passportNo", "nationality", "birthDate", "passportExpiry"].map((key) => (
         <td key={key} style={{ padding: 6 }}>
           {(() => {
@@ -1678,24 +1604,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const importProgram = programContext?.program || programContext || null;
   const importProgramId = importProgram?.id || "";
   const importProgramName = importProgram?.name || "";
-  const importPackages = React.useMemo(() => {
-    if (!importProgramId) return [];
-    if (Array.isArray(programContext?.packages)) return programContext.packages;
-    return normalizeProgramPackages(importProgram);
-  }, [importProgram, importProgramId, programContext?.packages]);
-  const packageOptions = React.useMemo(() => importPackages.map((pkg) => ({
-    ...pkg,
-    displayLabel: translateHotelLevel(pkg.level, lang) || pkg.level || pkg.id,
-  })), [importPackages, lang]);
-  const roomTypeOptions = React.useMemo(
-    () => getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
-    [lang],
-  );
-  const roomCategoryOptions = React.useMemo(() => ([
-    { value: "male_only", label: translateRoomCategory("male_only", lang) || l.maleOnly },
-    { value: "female_only", label: translateRoomCategory("female_only", lang) || l.femaleOnly },
-    { value: "family", label: translateRoomCategory("family", lang) || l.family },
-  ]), [l.family, l.femaleOnly, l.maleOnly, lang]);
   const [mode, setMode] = React.useState("image");
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
@@ -1703,11 +1611,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const [singleFile, setSingleFile] = React.useState(null);
   const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
   const [bulkFiles, setBulkFiles] = React.useState([]);
-  const [defaultPackageId, setDefaultPackageId] = React.useState("");
-  const [defaultRoomType, setDefaultRoomType] = React.useState("");
-  const [defaultRoomCategory, setDefaultRoomCategory] = React.useState("");
-  const [defaultPhone, setDefaultPhone] = React.useState("");
-  const [selectedRowIds, setSelectedRowIds] = React.useState(() => new Set());
   const [cropModal, setCropModal] = React.useState({ open: false, rowId: "", url: "", fileName: "" });
   const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
   const [cropReading, setCropReading] = React.useState(false);
@@ -1745,12 +1648,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
 
   const rowProgramDefaults = React.useCallback(() => importProgramId ? ({
     programId: importProgramId,
-    packageId: defaultPackageId || "",
-    roomType: normalizeRoomTypeKey(defaultRoomType) || "",
-    roomCategory: defaultRoomCategory || "",
-    roomCategoryLabel: roomCategoryOptions.find((option) => option.value === defaultRoomCategory)?.label || "",
-    phone: defaultPhone || "",
-  }) : {}, [defaultPackageId, defaultPhone, defaultRoomType, defaultRoomCategory, importProgramId, roomCategoryOptions]);
+  }) : {}, [importProgramId]);
 
   const clientByPassport = React.useMemo(() => {
     const map = new Map();
@@ -1847,7 +1745,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     if (!files.length) return;
     setError("");
     setRows([]);
-    setSelectedRowIds(new Set());
     rowFilesRef.current.clear();
     revokeAllDebugUrls();
     setProgress({ done: 0, total: files.length, active: true });
@@ -1897,7 +1794,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
           reviewReasonsAfter: updatedRow.reviewReasons || [],
           manualAccepted,
           accepted,
-          requiredFieldsCheck: getRequiredFieldsCheck(updatedRow, { programMode: Boolean(importProgramId), packageRequired: packageOptions.length > 0 }),
+          requiredFieldsCheck: getRequiredFieldsCheck(updatedRow, { programMode: Boolean(importProgramId) }),
           requiredFieldsValid: rowHasEssentialPassportData(updatedRow),
           cleanFieldsValid: rowHasRequiredPassportData(updatedRow),
           saveEligible: isRowSaveEligible(updatedRow),
@@ -1906,60 +1803,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       return updatedRow;
     }));
     if (manualAcceptRequested) onToast?.(l.manualAcceptToast, "success");
-  }, [importProgramId, l.manualAcceptToast, onToast, packageOptions.length]);
-
-  const toggleReviewSelection = React.useCallback((id, checked) => {
-    setSelectedRowIds((current) => {
-      const next = new Set(current);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
-
-  const applyProgramDefaultsToRows = React.useCallback(() => {
-    if (!importProgramId) return;
-    if ((packageOptions.length && !defaultPackageId) || !normalizeRoomTypeKey(defaultRoomType) || !defaultRoomCategory) {
-      onToast?.(l.assignmentRequired, "error");
-      return;
-    }
-    const roomCategoryLabel = roomCategoryOptions.find((option) => option.value === defaultRoomCategory)?.label || "";
-    setRows((current) => current.map((row) => ({
-      ...row,
-      programId: importProgramId,
-      packageId: defaultPackageId || row.packageId || "",
-      roomType: normalizeRoomTypeKey(defaultRoomType || row.roomType) || row.roomType || "",
-      roomCategory: defaultRoomCategory || row.roomCategory || "",
-      roomCategoryLabel: roomCategoryLabel || row.roomCategoryLabel || "",
-      phone: defaultPhone || row.phone || "",
-    })));
-    onToast?.(l.assignmentNotice, "info");
-  }, [defaultPackageId, defaultPhone, defaultRoomType, defaultRoomCategory, importProgramId, l.assignmentNotice, l.assignmentRequired, onToast, packageOptions.length, roomCategoryOptions]);
-
-  const groupSelectedRows = React.useCallback(() => {
-    if (selectedRowIds.size < 2) return;
-    const selectedIds = Array.from(selectedRowIds);
-    const groupId = `import-room-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
-    setRows((current) => {
-      let seat = 0;
-      return current.map((row) => {
-        if (!selectedRowIds.has(row.id)) return row;
-        seat += 1;
-        return {
-          ...row,
-          roomingGroupId: groupId,
-          familyGroupId: groupId,
-          importGroupId: groupId,
-          roomingGroupName: l.groupInRoom,
-          roomingGroupSize: selectedIds.length,
-          roomingSeatIndex: seat,
-          roomCategory: "family",
-          roomCategoryLabel: translateRoomCategory("family", lang) || l.family,
-        };
-      });
-    });
-    onToast?.(l.grouped, "success");
-  }, [l, lang, onToast, selectedRowIds]);
+  }, [importProgramId, l.manualAcceptToast, onToast]);
 
   const removeRow = React.useCallback((id) => {
     rowFilesRef.current.delete(id);
@@ -1967,12 +1811,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       const removed = current.find((row) => row.id === id);
       revokeDebugUrl(removed?.mrzDebug?.originalImageUrl);
       return current.filter((row) => row.id !== id);
-    });
-    setSelectedRowIds((current) => {
-      if (!current.has(id)) return current;
-      const next = new Set(current);
-      next.delete(id);
-      return next;
     });
   }, [revokeDebugUrl]);
 
@@ -2113,7 +1951,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       }
       const requiredFieldsCheck = getRequiredFieldsCheck(merged, {
         programMode: Boolean(importProgramId),
-        packageRequired: packageOptions.length > 0,
       });
       if (process.env.NODE_ENV !== "production") {
         const line2Mapping = buildMRZPriorityRowFields({
@@ -2184,7 +2021,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       return merged;
     }));
     return { hasParsedData, succeeded };
-  }, [cropModal.rowId, cropRect, findExisting, importProgramId, l, packageOptions.length]);
+  }, [cropModal.rowId, cropRect, findExisting, importProgramId, l]);
 
   const readSelectedCrop = React.useCallback(async () => {
     const file = rowFilesRef.current.get(cropModal.rowId);
@@ -2249,14 +2086,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   }, []);
 
   const toClientPayload = React.useCallback((row) => {
-    const selectedPackage = packageOptions.find((pkg) => pkg.id === row.packageId) || null;
-    const roomType = normalizeRoomTypeKey(row.roomType || defaultRoomType) || "";
-    const officialPrice = selectedPackage ? getPackageRoomPrice(selectedPackage, roomType) : 0;
+    const roomType = row.roomType || "";
     const roomingData = row.roomingGroupId ? {
       groupId: row.roomingGroupId,
       groupName: row.roomingGroupName || l.groupInRoom,
-      category: row.roomCategory || "family",
-      categoryLabel: row.roomCategoryLabel || translateRoomCategory("family", lang) || l.family,
+      category: row.roomCategory || "",
+      categoryLabel: row.roomCategoryLabel || "",
       size: row.roomingGroupSize || 0,
       seatIndex: row.roomingSeatIndex || 0,
     } : null;
@@ -2273,17 +2108,17 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       nameLatin: [row.latinLastName, row.latinFirstName].filter(Boolean).join(" "),
       phone: row.phone || "",
       gender: row.gender || "",
-      programId: importProgramId || row.programId || "",
+      programId: importProgramId || row.programId || null,
       packageId: row.packageId || "",
-      packageLevel: selectedPackage?.level || row.packageLevel || "",
-      hotelLevel: selectedPackage?.level || row.hotelLevel || "",
-      hotelMecca: selectedPackage?.hotelMecca || row.hotelMecca || "",
-      hotelMadina: selectedPackage?.hotelMadina || row.hotelMadina || "",
+      packageLevel: row.packageLevel || "",
+      hotelLevel: row.hotelLevel || "",
+      hotelMecca: row.hotelMecca || "",
+      hotelMadina: row.hotelMadina || "",
       roomType,
-      roomTypeLabel: getRoomTypeLabel(roomType),
-      officialPrice,
-      salePrice: officialPrice || 0,
-      price: officialPrice || 0,
+      roomTypeLabel: row.roomTypeLabel || "",
+      officialPrice: 0,
+      salePrice: 0,
+      price: 0,
       roomingGroupId: row.roomingGroupId || "",
       familyGroupId: row.familyGroupId || "",
       importGroupId: row.importGroupId || "",
@@ -2305,13 +2140,9 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       },
       notes: row.note || "",
     };
-  }, [buildPartialBirthDateDocs, defaultRoomType, importProgramId, l, lang, packageOptions]);
+  }, [buildPartialBirthDateDocs, importProgramId, l.groupInRoom]);
 
   const saveAccepted = React.useCallback(async () => {
-    if (!importProgramId) {
-      onToast?.(l.programRequired, "error");
-      return;
-    }
     const accepted = rows.filter(isRowSaveEligible);
     if (process.env.NODE_ENV !== "production") {
       console.debug("[MRZ] save-eligibility", rows.map((row) => ({
@@ -2321,7 +2152,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         manualAccepted: Boolean(row.manualAccepted),
         duplicateAction: row.duplicateAction,
         reviewReasons: row.reviewReasons || [],
-        requiredFieldsCheck: getRequiredFieldsCheck(row, { programMode: Boolean(importProgramId), packageRequired: packageOptions.length > 0 }),
+        requiredFieldsCheck: getRequiredFieldsCheck(row, { programMode: Boolean(importProgramId) }),
         requiredFieldsValid: rowHasEssentialPassportData(row),
         cleanFieldsValid: rowHasRequiredPassportData(row),
         saveEligible: isRowSaveEligible(row),
@@ -2339,15 +2170,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       onToast?.(l.requiredFieldsHardBlock, "error");
       return;
     }
-    if (
-      (packageOptions.length && accepted.some((row) => !row.packageId))
-      || accepted.some((row) => !normalizeRoomTypeKey(row.roomType))
-      || accepted.some((row) => !row.roomCategory)
-      || accepted.some((row) => !row.programId && !importProgramId)
-    ) {
-      onToast?.(l.assignmentRequired, "error");
-      return;
-    }
     setSaving(true);
     const failures = [];
     for (const row of accepted) {
@@ -2357,6 +2179,19 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         const nextPayload = {
           ...existing,
           ...payload,
+          programId: importProgramId ? payload.programId : (existing.programId || payload.programId || null),
+          packageId: payload.packageId || existing.packageId || "",
+          packageLevel: payload.packageLevel || existing.packageLevel || "",
+          hotelLevel: payload.hotelLevel || existing.hotelLevel || "",
+          hotelMecca: payload.hotelMecca || existing.hotelMecca || "",
+          hotelMadina: payload.hotelMadina || existing.hotelMadina || "",
+          roomType: payload.roomType || existing.roomType || "",
+          roomTypeLabel: payload.roomTypeLabel || existing.roomTypeLabel || "",
+          officialPrice: payload.officialPrice || existing.officialPrice || 0,
+          salePrice: payload.salePrice || existing.salePrice || existing.price || 0,
+          price: payload.price || existing.price || existing.salePrice || 0,
+          roomCategory: payload.roomCategory || existing.roomCategory || "",
+          roomCategoryLabel: payload.roomCategoryLabel || existing.roomCategoryLabel || "",
           passport: { ...(existing.passport || {}), ...payload.passport },
           docs: { ...(existing.docs || {}), ...(payload.docs || {}) },
         };
@@ -2389,7 +2224,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     }
     onToast?.(l.saved, "success");
     onClose?.();
-  }, [clients, importProgramId, l, onClose, onToast, packageOptions.length, rows, store, toClientPayload]);
+  }, [clients, importProgramId, l, onClose, onToast, rows, store, toClientPayload]);
 
   const firstAccepted = rows.find((row) => row.accepted && !row.existingClientId);
   const applySingleToForm = React.useCallback(() => {
@@ -2465,7 +2300,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
             fontSize: 12,
             fontWeight: 800,
           }}>
-            <AppIcon name="programs" size={15} color="var(--rukn-gold)" />
+            <AppIcon name="program" size={15} color="var(--rukn-gold)" />
             {formatMessage(l.programContext, { program: importProgramName || "—" })}
           </div>
         )}
@@ -2538,85 +2373,34 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
 
         {error && <div style={{ color: "var(--rukn-danger)", border: "1px solid var(--rukn-danger)", background: "var(--rukn-danger-dim)", borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 12 }}>{error}</div>}
 
-        {importProgramId && (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr)) auto auto",
-            gap: 8,
-            alignItems: "end",
-            marginBottom: 12,
-            padding: 10,
-            border: "1px solid var(--rukn-border-soft)",
-            borderRadius: 12,
-            background: "var(--rukn-bg-soft)",
-          }}>
-            {packageOptions.length > 0 && (
-              <label style={{ display: "grid", gap: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
-                {l.packageLabel}
-                <select value={defaultPackageId} onChange={(event) => setDefaultPackageId(event.target.value)} style={fieldStyle}>
-                  <option value="" style={{ color: "#111827" }}>{l.selectPackage}</option>
-                  {packageOptions.map((pkg) => (
-                    <option key={pkg.id} value={pkg.id} style={{ color: "#111827" }}>
-                      {pkg.displayLabel || pkg.level || pkg.id}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label style={{ display: "grid", gap: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
-              {l.roomType}
-              <select value={defaultRoomType} onChange={(event) => setDefaultRoomType(event.target.value)} style={fieldStyle}>
-                <option value="" style={{ color: "#111827" }}>{l.selectRoomType}</option>
-                {roomTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value} style={{ color: "#111827" }}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
-              {l.roomCategory}
-              <select value={defaultRoomCategory} onChange={(event) => setDefaultRoomCategory(event.target.value)} style={fieldStyle}>
-                <option value="" style={{ color: "#111827" }}>{l.selectRoomCategory}</option>
-                {roomCategoryOptions.map((option) => (
-                  <option key={option.value} value={option.value} style={{ color: "#111827" }}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ display: "grid", gap: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
-              {l.phone}
-              <input value={defaultPhone} onChange={(event) => setDefaultPhone(event.target.value)} style={{ ...fieldStyle, direction: "ltr" }} />
-            </label>
-            <button type="button" onClick={applyProgramDefaultsToRows} style={{ border: "1px solid var(--rukn-border)", background: "var(--rukn-gold-dim)", color: "var(--rukn-gold)", borderRadius: 10, padding: "8px 11px", fontSize: 11, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" }}>
-              {l.applyToAll}
-            </button>
-            <button type="button" onClick={groupSelectedRows} disabled={selectedRowIds.size < 2} title={l.groupHint} style={{ border: "1px solid var(--rukn-border-soft)", background: "var(--rukn-bg-card)", color: selectedRowIds.size < 2 ? "var(--rukn-text-muted)" : "var(--rukn-text)", borderRadius: 10, padding: "8px 11px", fontSize: 11, fontWeight: 900, cursor: selectedRowIds.size < 2 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-              {l.groupInRoom} · {selectedRowIds.size}
-            </button>
-            <p style={{ gridColumn: "1 / -1", color: "var(--rukn-text-muted)", fontSize: 11, lineHeight: 1.6, margin: 0 }}>
-              {l.assignmentNotice}
-            </p>
-          </div>
-        )}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 12,
+          padding: "9px 11px",
+          borderRadius: 12,
+          border: "1px solid var(--rukn-border-soft)",
+          background: importProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
+          color: importProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
+          fontSize: 12,
+          fontWeight: 800,
+          lineHeight: 1.6,
+        }}>
+          <AppIcon name={importProgramId ? "alert" : "program"} size={15} color={importProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
+          {importProgramId ? l.programIncompleteNotice : l.unassignedImportNotice}
+        </div>
 
         <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 12, overflow: "auto", maxHeight: 360, background: "var(--rukn-bg-card)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: importProgramId ? 1920 : 1390 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1520 }}>
             <thead style={{ position: "sticky", top: 0, background: "var(--rukn-bg-card)", zIndex: 1 }}>
               <tr>
                 {[
-                  ...(importProgramId ? [""] : []),
                   "#",
                   l.source,
                   l.dataSource,
                   l.status,
-                  ...(importProgramId ? [
-                    ...(packageOptions.length ? [l.packageLabel] : []),
-                    l.roomType,
-                    l.roomCategory,
-                    l.phone,
-                  ] : []),
+                  l.phone,
                   l.latinLast,
                   l.latinFirst,
                   l.arabicLast,
@@ -2645,15 +2429,9 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
                   onChange={updateRow}
                   onRemove={removeRow}
                   onSelectMRZ={openCropModal}
-                  programMode={Boolean(importProgramId)}
-                  packages={packageOptions}
-                  roomTypeOptions={roomTypeOptions}
-                  roomCategoryOptions={roomCategoryOptions}
-                  selected={selectedRowIds.has(row.id)}
-                  onToggleSelected={toggleReviewSelection}
                 />
               )) : (
-                <tr><td colSpan={importProgramId ? 22 : 17} style={{ padding: 22, textAlign: "center", color: "var(--rukn-text-muted)", fontWeight: 800 }}>{l.noRows}</td></tr>
+                <tr><td colSpan={18} style={{ padding: 22, textAlign: "center", color: "var(--rukn-text-muted)", fontWeight: 800 }}>{l.noRows}</td></tr>
               )}
             </tbody>
           </table>
@@ -2664,7 +2442,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
           <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
           {onResult && firstAccepted && <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>}
-          <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || saving || !importProgramId}>{saving ? l.processing : l.saveAccepted}</Button>
+          <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || saving}>{saving ? l.processing : l.saveAccepted}</Button>
         </div>
       </div>
       {cropModal.open && (

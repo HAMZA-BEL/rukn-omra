@@ -55,6 +55,12 @@ import {
   translateRoomType,
   trKey,
 } from "../utils/i18nValues";
+import {
+  INCOMPLETE_INFO_FILTER,
+  clientNeedsCompletion,
+  getClientCompletionBadges,
+  getClientCompletionLabels,
+} from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
 import {
@@ -108,6 +114,19 @@ import {
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
+const completionBadgeStyle = (tone) => ({
+  display:"inline-flex",
+  alignItems:"center",
+  gap:4,
+  padding:"1px 7px",
+  borderRadius:999,
+  border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
+  background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
+  color:tone === "warning" ? tc.warning : tc.grey,
+  fontSize:10,
+  fontWeight:800,
+  whiteSpace:"nowrap",
+});
 const PACKAGE_TEMPLATES = ["اقتصادي", "سياحي", "سياحي بالإفطار"];
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
@@ -1552,6 +1571,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const statusFilterRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
   const bulkActionsMenuPos = useDropdownPosition({
     anchorRef: bulkActionsBtnRef,
     menuRef: bulkActionsMenuRef,
@@ -1568,6 +1588,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     const matchesFilter = filter === "all" || status === filter;
     const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
     const matchesPackage = packageFilter === "all"
+      || (packageFilter === INCOMPLETE_INFO_FILTER && clientNeedsCompletion(c))
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
     const q   = search.toLowerCase();
@@ -1803,13 +1824,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const packageChips = React.useMemo(() => {
     const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
     const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
+    const incompleteCount = progClients.filter(clientNeedsCompletion).length;
     return [
       { key: "all", label: t.all, count: progClients.length },
+      ...(incompleteCount ? [{ key: INCOMPLETE_INFO_FILTER, label: completionLabels.incompleteFilter, count: incompleteCount }] : []),
       ...packages.map(pkg => ({ key: pkg.level, label: translateHotelLevel(pkg.level, lang) || pkg.level, count: countForLevel(pkg.level) })),
       ...(unassignedCount ? [{ key: "__unassigned", label: t.noHotel || "غير محدد", count: unassignedCount }] : []),
     ];
-  }, [packages, progClients, t, lang]);
-  const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned"
+  }, [completionLabels.incompleteFilter, packages, progClients, t, lang]);
+  const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned" || packageFilter === INCOMPLETE_INFO_FILTER
     ? null
     : packages.find(pkg => pkg.level === packageFilter) || null;
   const activePackageChip = packageChips.find(chip => chip.key === packageFilter) || packageChips[0];
@@ -2047,7 +2070,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     {
       key: "passport",
       icon: "passport",
-      label: lang === "fr" ? "Importer depuis les passeports" : lang === "en" ? "Import from passports" : "استيراد من الجوازات",
+      label: completionLabels.passportImport,
       onClick: handlePassportImportOpen,
     },
     {
@@ -2080,7 +2103,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -2315,7 +2338,19 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             </div>
           </div>
         </div>
-        {packageFilter === "__unassigned" ? (
+        {packageFilter === INCOMPLETE_INFO_FILTER ? (
+          <div style={{
+            border:"1px dashed rgba(245,158,11,.28)",
+            background:"rgba(245,158,11,.08)",
+            borderRadius:10,
+            padding:"10px 12px",
+            color:tc.warning,
+            fontSize:12,
+            fontWeight:800,
+          }}>
+            {completionLabels.informationIncomplete}
+          </div>
+        ) : packageFilter === "__unassigned" ? (
           <div style={{
             border:"1px dashed rgba(148,163,184,.2)",
             background:"rgba(148,163,184,.05)",
@@ -2749,7 +2784,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       <Modal
         open={showPassportImport}
         onClose={() => setShowPassportImport(false)}
-        title={lang === "fr" ? "Importer depuis les passeports" : lang === "en" ? "Import from passports" : "استيراد من الجوازات"}
+        title={completionLabels.passportImport}
         width={1040}
       >
         {showPassportImport && (
@@ -6491,6 +6526,7 @@ function InnerClientRow({
   const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
   const infoLine = [phoneLabel, cityLabel, bookingLabel ? `• ${bookingLabel}` : ""].filter(Boolean).join(" ");
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
+  const completionBadges = getClientCompletionBadges(client, lang);
 
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
@@ -6632,6 +6668,11 @@ function InnerClientRow({
                   {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
                 </span>
               )}
+              {completionBadges.map((badge) => (
+                <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+                  {badge.label}
+                </span>
+              ))}
             </div>
             <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
           </div>

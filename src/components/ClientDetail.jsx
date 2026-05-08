@@ -20,6 +20,7 @@ import {
   isEligibleRepresentative,
   isClientMinorWithoutCin,
 } from "../utils/clientRepresentation";
+import { getClientCompletionBadges } from "../utils/clientCompletionStatus";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -29,6 +30,19 @@ const printActionButtonStyle = {
   whiteSpace: "nowrap",
   textAlign: "center",
 };
+const completionBadgeStyle = (tone) => ({
+  display:"inline-flex",
+  alignItems:"center",
+  gap:4,
+  padding:"2px 8px",
+  borderRadius:999,
+  border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
+  background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
+  color:tone === "warning" ? tc.warning : tc.grey,
+  fontSize:10,
+  fontWeight:800,
+  whiteSpace:"nowrap",
+});
 
 const KNOWN_AIRLINE_LABELS = {
   SV: {
@@ -87,6 +101,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
+  const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang), [client, lang]);
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
@@ -301,6 +316,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
               </span>
             )}
+            {completionBadges.map((badge) => (
+              <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+                {badge.label}
+              </span>
+            ))}
           </div>
           {/* Amadeus format */}
           {(client.nom || client.prenom) && (
@@ -390,6 +410,18 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 <p style={{ fontSize:10, color:tc.grey }}>{k}</p>
                 <p style={{ fontSize:12, fontWeight:600, color:"var(--rukn-text-strong)" }}>{v}</p>
               </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+      {!program && !showDeletedProgramSnapshot && completionBadges.length > 0 && (
+        <GlassCard gold style={{ padding:14, marginBottom:14 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+            <AppIcon name="program" size={14} color={tc.gold} />
+            {completionBadges.map((badge) => (
+              <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+                {badge.label}
+              </span>
             ))}
           </div>
         </GlassCard>

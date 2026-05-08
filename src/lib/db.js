@@ -649,7 +649,11 @@ export const db = {
         query = query.eq("archived", false);
       }
 
-      if (programId) query = query.eq("program_id", programId);
+      if (programId === "__unassigned_program") {
+        query = query.is("program_id", null);
+      } else if (programId) {
+        query = query.eq("program_id", programId);
+      }
 
       const term = cleanPostgrestSearch(search);
       if (term) {

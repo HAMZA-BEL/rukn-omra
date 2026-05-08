@@ -5,6 +5,7 @@ import TransferSheet from "./TransferSheet";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
 import ImportClientsModal from "./ImportClientsModal";
+import MRZReader from "./MRZReader";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
@@ -12,6 +13,12 @@ import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { getParticipantTerminology } from "../utils/participantTerminology";
+import {
+  UNASSIGNED_PROGRAM_FILTER,
+  getClientCompletionBadges,
+  getClientCompletionLabels,
+  isUnassignedClient,
+} from "../utils/clientCompletionStatus";
 import { fetchClientsPage } from "../services/clientsService";
 
 const tc = theme.colors;
@@ -74,6 +81,7 @@ export default function ClientsPage({ store, onToast }) {
   const [checkedIds,  setCheckedIds]  = React.useState(new Set());
   const [selectMode,  setSelectMode]  = React.useState(false);
   const [showImport,  setShowImport]  = React.useState(false);
+  const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
   const getClientProgram = React.useCallback(
@@ -114,7 +122,8 @@ export default function ClientsPage({ store, onToast }) {
     return fallbackClients.filter(c => {
       const status = getClientStatus(c);
       const ok1 = tab === "archived" || filter === "all" || status === filter;
-      const ok2 = filterProg === "all" || c.programId === filterProg;
+      const ok2 = filterProg === "all"
+        || (filterProg === UNASSIGNED_PROGRAM_FILTER ? isUnassignedClient(c) : c.programId === filterProg);
       const q   = search.toLowerCase();
       const displayName = getClientDisplayName(c, "");
       const ok3 = !q || displayName.toLowerCase().includes(q) ||
@@ -279,6 +288,7 @@ export default function ClientsPage({ store, onToast }) {
     if (lang === "en") return "deleted";
     return "محذوف";
   }, [lang]);
+  const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
   const unspecifiedProgramLabel = React.useMemo(() => {
     if (lang === "fr") return "Non défini";
     if (lang === "en") return "Not specified";
@@ -369,6 +379,9 @@ export default function ClientsPage({ store, onToast }) {
         </div>
         {tab === "active" && (
           <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Button variant="ghost" icon="passport" onClick={() => setShowPassportImport(true)}>
+              {completionLabels.passportImport}
+            </Button>
             <Button variant="ghost" icon="import" onClick={() => setShowImport(true)}>
               {t.importExcel}
             </Button>
@@ -418,6 +431,7 @@ export default function ClientsPage({ store, onToast }) {
             fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
           }}>
             <option value="all">{t.allPrograms}</option>
+            <option value={UNASSIGNED_PROGRAM_FILTER}>{completionLabels.unassignedFilter}</option>
             {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -434,6 +448,7 @@ export default function ClientsPage({ store, onToast }) {
             fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
           }}>
             <option value="all">{t.allPrograms}</option>
+            <option value={UNASSIGNED_PROGRAM_FILTER}>{completionLabels.unassignedFilter}</option>
             {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
@@ -659,6 +674,15 @@ export default function ClientsPage({ store, onToast }) {
           />
         )}
       </Modal>
+      <Modal open={showPassportImport} onClose={() => setShowPassportImport(false)} title={completionLabels.passportImport} width={1040}>
+        {showPassportImport && (
+          <MRZReader
+            store={store}
+            onClose={() => setShowPassportImport(false)}
+            onToast={onToast}
+          />
+        )}
+      </Modal>
       <TransferSheet
         open={transferSheetOpen}
         onClose={closeTransferSheet}
@@ -687,6 +711,20 @@ const FilterChip = React.memo(function FilterChip({ icon, label, active, onClick
       <span>{label}</span>
     </button>
   );
+});
+
+const clientCompletionBadgeStyle = (tone) => ({
+  display:"inline-flex",
+  alignItems:"center",
+  gap:4,
+  padding:"2px 8px",
+  borderRadius:999,
+  border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
+  background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
+  color:tone === "warning" ? tc.warning : tc.grey,
+  fontSize:10,
+  fontWeight:800,
+  whiteSpace:"nowrap",
 });
 
 // ── ClientRow ─────────────────────────────────────────────────────────────────
@@ -724,6 +762,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
+  const completionBadges = getClientCompletionBadges(client, lang);
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
       onCheck();
@@ -848,6 +887,9 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             </div>
           </div>
           <div className="client-card-mobile-tags">
+            {completionBadges.map((badge) => (
+              <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>{badge.label}</span>
+            ))}
             {cityLine && <span>{cityLine}</span>}
             {registrationSource && <span>{registrationSource}</span>}
             {ticketLine && <span>{ticketLine}</span>}
@@ -926,6 +968,15 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
               }}>
                 {registrationSource}
               </span>
+            )}
+            {completionBadges.length > 0 && (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginTop:5 }}>
+                {completionBadges.map((badge) => (
+                  <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>
+                    {badge.label}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
           {!selectMode && (
