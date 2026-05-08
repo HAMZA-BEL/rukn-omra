@@ -250,21 +250,30 @@ export function Select({ label, value, onChange, options, required, style, disab
 // ── Badge ─────────────────────────────────────────────────────────────────────
 export function StatusBadge({ status }) {
   const { t } = useLang();
-  const statusKey = ["cleared", "partial", "unpaid"].includes(status) ? status : null;
-  const label = statusKey ? t[`status_${statusKey}`] : status;
+  const statusKey = ["cleared", "partial", "unpaid", "unassigned_program", "information_incomplete", "deleted_program"].includes(status) ? status : null;
+  const label = statusKey === "unassigned_program"
+    ? (t.unassignedProgramBadge || status)
+    : statusKey === "deleted_program"
+      ? (t.deletedProgramBadge || t.deletedProgram || status)
+    : statusKey === "information_incomplete"
+      ? (t.informationIncompleteBadge || status)
+      : statusKey ? t[`status_${statusKey}`] : status;
 
   const map = {
     cleared: { bg: "rgba(34,197,94,.15)", color: "#22c55e", dot: "#22c55e" },
     partial: { bg: "rgba(245,158,11,.15)", color: "#f59e0b", dot: "#f59e0b" },
     unpaid:  { bg: "rgba(239,68,68,.15)",  color: "#ef4444", dot: "#ef4444" },
+    unassigned_program: { bg: "rgba(148,163,184,.12)", color: "#94a3b8", dot: "#94a3b8" },
+    deleted_program: { bg: "rgba(148,163,184,.12)", color: "#94a3b8", dot: "#94a3b8" },
+    information_incomplete: { bg: "rgba(245,158,11,.13)", color: "#f59e0b", dot: "#f59e0b" },
   };
   const s = map[statusKey] || map.unpaid;
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 6,
       background: s.bg, color: s.color,
-      padding: "4px 12px", borderRadius: 20,
-      fontSize: 12, fontWeight: 700,
+      padding: "3px 8px", borderRadius: 999,
+      fontSize: 11, fontWeight: 800,
       border: `1px solid ${s.color}33`,
     }}>
       <span style={{

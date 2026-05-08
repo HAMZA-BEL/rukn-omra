@@ -20,7 +20,7 @@ import {
   isEligibleRepresentative,
   isClientMinorWithoutCin,
 } from "../utils/clientRepresentation";
-import { getClientCompletionBadges } from "../utils/clientCompletionStatus";
+import { getClientCompletionBadges, getClientCompletionLabels, getClientDeletedProgramLabel, getClientDisplayStatus, getClientPaymentEligibility, getClientProgramId } from "../utils/clientCompletionStatus";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -85,7 +85,8 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
 
-  const program     = getProgramById(client.programId);
+  const clientProgramId = getClientProgramId(client);
+  const program     = getProgramById(clientProgramId);
   const docs        = client.docs || {};
   const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
   const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
@@ -97,18 +98,25 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const remaining   = Math.max(0, salePrice - totalPaid);
   const discount    = Math.max(0, offPrice - salePrice);
   const status      = getClientStatus(client);
+  const displayStatus = getClientDisplayStatus(client, program, status);
   const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
   const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
-  const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang), [client, lang]);
+  const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program), [client, lang, program]);
+  const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
+  const paymentEligibility = React.useMemo(() => getClientPaymentEligibility(client, program), [client, program]);
+  const secondaryCompletionBadges = React.useMemo(
+    () => completionBadges.filter((badge) => badge.key !== displayStatus),
+    [completionBadges, displayStatus],
+  );
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
   const badgePhotoPath = client.badgePhotoPath || docs.badgePhotoPath || "";
   const programClients = React.useMemo(
-    () => clients.filter((item) => item.programId === client.programId),
-    [clients, client.programId]
+    () => clients.filter((item) => getClientProgramId(item) === clientProgramId),
+    [clients, clientProgramId]
   );
   const badgeFileNumber = React.useMemo(() => {
     const index = programClients.findIndex((item) => item.id === client.id);
@@ -260,6 +268,20 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
     setReceiptPayment(null);
   }, [agency, client, lang, payments, program, receiptPayment]);
 
+  const paymentBlockMessage = paymentEligibility.paymentEligibilityReason === "no_program"
+    ? (t.noProgramPaymentBlocked || completionLabels.noProgramPaymentBlocked)
+    : (t.incompleteProgramPaymentBlocked || completionLabels.incompleteProgramPaymentBlocked);
+  const paymentPanelMessage = paymentEligibility.paymentEligibilityReason === "no_program"
+    ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
+    : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel);
+  const handleAddPaymentClick = React.useCallback(() => {
+    if (!paymentEligibility.canAddPayment) {
+      onToast?.(paymentBlockMessage, "error");
+      return;
+    }
+    setShowPayForm(true);
+  }, [onToast, paymentBlockMessage, paymentEligibility.canAddPayment]);
+
   React.useEffect(() => {
     let cancelled = false;
     setBadgePhotoUrl("");
@@ -316,7 +338,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
               </span>
             )}
-            {completionBadges.map((badge) => (
+            {secondaryCompletionBadges.map((badge) => (
               <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
                 {badge.label}
               </span>
@@ -341,11 +363,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 <AppIcon name="location" size={13} color={tc.grey} /> {t.address || "العنوان"}: {address}
               </span>
             )}
-            <span style={{ fontSize:12, color:tc.grey, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="archive" size={13} color={tc.grey} /> {client.id}</span>
             {client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
           </div>
         </div>
-        <StatusBadge status={status} />
+        <StatusBadge status={displayStatus} />
       </div>
 
       {/* Print buttons */}
@@ -393,8 +414,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {[
-              [t.program,     program?.name || deletedProgramSnapshot?.programName || deletedProgramSnapshot?.programNameFr || "—"],
-              ...(showDeletedProgramSnapshot && deletedProgramSnapshot?.originalProgramId ? [[lang === "fr" ? "ID original" : lang === "en" ? "Original ID" : "المعرّف الأصلي", deletedProgramSnapshot.originalProgramId]] : []),
+              [t.program,     program?.name || (showDeletedProgramSnapshot ? getClientDeletedProgramLabel(client, lang) : completionLabels.deletedProgram)],
               [t.level || "المستوى",  translateClientLevel(client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel, lang) || client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel || "—"],
               [t.hotelMecca,  client.hotelMecca || deletedProgramSnapshot?.hotelMecca || "—"],
               [t.hotelMadina, client.hotelMadina || deletedProgramSnapshot?.hotelMadina || "—"],
@@ -414,11 +434,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           </div>
         </GlassCard>
       )}
-      {!program && !showDeletedProgramSnapshot && completionBadges.length > 0 && (
+      {!program && !showDeletedProgramSnapshot && secondaryCompletionBadges.length > 0 && (
         <GlassCard gold style={{ padding:14, marginBottom:14 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <AppIcon name="program" size={14} color={tc.gold} />
-            {completionBadges.map((badge) => (
+            {secondaryCompletionBadges.map((badge) => (
               <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
                 {badge.label}
               </span>
@@ -531,11 +551,35 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       <Divider label={t.paymentRecord} />
 
+      {!paymentEligibility.canAddPayment && (
+        <div style={{
+          display:"flex",
+          alignItems:"flex-start",
+          gap:8,
+          padding:"8px 11px",
+          marginBottom:10,
+          borderRadius:10,
+          border:"1px solid rgba(245,158,11,.28)",
+          background:"rgba(245,158,11,.09)",
+          color:tc.warning,
+          fontSize:11.5,
+          lineHeight:1.5,
+          fontWeight:700,
+        }}>
+          <AppIcon name="alert" size={15} color={tc.warning} />
+          <span>{paymentPanelMessage}</span>
+        </div>
+      )}
+
       {/* Add payment */}
-      {status !== "cleared" && !showPayForm && (
-        <Button variant="success" icon="plus" onClick={() => setShowPayForm(true)}
-          style={{ marginBottom:12 }}>
-          {t.addPayment}
+      {displayStatus !== "cleared" && !showPayForm && (
+        <Button
+          variant={paymentEligibility.canAddPayment ? "success" : "warning"}
+          icon={paymentEligibility.canAddPayment ? "plus" : "alert"}
+          onClick={handleAddPaymentClick}
+          style={{ marginBottom:12 }}
+        >
+          {paymentEligibility.canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
         </Button>
       )}
       {showPayForm && (

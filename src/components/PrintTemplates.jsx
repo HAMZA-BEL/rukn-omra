@@ -202,7 +202,7 @@ const commonPrintCSS = `
   html[dir="rtl"] .price, html[dir="rtl"] .qty { text-align:center; }
   @media print { @page { size:A4 portrait; margin:0; } }
 `;
-export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice" }) {
+export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice", submitLabel = "" }) {
   const [recipientType, setRecipientType] = React.useState("client");
   const [companyName, setCompanyName] = React.useState("");
   const [companyIce, setCompanyIce] = React.useState("");
@@ -332,6 +332,8 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
           <Button variant="primary" icon="print" onClick={handlePrint} disabled={printing}>
             {printing
               ? label(lang, "جاري التحضير...", "Préparation...", "Preparing...")
+              : submitLabel
+                ? submitLabel
               : documentType === "proforma"
               ? label(lang, "طباعة فاتورة أولية", "Imprimer proforma", "Print Proforma")
               : label(lang, "طباعة الفاتورة", "Imprimer la facture", "Print Invoice")}

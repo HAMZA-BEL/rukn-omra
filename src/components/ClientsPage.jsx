@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { SearchBar, Button, StatusBadge, EmptyState, Modal, GlassCard } from "./UI";
+import { Button, StatusBadge, EmptyState, Modal, GlassCard } from "./UI";
 import TransferSheet from "./TransferSheet";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
@@ -15,9 +15,12 @@ import { getClientDisplayName } from "../utils/clientNames";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
   UNASSIGNED_PROGRAM_FILTER,
+  getClientDisplayStatus,
   getClientCompletionBadges,
   getClientCompletionLabels,
-  isUnassignedClient,
+  getClientDeletedProgramLabel,
+  getClientProgramId,
+  hasDeletedProgramContext,
 } from "../utils/clientCompletionStatus";
 import { fetchClientsPage } from "../services/clientsService";
 
@@ -44,12 +47,8 @@ const formatClientReference = (client = {}) => {
   const ticket = typeof client?.ticketNo === "string" ? client.ticketNo.trim() : "";
   if (ticket) return ticket;
   const fallback = typeof client?.id === "string" ? client.id.trim() : "";
-  if (!fallback) return "—";
-  if (UUID_REGEX.test(fallback)) {
-    const start = fallback.slice(0, 4).toUpperCase();
-    const end = fallback.slice(-4).toUpperCase();
-    return `#${start}-${end}`;
-  }
+  if (!fallback) return "";
+  if (UUID_REGEX.test(fallback) || fallback.length > 18) return "";
   return fallback;
 };
 
@@ -84,8 +83,14 @@ export default function ClientsPage({ store, onToast }) {
   const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
+  const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
+  const [importMenuOpen, setImportMenuOpen] = React.useState(false);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const statusFilterRef = React.useRef(null);
+  const importMenuRef = React.useRef(null);
+  const searchInputRef = React.useRef(null);
   const getClientProgram = React.useCallback(
-    (client) => programs.find((program) => program.id === client?.programId) || null,
+    (client) => programs.find((program) => program.id === getClientProgramId(client)) || null,
     [programs]
   );
   const getClientTerms = React.useCallback(
@@ -99,31 +104,32 @@ export default function ClientsPage({ store, onToast }) {
     setSearch("");
     setFilter("all");
     setFilterProg("all");
+    setStatusFilterOpen(false);
+    setImportMenuOpen(false);
+    setSearchOpen(false);
     setTransferTargets([]);
     setTransferSheetOpen(false);
     exitSelectMode();
   };
 
-  const FILTERS = [
-    { key:"all",     label:t.all,           icon:"users" },
-    { key:"cleared", label:t.clearedFilter, icon:"success" },
-    { key:"partial", label:t.partialFilter, icon:"partial" },
-    { key:"unpaid",  label:t.unpaidFilter,  icon:"unpaid" },
-  ];
-
   const fallbackClients = tab === "active" ? activeClients : archivedClients;
   const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all");
   const shouldUseFullFallback = !useRemotePaging || Boolean(remotePage.error);
+  const programById = React.useMemo(() => new Map(programs.map((program) => [program.id, program])), [programs]);
+  const getDisplayStatusForClient = React.useCallback((client) => (
+    getClientDisplayStatus(client, programById.get(getClientProgramId(client)), getClientStatus(client))
+  ), [getClientStatus, programById]);
 
   // The full store list is only used for payment-status filters and local mode.
   // When remote paging is available, the visible page comes from Supabase range().
   const fallbackFilteredClients = React.useMemo(() => {
     if (!shouldUseFullFallback) return [];
     return fallbackClients.filter(c => {
-      const status = getClientStatus(c);
-      const ok1 = tab === "archived" || filter === "all" || status === filter;
-      const ok2 = filterProg === "all"
-        || (filterProg === UNASSIGNED_PROGRAM_FILTER ? isUnassignedClient(c) : c.programId === filterProg);
+      const status = getDisplayStatusForClient(c);
+      const ok1 = tab === "archived"
+        || filter === "all"
+        || (filter === UNASSIGNED_PROGRAM_FILTER ? status === "unassigned_program" : status === filter);
+      const ok2 = filterProg === "all" || getClientProgramId(c) === filterProg;
       const q   = search.toLowerCase();
       const displayName = getClientDisplayName(c, "");
       const ok3 = !q || displayName.toLowerCase().includes(q) ||
@@ -131,7 +137,7 @@ export default function ClientsPage({ store, onToast }) {
         (c.ticketNo||"").toLowerCase().includes(q);
       return ok1 && ok2 && ok3;
     });
-  }, [fallbackClients, filter, filterProg, search, getClientStatus, tab, shouldUseFullFallback]);
+  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, tab, shouldUseFullFallback]);
 
   // Reset to page 1 whenever filters or tab change
   React.useEffect(() => { setCurrentPage(1); }, [search, filter, filterProg, tab]);
@@ -289,6 +295,33 @@ export default function ClientsPage({ store, onToast }) {
     return "محذوف";
   }, [lang]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
+  const statusFilters = React.useMemo(() => ([
+    { key:"all", label:t.all, icon:"users" },
+    { key:"cleared", label:t.status_cleared || t.clearedFilter, icon:"success" },
+    { key:"partial", label:t.status_partial || t.partialFilter, icon:"partial" },
+    { key:"unpaid", label:t.status_unpaid || t.unpaidFilter, icon:"unpaid" },
+    { key:UNASSIGNED_PROGRAM_FILTER, label:t.unassignedProgramFilter || completionLabels.unassignedProgram, icon:"program" },
+  ]), [completionLabels.unassignedProgram, t]);
+  const activeStatusFilter = statusFilters.find((item) => item.key === filter) || statusFilters[0];
+  React.useEffect(() => {
+    if (!statusFilterOpen) return undefined;
+    const handleOutside = (event) => {
+      if (statusFilterRef.current?.contains(event.target)) return;
+      setStatusFilterOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutside);
+    return () => document.removeEventListener("pointerdown", handleOutside);
+  }, [statusFilterOpen]);
+  React.useEffect(() => {
+    if (!importMenuOpen) return undefined;
+    const handleOutside = (event) => {
+      if (importMenuRef.current?.contains(event.target)) return;
+      setImportMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutside);
+    return () => document.removeEventListener("pointerdown", handleOutside);
+  }, [importMenuOpen]);
+  const searchExpanded = searchOpen || search.trim().length > 0;
   const unspecifiedProgramLabel = React.useMemo(() => {
     if (lang === "fr") return "Non défini";
     if (lang === "en") return "Not specified";
@@ -299,8 +332,9 @@ export default function ClientsPage({ store, onToast }) {
     if (!selectMode) return new Map();
     const counts = new Map();
     activeClients.forEach(c => {
-      if (!c.programId) return;
-      counts.set(c.programId, (counts.get(c.programId) || 0) + 1);
+      const programId = getClientProgramId(c);
+      if (!programId) return;
+      counts.set(programId, (counts.get(programId) || 0) + 1);
     });
     return counts;
   }, [activeClients, selectMode]);
@@ -378,16 +412,75 @@ export default function ClientsPage({ store, onToast }) {
           </p>
         </div>
         {tab === "active" && (
-          <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Button variant="ghost" icon="passport" onClick={() => setShowPassportImport(true)}>
-              {completionLabels.passportImport}
-            </Button>
-            <Button variant="ghost" icon="import" onClick={() => setShowImport(true)}>
-              {t.importExcel}
-            </Button>
+          <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
             <Button variant="primary" icon="plus" onClick={() => setShowAdd(true)}>
               {t.addClient}
             </Button>
+            <div ref={importMenuRef} style={{ position:"relative" }}>
+              <Button variant="ghost" icon="import" onClick={() => setImportMenuOpen(open => !open)}>
+                {t.importAction || completionLabels.importAction}
+              </Button>
+              {importMenuOpen && (
+                <div style={{
+                  position:"absolute",
+                  top:"calc(100% + 6px)",
+                  insetInlineEnd:0,
+                  zIndex:35,
+                  width:210,
+                  padding:6,
+                  borderRadius:12,
+                  background:"var(--rukn-menu-bg)",
+                  border:"1px solid var(--rukn-menu-border)",
+                  boxShadow:"var(--rukn-menu-shadow)",
+                }}>
+                  {[
+                    {
+                      key:"excel",
+                      icon:"import",
+                      label:t.excelImport || t.importExcel || completionLabels.excelImport,
+                      onClick:() => {
+                        setImportMenuOpen(false);
+                        setShowImport(true);
+                      },
+                    },
+                    {
+                      key:"passport",
+                      icon:"passport",
+                      label:t.passportImport || completionLabels.passportImport,
+                      onClick:() => {
+                        setImportMenuOpen(false);
+                        setShowPassportImport(true);
+                      },
+                    },
+                  ].map((action) => (
+                    <button
+                      key={action.key}
+                      type="button"
+                      onClick={action.onClick}
+                      style={{
+                        width:"100%",
+                        display:"flex",
+                        alignItems:"center",
+                        gap:8,
+                        padding:"8px 10px",
+                        border:0,
+                        borderRadius:9,
+                        background:"transparent",
+                        color:"var(--rukn-text-strong)",
+                        fontSize:12,
+                        fontWeight:800,
+                        cursor:"pointer",
+                        textAlign:"start",
+                        fontFamily:"'Cairo',sans-serif",
+                      }}
+                    >
+                      <AppIcon name={action.icon} size={14} color={tc.gold} />
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -417,73 +510,214 @@ export default function ClientsPage({ store, onToast }) {
         })}
       </div>
 
-      {/* Filters — active tab only */}
-      {tab === "active" && (
-        <div className="page-filters" style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
-          {FILTERS.map(f => (
-            <FilterChip key={f.key} {...f} active={filter===f.key} onClick={() => setFilter(f.key)} />
-          ))}
-          <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
-            background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
-            border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
-            borderRadius:20, padding:"6px 14px",
-            color:filterProg!=="all"?tc.gold:tc.grey,
-            fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
-          }}>
-            <option value="all">{t.allPrograms}</option>
-            <option value={UNASSIGNED_PROGRAM_FILTER}>{completionLabels.unassignedFilter}</option>
-            {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-      )}
-
-      {/* Archive filters: program only */}
-      {tab === "archived" && (
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
-          <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
-            background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
-            border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
-            borderRadius:20, padding:"6px 14px",
-            color:filterProg!=="all"?tc.gold:tc.grey,
-            fontSize:12, fontFamily:"'Cairo',sans-serif", cursor:"pointer", direction:dir,
-          }}>
-            <option value="all">{t.allPrograms}</option>
-            <option value={UNASSIGNED_PROGRAM_FILTER}>{completionLabels.unassignedFilter}</option>
-            {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-      )}
-
       <div style={{
         display:"flex",
         flexWrap:"wrap",
-        gap:12,
+        gap:6,
         alignItems:"center",
+        justifyContent:"flex-start",
         marginBottom: tab === "active" ? (selectMode ? 8 : 18) : 18,
       }}>
-        <SearchBar
-          value={search}
-          onChange={e=>setSearch(e.target.value)}
-          placeholder={t.searchClients}
-          style={{ flex:"1 1 320px", minWidth:220, maxWidth:520 }}
-        />
-        {tab === "active" && filteredCount > 0 && (
-          <Button
-            variant={selectMode ? "warning" : "ghost"}
-            size="sm"
-            icon="checked"
-            disabled={!filteredCount}
+        {tab === "active" && (
+          <div ref={statusFilterRef} style={{ position:"relative", flex:"0 0 auto" }}>
+            <button
+              type="button"
+              onClick={() => setStatusFilterOpen(open => !open)}
+              style={{
+                display:"inline-flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:6,
+                minWidth:92,
+                height:34,
+                padding:"0 9px",
+                borderRadius:11,
+                background:filter !== "all" ? "rgba(212,175,55,.1)" : "var(--rukn-bg-soft)",
+                border:`1px solid ${filter !== "all" ? "rgba(212,175,55,.35)" : "var(--rukn-border-soft)"}`,
+                color:filter !== "all" ? tc.gold : tc.grey,
+                fontSize:12,
+                fontWeight:800,
+                cursor:"pointer",
+                fontFamily:"'Cairo',sans-serif",
+              }}
+            >
+              <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                <AppIcon name="filter" size={14} color={filter !== "all" ? tc.gold : tc.grey} />
+                {activeStatusFilter.label}
+              </span>
+            </button>
+            {statusFilterOpen && (
+              <div style={{
+                position:"absolute",
+                top:"calc(100% + 6px)",
+                insetInlineStart:0,
+                width:230,
+                zIndex:30,
+                padding:6,
+                borderRadius:12,
+                background:"var(--rukn-menu-bg)",
+                border:"1px solid var(--rukn-menu-border)",
+                boxShadow:"var(--rukn-menu-shadow)",
+              }}>
+                {statusFilters.map((option) => {
+                  const active = filter === option.key;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => {
+                        setFilter(option.key);
+                        setStatusFilterOpen(false);
+                      }}
+                      style={{
+                        width:"100%",
+                        display:"flex",
+                        alignItems:"center",
+                        justifyContent:"space-between",
+                        gap:8,
+                        padding:"8px 10px",
+                        border:0,
+                        borderRadius:9,
+                        background:active ? "rgba(212,175,55,.12)" : "transparent",
+                        color:active ? tc.gold : "var(--rukn-text-strong)",
+                        fontSize:12,
+                        fontWeight:active ? 900 : 700,
+                        cursor:"pointer",
+                        fontFamily:"'Cairo',sans-serif",
+                      }}
+                    >
+                      <span style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
+                        <AppIcon name={option.icon} size={13} color={active ? tc.gold : tc.grey} />
+                        {option.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+        <div
+          onMouseEnter={() => setSearchOpen(true)}
+          onMouseLeave={() => {
+            if (!search.trim() && document.activeElement !== searchInputRef.current) setSearchOpen(false);
+          }}
+          style={{
+            width:searchExpanded ? "min(460px, 100%)" : 34,
+            height:34,
+            flex:searchExpanded ? "1 1 360px" : "0 0 38px",
+            maxWidth:"100%",
+            display:"flex",
+            alignItems:"center",
+            gap:6,
+            borderRadius:11,
+            background:"rgba(255,255,255,.04)",
+            border:`1px solid ${searchExpanded ? "rgba(212,175,55,.24)" : "var(--rukn-border-soft)"}`,
+            padding:searchExpanded ? "0 9px" : 0,
+            overflow:"hidden",
+            transition:"width .2s ease, flex-basis .2s ease, border-color .2s ease, padding .2s ease",
+          }}
+        >
+          <button
+            type="button"
             onClick={() => {
-              if (selectMode) {
-                exitSelectMode();
-              } else {
-                clearSelection();
-                setSelectMode(true);
-              }
+              setSearchOpen(true);
+              requestAnimationFrame(() => searchInputRef.current?.focus());
             }}
+            style={{
+              width:34,
+              height:32,
+              flex:"0 0 34px",
+              border:0,
+              background:"transparent",
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"center",
+              cursor:"pointer",
+            }}
+            aria-label={t.searchClients}
           >
-            {selectMode ? (t.finishSelection || t.cancel) : t.selectMultiple}
-          </Button>
+            <AppIcon name="search" size={16} color={tc.gold} />
+          </button>
+          {searchExpanded && (
+            <>
+              <input
+                ref={searchInputRef}
+                value={search}
+                onChange={e=>setSearch(e.target.value)}
+                onFocus={() => setSearchOpen(true)}
+                onBlur={() => {
+                  if (!search.trim()) setSearchOpen(false);
+                }}
+                placeholder={t.searchClients}
+                style={{
+                  flex:1,
+                  minWidth:0,
+                  border:0,
+                  outline:0,
+                  background:"transparent",
+                  color:tc.white,
+                  fontSize:13,
+                  fontFamily:"'Cairo',sans-serif",
+                }}
+              />
+              {search.trim() && (
+                <button type="button" onClick={() => {
+                  setSearch("");
+                  requestAnimationFrame(() => searchInputRef.current?.focus());
+                }} style={{
+                  width:24,
+                  height:24,
+                  border:0,
+                  borderRadius:8,
+                  background:"rgba(255,255,255,.06)",
+                  display:"inline-flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                  cursor:"pointer",
+                }} aria-label={t.clear || "Clear"}>
+                  <AppIcon name="x" size={13} color={tc.grey} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
+          flex:"0 0 178px",
+          maxWidth:"100%",
+          height:34,
+          background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
+          border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
+          borderRadius:10,
+          padding:"0 12px",
+          color:filterProg!=="all"?tc.gold:tc.grey,
+          fontSize:12,
+          fontFamily:"'Cairo',sans-serif",
+          cursor:"pointer",
+          direction:dir,
+        }}>
+          <option value="all">{t.allPrograms}</option>
+          {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {tab === "active" && filteredCount > 0 && (
+          <div style={{ marginInlineStart:"auto" }}>
+            <Button
+              variant={selectMode ? "warning" : "ghost"}
+              size="sm"
+              icon="checked"
+              disabled={!filteredCount}
+              onClick={() => {
+                if (selectMode) {
+                  exitSelectMode();
+                } else {
+                  clearSelection();
+                  setSelectMode(true);
+                }
+              }}
+            >
+              {selectMode ? (t.finishSelection || t.cancel) : t.selectMultiple}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -562,7 +796,8 @@ export default function ClientsPage({ store, onToast }) {
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
           {paginatedClients.map((c,i) => {
             const deletedProgramSnapshot = c.docs?.deletedProgramSnapshot;
-            const liveProgram = c.programId ? store.getProgramById(c.programId) : null;
+            const clientProgramId = getClientProgramId(c);
+            const liveProgram = clientProgramId ? store.getProgramById(clientProgramId) : null;
             const prog      = liveProgram
               || (deletedProgramSnapshot?.programName || deletedProgramSnapshot?.programNameFr
                 ? {
@@ -572,7 +807,7 @@ export default function ClientsPage({ store, onToast }) {
                 : { name: unspecifiedProgramLabel });
             const paid      = getClientTotalPaid(c.id);
             const price     = c.salePrice || c.price || 0;
-            const status    = getClientStatus(c);
+            const status    = getDisplayStatusForClient(c);
             const remaining = Math.max(0, price - paid);
             return (
               <ClientRow key={c.id} client={c} program={prog}
@@ -695,34 +930,17 @@ export default function ClientsPage({ store, onToast }) {
   );
 }
 
-// ── FilterChip ────────────────────────────────────────────────────────────────
-const FilterChip = React.memo(function FilterChip({ icon, label, active, onClick }) {
-  const showIcon = icon && !startsWithIcon(label, icon);
-  return (
-    <button onClick={onClick} style={{
-      display:"inline-flex", alignItems:"center", gap:6,
-      padding:"6px 14px", borderRadius:20,
-      background:active?"rgba(212,175,55,.15)":"rgba(255,255,255,.04)",
-      border:`1px solid ${active?"rgba(212,175,55,.4)":"rgba(255,255,255,.08)"}`,
-      color:active?tc.gold:tc.grey, fontSize:12, fontWeight:active?700:400,
-      cursor:"pointer", fontFamily:"'Cairo',sans-serif", transition:"all .2s",
-    }}>
-      {showIcon && <AppIcon name={icon} size={14} color={active?tc.gold:tc.grey} />}
-      <span>{label}</span>
-    </button>
-  );
-});
-
 const clientCompletionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
   gap:4,
-  padding:"2px 8px",
+  padding:"1px 6px",
   borderRadius:999,
   border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
   background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
   color:tone === "warning" ? tc.warning : tc.grey,
-  fontSize:10,
+  fontSize:9.5,
+  lineHeight:1.35,
   fontWeight:800,
   whiteSpace:"nowrap",
 });
@@ -762,7 +980,14 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
-  const completionBadges = getClientCompletionBadges(client, lang);
+  const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
+  const rowLabels = getClientCompletionLabels(lang);
+  const programName = String(program?.name || "").trim();
+  const genericProgramLabels = new Set(["—", "غير محدد", "Non défini", "Not specified"]);
+  const contextLabel = status === "unassigned_program"
+    ? (hasDeletedProgramContext(client) ? getClientDeletedProgramLabel(client, lang) : "")
+    : (!genericProgramLabels.has(programName) ? programName : "");
+  const contextLine = [reference, phoneLine, cityLine, contextLabel, registrationSource, ticketLine].filter(Boolean).join(" • ");
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
       onCheck();
@@ -842,6 +1067,13 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 <p className="client-card-mobile-name-text" title={displayName}>
                   {displayName}
                 </p>
+                {secondaryBadges.length > 0 && (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:2 }}>
+                    {secondaryBadges.map((badge) => (
+                      <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>{badge.label}</span>
+                    ))}
+                  </div>
+                )}
                 {phoneLine && <p className="client-card-mobile-phone">{phoneLine}</p>}
               </div>
             </div>
@@ -867,9 +1099,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             </div>
           </div>
           <div className="client-card-mobile-subinfo">
-            <span>{reference}</span>
-            <span>•</span>
-            <span>{program?.name || "—"}</span>
+            <span>{contextLine || phoneLine || "—"}</span>
           </div>
           <div className="client-card-mobile-finance">
             <div>
@@ -887,11 +1117,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
             </div>
           </div>
           <div className="client-card-mobile-tags">
-            {completionBadges.map((badge) => (
-              <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>{badge.label}</span>
-            ))}
             {cityLine && <span>{cityLine}</span>}
-            {registrationSource && <span>{registrationSource}</span>}
             {ticketLine && <span>{ticketLine}</span>}
           </div>
         </div>
@@ -904,22 +1130,22 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.025}s` }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
       <div style={{
-        display:"flex", alignItems:"center", gap:12, padding:"11px 14px",
+        display:"flex", alignItems:"center", gap:9, padding:"8px 12px",
         background:isChecked?"rgba(212,175,55,.1)":hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
         border:`1px solid ${isChecked?"rgba(212,175,55,.4)":hov?"var(--rukn-row-border-hover)":"var(--rukn-row-border)"}`,
         borderRadius:12, transition:"all .18s", position:"relative",
         boxShadow: hov ? "0 8px 20px rgba(15,23,42,.05)" : "none",
       }}>
 
-        <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-          <span style={{ width:22, textAlign:"center", fontSize:12, color:tc.grey, fontWeight:600 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+          <span style={{ width:20, textAlign:"center", fontSize:11, color:tc.grey, fontWeight:600 }}>
             {index + 1}
           </span>
-          <div style={{ width:36, height:36, borderRadius:10, flexShrink:0,
+          <div style={{ width:31, height:31, borderRadius:9, flexShrink:0,
             background:"linear-gradient(135deg,rgba(212,175,55,.22),rgba(212,175,55,.06))",
             border:"1px solid rgba(212,175,55,.2)",
             display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:15, fontWeight:700, color:tc.gold }}>
+            fontSize:13, fontWeight:700, color:tc.gold }}>
             {(displayName || "?")[0]}
           </div>
           {showCheckbox && (
@@ -943,55 +1169,37 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
 
         <div
           onClick={handleRowClick}
-          style={{ display:"flex", alignItems:"center", gap:12, flex:1, cursor:"pointer", minWidth:0 }}
+          style={{ display:"flex", alignItems:"center", gap:10, flex:1, cursor:"pointer", minWidth:0 }}
         >
           <div style={{ flex:1, minWidth:0 }}>
-            <p style={{ fontWeight:700, fontSize:14, color:tc.white }}>{displayName}</p>
-            <p style={{ fontSize:11, color:tc.grey, marginTop:2 }}>
-              {reference} • {client.phone} • {client.city} • {program?.name||"—"}
+            <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", minWidth:0 }}>
+              <p style={{ fontWeight:700, fontSize:13, color:tc.white, margin:0 }}>{displayName}</p>
+              {secondaryBadges.map((badge) => (
+                <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>
+                  {badge.label}
+                </span>
+              ))}
+            </div>
+            <p style={{ fontSize:10.5, color:tc.grey, marginTop:1 }}>
+              {contextLine || "—"}
               {isArchived && client.archivedAt && (
                 <span style={{ color:tc.warning }}> • {new Date(client.archivedAt).toLocaleDateString("ar-MA")}</span>
               )}
             </p>
-            {registrationSource && (
-              <span style={{
-                display:"inline-flex",
-                alignItems:"center",
-                marginTop:5,
-                padding:"2px 8px",
-                borderRadius:999,
-                border:"1px solid rgba(212,175,55,.18)",
-                background:"rgba(212,175,55,.07)",
-                color:tc.gold,
-                fontSize:10,
-                fontWeight:800,
-              }}>
-                {registrationSource}
-              </span>
-            )}
-            {completionBadges.length > 0 && (
-              <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginTop:5 }}>
-                {completionBadges.map((badge) => (
-                  <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>
-                    {badge.label}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
           {!selectMode && (
-            <div style={{ display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>
+            <div style={{ display:"flex", gap:10, alignItems:"center", flexShrink:0 }}>
               {!isArchived && (
                 <>
                   <div style={{ textAlign:"center" }}>
-                    <p style={{ fontSize:10, color:tc.grey }}>{t.paid}</p>
-                    <p style={{ fontSize:13, fontWeight:700, color:tc.greenLight }}>
+                    <p style={{ fontSize:9.5, color:tc.grey }}>{t.paid}</p>
+                    <p style={{ fontSize:12, fontWeight:700, color:tc.greenLight }}>
                       {formatCurrency(paid, lang)}
                     </p>
                   </div>
                   <div style={{ textAlign:"center" }}>
-                    <p style={{ fontSize:10, color:tc.grey }}>{t.remaining}</p>
-                    <p style={{ fontSize:13, fontWeight:700, color:remaining>0?tc.warning:tc.greenLight }}>
+                    <p style={{ fontSize:9.5, color:tc.grey }}>{t.remaining}</p>
+                    <p style={{ fontSize:12, fontWeight:700, color:remaining>0?tc.warning:tc.greenLight }}>
                       {formatCurrency(remaining, lang)}
                     </p>
                   </div>

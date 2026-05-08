@@ -1,6 +1,7 @@
 import PizZip from "pizzip";
 import { formatCurrency } from "../currency";
 import { amountInWordsSentence } from "../amountToWords";
+import { buildInvoiceData } from "./invoiceBuilder";
 import { savedInvoiceSnapshotToPrintData } from "./invoiceSnapshots";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -17,6 +18,7 @@ const xmlEscape = (value = "") => String(value ?? "")
 const trimValue = (value) => (typeof value === "string" ? value.trim() : "");
 const cleanDisplay = (value, fallback = "-") => trimValue(value) || fallback;
 const safeFilePart = (value) => cleanDisplay(value, "invoice").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
+const firstText = (...values) => values.map(trimValue).find(Boolean) || "";
 
 const formatPrintDate = (value) => {
   const raw = trimValue(value);
@@ -159,9 +161,15 @@ export function buildInvoiceDocxBlob({ invoiceData, lang = "ar" } = {}) {
     invoiceNo,
     invoiceDate,
     issuedToCompany,
+    documentType,
   } = invoiceData;
-  const title = label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`);
-  const amountWords = amountInWordsSentence(salePrice, lang, "invoice");
+  const isProforma = documentType === "proforma";
+  const title = isProforma
+    ? label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
+    : invoiceNo
+      ? label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`)
+      : label(lang, "فاتورة", "FACTURE", "INVOICE");
+  const amountWords = amountInWordsSentence(isProforma ? Math.max(0, Number(remaining) || 0) : salePrice, lang, isProforma ? "proforma" : "invoice");
   const serviceLabel = label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package");
   const description = [
     `${serviceLabel}${programName ? ` - ${programName}` : ""}`,
@@ -235,6 +243,52 @@ export function downloadInvoiceWordSnapshot({ snapshot, lang = "ar" } = {}) {
   if (!blob) return false;
   const prefix = lang === "ar" ? "فاتورة" : "Invoice";
   const fileName = `${prefix} - ${safeFilePart(invoiceData.invoiceNo)}.docx`;
+  downloadBlob(blob, fileName);
+  return true;
+}
+
+export function downloadInvoiceWordDocument({
+  client,
+  program,
+  payments = [],
+  recipient,
+  lang = "ar",
+  documentType = "invoice",
+} = {}) {
+  const invoiceData = buildInvoiceData({
+    client,
+    program,
+    payments,
+    recipient,
+    lang,
+    documentType,
+    skipInvoiceRegistry: true,
+  });
+  if (!invoiceData?.valid) return false;
+  const latestPayment = invoiceData.latestPayment || {};
+  const invoiceNo = firstText(
+    invoiceData.invoiceNo,
+    client?.invoiceDisplayNumber,
+    client?.invoiceNumberDisplay,
+    latestPayment.invoiceDisplayNumber,
+    latestPayment.invoiceNumberDisplay,
+  );
+  const enrichedInvoiceData = {
+    ...invoiceData,
+    invoiceNo,
+    phone: firstText(client?.phone),
+    programName: firstText(program?.name),
+    departureDate: firstText(program?.departure),
+    returnDate: firstText(program?.returnDate),
+    level: firstText(client?.packageLevel, client?.hotelLevel),
+    roomType: firstText(client?.roomTypeLabel, client?.roomType),
+  };
+  const blob = buildInvoiceDocxBlob({ invoiceData: enrichedInvoiceData, lang });
+  if (!blob) return false;
+  const prefix = documentType === "proforma"
+    ? (lang === "ar" ? "فاتورة-أولية" : "proforma")
+    : (lang === "ar" ? "فاتورة" : "invoice");
+  const fileName = `${prefix}-${safeFilePart(enrichedInvoiceData.clientName)}-${safeFilePart(invoiceNo || new Date().toISOString().slice(0, 10))}.docx`;
   downloadBlob(blob, fileName);
   return true;
 }

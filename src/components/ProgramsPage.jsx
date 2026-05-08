@@ -25,6 +25,7 @@ import { downloadAmadeusExcel } from "../utils/amadeus";
 import { formatAirlineLabel, getProgramAirline } from "../utils/airlines";
 import { escapeHtml } from "../utils/escapeHtml";
 import { printProgramPDF } from "../utils/exportPdf";
+import { createCombinedRoomingSection, downloadRoomingPdf } from "../utils/roomingPdf";
 import {
   calculateHotelStayDates,
   formatDateForExcel,
@@ -60,6 +61,7 @@ import {
   clientNeedsCompletion,
   getClientCompletionBadges,
   getClientCompletionLabels,
+  getClientDisplayStatus,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
@@ -118,12 +120,13 @@ const completionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
   gap:4,
-  padding:"1px 7px",
+  padding:"1px 6px",
   borderRadius:999,
   border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
   background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
   color:tone === "warning" ? tc.warning : tc.grey,
-  fontSize:10,
+  fontSize:9.5,
+  lineHeight:1.35,
   fontWeight:800,
   whiteSpace:"nowrap",
 });
@@ -1584,7 +1587,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     clients.filter(c => c.programId === program.id), [clients, program.id]);
 
   const filtered = React.useMemo(() => progClients.filter(c => {
-    const status = getClientStatus(c);
+    const status = getClientDisplayStatus(c, program, getClientStatus(c));
     const matchesFilter = filter === "all" || status === filter;
     const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
     const matchesPackage = packageFilter === "all"
@@ -1597,7 +1600,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
     return matchesFilter && matchesPackage && matchesSearch;
-  }), [progClients, filter, packageFilter, search, getClientStatus]);
+  }), [progClients, filter, packageFilter, search, getClientStatus, program]);
 
   React.useEffect(() => {
     setPackageFilter("all");
@@ -1808,10 +1811,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }), [progClients, getClientTotalPaid]);
   const totalRem  = Math.max(0, totals.revenue - totals.paid);
   const statusCounts = React.useMemo(() => ({
-    cleared: progClients.filter(c=>getClientStatus(c)==="cleared").length,
-    partial: progClients.filter(c=>getClientStatus(c)==="partial").length,
-    unpaid:  progClients.filter(c=>getClientStatus(c)==="unpaid").length,
-  }), [progClients, getClientStatus]);
+    cleared: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="cleared").length,
+    partial: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="partial").length,
+    unpaid:  progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="unpaid").length,
+  }), [progClients, getClientStatus, program]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
 
   const filters = [
@@ -2693,9 +2696,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           {filtered.map((c,i)=>{
             const paid = getClientTotalPaid(c.id);
             const rem  = Math.max(0, (c.salePrice||c.price||0) - paid);
-            const stat = getClientStatus(c);
+            const stat = getClientDisplayStatus(c, program, getClientStatus(c));
             return (
               <InnerClientRow key={c.id} client={c} index={i}
+                program={program}
                 paid={paid} remaining={rem} status={stat}
                 onClick={()=>setSelectedClient(c)}
                 onEdit={()=>setEditingClient(c)}
@@ -2873,6 +2877,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const [roomFilterOpen, setRoomFilterOpen] = React.useState(false);
   const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
+  const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const flowRef = React.useRef(null);
   const flowNodesRef = React.useRef([]);
@@ -3815,6 +3820,136 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     win.document.close();
   }, [groupedRooms, rooms, clientsById, program, city, clients.length, agency, lang, t, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel]);
 
+  const getStoredCanvasRooms = React.useCallback((targetCity) => {
+    if (targetCity === city) return rooms;
+    try {
+      const raw = localStorage.getItem(`rukn_rooming_sheet_${program.id}_${targetCity}`);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (parsed?.kind === "rooming-canvas") return Array.isArray(parsed.rooms) ? parsed.rooms : [];
+      return Object.values(parsed?.meta?.rooms || {});
+    } catch {
+      return [];
+    }
+  }, [city, rooms, program.id]);
+
+  const getRoomingStayDates = React.useCallback((targetCity, room) => {
+    const firstClient = (room.occupantIds || []).map((id) => clientsById[id]).find(Boolean);
+    const pkgLevel = firstClient?.packageLevel || firstClient?.hotelLevel || "";
+    const pkg = firstClient
+      ? (packageById.get(firstClient.packageId || firstClient.package_id) || packageByLevel.get(pkgLevel))
+      : null;
+    const explicitDates = targetCity === "makkah"
+      ? {
+        checkIn: pickFirstText(program, ["makkahCheckin", "makkah_checkin", "meccaCheckin", "mecca_checkin"]),
+        checkOut: pickFirstText(program, ["makkahCheckout", "makkah_checkout", "meccaCheckout", "mecca_checkout"]),
+      }
+      : {
+        checkIn: pickFirstText(program, ["madinahCheckin", "madinah_checkin", "madinaCheckin", "madina_checkin", "medinaCheckin", "medina_checkin"]),
+        checkOut: pickFirstText(program, ["madinahCheckout", "madinah_checkout", "madinaCheckout", "madina_checkout", "medinaCheckout", "medina_checkout"]),
+      };
+    if (explicitDates.checkIn || explicitDates.checkOut) return explicitDates;
+    const stayDates = calculateHotelStayDates({
+      departureDate: program.departure,
+      returnDate: program.returnDate,
+      visitOrder: program.visitOrder || program.visit_order,
+      madinahNights: pkg?.madinahNights ?? program.madinahNights ?? program.madinah_nights,
+    });
+    return targetCity === "makkah"
+      ? { checkIn: stayDates.makkahCheckIn, checkOut: stayDates.makkahCheckOut }
+      : { checkIn: stayDates.medinaCheckIn, checkOut: stayDates.medinaCheckOut };
+  }, [clientsById, packageById, packageByLevel, program]);
+
+  const getRoomingHotelForCity = React.useCallback((targetCity, cityRooms = []) => {
+    const fallbackHotel = targetCity === "makkah"
+      ? (program.hotelMecca || program.hotel_mecca || "")
+      : (program.hotelMadina || program.hotel_madina || "");
+    return cityRooms.find((room) => String(room.hotel || "").trim())?.hotel || fallbackHotel || "";
+  }, [program]);
+
+  const buildRoomingPdfRows = React.useCallback((targetCities = [city]) => {
+    const cityLabels = {
+      makkah: t.makkah || "مكة",
+      madinah: t.madinah || "المدينة",
+    };
+    return targetCities.flatMap((targetCity) => {
+      const cityRooms = getStoredCanvasRooms(targetCity);
+      const fallbackHotel = getRoomingHotelForCity(targetCity, cityRooms);
+      return cityRooms.map((room, index) => {
+        const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
+        const names = occupantIds
+          .map((clientId) => clientsById[clientId])
+          .filter(Boolean)
+          .map((client) => getClientDisplayName(client));
+        const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
+        const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(roomTypeKey), names.length || 1);
+        const stayDates = getRoomingStayDates(targetCity, room);
+        return {
+          city: targetCity,
+          cityLabel: cityLabels[targetCity],
+          hotel: room.hotel || fallbackHotel || (t.roomingMissingHotel || "فندق غير محدد"),
+          checkIn: stayDates.checkIn,
+          checkOut: stayDates.checkOut,
+          roomTypeKey,
+          roomTypeLabel: getLocalizedRoomTypeLabel(roomTypeKey),
+          capacity,
+          names,
+          order: Number(room.order ?? index),
+        };
+      });
+    });
+  }, [city, clientsById, getLocalizedRoomTypeLabel, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, t]);
+
+  const handleDownloadRoomingPdf = React.useCallback(async (mode = "single") => {
+    if (roomingPdfBusy) return;
+    try {
+      setRoomingPdfBusy(mode);
+      const combined = mode === "combined";
+      const targetCities = combined ? ["makkah", "madinah"] : [city];
+      const pdfRooms = buildRoomingPdfRows(targetCities);
+      const makkahRooms = combined ? getStoredCanvasRooms("makkah") : [];
+      const madinahRooms = combined ? getStoredCanvasRooms("madinah") : [];
+      const makkahHotel = getRoomingHotelForCity("makkah", makkahRooms);
+      const madinahHotel = getRoomingHotelForCity("madinah", madinahRooms);
+      const makkahDates = getRoomingStayDates("makkah", { occupantIds: makkahRooms[0]?.occupantIds || [] });
+      const madinahDates = getRoomingStayDates("madinah", { occupantIds: madinahRooms[0]?.occupantIds || [] });
+      const sharedLabels = {
+        checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
+        checkOut: t.checkOut || (lang === "fr" ? "Départ" : lang === "en" ? "Check-out" : "الخروج"),
+        roomsCount: t.roomingRoomsCount || (lang === "fr" ? "Chambres" : lang === "en" ? "Rooms" : "عدد الغرف"),
+        unknownHotel: t.roomingMissingHotel || (lang === "fr" ? "Hôtel non défini" : lang === "en" ? "Unspecified hotel" : "فندق غير محدد"),
+        noRooms: t.noRoomingRooms || (lang === "fr" ? "Aucune chambre d'hébergement." : lang === "en" ? "No rooming rooms." : "لا توجد غرف للتسكين."),
+        otherRoomType: t.other || (lang === "fr" ? "Autre" : lang === "en" ? "Other" : "أخرى"),
+        generatedAt: new Date().toLocaleDateString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US"),
+        makkah: t.makkah || "مكة",
+        madinah: t.madinah || "المدينة",
+      };
+      await downloadRoomingPdf({
+        rooms: pdfRooms,
+        lang,
+        programName: program.name || "program",
+        agencyName: agency?.nameAr || agency?.nameFr || agency?.name || "",
+        agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
+        filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
+        labels: sharedLabels,
+        sectionOverride: combined ? createCombinedRoomingSection({
+          rooms: pdfRooms,
+          makkahHotel,
+          madinahHotel,
+          makkahDates,
+          madinahDates,
+          labels: sharedLabels,
+        }) : null,
+      });
+      onToast?.(t.roomingPdfReady || (lang === "fr" ? "PDF d'hébergement téléchargé" : lang === "en" ? "Rooming PDF downloaded" : "تم تنزيل PDF التسكين"), "success");
+    } catch (error) {
+      console.error("[rooming pdf export]", error);
+      onToast?.(t.roomingPdfFailed || (lang === "fr" ? "Impossible de générer le PDF" : lang === "en" ? "Unable to generate PDF" : "تعذر إنشاء ملف PDF"), "error");
+    } finally {
+      setRoomingPdfBusy("");
+    }
+  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, t]);
+
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
 
@@ -3954,6 +4089,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
           <RoomingToolbarButton title={t.roomingSave || "حفظ"} onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
+          <RoomingToolbarButton
+            title={t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF")}
+            onClick={() => handleDownloadRoomingPdf("single")}
+            disabled={Boolean(roomingPdfBusy)}
+            icon={<AppIcon name="download" size={15} />}
+          >
+            <span>{roomingPdfBusy === "single" ? (t.loading || "جاري التحميل...") : (t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF"))}</span>
+          </RoomingToolbarButton>
+          <RoomingToolbarButton
+            title={t.roomingCombinedPdf || (lang === "fr" ? "PDF combiné" : lang === "en" ? "Combined PDF" : "PDF مكة والمدينة")}
+            onClick={() => handleDownloadRoomingPdf("combined")}
+            disabled={Boolean(roomingPdfBusy)}
+            icon={<AppIcon name="download" size={15} />}
+          >
+            <span>{roomingPdfBusy === "combined" ? (t.loading || "جاري التحميل...") : (t.roomingCombinedPdf || (lang === "fr" ? "PDF combiné" : lang === "en" ? "Combined PDF" : "PDF مكة والمدينة"))}</span>
+          </RoomingToolbarButton>
           <RoomingToolbarButton title={t.roomingExportExcel || "تصدير Excel"} onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
           <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
             <RoomingToolbarButton
@@ -6487,6 +6638,7 @@ function HeaderSelectCheckbox({ checked, indeterminate, onChange, label }) {
 
 function InnerClientRow({
   client,
+  program,
   index,
   paid,
   remaining,
@@ -6524,9 +6676,10 @@ function InnerClientRow({
   const packageLabel = translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "";
   const roomLabel = translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "";
   const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
-  const infoLine = [phoneLabel, cityLabel, bookingLabel ? `• ${bookingLabel}` : ""].filter(Boolean).join(" ");
+  const registrationSource = (client.registrationSource || client.registration_source || "").trim();
+  const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
-  const completionBadges = getClientCompletionBadges(client, lang);
+  const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
 
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
@@ -6569,8 +6722,8 @@ function InnerClientRow({
       <div
         style={{
           display: "flex",
-          gap: 12,
-          padding: "11px 16px",
+          gap: 9,
+          padding: "8px 12px",
           background: isChecked
             ? "rgba(212,175,55,.12)"
             : hov
@@ -6595,7 +6748,7 @@ function InnerClientRow({
           style={{
             display: "grid",
             gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 140px 140px 130px 130px 110px",
-            gap: 12,
+            gap: 10,
             flex: 1,
             minWidth: 0,
             width: "100%",
@@ -6617,22 +6770,22 @@ function InnerClientRow({
               />
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 12, color: tc.grey, fontWeight: 600, width: 22, textAlign: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ fontSize: 11, color: tc.grey, fontWeight: 600, width: 20, textAlign: "center" }}>
               {index + 1}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div
                 style={{
-                  width: 34,
-                  height: 34,
+                  width: 30,
+                  height: 30,
                   borderRadius: 9,
                   background: "linear-gradient(135deg,rgba(212,175,55,.25),rgba(212,175,55,.08))",
                   border: "1px solid rgba(212,175,55,.2)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: 700,
                   color: tc.gold,
                 }}
@@ -6645,17 +6798,17 @@ function InnerClientRow({
             <div style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: 5,
               minWidth: 0,
               flexWrap: "wrap",
               direction: isRTL ? "rtl" : "ltr",
             }}>
-              <p style={{ fontWeight: 700, fontSize: 13, color: tc.white, margin: 0, minWidth: 0 }}>
+              <p style={{ fontWeight: 700, fontSize: 12.5, color: tc.white, margin: 0, minWidth: 0 }}>
                 {fallbackName || "—"}
               </p>
               {minorClient && (
                 <span style={{
-                  fontSize: 10,
+                  fontSize: 9.5,
                   lineHeight: 1.4,
                   fontWeight: 800,
                   padding: "1px 7px",
@@ -6668,24 +6821,24 @@ function InnerClientRow({
                   {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
                 </span>
               )}
-              {completionBadges.map((badge) => (
+              {secondaryBadges.map((badge) => (
                 <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
                   {badge.label}
                 </span>
               ))}
             </div>
-            <p style={{ fontSize: 11, color: tc.grey }}>{infoLine || "—"}</p>
+            <p style={{ fontSize: 10.5, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
-          <span style={{ color: tc.grey, textAlign: "center", fontSize: 12 }}>
+          <span style={{ color: tc.grey, textAlign: "center", fontSize: 11 }}>
             {roomLabel || "—"}
           </span>
-          <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 12 }}>
+          <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 11 }}>
             {client.ticketNo || "—"}
           </span>
-          <span style={{ color: tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 13 }}>
+          <span style={{ color: tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
             {paidLabel}
           </span>
-          <span style={{ color: remaining > 0 ? tc.warning : tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 13 }}>
+          <span style={{ color: remaining > 0 ? tc.warning : tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
             {remainingLabel}
           </span>
           <div style={{ textAlign: "center" }}>

@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Filter } from "lucide-react";
 import { StatusBadge, GlassCard, SearchBar, Button, Modal } from "./UI";
 import { theme } from "./styles";
@@ -10,6 +11,7 @@ import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import {
   deleteSavedInvoiceSnapshot,
+  downloadInvoiceWordDocument,
   downloadInvoiceWordSnapshot,
   readSavedInvoices,
   restoreSavedInvoiceSnapshot,
@@ -476,6 +478,7 @@ export default function ClearancePage({ store }) {
   const [pageSize, setPageSize] = React.useState(10);
   const [currentPage, setCurrentPage] = React.useState(1);
   const [invoiceClient, setInvoiceClient] = React.useState(null);
+  const [invoiceAction, setInvoiceAction] = React.useState("print");
   const [activeTab, setActiveTab] = React.useState("clearance");
   const [savedInvoices, setSavedInvoices] = React.useState(() => (
     invoicesAreRemote ? [] : readSavedInvoices()
@@ -486,6 +489,11 @@ export default function ClearancePage({ store }) {
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
   const proformaInvoiceLabel = lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية";
   const invoiceColumnLabel = lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة";
+  const invoiceActionLabels = React.useMemo(() => ({
+    print: lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة",
+    downloadWord: lang === "fr" ? "Télécharger Word" : lang === "en" ? "Download Word" : "تحميل Word",
+    menu: lang === "fr" ? "Actions facture" : lang === "en" ? "Invoice actions" : "إجراءات الفاتورة",
+  }), [lang]);
   const getInvoiceActionLabel = React.useCallback(
     (client) => (client?.remaining <= 0 ? finalInvoiceLabel : proformaInvoiceLabel),
     [finalInvoiceLabel, proformaInvoiceLabel]
@@ -641,8 +649,9 @@ export default function ClearancePage({ store }) {
     unpaid:  t.unpaidFilter  || (lang === "fr" ? "Non payé": "لم يدفعوا"),
   };
 
-  const handlePrintInvoice = React.useCallback((client) => {
+  const handleInvoiceAction = React.useCallback((client, action = "print") => {
     if (!client) return;
+    setInvoiceAction(action);
     setInvoiceClient(client);
   }, []);
 
@@ -650,6 +659,16 @@ export default function ClearancePage({ store }) {
     if (!invoiceClient) return false;
     const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
     const clientPayments = invoiceClient.clientPayments || payments.filter(p => p.clientId === invoiceClient.id);
+    if (invoiceAction === "word") {
+      return downloadInvoiceWordDocument({
+        client: invoiceClient,
+        program,
+        payments: clientPayments,
+        recipient,
+        lang,
+        documentType: invoiceClient.remaining <= 0 ? "invoice" : "proforma",
+      });
+    }
     const printFn = invoiceClient.remaining <= 0 ? printInvoice : printProformaInvoice;
     const printed = await printFn({
       client: invoiceClient,
@@ -662,7 +681,7 @@ export default function ClearancePage({ store }) {
     });
     if (printed && invoiceClient.remaining <= 0) await refreshSavedInvoices();
     return printed;
-  }, [agency, invoiceApi, invoiceClient, lang, payments, programs, refreshSavedInvoices]);
+  }, [agency, invoiceAction, invoiceApi, invoiceClient, lang, payments, programs, refreshSavedInvoices]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
@@ -1070,7 +1089,8 @@ export default function ClearancePage({ store }) {
               index={(currentPage - 1) * pageSize + i}
               gridTemplate={tableColumns}
               invoiceLabel={getInvoiceActionLabel(c)}
-              onPrintInvoice={handlePrintInvoice}
+              onInvoiceAction={handleInvoiceAction}
+              actionLabels={invoiceActionLabels}
               money={money}
             />
           ))}
@@ -1155,7 +1175,8 @@ export default function ClearancePage({ store }) {
             client={client}
             index={(currentPage - 1) * pageSize + index}
             invoiceLabel={getInvoiceActionLabel(client)}
-            onPrintInvoice={handlePrintInvoice}
+            onInvoiceAction={handleInvoiceAction}
+            actionLabels={invoiceActionLabels}
             t={t}
             lang={lang}
             money={money}
@@ -1217,9 +1238,13 @@ export default function ClearancePage({ store }) {
 
       <InvoiceRecipientModal
         open={Boolean(invoiceClient)}
-        onClose={() => setInvoiceClient(null)}
+        onClose={() => {
+          setInvoiceClient(null);
+          setInvoiceAction("print");
+        }}
         lang={lang}
         documentType={invoiceClient?.remaining <= 0 ? "invoice" : "proforma"}
+        submitLabel={invoiceAction === "word" ? invoiceActionLabels.downloadWord : ""}
         onPrint={handlePrintSelectedInvoice}
       />
     </div>
@@ -1462,12 +1487,29 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, o
 
 function InvoiceActionsMenu({ label, items = [] }) {
   const [open, setOpen] = React.useState(false);
+  const buttonRef = React.useRef(null);
   const menuRef = React.useRef(null);
+  const [menuPos, setMenuPos] = React.useState({ top: 0, left: 0, width: 190 });
+
+  const updateMenuPosition = React.useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect?.();
+    if (!rect) return;
+    const width = 190;
+    const gap = 8;
+    const estimatedHeight = Math.max(58, items.length * 42 + 12);
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
+    const preferredTop = rect.bottom + gap;
+    const fallbackTop = rect.top - gap - estimatedHeight;
+    const top = preferredTop + estimatedHeight <= window.innerHeight - 8
+      ? preferredTop
+      : Math.max(8, fallbackTop);
+    setMenuPos({ top, left, width });
+  }, [items.length]);
 
   React.useEffect(() => {
     if (!open) return undefined;
     const handlePointer = (event) => {
-      if (!menuRef.current || menuRef.current.contains(event.target)) return;
+      if (menuRef.current?.contains(event.target) || buttonRef.current?.contains(event.target)) return;
       setOpen(false);
     };
     const handleEscape = (event) => {
@@ -1475,18 +1517,26 @@ function InvoiceActionsMenu({ label, items = [] }) {
     };
     document.addEventListener("pointerdown", handlePointer);
     document.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointer);
       document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
     };
-  }, [open]);
+  }, [open, updateMenuPosition]);
 
   return (
-    <div ref={menuRef} style={{ position:"relative" }}>
+    <div style={{ position:"relative" }}>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={label}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          updateMenuPosition();
+          setOpen((value) => !value);
+        }}
         style={{
           width:34,
           height:34,
@@ -1505,18 +1555,18 @@ function InvoiceActionsMenu({ label, items = [] }) {
       >
         ⋯
       </button>
-      {open && (
-        <div style={{
-          position:"absolute",
-          top:"calc(100% + 8px)",
-          insetInlineEnd:0,
-          minWidth:190,
+      {open && createPortal(
+        <div ref={menuRef} style={{
+          position:"fixed",
+          top:menuPos.top,
+          left:menuPos.left,
+          width:menuPos.width,
           padding:6,
           borderRadius:12,
           background:"var(--rukn-bg-card)",
           border:"1px solid var(--rukn-border-soft)",
           boxShadow:"var(--rukn-shadow-card)",
-          zIndex:30,
+          zIndex:10000,
         }}>
           {items.map((item) => (
             <button
@@ -1551,13 +1601,14 @@ function InvoiceActionsMenu({ label, items = [] }) {
               <span>{item.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
 }
 
-function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel, money }) {
+function ClearRow({ client, index, gridTemplate, onInvoiceAction, actionLabels, money }) {
   const [hov, setHov] = React.useState(false);
   const contactLine = [client.phone ? `${client.phone}` : "", client.city ? `• ${client.city}` : ""].filter(Boolean).join(" ");
   return (
@@ -1597,31 +1648,20 @@ function ClearRow({ client, index, gridTemplate, onPrintInvoice, invoiceLabel, m
           {client.lastPmt?.receiptNo||"—"}
         </span>
         <div style={{ display:"flex", justifyContent:"center", width:"100%", minWidth:0 }}>
-          <button
-            type="button"
-            className="invoice-btn"
-            onClick={() => onPrintInvoice?.(client)}
-          >
-            {invoiceLabel}
-          </button>
+          <InvoiceActionsMenu
+            label={actionLabels?.menu}
+            items={[
+              { key: "print", label: actionLabels?.print || "Print", icon: "print", onClick: () => onInvoiceAction?.(client, "print") },
+              { key: "word", label: actionLabels?.downloadWord || "Download Word", icon: "file", onClick: () => onInvoiceAction?.(client, "word") },
+            ]}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang, money }) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  const menuRef = React.useRef(null);
-  React.useEffect(() => {
-    if (!menuOpen) return;
-    const handlePointer = (e) => {
-      if (!menuRef.current || menuRef.current.contains(e.target)) return;
-      setMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointer);
-    return () => document.removeEventListener("pointerdown", handlePointer);
-  }, [menuOpen]);
+function ClearCard({ client, index, onInvoiceAction, actionLabels, t, lang, money }) {
   const reference = client.displayRef || formatFileReference(client);
   const phoneLine = client.phone ? client.phone.trim() : "";
   const cityLine = client.city ? client.city.trim() : "";
@@ -1637,22 +1677,14 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang, money
           {phoneLine && <p className="clear-card-phone">{phoneLine}</p>}
           {cityLine && <p className="clear-card-meta">{cityLine}</p>}
         </div>
-        <div className="clear-card-actions" ref={menuRef}>
-          <button
-            type="button"
-            className={`clear-card-kebab${menuOpen ? " is-open" : ""}`}
-            aria-label={moreLabel}
-            onClick={() => setMenuOpen(o => !o)}
-          >
-            ⋮
-          </button>
-          {menuOpen && (
-            <div className="clear-card-menu">
-              <button type="button" onClick={() => { onPrintInvoice?.(client); setMenuOpen(false); }}>
-                {invoiceLabel}
-              </button>
-            </div>
-          )}
+        <div className="clear-card-actions">
+          <InvoiceActionsMenu
+            label={actionLabels?.menu || moreLabel}
+            items={[
+              { key: "print", label: actionLabels?.print || "Print", icon: "print", onClick: () => onInvoiceAction?.(client, "print") },
+              { key: "word", label: actionLabels?.downloadWord || "Download Word", icon: "file", onClick: () => onInvoiceAction?.(client, "word") },
+            ]}
+          />
         </div>
       </div>
 
@@ -1687,16 +1719,6 @@ function ClearCard({ client, index, invoiceLabel, onPrintInvoice, t, lang, money
           <span>{t.lastReceipt}</span>
           <strong>{client.lastPmt?.receiptNo || "—"}</strong>
         </div>
-      </div>
-
-      <div className="clear-card-footer">
-        <button
-          type="button"
-          className="invoice-btn"
-          onClick={() => onPrintInvoice?.(client)}
-        >
-          {invoiceLabel}
-        </button>
       </div>
     </div>
   );
