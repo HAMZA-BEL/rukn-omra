@@ -17,6 +17,7 @@ import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusB
 import AirlineSelector from "./AirlineSelector";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
+import ImportClientsModal from "./ImportClientsModal";
 import MRZReader from "./MRZReader";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
@@ -1550,6 +1551,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [search,         setSearch]         = React.useState("");
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [showAddClient,  setShowAddClient]  = React.useState(false);
+  const [showExcelImport, setShowExcelImport] = React.useState(false);
   const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [selectMode,     setSelectMode]     = React.useState(false);
@@ -1979,6 +1981,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     closeHeaderActions();
     setShowPassportImport(true);
   }, [closeHeaderActions]);
+  const handleExcelImportOpen = React.useCallback(() => {
+    closeHeaderActions();
+    setShowExcelImport(true);
+  }, [closeHeaderActions]);
   const handleEditProgram = React.useCallback(() => {
     closeHeaderActions();
     onEditProgram?.();
@@ -2071,6 +2077,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       onClick: handleEditProgram,
     },
     {
+      key: "excel-import",
+      icon: "import",
+      label: t.excelImport || t.importExcel || (lang === "fr" ? "Importer depuis Excel / CSV" : lang === "en" ? "Import from Excel / CSV" : "استيراد من Excel / CSV"),
+      onClick: handleExcelImportOpen,
+    },
+    {
       key: "passport",
       icon: "passport",
       label: completionLabels.passportImport,
@@ -2106,7 +2118,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.exportPilgrimsList]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.excelImport, t.exportPilgrimsList, t.importExcel]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -2784,6 +2796,20 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         <ClientForm store={store} defaultProgramId={program.id} lockProgramId={program.id}
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
+      </Modal>
+      <Modal open={showExcelImport} onClose={() => setShowExcelImport(false)} title={t.importModalTitle} width={920}>
+        {showExcelImport && (
+          <ImportClientsModal
+            store={store}
+            onClose={() => setShowExcelImport(false)}
+            onToast={onToast}
+            programContext={{
+              id: program.id,
+              name: program.name,
+              packages,
+            }}
+          />
+        )}
       </Modal>
       <Modal
         open={showPassportImport}

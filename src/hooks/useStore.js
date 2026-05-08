@@ -109,7 +109,7 @@ const buildDisplayName = (data) => {
 const sanitizePassport = (passport = {}) => ({
   number:      trimString(passport.number || ""),
   cin:         trimString(passport.cin || passport.nationalId || ""),
-  nationality: trimString(passport.nationality || "") || "MAR",
+  nationality: trimString(passport.nationality || ""),
   birthDate:   trimString(passport.birthDate || ""),
   expiry:      trimString(passport.expiry || ""),
   gender:      trimString(passport.gender || ""),

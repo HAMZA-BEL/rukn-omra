@@ -900,7 +900,7 @@ export default function ClientsPage({ store, onToast }) {
           onSave={() => { setShowAdd(false); onToast(t.addSuccess,"success"); }}
           onCancel={() => setShowAdd(false)} />
       </Modal>
-      <Modal open={showImport} onClose={() => setShowImport(false)} title={t.importModalTitle} width={720}>
+      <Modal open={showImport} onClose={() => setShowImport(false)} title={t.importModalTitle} width={920}>
         {showImport && (
           <ImportClientsModal
             store={store}
