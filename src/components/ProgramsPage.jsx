@@ -39,6 +39,7 @@ import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
+  getPackageRoomPrice,
   getPackageStartingPrice,
   getLegacyFieldsFromPackages,
   getProgramPackageCount,
@@ -440,6 +441,76 @@ const findRoomingPackageFromRoom = (room = {}, packages = [], city = "makkah") =
   return null;
 };
 
+const getRoomingClientPackage = (client = {}, room = {}, packages = [], city = "makkah") => {
+  const roomPackage = findRoomingPackageFromRoom(room, packages, city);
+  if (roomPackage) return roomPackage;
+  const packageId = String(client.packageId || client.package_id || "").trim();
+  if (packageId) {
+    const byId = packages.find((pkg) => String(pkg.id || "") === packageId);
+    if (byId) return byId;
+  }
+  const level = String(client.packageLevel || client.hotelLevel || client.hotel_level || "").trim();
+  if (!level) return null;
+  return packages.find((pkg) => String(pkg.level || "").trim() === level) || null;
+};
+
+const getRoomingPriceNumber = (value) => {
+  if (value === "" || value === null || value === undefined) return 0;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : 0;
+};
+
+const getClientOfficialRoomingPrice = (client = {}) => getRoomingPriceNumber(
+  client.officialPrice ?? client.official_price ?? client.price
+);
+
+const getClientSaleRoomingPrice = (client = {}) => getRoomingPriceNumber(
+  client.salePrice ?? client.sale_price ?? client.price
+);
+
+const getRoomingPriceSync = ({ client, room, packages = [], city = "makkah", decision = null }) => {
+  if (!client || !room) return null;
+  const targetRoomType = normalizeRoomingRoomType(room.roomType) || getRoomingRoomTypeFromCapacity(room.capacity);
+  if (!targetRoomType) return null;
+  const currentRoomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
+  if (currentRoomType && currentRoomType === targetRoomType) return null;
+  const pkg = getRoomingClientPackage(client, room, packages, city);
+  const newOfficialPrice = getPackageRoomPrice(pkg, targetRoomType);
+  if (!newOfficialPrice) return null;
+  const oldOfficialPrice = getClientOfficialRoomingPrice(client);
+  const oldSalePrice = getClientSaleRoomingPrice(client);
+  const salePriceLooksManual = oldSalePrice > 0 && oldSalePrice !== oldOfficialPrice;
+  if (salePriceLooksManual && !decision) {
+    return {
+      requiresConfirmation: true,
+      oldOfficialPrice,
+      oldSalePrice,
+      newOfficialPrice,
+      targetRoomType,
+      packageId: pkg?.id || "",
+      packageLevel: pkg?.level || "",
+      patch: null,
+    };
+  }
+  const keepPreviousSale = Boolean(decision?.keepPreviousSale);
+  const decidedSalePrice = decision && !keepPreviousSale
+    ? getRoomingPriceNumber(decision.salePrice)
+    : null;
+  return {
+    requiresConfirmation: false,
+    oldOfficialPrice,
+    oldSalePrice,
+    newOfficialPrice,
+    targetRoomType,
+    packageId: pkg?.id || "",
+    packageLevel: pkg?.level || "",
+    patch: {
+      officialPrice: newOfficialPrice,
+      salePrice: keepPreviousSale ? oldSalePrice : (decision ? decidedSalePrice : newOfficialPrice),
+    },
+  };
+};
+
 const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = "", city = "makkah", packages = [] }) => {
   const clientsById = new Map(clients.map((client) => [client.id, client]));
   const seen = new Set();
@@ -461,6 +532,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
     const roomHotel = String(room.hotel || "").trim();
     const roomPackage = findRoomingPackageFromRoom(room, packages, city);
     const roomLevel = String(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
+    const priceOverrides = room.priceOverrides && typeof room.priceOverrides === "object" ? room.priceOverrides : {};
     const locationPatch = roomHotel
       ? (city === "madinah" ? { hotelMadina: roomHotel } : { hotelMecca: roomHotel })
       : {};
@@ -480,6 +552,14 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
         groupSize: validOccupantIds.length,
         seatIndex: index + 1,
       };
+      const priceSync = getRoomingPriceSync({
+        client,
+        room,
+        packages,
+        city,
+        decision: priceOverrides[clientId] || null,
+      });
+      const pricePatch = priceSync?.patch || {};
       const unchanged = client.roomType === roomType
         && client.roomTypeLabel === roomTypeLabel
         && (client.roomCategory || "") === category
@@ -493,7 +573,9 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
         && (!levelPatch.packageLevel || client.packageLevel === levelPatch.packageLevel)
         && (!levelPatch.hotelLevel || client.hotelLevel === levelPatch.hotelLevel)
         && (!levelPatch.packageId || client.packageId === levelPatch.packageId)
-        && (!confirmedGender || client.gender === confirmedGender);
+        && (!confirmedGender || client.gender === confirmedGender)
+        && (pricePatch.officialPrice === undefined || Number(client.officialPrice || 0) === Number(pricePatch.officialPrice || 0))
+        && (pricePatch.salePrice === undefined || Number(client.salePrice || 0) === Number(pricePatch.salePrice || 0));
       if (unchanged) return;
       updates.push({
         id: clientId,
@@ -508,6 +590,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
           roomingSeatIndex: index + 1,
           ...locationPatch,
           ...levelPatch,
+          ...pricePatch,
           ...(confirmedGender ? { gender: confirmedGender } : {}),
           docs: {
             ...(client.docs || {}),
@@ -3221,6 +3304,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
   const [pendingDrop, setPendingDrop] = React.useState(null);
+  const [pendingDropSalePrice, setPendingDropSalePrice] = React.useState("");
   const [panelSearch, setPanelSearch] = React.useState("");
   const [panelHotel, setPanelHotel] = React.useState("all");
   const [panelRoomType, setPanelRoomType] = React.useState("all");
@@ -3605,6 +3689,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     const conflicts = [];
     if (targetRoomType && currentRoomType && targetRoomType !== currentRoomType) conflicts.push("roomType");
     if (targetHotel && currentHotel && normalizeRoomingHotel(targetHotel) !== normalizeRoomingHotel(currentHotel)) conflicts.push("hotel");
+    const priceSync = getRoomingPriceSync({ client, room, packages, city });
+    if (priceSync?.requiresConfirmation) conflicts.push("price");
     let genderAssignment = "";
     if (!clientGender && room.category === "male_only") {
       conflicts.push("genderAssignment");
@@ -3632,8 +3718,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       targetRoomTypeLabel: targetRoomType ? getLocalizedRoomTypeLabel(targetRoomType) : "",
       currentHotel,
       targetHotel,
+      priceSync,
     };
-  }, [city, clientsById, getLocalizedRoomTypeLabel]);
+  }, [city, clientsById, getLocalizedRoomTypeLabel, packages]);
 
   const getCompatibilityReason = React.useCallback((client, room) => {
     const result = getCompatibilityResult(client, room);
@@ -3896,6 +3983,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       capacity,
       occupantIds: kept,
       genderOverrides: Object.fromEntries(Object.entries(item.genderOverrides || {}).filter(([id]) => kept.includes(id))),
+      priceOverrides: Object.fromEntries(Object.entries(item.priceOverrides || {}).filter(([id]) => kept.includes(id))),
     } : item));
     if (removed.length) {
       setUnassigned((prev) => [...prev, ...removed]);
@@ -3956,6 +4044,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         ...room,
         occupantIds: (room.occupantIds || []).filter((id) => id !== clientId),
         genderOverrides: Object.fromEntries(Object.entries(room.genderOverrides || {}).filter(([id]) => id !== clientId)),
+        priceOverrides: Object.fromEntries(Object.entries(room.priceOverrides || {}).filter(([id]) => id !== clientId)),
       }
       : room));
     setUnassigned((prev) => [...prev, { clientId, reason: "" }]);
@@ -3969,15 +4058,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       if (item.id !== room.id) return item;
       const occupantIds = item.occupantIds || [];
       const genderAssignment = ["male", "female"].includes(options.genderAssignment) ? options.genderAssignment : "";
+      const priceDecision = options.priceDecision && typeof options.priceDecision === "object" ? options.priceDecision : null;
       if (occupantIds.includes(clientId)) {
-        return genderAssignment
-          ? { ...item, genderOverrides: { ...(item.genderOverrides || {}), [clientId]: genderAssignment } }
-          : item;
+        if (!genderAssignment && !priceDecision) return item;
+        return {
+          ...item,
+          ...(genderAssignment ? { genderOverrides: { ...(item.genderOverrides || {}), [clientId]: genderAssignment } } : {}),
+          ...(priceDecision ? { priceOverrides: { ...(item.priceOverrides || {}), [clientId]: priceDecision } } : {}),
+        };
       }
       return {
         ...item,
         occupantIds: [...occupantIds, clientId],
         ...(genderAssignment ? { genderOverrides: { ...(item.genderOverrides || {}), [clientId]: genderAssignment } } : {}),
+        ...(priceDecision ? { priceOverrides: { ...(item.priceOverrides || {}), [clientId]: priceDecision } } : {}),
       };
     }));
     setUnassigned((prev) => prev.filter((item) => item.clientId !== clientId));
@@ -4375,18 +4469,43 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
+  React.useEffect(() => {
+    if (!pendingDrop?.priceSync?.requiresConfirmation) {
+      setPendingDropSalePrice("");
+      return;
+    }
+    setPendingDropSalePrice(String(pendingDrop.priceSync.newOfficialPrice || ""));
+  }, [pendingDrop]);
   const pendingDropCopy = React.useMemo(() => {
     if (!pendingDrop) return null;
     const hasRoomType = pendingDrop.conflicts.includes("roomType");
     const hasHotel = pendingDrop.conflicts.includes("hotel");
     const hasGenderAssignment = pendingDrop.conflicts.includes("genderAssignment");
     const hasFamilyMixed = pendingDrop.conflicts.includes("familyMixed");
+    const hasPrice = pendingDrop.conflicts.includes("price") && pendingDrop.priceSync?.requiresConfirmation;
     const conflictCity = pendingDrop.city || city;
     const hotelLabel = conflictCity === "madinah" ? (t.hotelMadina || "فندق المدينة") : (t.hotelMecca || "فندق مكة");
     const genderTarget = pendingDrop.genderAssignment === "female"
       ? (lang === "fr" ? "femme" : lang === "en" ? "female" : "أنثى")
       : (lang === "fr" ? "homme" : lang === "en" ? "male" : "ذكر");
-    const conflictCount = [hasRoomType, hasHotel, hasGenderAssignment, hasFamilyMixed].filter(Boolean).length;
+    const formatPriceLabel = (value) => formatCurrency(value || 0, lang);
+    const priceSection = hasPrice ? {
+      newOfficialLabel: lang === "fr" ? "Nouveau prix officiel" : lang === "en" ? "New official price" : "السعر الرسمي الجديد",
+      newSaleLabel: lang === "fr" ? "Nouveau prix de vente" : lang === "en" ? "New sale price" : "سعر البيع الجديد",
+      oldOfficialLabel: lang === "fr" ? "Ancien prix officiel" : lang === "en" ? "Previous official price" : "السعر الرسمي السابق",
+      oldSaleLabel: lang === "fr" ? "Ancien prix de vente" : lang === "en" ? "Previous sale price" : "سعر البيع السابق",
+      keepPrevious: lang === "fr" ? "Garder l’ancien prix de vente" : lang === "en" ? "Keep previous sale price" : "الإبقاء على سعر البيع السابق",
+      intro: lang === "fr"
+        ? "Le type de chambre a été modifié, et le prix de vente actuel est différent de l’ancien prix officiel."
+        : lang === "en"
+          ? "The room type has changed, and the current sale price is different from the previous official price."
+          : "تم تغيير نوع الغرفة، وسعر البيع الحالي مختلف عن السعر الرسمي السابق.",
+      newOfficialPrice: pendingDrop.priceSync.newOfficialPrice,
+      oldOfficialPrice: pendingDrop.priceSync.oldOfficialPrice,
+      oldSalePrice: pendingDrop.priceSync.oldSalePrice,
+      formatPrice: formatPriceLabel,
+    } : null;
+    const conflictCount = [hasRoomType, hasHotel, hasGenderAssignment, hasFamilyMixed, hasPrice].filter(Boolean).length;
     const makeDetails = (labels) => [
       ...(hasRoomType ? [{ currentLabel: labels.roomCurrent, currentValue: pendingDrop.currentRoomTypeLabel || "—", targetLabel: labels.roomTarget, targetValue: pendingDrop.targetRoomTypeLabel || "—" }] : []),
       ...(hasHotel ? [{ currentLabel: labels.hotelCurrent, currentValue: pendingDrop.currentHotel || "—", targetLabel: labels.hotelTarget, targetValue: pendingDrop.targetHotel || "—" }] : []),
@@ -4409,6 +4528,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }),
         question: "Voulez-vous mettre à jour ces informations et ajouter le pèlerin à cette chambre ?",
         primary: "Mettre à jour et ajouter",
+        priceSection,
       };
       if (lang === "en") return {
         title: "Update rooming details?",
@@ -4425,6 +4545,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }),
         question: "Do you want to update these details and add the pilgrim to this room?",
         primary: "Update and add",
+        priceSection,
       };
       return {
         title: "تحديث بيانات التسكين؟",
@@ -4441,6 +4562,30 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }),
         question: "هل تريد تحديث هذه البيانات وإضافة المعتمر إلى الغرفة؟",
         primary: "تحديث وإضافة",
+        priceSection,
+      };
+    }
+    if (hasPrice) {
+      if (lang === "fr") return {
+        title: "Mettre à jour le prix de vente ?",
+        intro: priceSection.intro,
+        question: "Voulez-vous mettre à jour le prix et ajouter ce pèlerin à cette chambre ?",
+        primary: "Mettre à jour et ajouter",
+        priceSection,
+      };
+      if (lang === "en") return {
+        title: "Update sale price?",
+        intro: priceSection.intro,
+        question: "Do you want to update the price and add them to this room?",
+        primary: "Update and add",
+        priceSection,
+      };
+      return {
+        title: "تحديث سعر البيع؟",
+        intro: priceSection.intro,
+        question: "هل تريد تحديث السعر وإضافة المعتمر إلى هذه الغرفة؟",
+        primary: "تحديث وإضافة",
+        priceSection,
       };
     }
     if (hasRoomType) {
@@ -4449,18 +4594,21 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         intro: `Ce pèlerin est actuellement défini en ${pendingDrop.currentRoomTypeLabel}, mais la chambre sélectionnée est ${pendingDrop.targetRoomTypeLabel}.`,
         question: "Voulez-vous mettre à jour le type de chambre et l’ajouter à cette chambre ?",
         primary: "Mettre à jour et ajouter",
+        priceSection,
       };
       if (lang === "en") return {
         title: "Update room type?",
         intro: `This pilgrim is currently assigned to ${pendingDrop.currentRoomTypeLabel}, but the selected room is ${pendingDrop.targetRoomTypeLabel}.`,
         question: "Do you want to update the room type and add them to this room?",
         primary: "Update and add",
+        priceSection,
       };
       return {
         title: "تحديث نوع الغرفة؟",
         intro: `هذا المعتمر محدد حاليًا كـ ${pendingDrop.currentRoomTypeLabel}، والغرفة المختارة هي ${pendingDrop.targetRoomTypeLabel}.`,
         question: "هل تريد تحديث نوع الغرفة وإضافته إلى هذه الغرفة؟",
         primary: "تحديث وإضافة",
+        priceSection,
       };
     }
     if (hasGenderAssignment) {
@@ -4537,15 +4685,46 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       primary: "تحديث وإضافة",
     };
   }, [city, lang, pendingDrop, t.hotelMadina, t.hotelMecca]);
+  const buildPendingDropPriceDecision = React.useCallback((mode = "update") => {
+    if (!pendingDrop?.priceSync?.requiresConfirmation) return null;
+    if (mode === "keep") {
+      return {
+        officialPrice: pendingDrop.priceSync.newOfficialPrice,
+        salePrice: pendingDrop.priceSync.oldSalePrice,
+        keepPreviousSale: true,
+      };
+    }
+    const parsedSalePrice = getRoomingPriceNumber(String(pendingDropSalePrice).replace(",", "."));
+    return {
+      officialPrice: pendingDrop.priceSync.newOfficialPrice,
+      salePrice: parsedSalePrice,
+      keepPreviousSale: false,
+    };
+  }, [pendingDrop, pendingDropSalePrice]);
   const confirmPendingDrop = React.useCallback(() => {
     if (!pendingDrop) return;
-    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId, { genderAssignment: pendingDrop.genderAssignment });
+    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId, {
+      genderAssignment: pendingDrop.genderAssignment,
+      priceDecision: buildPendingDropPriceDecision("update"),
+    });
     if (pendingDrop.source === "picker") {
       setSelectedPilgrimIds([]);
       setPickerOpen(false);
     }
     setPendingDrop(null);
-  }, [commitClientDropIntoRoom, pendingDrop]);
+  }, [buildPendingDropPriceDecision, commitClientDropIntoRoom, pendingDrop]);
+  const keepPendingDropSalePrice = React.useCallback(() => {
+    if (!pendingDrop) return;
+    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId, {
+      genderAssignment: pendingDrop.genderAssignment,
+      priceDecision: buildPendingDropPriceDecision("keep"),
+    });
+    if (pendingDrop.source === "picker") {
+      setSelectedPilgrimIds([]);
+      setPickerOpen(false);
+    }
+    setPendingDrop(null);
+  }, [buildPendingDropPriceDecision, commitClientDropIntoRoom, pendingDrop]);
   const cancelPendingDrop = React.useCallback(() => {
     setPendingDrop(null);
   }, []);
@@ -5047,11 +5226,81 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               ) : pendingDropCopy.target ? (
                 <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>{pendingDropCopy.target}</p>
               ) : null}
+              {pendingDropCopy.priceSection && (
+                <div style={{
+                  display: "grid",
+                  gap: 10,
+                  padding: 12,
+                  border: "1px solid rgba(212,175,55,.24)",
+                  background: "rgba(212,175,55,.07)",
+                  borderRadius: 12,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ color: "#64748b", fontSize: 11, fontWeight: 900 }}>
+                      {pendingDropCopy.priceSection.newOfficialLabel}
+                    </span>
+                    <strong style={{ color: "#0f172a", fontSize: 14 }}>
+                      {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.newOfficialPrice)}
+                    </strong>
+                  </div>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={{ color: "#64748b", fontSize: 11, fontWeight: 900 }}>
+                      {pendingDropCopy.priceSection.newSaleLabel}
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={pendingDropSalePrice}
+                      onChange={(event) => setPendingDropSalePrice(event.target.value)}
+                      style={{
+                        width: "100%",
+                        border: "1px solid rgba(148,163,184,.35)",
+                        borderRadius: 9,
+                        padding: "8px 10px",
+                        background: "#ffffff",
+                        color: "#0f172a",
+                        fontSize: 13,
+                        fontWeight: 800,
+                        fontFamily: "'Cairo',sans-serif",
+                        outline: "none",
+                      }}
+                    />
+                  </label>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
+                    paddingTop: 2,
+                  }}>
+                    <div>
+                      <p style={{ color: "#94a3b8", fontSize: 10.5, fontWeight: 800 }}>
+                        {pendingDropCopy.priceSection.oldOfficialLabel}
+                      </p>
+                      <p style={{ color: "#475569", fontSize: 12, fontWeight: 900 }}>
+                        {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.oldOfficialPrice)}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ color: "#94a3b8", fontSize: 10.5, fontWeight: 800 }}>
+                        {pendingDropCopy.priceSection.oldSaleLabel}
+                      </p>
+                      <p style={{ color: "#475569", fontSize: 12, fontWeight: 900 }}>
+                        {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.oldSalePrice)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.8, margin: 0 }}>
                 {pendingDropCopy.question}
               </p>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
                 <Button variant="ghost" onClick={cancelPendingDrop}>{t.cancel || "إلغاء"}</Button>
+                {pendingDropCopy.priceSection && (
+                  <Button variant="ghost" onClick={keepPendingDropSalePrice}>
+                    {pendingDropCopy.priceSection.keepPrevious}
+                  </Button>
+                )}
                 <Button onClick={confirmPendingDrop}>{pendingDropCopy.primary}</Button>
               </div>
             </div>
