@@ -26,7 +26,7 @@ import { downloadAmadeusExcel } from "../utils/amadeus";
 import { formatAirlineLabel, getProgramAirline } from "../utils/airlines";
 import { escapeHtml } from "../utils/escapeHtml";
 import { printProgramPDF } from "../utils/exportPdf";
-import { createCombinedRoomingSection, downloadRoomingPdf } from "../utils/roomingPdf";
+import { createCombinedRoomingSection, createRoomingPrintHtml, downloadRoomingPdf } from "../utils/roomingPdf";
 import {
   calculateHotelStayDates,
   formatDateForExcel,
@@ -118,6 +118,8 @@ import {
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
+const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
+const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const completionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
@@ -1733,6 +1735,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [bulkActionsOpen, setBulkActionsOpen] = React.useState(false);
   const [packageFilter, setPackageFilter] = React.useState("all");
+  const [programClientPage, setProgramClientPage] = React.useState(1);
+  const [programClientPageSize, setProgramClientPageSize] = React.useState(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
   const [programTab, setProgramTab] = React.useState("clients");
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
@@ -1776,9 +1780,48 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     return matchesFilter && matchesPackage && matchesSearch;
   }), [progClients, filter, packageFilter, search, getClientStatus, program]);
 
+  const totalProgramClientItems = filtered.length;
+  const totalProgramClientPages = Math.max(1, Math.ceil(totalProgramClientItems / programClientPageSize));
+  const safeProgramClientPage = Math.min(Math.max(1, programClientPage), totalProgramClientPages);
+  const programClientStartIndex = (safeProgramClientPage - 1) * programClientPageSize;
+  const programClientEndIndex = programClientStartIndex + programClientPageSize;
+  const paginatedProgramClients = React.useMemo(
+    () => filtered.slice(programClientStartIndex, programClientEndIndex),
+    [filtered, programClientStartIndex, programClientEndIndex]
+  );
+  const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
+  const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
+  const programClientPageSizeOptions = React.useMemo(() => (
+    PROGRAM_DETAIL_PAGE_SIZE_OPTIONS.map((size) => ({
+      value: size,
+      label: lang === "fr"
+        ? `Afficher ${size} par page`
+        : lang === "en"
+          ? `Show ${size} per page`
+          : `عرض ${size} في الصفحة`,
+    }))
+  ), [lang]);
+
   React.useEffect(() => {
     setPackageFilter("all");
   }, [program.id]);
+
+  React.useEffect(() => {
+    setProgramClientPageSize(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
+    setProgramClientPage(1);
+    setCheckedIds(new Set());
+    setBulkActionsOpen(false);
+  }, [program.id]);
+
+  React.useEffect(() => {
+    setProgramClientPage(1);
+    setCheckedIds(new Set());
+    setBulkActionsOpen(false);
+  }, [search, filter, packageFilter, programTab]);
+
+  React.useEffect(() => {
+    setProgramClientPage((current) => Math.min(Math.max(1, current), totalProgramClientPages));
+  }, [totalProgramClientPages]);
 
   React.useEffect(() => {
     if (!headerActionsOpen) return undefined;
@@ -1860,8 +1903,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
 
   const toggleAllFiltered = React.useCallback(() => {
-    if (!filtered.length) return;
-    const filteredIds = filtered.map((client) => client.id);
+    if (!paginatedProgramClients.length) return;
+    const filteredIds = paginatedProgramClients.map((client) => client.id);
     setCheckedIds((prev) => {
       const allVisibleSelected = filteredIds.every((id) => prev.has(id));
       if (allVisibleSelected) {
@@ -1871,7 +1914,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       }
       return new Set([...prev, ...filteredIds]);
     });
-  }, [filtered, setCheckedIds]);
+  }, [paginatedProgramClients, setCheckedIds]);
 
   const exitSelectMode = React.useCallback(() => {
     setSelectMode(false);
@@ -1973,11 +2016,23 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [allPrograms, transferTargets, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode]);
 
   const selectedVisibleCount = React.useMemo(
-    () => filtered.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
-    [filtered, checkedIds]
+    () => paginatedProgramClients.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
+    [paginatedProgramClients, checkedIds]
   );
-  const allChecked = selectedVisibleCount === filtered.length && filtered.length > 0;
+  const allChecked = selectedVisibleCount === paginatedProgramClients.length && paginatedProgramClients.length > 0;
   const partiallyChecked = selectedVisibleCount > 0 && !allChecked;
+  const handleProgramClientPageSizeChange = React.useCallback((event) => {
+    const nextSize = Number(event.target.value) || PROGRAM_DETAIL_DEFAULT_PAGE_SIZE;
+    setProgramClientPageSize(nextSize);
+    setProgramClientPage(1);
+    setCheckedIds(new Set());
+    setBulkActionsOpen(false);
+  }, []);
+  const goToProgramClientPage = React.useCallback((nextPage) => {
+    setProgramClientPage(Math.min(Math.max(1, nextPage), totalProgramClientPages));
+    setCheckedIds(new Set());
+    setBulkActionsOpen(false);
+  }, [totalProgramClientPages]);
 
   const totals = React.useMemo(() => ({
     revenue: progClients.reduce((s,c)=>s+(c.salePrice||c.price||0),0),
@@ -2752,6 +2807,100 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         )}
       </div>
 
+      {filtered.length > 0 && (
+        <div style={{
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"space-between",
+          gap:10,
+          flexWrap:"wrap",
+          marginBottom: selectMode ? 8 : 14,
+          padding:"8px 10px",
+          border:"1px solid rgba(255,255,255,.08)",
+          borderRadius:10,
+          background:"rgba(255,255,255,.025)",
+        }}>
+          <span style={{ color:tc.grey, fontSize:11.5, fontWeight:700 }}>
+            {lang === "fr"
+              ? `Affichage ${programClientRangeStart} - ${programClientRangeEnd} sur ${filtered.length}`
+              : lang === "en"
+                ? `Showing ${programClientRangeStart} - ${programClientRangeEnd} of ${filtered.length}`
+                : `عرض ${programClientRangeStart} - ${programClientRangeEnd} من ${filtered.length}`}
+          </span>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+            <select
+              value={programClientPageSize}
+              onChange={handleProgramClientPageSizeChange}
+              style={{
+                height:32,
+                borderRadius:9,
+                border:"1px solid rgba(255,255,255,.12)",
+                background:"rgba(255,255,255,.04)",
+                color:tc.white,
+                padding:"0 9px",
+                fontSize:11.5,
+                fontWeight:800,
+                fontFamily:"'Cairo',sans-serif",
+                direction:dir,
+                outline:"none",
+                cursor:"pointer",
+              }}
+            >
+              {programClientPageSizeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+              <button
+                type="button"
+                onClick={() => goToProgramClientPage(safeProgramClientPage - 1)}
+                disabled={safeProgramClientPage <= 1}
+                style={{
+                  width:30,
+                  height:30,
+                  borderRadius:8,
+                  border:"1px solid rgba(255,255,255,.1)",
+                  background:"rgba(255,255,255,.04)",
+                  color:safeProgramClientPage <= 1 ? "rgba(148,163,184,.45)" : tc.gold,
+                  cursor:safeProgramClientPage <= 1 ? "not-allowed" : "pointer",
+                  display:"inline-flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                }}
+                aria-label={t.previous || "Previous"}
+              >
+                <AppIcon name="chevronBack" size={14} color="currentColor" style={{ transform:isRTL ? "rotate(180deg)" : "none" }} />
+              </button>
+              <span style={{ color:tc.gold, fontSize:11.5, fontWeight:900, minWidth:72, textAlign:"center" }}>
+                {lang === "fr" || lang === "en"
+                  ? `Page ${safeProgramClientPage} / ${totalProgramClientPages}`
+                  : `صفحة ${safeProgramClientPage} / ${totalProgramClientPages}`}
+              </span>
+              <button
+                type="button"
+                onClick={() => goToProgramClientPage(safeProgramClientPage + 1)}
+                disabled={safeProgramClientPage >= totalProgramClientPages}
+                style={{
+                  width:30,
+                  height:30,
+                  borderRadius:8,
+                  border:"1px solid rgba(255,255,255,.1)",
+                  background:"rgba(255,255,255,.04)",
+                  color:safeProgramClientPage >= totalProgramClientPages ? "rgba(148,163,184,.45)" : tc.gold,
+                  cursor:safeProgramClientPage >= totalProgramClientPages ? "not-allowed" : "pointer",
+                  display:"inline-flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                }}
+                aria-label={t.next || "Next"}
+              >
+                <AppIcon name="chevronBack" size={14} color="currentColor" style={{ transform:isRTL ? "none" : "rotate(180deg)" }} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectMode && (
         <GlassCard style={{ padding:"10px 14px", marginBottom:14 }}>
           <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", justifyContent:"space-between" }}>
@@ -2880,12 +3029,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           sub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)} />
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          {filtered.map((c,i)=>{
+          {paginatedProgramClients.map((c,i)=>{
             const paid = getClientTotalPaid(c.id);
             const rem  = Math.max(0, (c.salePrice||c.price||0) - paid);
             const stat = getClientDisplayStatus(c, program, getClientStatus(c));
             return (
-              <InnerClientRow key={c.id} client={c} index={i}
+              <InnerClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
                 paid={paid} remaining={rem} status={stat}
                 onClick={()=>setSelectedClient(c)}
@@ -4050,156 +4199,52 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   }, [rooms, clientsById, city, program.name, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel, t]);
 
   const printCanvas = React.useCallback(() => {
-    const totalRooms = rooms.length;
-    const totalAssigned = rooms.reduce((sum, room) => sum + (room.occupantIds || []).length, 0);
     const cityLabel = city === "makkah" ? (t.makkah || "مكة") : (t.madinah || "المدينة");
-    const period = [program.departure, program.returnDate].filter(Boolean).join(" - ") || "—";
-    const sortedRooms = rooms.slice().sort((a, b) => {
-      const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
-      if (hotel) return hotel;
-      const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
-      if (type) return type;
-      return String(a.roomNumber || "").localeCompare(String(b.roomNumber || ""), "ar", { numeric: true });
-    });
-    const roomsByHotel = sortedRooms.reduce((map, room) => {
-      const hotel = room.hotel || (t.roomingMissingHotel || "فندق غير محدد");
-      if (!map.has(hotel)) map.set(hotel, []);
-      map.get(hotel).push(room);
-      return map;
-    }, new Map());
-    const sections = Array.from(roomsByHotel.entries()).map(([hotel, hotelRooms]) => {
-      const assigned = hotelRooms.reduce((sum, room) => sum + (room.occupantIds || []).length, 0);
-      return `
-        <section class="hotel-section">
-          <div class="hotel-title">
-            <h2>${escapeHtml(hotel)}</h2>
-            <span>${escapeHtml(hotelRooms.length)} ${escapeHtml(t.roomingRoomsUnit || "غرف")} · ${escapeHtml(assigned)} ${escapeHtml(t.pilgrimUnit || "معتمر")}</span>
-          </div>
-          <div class="rooms-grid">
-            ${hotelRooms.map((room) => {
-              const occupants = room.occupantIds || [];
-              const capacity = Math.max(Number(room.capacity) || getRoomingCapacity(room.roomType), occupants.length || 1);
-              const category = room.category || "male_only";
-              const names = occupants.map((clientId, index) => {
-                const client = clientsById[clientId];
-                const source = getClientRegistrationSource(client);
-                const label = client ? `${getClientDisplayName(client)}${source ? ` · ${source}` : ""}` : "—";
-                return `<li><span>${index + 1}</span><b>${escapeHtml(label)}</b></li>`;
-              }).join("") || `<li class="empty"><span>0</span><b>${escapeHtml(t.noPilgrims || "بدون معتمرين")}</b></li>`;
-              return `
-                <article class="room-card ${escapeHtml(category)}">
-                  <div class="category-line">
-                    <span class="category-badge">${escapeHtml(getLocalizedCategoryLabel(category))}</span>
-                  </div>
-                  <div class="room-meta">
-                    <strong>${escapeHtml(getLocalizedRoomTypeLabel(room.roomType))}</strong>
-                    <span class="occupancy">${escapeHtml(occupants.length)}/${escapeHtml(capacity)}</span>
-                  </div>
-                  <div class="hotel-name">${escapeHtml(room.hotel || hotel)}</div>
-                  <ol>${names}</ol>
-                </article>
-              `;
-            }).join("")}
-          </div>
-        </section>
-      `;
-    }).join("");
     const win = window.open("", "_blank");
     if (!win) return;
-    const printDir = lang === "ar" ? "rtl" : "ltr";
-    const agencyLogoUrl = agency?.logoUrl || agency?.logo_url || "";
     const agencyName = agency?.nameAr || agency?.nameFr || t.agencyName || "";
-    const agencySubline = agency?.nameFr && agency?.nameFr !== agencyName ? agency.nameFr : (agency?.city || "");
-    const agencyBrandHtml = agencyLogoUrl
-      ? `<img src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName)}" onerror="this.style.display='none'"/>`
-      : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
-    win.document.write(`<!doctype html><html dir="${printDir}"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
-      <style>
-        @page{size:A4 landscape;margin:6mm 7mm}
-        *{box-sizing:border-box}
-        html,body{background:#fff !important;background-color:#fff !important;margin:0;overflow-x:hidden}
-        body{font-family:Arial,"Tahoma",sans-serif;color:#0f172a;font-size:9.5px;line-height:1.22}
-        .page{width:100%;margin:0 auto;padding:0 2mm 2mm;overflow:hidden;background:transparent !important;border:0 !important;outline:0 !important;box-shadow:none !important}
-        .hero{position:relative;text-align:center;padding:2px 58mm 1px 18mm;margin-bottom:1px;min-height:20mm}
-        .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;width:54mm;text-align:start}
-        .agency-brand img{display:block;width:16mm;height:16mm;object-fit:contain;flex:0 0 auto}
-        .agency-logo-fallback{width:16mm;height:16mm;border:1px solid #d7dbe2;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#9a7418;background:#fff;font-size:13px;font-weight:900;flex:0 0 auto}
-        .agency-copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
-        .agency-copy strong{display:block;color:#0f5aa6;font-size:12px;line-height:1.05;font-weight:900;white-space:nowrap}
-        .agency-copy small{display:block;color:#a9472d;font-size:7px;line-height:1.15;font-weight:800;white-space:nowrap;margin-top:1px}
-        h1{font-size:24px;line-height:1;margin:0 0 3px;font-weight:900;color:#0d1728;letter-spacing:0}
-        .program-name{font-size:11px;color:#9a7418;font-weight:900;margin:0}
-        .summary{display:grid;grid-template-columns:1fr 1.35fr 1fr 1fr;gap:5px;margin:1px 0 6px;border-top:1.2px solid #b99235;padding-top:4px}
-        .summary-card{height:10.5mm;border:1px solid #d9dce2;border-radius:7px;background:#fff;padding:3px 6px;display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:none}
-        .summary-card span{display:block;color:#464b55;font-size:7.5px;font-weight:800;margin-bottom:1px}
-        .summary-card b{display:block;color:#0f172a;font-size:8.8px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .hotel-section{margin:0 0 6px;break-inside:auto;page-break-inside:auto;background:transparent;border:0;outline:0;box-shadow:none}
-        .hotel-section::before,.hotel-section::after{content:none !important;display:none !important}
-        .hotel-title{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;margin:1px 0 6px;padding:2px 0;break-after:avoid;page-break-after:avoid;color:#101827;border-top:1px solid #c79b3c;border-bottom:1px solid #c79b3c}
-        .hotel-title::before,.hotel-title::after{content:"";height:1px;background:#c79b3c;flex:1}
-        .hotel-title::after{background:#c79b3c}
-        .hotel-title h2{font-size:14px;line-height:1;margin:0;font-weight:900;color:#101827}
-        .hotel-title h2::before,.hotel-title h2::after{content:"";display:inline-block;width:10px;height:5px;border-top:1.5px solid #c79b3c;margin:0 5px;transform:skewX(-28deg)}
-        .hotel-title span{display:none}
-        .rooms-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px 6px;align-items:start;background:transparent;border:0;outline:0;box-shadow:none;padding:0}
-        .rooms-grid::before,.rooms-grid::after{content:none !important;display:none !important}
-        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:8px;padding:6px 7px;background:#fff;min-height:29mm;box-shadow:none}
-        .room-card::before{content:"";position:absolute;inset-inline:0;top:0;height:2px;border-radius:8px 8px 0 0;background:#b99235}
-        .room-card.male_only::before{background:#2c5f93}
-        .room-card.female_only::before{background:#ad5c7a}
-        .room-card.family::before{background:#a88a2c}
-        .category-line{display:flex;justify-content:center;margin:0 0 4px}
-        .category-badge{display:inline-flex;align-items:center;justify-content:center;min-width:42px;text-align:center;font-size:7.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:5px;padding:1px 6px}
-        .female_only .category-badge{background:#f1dfe7;border-color:#ead1dc}
-        .family .category-badge{background:#eadbb4;border-color:#dfcb92}
-        .room-meta{display:flex;align-items:center;justify-content:center;gap:8px;padding:0 0 4px;margin-bottom:2px}
-        .room-meta strong{display:block;font-size:11px;font-weight:900;color:#0f172a}
-        .occupancy{font-size:8.5px;font-weight:900;color:#0f172a;border:0;background:transparent;border-radius:0;padding:0;white-space:nowrap}
-        .hotel-name{border-top:1px dashed #d2d6dd;border-bottom:1px solid #c7cbd2;color:#a77d22;text-align:center;font-size:7.8px;font-weight:900;padding:3px 0;margin:0 0 4px}
-        ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-        li{display:grid;grid-template-columns:11px 1fr;gap:4px;align-items:center;padding:0 2px;min-height:12px;border:0;background:transparent}
-        li span{color:#111827;font-size:7.6px;font-weight:900;text-align:center}
-        li b{font-size:8.6px;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        li.empty b{color:#9ca3af;font-weight:700}
-        .print-footer{position:fixed;left:0;right:0;bottom:0;color:#0f172a;font-size:9px;display:flex;justify-content:center;gap:18px;align-items:center}
-        .print-footer::before,.print-footer::after{content:"";width:38mm;height:1px;background:linear-gradient(90deg,transparent,#d5ad5a)}
-        .print-footer::after{background:linear-gradient(90deg,#d5ad5a,transparent)}
-        .print-footer .page-no::after{content:"${escapeHtml(t.page || "صفحة")} " counter(page)}
-        @media print{
-          html,body,.page{overflow:hidden;background:#fff !important;background-color:#fff !important}
-          .hero,.summary,.hotel-section,.rooms-grid,.print-footer{background:transparent !important;background-color:transparent !important;box-shadow:none !important;border-image:none !important;outline:none !important}
-          .hotel-section,.rooms-grid{border:none !important}
-          .summary-card,.room-card{box-shadow:none !important;filter:none !important}
-          .rooms-grid{grid-template-columns:repeat(6,1fr)}
-          .room-card{break-inside:avoid;page-break-inside:avoid}
-          .hotel-title{break-after:avoid;page-break-after:avoid}
-          .report-header{break-after:avoid;page-break-after:avoid}
-        }
-      </style></head><body><main class="page">
-        <header>
-          <div class="hero">
-            <div class="agency-brand">
-              ${agencyBrandHtml}
-              <div class="agency-copy">
-                <strong>${escapeHtml(agencyName || "—")}</strong>
-                ${agencySubline ? `<small>${escapeHtml(agencySubline)}</small>` : ""}
-              </div>
-            </div>
-            <h1>${escapeHtml(t.roomingPrintTitle || "ورقة التسكين")}</h1>
-            <p class="program-name">${escapeHtml(program.name || "—")}</p>
-          </div>
-          <div class="summary">
-            <div class="summary-card"><div><span>${escapeHtml(t.city)}:</span><b>${escapeHtml(cityLabel)}</b></div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.period || "الفترة")}:</span><b>${escapeHtml(period)}</b></div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.totalClients)}:</span><b>${escapeHtml(String(totalAssigned))}/${escapeHtml(String(clients.length))}</b></div></div>
-            <div class="summary-card"><div><span>${escapeHtml(t.roomingRoomsCount || "عدد الغرف")}:</span><b>${escapeHtml(String(totalRooms))}</b></div></div>
-          </div>
-        </header>
-        ${sections || `<p>${escapeHtml(t.noRoomingRooms || "لا توجد غرف للتسكين.")}</p>`}
-        <footer class="print-footer"><span class="page-no"></span></footer>
-      </main><script>window.onload=()=>window.print()</script></body></html>`);
+    const printRooms = rooms.map((room, index) => {
+      const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
+      const pilgrims = occupantIds
+        .map((clientId) => clientsById[clientId])
+        .filter(Boolean)
+        .map((client) => ({
+          name: getClientDisplayName(client),
+          source: getClientRegistrationSource(client),
+        }));
+      const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
+      return {
+        city,
+        cityLabel,
+        hotel: room.hotel || (t.roomingMissingHotel || "فندق غير محدد"),
+        checkIn: program.departure || "",
+        checkOut: program.returnDate || "",
+        roomTypeKey,
+        roomTypeLabel: getLocalizedRoomTypeLabel(roomTypeKey),
+        capacity: Math.max(1, Number(room.capacity) || getRoomingCapacity(roomTypeKey), pilgrims.length || 1),
+        pilgrims,
+        names: pilgrims.map((pilgrim) => pilgrim.name),
+        order: Number(room.order ?? index),
+      };
+    });
+    win.document.write(createRoomingPrintHtml({
+      rooms: printRooms,
+      lang,
+      programName: program.name || "",
+      agencyName,
+      agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
+      labels: {
+        rooming: t.roomingPrintTitle || "ورقة التسكين",
+        checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
+        checkOut: t.checkOut || (lang === "fr" ? "Départ" : lang === "en" ? "Check-out" : "الخروج"),
+        roomsCount: t.roomingRoomsCount || (lang === "fr" ? "Chambres" : lang === "en" ? "Rooms" : "عدد الغرف"),
+        unknownHotel: t.roomingMissingHotel || (lang === "fr" ? "Hôtel non défini" : lang === "en" ? "Unspecified hotel" : "فندق غير محدد"),
+        noRooms: t.noRoomingRooms || (lang === "fr" ? "Aucune chambre d'hébergement." : lang === "en" ? "No rooming rooms." : "لا توجد غرف للتسكين."),
+        otherRoomType: t.other || (lang === "fr" ? "Autre" : lang === "en" ? "Other" : "أخرى"),
+      },
+    }));
     win.document.close();
-  }, [groupedRooms, rooms, clientsById, program, city, clients.length, agency, lang, t, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel]);
+  }, [rooms, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel]);
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
@@ -4250,10 +4295,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       const fallbackHotel = getRoomingHotelForCity(targetCity, cityRooms);
       return cityRooms.map((room, index) => {
         const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
-        const names = occupantIds
+        const pilgrims = occupantIds
           .map((clientId) => clientsById[clientId])
           .filter(Boolean)
-          .map((client) => getClientDisplayName(client));
+          .map((client) => ({
+            name: getClientDisplayName(client),
+            source: getClientRegistrationSource(client),
+          }));
+        const names = pilgrims.map((pilgrim) => pilgrim.name);
         const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
         const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(roomTypeKey), names.length || 1);
         const stayDates = getRoomingStayDates(targetCity, room);
@@ -4266,6 +4315,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           roomTypeKey,
           roomTypeLabel: getLocalizedRoomTypeLabel(roomTypeKey),
           capacity,
+          pilgrims,
           names,
           order: Number(room.order ?? index),
         };

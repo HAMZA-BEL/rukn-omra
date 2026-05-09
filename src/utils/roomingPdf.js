@@ -12,6 +12,8 @@ const FLOW_LAYOUT = {
   sectionTitleHeight: 15,
   sectionTitleGap: 4,
 };
+const ROOM_CARD_WRITE_AREA_HEIGHT = 8;
+const ROOM_CARD_WRITE_AREA_GAP = 4;
 const TYPE_COLORS = {
   double: { text: "#1d4f75", chipBg: "#f4f8fb", chipBorder: "#dfe9f1" },
   triple: { text: "#277052", chipBg: "#f3f8f5", chipBorder: "#dcebe2" },
@@ -54,6 +56,24 @@ const getDirection = (lang) => (lang === "ar" ? "rtl" : "ltr");
 const text = (value, fallback = "—") => {
   const clean = String(value || "").trim();
   return clean || fallback;
+};
+
+const escapeHtml = (value) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const getRoomPilgrims = (room = {}) => {
+  if (Array.isArray(room.pilgrims)) {
+    return room.pilgrims.map((pilgrim) => ({
+      name: text(pilgrim?.name, "—"),
+      source: text(pilgrim?.source, ""),
+    }));
+  }
+  const names = Array.isArray(room.names) ? room.names : [];
+  return names.map((name) => ({ name: text(name, "—"), source: "" }));
 };
 
 const drawRoundRect = (ctx, x, y, width, height, radius) => {
@@ -153,15 +173,16 @@ const wrapText = (ctx, value, maxWidth, maxLines = 2) => {
 const measureRoomCard = (ctx, room, cardWidth) => {
   const contentWidth = cardWidth - 22;
   ctx.font = "700 8.2pt Arial, Tahoma, sans-serif";
-  const names = Array.isArray(room.names) ? room.names : [];
-  const capacity = Math.max(1, Number(room.capacity) || names.length || 1);
-  const rowCount = Math.max(capacity, names.length);
-  const rows = Array.from({ length: rowCount }, (_, index) => names[index] || "—");
-  const chipsHeight = rows.reduce((sum, name) => {
-    const lineCount = wrapText(ctx, name, contentWidth, 2).length;
+  const pilgrims = getRoomPilgrims(room);
+  const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
+  const rowCount = Math.max(capacity, pilgrims.length);
+  const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
+  const chipsHeight = rows.reduce((sum, pilgrim) => {
+    const sourceWidth = pilgrim.source ? Math.min(38, Math.max(22, ctx.measureText(pilgrim.source).width + 12)) : 0;
+    const lineCount = wrapText(ctx, pilgrim.name, contentWidth - sourceWidth - (sourceWidth ? 5 : 0), 2).length;
     return sum + Math.max(12.8, lineCount * 9.4 + 4);
   }, 0);
-  return Math.max(56, 13 + chipsHeight + Math.max(0, rows.length - 1) * 2.2 + 7);
+  return Math.max(66, 13 + ROOM_CARD_WRITE_AREA_HEIGHT + ROOM_CARD_WRITE_AREA_GAP + chipsHeight + Math.max(0, rows.length - 1) * 2.2 + 7);
 };
 
 const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang }) => {
@@ -264,10 +285,10 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
 
 const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
   const direction = getDirection(lang);
-  const names = Array.isArray(room.names) ? room.names : [];
-  const capacity = Math.max(1, Number(room.capacity) || names.length || 1);
-  const rowCount = Math.max(capacity, names.length);
-  const count = names.filter(Boolean).length;
+  const pilgrims = getRoomPilgrims(room);
+  const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
+  const rowCount = Math.max(capacity, pilgrims.length);
+  const count = pilgrims.filter((pilgrim) => pilgrim.name && pilgrim.name !== "—").length;
   const status = count > capacity ? "over" : count < capacity ? "incomplete" : "full";
   const colors = {
     full: { border: "#d8dee7", fill: "#ffffff" },
@@ -286,11 +307,21 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
   const right = x + width - 8;
   const left = x + 8;
 
-  const rows = Array.from({ length: rowCount }, (_, index) => names[index] || "—");
+  const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
   const chipGap = 2.2;
   const chipX = left;
   const chipWidth = width - 16;
-  const contentTop = y + 8;
+  const writeY = y + 6;
+  drawRoundRect(ctx, left, writeY, chipWidth, ROOM_CARD_WRITE_AREA_HEIGHT, 4);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.strokeStyle = "#d7dbe2";
+  ctx.lineWidth = 0.55;
+  ctx.setLineDash([2, 2]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const contentTop = writeY + ROOM_CARD_WRITE_AREA_HEIGHT + ROOM_CARD_WRITE_AREA_GAP;
   const contentBottom = y + height - 7;
   const availableHeight = Math.max(1, contentBottom - contentTop);
   const chipHeight = Math.max(1, (availableHeight - chipGap * Math.max(0, rows.length - 1)) / rows.length);
@@ -300,9 +331,16 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
   ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
   const contentWidth = chipWidth - 10;
   let cursor = contentTop;
-  rows.forEach((name) => {
-    const empty = name === "—";
-    const lines = wrapText(ctx, name, contentWidth, maxLines);
+  rows.forEach((pilgrim) => {
+    const empty = pilgrim.name === "—";
+    const sourceText = !empty ? text(pilgrim.source, "") : "";
+    const sourceMaxWidth = sourceText ? Math.min(40, Math.max(24, chipWidth * 0.34)) : 0;
+    ctx.font = `800 ${Math.max(5.9, fontSize - 1.4)}pt Arial, Tahoma, sans-serif`;
+    const sourceLabel = sourceText ? truncateToWidth(ctx, sourceText, sourceMaxWidth - 9) : "";
+    const sourceWidth = sourceLabel ? Math.min(sourceMaxWidth, Math.max(20, ctx.measureText(sourceLabel).width + 9)) : 0;
+    ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
+    const nameWidthLimit = contentWidth - sourceWidth - (sourceWidth ? 5 : 0);
+    const lines = wrapText(ctx, pilgrim.name, nameWidthLimit, maxLines);
     drawRoundRect(ctx, chipX, cursor, chipWidth, chipHeight, Math.min(7, chipHeight / 2));
     ctx.fillStyle = empty ? "#fafafa" : typeStyle.chipBg;
     ctx.fill();
@@ -311,14 +349,38 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
     ctx.stroke();
     const textBlockHeight = lines.length * lineHeight;
     let lineY = cursor + Math.max(1, (chipHeight - textBlockHeight) / 2);
-    lines.forEach((line) => {
-      drawText(ctx, line, right - 5, lineY, {
+    const firstLine = lines[0] || "";
+    const measuredNameWidth = Math.min(ctx.measureText(firstLine).width, nameWidthLimit);
+    lines.forEach((line, lineIndex) => {
+      const lineX = direction === "rtl" ? right - 5 : left + 5;
+      drawText(ctx, line, lineX, lineY, {
         size: fontSize,
         weight: empty ? 600 : 700,
         color: empty ? "#94a3b8" : typeStyle.text || "#1f2937",
-        align: "right",
+        align: direction === "rtl" ? "right" : "left",
         direction,
       });
+      if (lineIndex === 0 && sourceLabel) {
+        const badgeX = direction === "rtl"
+          ? Math.max(chipX + 4, right - 5 - measuredNameWidth - 5 - sourceWidth)
+          : Math.min(chipX + chipWidth - sourceWidth - 4, left + 5 + measuredNameWidth + 5);
+        const badgeY = cursor + Math.max(1, (chipHeight - Math.min(10.5, chipHeight - 2)) / 2);
+        const badgeH = Math.min(10.5, chipHeight - 2);
+        drawRoundRect(ctx, badgeX, badgeY, sourceWidth, badgeH, Math.min(5, badgeH / 2));
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.strokeStyle = typeStyle.chipBorder;
+        ctx.lineWidth = 0.45;
+        ctx.stroke();
+        drawText(ctx, sourceLabel, direction === "rtl" ? badgeX + sourceWidth / 2 : badgeX + sourceWidth / 2, badgeY + 1.4, {
+          size: Math.max(5.9, fontSize - 1.4),
+          weight: 800,
+          color: "#64748b",
+          align: "center",
+          direction,
+          maxWidth: sourceWidth - 6,
+        });
+      }
       lineY += lineHeight;
     });
     cursor += chipHeight + chipGap;
@@ -395,14 +457,14 @@ const getCardWidth = (page) => (
 );
 
 const getRoomMinimumHeight = (room) => {
-  const names = Array.isArray(room.names) ? room.names : [];
-  const capacity = Math.max(1, Number(room.capacity) || names.length || 1);
-  const rowCount = Math.max(capacity, names.length);
-  if (rowCount <= 2) return 56;
-  if (rowCount === 3) return 64;
-  if (rowCount === 4) return 72;
-  if (rowCount === 5) return 80;
-  return 92;
+  const pilgrims = getRoomPilgrims(room);
+  const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
+  const rowCount = Math.max(capacity, pilgrims.length);
+  if (rowCount <= 2) return 66;
+  if (rowCount === 3) return 74;
+  if (rowCount === 4) return 82;
+  if (rowCount === 5) return 90;
+  return 102;
 };
 
 const getFlowRowHeight = (ctx, rooms, cardWidth) => {
@@ -709,6 +771,143 @@ export async function downloadRoomingPdf({
   const pdf = await makePdf(pages);
   downloadBlob(pdf, filename || `rooming-${sanitizeFile(programName)}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
+
+export const createRoomingPrintHtml = ({
+  rooms = [],
+  labels = {},
+  lang = "ar",
+  programName = "",
+  agencyName = "",
+  agencyLogoUrl = "",
+  sectionOverride = null,
+} = {}) => {
+  const direction = getDirection(lang);
+  const sections = groupRooms(rooms, labels, sectionOverride);
+  const logoHtml = agencyLogoUrl
+    ? `<img class="agency-logo" src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName || "Rukn")}" onerror="this.style.display='none'"/>`
+    : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
+  const roomCardHtml = (room) => {
+    const typeStyle = TYPE_COLORS[room.roomTypeKey] || TYPE_COLORS.other;
+    const pilgrims = getRoomPilgrims(room);
+    const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
+    const rowCount = Math.max(capacity, pilgrims.length);
+    const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
+    return `
+      <article class="room-card" style="--type-text:${typeStyle.text};--chip-bg:${typeStyle.chipBg};--chip-border:${typeStyle.chipBorder}">
+        <div class="write-space"></div>
+        <ol>
+          ${rows.map((pilgrim) => {
+            const empty = !pilgrim.name || pilgrim.name === "—";
+            return `
+              <li class="${empty ? "empty" : ""}">
+                <span class="pilgrim-name">${escapeHtml(empty ? "—" : pilgrim.name)}</span>
+                ${!empty && pilgrim.source ? `<span class="source-badge">${escapeHtml(pilgrim.source)}</span>` : ""}
+              </li>
+            `;
+          }).join("")}
+        </ol>
+      </article>
+    `;
+  };
+  const sectionsHtml = sections.length ? sections.map((section) => {
+    const typeGroups = getOrderedTypeGroups(section, labels, lang);
+    return `
+      <section class="rooming-section">
+        <header class="print-header">
+          <div class="agency-brand">
+            ${logoHtml}
+            <strong>${escapeHtml(agencyName || "—")}</strong>
+          </div>
+          <div class="title-block">
+            <h1>${escapeHtml(section.cityLabel || labels.rooming || "Rooming")}</h1>
+            ${section.combined && Array.isArray(section.dateRanges)
+              ? section.dateRanges.slice(0, 2).map((range) => (
+                `<p>${escapeHtml(range.label)}: ${escapeHtml(labels.checkIn || "Check-in")} ${escapeHtml(formatDate(range.checkIn))} / ${escapeHtml(labels.checkOut || "Check-out")} ${escapeHtml(formatDate(range.checkOut))}</p>`
+              )).join("")
+              : `<p>${escapeHtml(section.hotel || "")}</p>`}
+            ${programName ? `<small>${escapeHtml(programName)}</small>` : ""}
+          </div>
+          <div class="metric-strip">
+            <div><span>${escapeHtml(labels.roomsCount || "Rooms")}</span><b>${escapeHtml(String(section.rooms.length))}</b></div>
+            <div><span>${escapeHtml(labels.checkIn || "Check-in")}</span><b>${escapeHtml(formatDate(section.checkIn))}</b></div>
+            <div><span>${escapeHtml(labels.checkOut || "Check-out")}</span><b>${escapeHtml(formatDate(section.checkOut))}</b></div>
+          </div>
+        </header>
+        <div class="divider"></div>
+        ${typeGroups.map((group) => `
+          <div class="type-group">
+            <div class="type-title"><span>${escapeHtml(group.title)}</span></div>
+            <div class="rooms-grid">
+              ${group.rows.flat().map(roomCardHtml).join("")}
+            </div>
+          </div>
+        `).join("")}
+      </section>
+    `;
+  }).join("") : `
+    <section class="rooming-section">
+      <header class="print-header">
+        <div class="agency-brand">${logoHtml}<strong>${escapeHtml(agencyName || "—")}</strong></div>
+        <div class="title-block"><h1>${escapeHtml(labels.rooming || "Rooming")}</h1>${programName ? `<small>${escapeHtml(programName)}</small>` : ""}</div>
+      </header>
+      <div class="divider"></div>
+      <p class="empty-state">${escapeHtml(labels.noRooms || "No rooms")}</p>
+    </section>
+  `;
+
+  return `<!doctype html>
+<html dir="${direction}" lang="${escapeHtml(lang)}">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(programName || labels.rooming || "Rooming")}</title>
+  <style>
+    @page{size:A4 landscape;margin:7mm}
+    *{box-sizing:border-box}
+    html,body{margin:0;background:#fff;color:#0f172a}
+    body{font-family:Arial,Tahoma,sans-serif;font-size:9px;line-height:1.25}
+    .rooming-section{break-after:page;page-break-after:always}
+    .rooming-section:last-child{break-after:auto;page-break-after:auto}
+    .print-header{position:relative;display:grid;grid-template-columns:48mm minmax(0,1fr) 86mm;align-items:start;gap:8mm;min-height:16mm;padding:0 0 2.5mm}
+    .agency-brand{display:flex;align-items:center;gap:2.5mm;min-width:0}
+    .agency-logo,.agency-logo-fallback{width:10mm;height:10mm;flex:0 0 auto;object-fit:contain;border-radius:2mm}
+    .agency-logo-fallback{border:1px solid #d7dbe2;display:inline-flex;align-items:center;justify-content:center;color:#9a7418;font-size:12px;font-weight:900}
+    .agency-brand strong{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;color:#0f172a}
+    .title-block{text-align:center;min-width:0}
+    .title-block h1{margin:0;color:#0f172a;font-size:15px;line-height:1.1;font-weight:900}
+    .title-block p{margin:2px 0 0;color:#9a7418;font-size:8px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .title-block small{display:block;margin-top:1px;color:#64748b;font-size:7.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .metric-strip{display:grid;grid-template-columns:repeat(3,1fr);height:12mm;border-inline-start:1px solid #d9c491}
+    .metric-strip div{display:flex;flex-direction:column;align-items:center;justify-content:center;border-inline-end:1px solid #d9c491;padding:0 2mm;text-align:center;min-width:0}
+    .metric-strip span{font-size:7px;color:#475569;font-weight:800;white-space:nowrap}
+    .metric-strip b{font-size:8.2px;color:#0f172a;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+    .divider{height:1px;background:#b99235;margin:0 0 3mm}
+    .type-group{margin:0 0 2.5mm;break-inside:auto;page-break-inside:auto}
+    .type-title{display:flex;align-items:center;gap:2mm;margin:0 0 1.5mm;color:#7c641f;font-weight:900}
+    .type-title::before,.type-title::after{content:"";height:1px;background:#eee7d6;flex:1}
+    .type-title span{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6dcc2;background:#fbfaf7;border-radius:999px;padding:1.2mm 5mm;font-size:8.5px;line-height:1}
+    .rooms-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1.7mm;align-items:start}
+    .room-card{border:1px solid #d8dee7;border-radius:2mm;background:#fff;padding:1.7mm;break-inside:avoid;page-break-inside:avoid;min-height:17mm}
+    .write-space{height:2.8mm;border:1px dashed #d7dbe2;border-radius:1.2mm;margin-bottom:1.3mm;background:#fff}
+    ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.6mm}
+    li{display:flex;align-items:center;justify-content:flex-start;gap:1.2mm;min-height:3.9mm;border:1px solid var(--chip-border);border-radius:999px;background:var(--chip-bg);padding:.55mm 1.4mm;min-width:0}
+    .pilgrim-name{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--type-text);font-size:8px;font-weight:800}
+    .source-badge{flex:0 1 auto;max-width:32mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--chip-border);border-radius:999px;background:#fff;color:#64748b;font-size:6.6px;font-weight:800;line-height:1;padding:.25mm 1.3mm}
+    li.empty{background:#fafafa;border-color:#ededed}
+    li.empty .pilgrim-name{color:#94a3b8}
+    .empty-state{margin:18mm 0 0;text-align:center;color:#64748b;font-size:12px;font-weight:800}
+    @media print{
+      html,body{background:#fff !important}
+      .room-card,.type-title,.print-header{break-inside:avoid;page-break-inside:avoid}
+      .rooms-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
+    }
+  </style>
+</head>
+<body>
+  ${sectionsHtml}
+  <script>window.onload=()=>window.print()</script>
+</body>
+</html>`;
+};
 
 export const createCombinedRoomingSection = ({
   rooms = [],
