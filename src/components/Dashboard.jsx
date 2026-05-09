@@ -13,8 +13,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
   const { t, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { stats, clients, programs, activityLog,
-          getClientStatus, getClientTotalPaid, getProgramClients, getProgramById,
-          fetchActivityLogPage } = store;
+          getClientStatus, getClientTotalPaid, getProgramClients, getProgramById } = store;
   const [search, setSearch] = React.useState("");
   const [brandHover, setBrandHover] = React.useState(false);
   const handleBrandClick = React.useCallback(() => {
@@ -29,62 +28,11 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
     (value) => formatCurrency(value, lang),
     [lang]
   );
-  const ACTIVITY_PAGE_SIZE = 5;
-  const [activityPage, setActivityPage] = React.useState(0);
-  const [activityRows, setActivityRows] = React.useState(activityLog.slice(0, ACTIVITY_PAGE_SIZE));
-  const [activityTotal, setActivityTotal] = React.useState(activityLog.length);
-  const [activityLoading, setActivityLoading] = React.useState(false);
-  const [activityError, setActivityError] = React.useState(null);
-
-  const applyActivityFallback = React.useCallback((pageIndex) => {
-    const start = pageIndex * ACTIVITY_PAGE_SIZE;
-    const fallback = activityLog.slice(start, start + ACTIVITY_PAGE_SIZE);
-    if (fallback.length) {
-      setActivityRows(fallback);
-      setActivityTotal(activityLog.length);
-      setActivityPage(pageIndex);
-      setActivityError(null);
-    } else {
-      setActivityRows([]);
-      setActivityTotal(0);
-      setActivityError("تعذّر تحميل سجل النشاط");
-    }
-  }, [activityLog]);
-
-  const loadActivityPage = React.useCallback(async (pageIndex = 0) => {
-    if (!fetchActivityLogPage) {
-      applyActivityFallback(pageIndex);
-      return;
-    }
-    setActivityLoading(true);
-    setActivityError(null);
-    try {
-      const { data, count, error } = await fetchActivityLogPage({ page: pageIndex, limit: ACTIVITY_PAGE_SIZE });
-      if (error) {
-        applyActivityFallback(pageIndex);
-        return;
-      }
-      setActivityRows(data || []);
-      setActivityTotal(count ?? 0);
-      setActivityPage(pageIndex);
-    } catch (err) {
-      console.error("[Dashboard] activity log load failed", err);
-      applyActivityFallback(pageIndex);
-    } finally {
-      setActivityLoading(false);
-    }
-  }, [applyActivityFallback, fetchActivityLogPage]);
-
-  React.useEffect(() => {
-    loadActivityPage(0);
-  }, [loadActivityPage]);
-
-  React.useEffect(() => {
-    if (activityPage === 0 && !activityLoading && activityLog.length) {
-      setActivityRows(activityLog.slice(0, ACTIVITY_PAGE_SIZE));
-      setActivityTotal((prev) => Math.max(prev, activityLog.length));
-    }
-  }, [activityLog, activityLoading, activityPage]);
+  const dashboardActivityRows = React.useMemo(() => (
+    [...(activityLog || [])]
+      .sort((a, b) => new Date(b.time || b.createdAt || 0) - new Date(a.time || a.createdAt || 0))
+      .slice(0, 5)
+  ), [activityLog]);
 
   const results = React.useMemo(() => {
     if (!search.trim()) return [];
@@ -99,11 +47,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
     return [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
   }, [search, clients, programs]);
 
-  const maxActivityPage = Math.max(0, Math.ceil(activityTotal / ACTIVITY_PAGE_SIZE) - 1);
   const programClientCounts = stats.programClientCounts || {};
-
-  const newerLabel = t.newerUpdates || (lang === "fr" ? "Plus récent" : lang === "en" ? "Newer" : "الأحدث");
-  const olderLabel = t.olderUpdates || (lang === "fr" ? "Plus ancien" : lang === "en" ? "Older" : "الأقدم");
 
   return (
     <div className="page-shell" style={{ paddingBottom:40 }}>
@@ -248,69 +192,15 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             {/* Activity log */}
             <SectionHeader title={t.recentActivity} onMore={()=>onNavigate("activity")} btnLabel={t.viewAll} />
             <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
-              {activityError && (
-                <div style={{ padding:16, textAlign:"center", color:theme.colors.danger, fontSize:12 }}>
-                  {activityError}
-                </div>
-              )}
-              {activityLoading && (
-                <div style={{ padding:16, textAlign:"center", color:tc.grey, fontSize:12 }}>
-                  {t.loading || "جاري التحميل..."}
-                </div>
-              )}
-              {!activityError && !activityLoading && activityRows.length === 0 && (
+              {dashboardActivityRows.length === 0 && (
                 <div style={{ padding:20, textAlign:"center", color:tc.grey, fontSize:13 }}>
-                  {t.noActivities}
+                  {t.noActivities || (lang === "fr" ? "Aucune activité récente" : lang === "en" ? "No recent activity" : "لا توجد تعديلات حديثة")}
                 </div>
               )}
-              {activityRows.map((a,i)=>(
-                <ActivityRow key={a.id || i} activity={a} index={i + activityPage * ACTIVITY_PAGE_SIZE} />
+              {dashboardActivityRows.map((a,i)=>(
+                <ActivityRow key={a.id || i} activity={a} index={i} />
               ))}
             </div>
-            {activityTotal > ACTIVITY_PAGE_SIZE && (
-              <div style={{
-                display:"flex", justifyContent:"center", alignItems:"center",
-                gap:12, marginTop:12,
-              }}>
-                <button
-                  type="button"
-                  onClick={() => loadActivityPage(Math.max(0, activityPage - 1))}
-                  disabled={activityPage === 0 || activityLoading}
-                  style={{
-                    padding:"6px 14px",
-                    borderRadius:999,
-                    border:"1px solid rgba(255,255,255,.15)",
-                    background:activityPage===0?"rgba(255,255,255,.04)":"rgba(212,175,55,.15)",
-                    color:activityPage===0?tc.grey:tc.gold,
-                    fontSize:12, fontWeight:600,
-                    cursor:activityPage===0?"not-allowed":"pointer",
-                    transition:"all .2s",
-                  }}
-                >
-                  {newerLabel}
-                </button>
-                <span style={{ fontSize:11, color:tc.grey }}>
-                  {activityPage + 1}/{maxActivityPage + 1}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => loadActivityPage(Math.min(maxActivityPage, activityPage + 1))}
-                  disabled={activityPage === maxActivityPage || activityLoading}
-                  style={{
-                    padding:"6px 14px",
-                    borderRadius:999,
-                    border:"1px solid rgba(255,255,255,.15)",
-                    background:activityPage===maxActivityPage?"rgba(255,255,255,.04)":"rgba(212,175,55,.15)",
-                    color:activityPage===maxActivityPage?tc.grey:tc.gold,
-                    fontSize:12, fontWeight:600,
-                    cursor:activityPage===maxActivityPage?"not-allowed":"pointer",
-                    transition:"all .2s",
-                  }}
-                >
-                  {olderLabel}
-                </button>
-              </div>
-            )}
           </>
         )}
       </div>
