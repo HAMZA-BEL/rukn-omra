@@ -455,6 +455,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
     const categoryLabel = category ? getRoomingCategoryLabel(category) : "";
     const roomingGroupId = String(room.roomingGroupId || room.id || "").trim();
     const roomingGroupName = String(room.roomingGroupName || (room.roomNumber ? `غرفة ${room.roomNumber}` : "")).trim();
+    const genderOverrides = room.genderOverrides && typeof room.genderOverrides === "object" ? room.genderOverrides : {};
     const roomHotel = String(room.hotel || "").trim();
     const roomPackage = findRoomingPackageFromRoom(room, packages, city);
     const roomLevel = String(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
@@ -468,6 +469,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
       if (seen.has(clientId)) return;
       seen.add(clientId);
       const client = clientsById.get(clientId);
+      const confirmedGender = ["male", "female"].includes(genderOverrides[clientId]) ? genderOverrides[clientId] : "";
       const roomingPatch = {
         groupId: roomingGroupId,
         groupName: roomingGroupName,
@@ -488,7 +490,8 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
         && (!locationPatch.hotelMadina || client.hotelMadina === locationPatch.hotelMadina)
         && (!levelPatch.packageLevel || client.packageLevel === levelPatch.packageLevel)
         && (!levelPatch.hotelLevel || client.hotelLevel === levelPatch.hotelLevel)
-        && (!levelPatch.packageId || client.packageId === levelPatch.packageId);
+        && (!levelPatch.packageId || client.packageId === levelPatch.packageId)
+        && (!confirmedGender || client.gender === confirmedGender);
       if (unchanged) return;
       updates.push({
         id: clientId,
@@ -503,6 +506,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
           roomingSeatIndex: index + 1,
           ...locationPatch,
           ...levelPatch,
+          ...(confirmedGender ? { gender: confirmedGender } : {}),
           docs: {
             ...(client.docs || {}),
             rooming: {
@@ -3133,6 +3137,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (lang === "en") return "Rooming was saved, but some pilgrim details could not be updated.";
     return "تم حفظ التسكين، لكن تعذر تحديث بعض بيانات المعتمرين.";
   }, [lang]);
+  const unknownGenderBadgeLabel = React.useMemo(() => {
+    if (lang === "fr") return "Sexe non défini";
+    if (lang === "en") return "Gender not set";
+    return "الجنس غير محدد";
+  }, [lang]);
 
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
@@ -3429,16 +3438,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (occupantIds.length >= capacity) return { ok: false, reason: t.roomFull || "الغرفة ممتلئة" };
     if (room.category === "male_only" && clientGender === "female") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
     if (room.category === "female_only" && clientGender === "male") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
-    if (room.category === "family" && ["male", "female"].includes(clientGender)) {
-      const occupants = occupantIds.map((id) => clientsById[id]).filter(Boolean);
-      const mixed = occupants.some((occupant) => normalizeRoomingGender(occupant.gender) && normalizeRoomingGender(occupant.gender) !== clientGender);
-      if (mixed) {
-        const roomFamilyKeys = new Set(occupants.map((occupant) => getClientContext(occupant).familyKey).filter(Boolean));
-        if (!context.familyKey || !roomFamilyKeys.has(context.familyKey)) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
-      }
-    }
     return { ok: true };
-  }, [clientsById, getClientContext, program.id, t]);
+  }, [getClientContext, program.id, t]);
 
   const getRoomingDropConflicts = React.useCallback((client, room) => {
     if (!client || !room) return null;
@@ -3446,15 +3447,36 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     const currentRoomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
     const targetHotel = isMissingRoomingValue(room.hotel) ? "" : String(room.hotel).trim();
     const currentHotel = getExplicitClientHotelForRoomingCity(client, city);
+    const clientGender = normalizeRoomingGender(client.gender);
+    const occupantGenders = (room.occupantIds || [])
+      .map((id) => normalizeRoomingGender(clientsById[id]?.gender))
+      .filter((gender) => gender === "male" || gender === "female");
+    const hasMale = occupantGenders.includes("male");
+    const hasFemale = occupantGenders.includes("female");
     const conflicts = [];
     if (targetRoomType && currentRoomType && targetRoomType !== currentRoomType) conflicts.push("roomType");
     if (targetHotel && currentHotel && normalizeRoomingHotel(targetHotel) !== normalizeRoomingHotel(currentHotel)) conflicts.push("hotel");
+    let genderAssignment = "";
+    if (!clientGender && room.category === "male_only") {
+      conflicts.push("genderAssignment");
+      genderAssignment = "male";
+    } else if (!clientGender && room.category === "female_only") {
+      conflicts.push("genderAssignment");
+      genderAssignment = "female";
+    }
+    const createsFamilyMix = room.category === "family"
+      && ["male", "female"].includes(clientGender)
+      && occupantGenders.length > 0
+      && !(hasMale && hasFemale)
+      && ((clientGender === "male" && hasFemale) || (clientGender === "female" && hasMale));
+    if (createsFamilyMix) conflicts.push("familyMixed");
     if (!conflicts.length) return null;
     return {
       clientId: client.id,
       roomId: room.id,
       city,
       conflicts,
+      genderAssignment,
       currentRoomType,
       targetRoomType,
       currentRoomTypeLabel: currentRoomType ? getLocalizedRoomTypeLabel(currentRoomType) : "",
@@ -3462,7 +3484,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       currentHotel,
       targetHotel,
     };
-  }, [city, getLocalizedRoomTypeLabel]);
+  }, [city, clientsById, getLocalizedRoomTypeLabel]);
 
   const getCompatibilityReason = React.useCallback((client, room) => {
     const result = getCompatibilityResult(client, room);
@@ -3724,6 +3746,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       ...roomDraft,
       capacity,
       occupantIds: kept,
+      genderOverrides: Object.fromEntries(Object.entries(item.genderOverrides || {}).filter(([id]) => kept.includes(id))),
     } : item));
     if (removed.length) {
       setUnassigned((prev) => [...prev, ...removed]);
@@ -3780,20 +3803,33 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const removeClientFromRoom = React.useCallback((roomId, clientId) => {
     setRooms((prev) => prev.map((room) => room.id === roomId
-      ? { ...room, occupantIds: (room.occupantIds || []).filter((id) => id !== clientId) }
+      ? {
+        ...room,
+        occupantIds: (room.occupantIds || []).filter((id) => id !== clientId),
+        genderOverrides: Object.fromEntries(Object.entries(room.genderOverrides || {}).filter(([id]) => id !== clientId)),
+      }
       : room));
     setUnassigned((prev) => [...prev, { clientId, reason: "" }]);
     markDirty();
   }, [markDirty]);
 
-  const commitClientDropIntoRoom = React.useCallback((roomId, clientId) => {
+  const commitClientDropIntoRoom = React.useCallback((roomId, clientId, options = {}) => {
     const room = rooms.find((item) => item.id === roomId);
     if (!room) return false;
     setRooms((prev) => prev.map((item) => {
       if (item.id !== room.id) return item;
       const occupantIds = item.occupantIds || [];
-      if (occupantIds.includes(clientId)) return item;
-      return { ...item, occupantIds: [...occupantIds, clientId] };
+      const genderAssignment = ["male", "female"].includes(options.genderAssignment) ? options.genderAssignment : "";
+      if (occupantIds.includes(clientId)) {
+        return genderAssignment
+          ? { ...item, genderOverrides: { ...(item.genderOverrides || {}), [clientId]: genderAssignment } }
+          : item;
+      }
+      return {
+        ...item,
+        occupantIds: [...occupantIds, clientId],
+        ...(genderAssignment ? { genderOverrides: { ...(item.genderOverrides || {}), [clientId]: genderAssignment } } : {}),
+      };
     }));
     setUnassigned((prev) => prev.filter((item) => item.clientId !== clientId));
     setSelectedRoomId(room.id);
@@ -3815,7 +3851,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       setPendingDrop(conflict);
       return false;
     }
-    return commitClientDropIntoRoom(roomId, clientId);
+    return commitClientDropIntoRoom(roomId, clientId, options);
   }, [rooms, clientsById, getCompatibilityReason, getRoomingDropConflicts, commitClientDropIntoRoom, onToast]);
 
   const addSelectedPilgrimsToRoom = React.useCallback(() => {
@@ -3832,6 +3868,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       onToast?.(t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة", "error");
       return;
     }
+    const firstConflict = selected
+      .map((clientId) => getRoomingDropConflicts(clientsById[clientId], room))
+      .find(Boolean);
+    if (firstConflict) {
+      setPendingDrop({ ...firstConflict, source: "picker" });
+      return;
+    }
     setRooms((prev) => prev.map((item) => item.id === room.id
       ? { ...item, occupantIds: [...(item.occupantIds || []), ...selected] }
       : item));
@@ -3840,7 +3883,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     markDirty();
     setSelectedPilgrimIds([]);
     setPickerOpen(false);
-  }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, markDirty, onToast]);
+  }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, getRoomingDropConflicts, markDirty, onToast, t.noCompatiblePilgrims]);
 
   const autoArrangeRooms = React.useCallback(() => {
     if (rooms.length && !window.confirm(t.roomingAutoArrangeConfirm || "سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
@@ -4072,51 +4115,51 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
     win.document.write(`<!doctype html><html dir="${printDir}"><head><meta charset="utf-8"><title>${escapeHtml(program.name)}</title>
       <style>
-        @page{size:A4 landscape;margin:7mm 8mm}
+        @page{size:A4 landscape;margin:6mm 7mm}
         *{box-sizing:border-box}
         html,body{background:#fff !important;background-color:#fff !important;margin:0;overflow-x:hidden}
-        body{font-family:Arial,"Tahoma",sans-serif;color:#0f172a;font-size:10.5px;line-height:1.25}
-        .page{width:100%;margin:0 auto;padding:0 4mm 2mm;overflow:hidden;background:transparent !important;border:0 !important;outline:0 !important;box-shadow:none !important}
-        .hero{position:relative;text-align:center;padding:3px 60mm 3px 18mm;margin-bottom:2px;min-height:29mm}
-        .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:7px;width:58mm;text-align:start}
-        .agency-brand img{display:block;width:22mm;height:22mm;object-fit:contain;flex:0 0 auto}
-        .agency-logo-fallback{width:22mm;height:22mm;border:1px solid #d7dbe2;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9a7418;background:#fff;font-size:16px;font-weight:900;flex:0 0 auto}
+        body{font-family:Arial,"Tahoma",sans-serif;color:#0f172a;font-size:9.5px;line-height:1.22}
+        .page{width:100%;margin:0 auto;padding:0 2mm 2mm;overflow:hidden;background:transparent !important;border:0 !important;outline:0 !important;box-shadow:none !important}
+        .hero{position:relative;text-align:center;padding:2px 58mm 1px 18mm;margin-bottom:1px;min-height:20mm}
+        .agency-brand{position:absolute;inset-inline-start:0;top:0;display:flex;align-items:center;justify-content:flex-start;gap:6px;width:54mm;text-align:start}
+        .agency-brand img{display:block;width:16mm;height:16mm;object-fit:contain;flex:0 0 auto}
+        .agency-logo-fallback{width:16mm;height:16mm;border:1px solid #d7dbe2;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#9a7418;background:#fff;font-size:13px;font-weight:900;flex:0 0 auto}
         .agency-copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-width:0}
-        .agency-copy strong{display:block;color:#0f5aa6;font-size:16px;line-height:1.05;font-weight:900;white-space:nowrap}
-        .agency-copy small{display:block;color:#a9472d;font-size:8.5px;line-height:1.2;font-weight:800;white-space:nowrap;margin-top:2px}
-        h1{font-size:34px;line-height:1;margin:0 0 5px;font-weight:900;color:#0d1728;letter-spacing:.5px}
-        .program-name{font-size:14px;color:#9a7418;font-weight:900;margin:0}
-        .summary{display:grid;grid-template-columns:1fr 1.35fr 1fr 1fr;gap:7px;margin:2px 0 8px}
-        .summary-card{height:14.5mm;border:1px solid #d9dce2;border-radius:9px;background:#fff;padding:4px 8px;display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:none}
-        .summary-card span{display:block;color:#464b55;font-size:9px;font-weight:800;margin-bottom:2px}
-        .summary-card b{display:block;color:#0f172a;font-size:10.5px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .hotel-section{margin:0 0 8px;break-inside:auto;page-break-inside:auto;background:transparent;border:0;outline:0;box-shadow:none}
+        .agency-copy strong{display:block;color:#0f5aa6;font-size:12px;line-height:1.05;font-weight:900;white-space:nowrap}
+        .agency-copy small{display:block;color:#a9472d;font-size:7px;line-height:1.15;font-weight:800;white-space:nowrap;margin-top:1px}
+        h1{font-size:24px;line-height:1;margin:0 0 3px;font-weight:900;color:#0d1728;letter-spacing:0}
+        .program-name{font-size:11px;color:#9a7418;font-weight:900;margin:0}
+        .summary{display:grid;grid-template-columns:1fr 1.35fr 1fr 1fr;gap:5px;margin:1px 0 6px;border-top:1.2px solid #b99235;padding-top:4px}
+        .summary-card{height:10.5mm;border:1px solid #d9dce2;border-radius:7px;background:#fff;padding:3px 6px;display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:none}
+        .summary-card span{display:block;color:#464b55;font-size:7.5px;font-weight:800;margin-bottom:1px}
+        .summary-card b{display:block;color:#0f172a;font-size:8.8px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .hotel-section{margin:0 0 6px;break-inside:auto;page-break-inside:auto;background:transparent;border:0;outline:0;box-shadow:none}
         .hotel-section::before,.hotel-section::after{content:none !important;display:none !important}
-        .hotel-title{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 8px;padding:3px 0;break-after:avoid;page-break-after:avoid;color:#101827;border-top:1.5px solid #c79b3c;border-bottom:1.5px solid #c79b3c}
-        .hotel-title::before,.hotel-title::after{content:"";height:1.5px;background:#c79b3c;flex:1}
+        .hotel-title{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;margin:1px 0 6px;padding:2px 0;break-after:avoid;page-break-after:avoid;color:#101827;border-top:1px solid #c79b3c;border-bottom:1px solid #c79b3c}
+        .hotel-title::before,.hotel-title::after{content:"";height:1px;background:#c79b3c;flex:1}
         .hotel-title::after{background:#c79b3c}
-        .hotel-title h2{font-size:19px;line-height:1;margin:0;font-weight:900;color:#101827}
-        .hotel-title h2::before,.hotel-title h2::after{content:"";display:inline-block;width:14px;height:7px;border-top:2px solid #c79b3c;margin:0 7px;transform:skewX(-28deg)}
+        .hotel-title h2{font-size:14px;line-height:1;margin:0;font-weight:900;color:#101827}
+        .hotel-title h2::before,.hotel-title h2::after{content:"";display:inline-block;width:10px;height:5px;border-top:1.5px solid #c79b3c;margin:0 5px;transform:skewX(-28deg)}
         .hotel-title span{display:none}
-        .rooms-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px 8px;align-items:start;background:transparent;border:0;outline:0;box-shadow:none;padding:0}
+        .rooms-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px 6px;align-items:start;background:transparent;border:0;outline:0;box-shadow:none;padding:0}
         .rooms-grid::before,.rooms-grid::after{content:none !important;display:none !important}
-        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:9px;padding:7px 8px;background:#fff;min-height:36mm;box-shadow:none}
-        .room-card::before{content:"";position:absolute;inset-inline:0;top:0;height:3px;border-radius:9px 9px 0 0;background:#b99235}
+        .room-card{position:relative;break-inside:avoid;page-break-inside:avoid;border:1px solid #d7dbe2;border-radius:8px;padding:6px 7px;background:#fff;min-height:29mm;box-shadow:none}
+        .room-card::before{content:"";position:absolute;inset-inline:0;top:0;height:2px;border-radius:8px 8px 0 0;background:#b99235}
         .room-card.male_only::before{background:#2c5f93}
         .room-card.female_only::before{background:#ad5c7a}
         .room-card.family::before{background:#a88a2c}
-        .category-line{display:flex;justify-content:center;margin:1px 0 5px}
-        .category-badge{display:inline-flex;align-items:center;justify-content:center;min-width:48px;text-align:center;font-size:8.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:5px;padding:2px 8px}
+        .category-line{display:flex;justify-content:center;margin:0 0 4px}
+        .category-badge{display:inline-flex;align-items:center;justify-content:center;min-width:42px;text-align:center;font-size:7.5px;font-weight:900;color:#263142;background:#e8eef6;border:1px solid #dbe4ef;border-radius:5px;padding:1px 6px}
         .female_only .category-badge{background:#f1dfe7;border-color:#ead1dc}
         .family .category-badge{background:#eadbb4;border-color:#dfcb92}
-        .room-meta{display:flex;align-items:center;justify-content:center;gap:10px;padding:0 0 5px;margin-bottom:3px}
-        .room-meta strong{display:block;font-size:14px;font-weight:900;color:#0f172a}
-        .occupancy{font-size:10px;font-weight:900;color:#0f172a;border:0;background:transparent;border-radius:0;padding:0;white-space:nowrap}
-        .hotel-name{border-top:1px dashed #d2d6dd;border-bottom:1px solid #c7cbd2;color:#a77d22;text-align:center;font-size:9.5px;font-weight:900;padding:4px 0;margin:0 0 5px}
+        .room-meta{display:flex;align-items:center;justify-content:center;gap:8px;padding:0 0 4px;margin-bottom:2px}
+        .room-meta strong{display:block;font-size:11px;font-weight:900;color:#0f172a}
+        .occupancy{font-size:8.5px;font-weight:900;color:#0f172a;border:0;background:transparent;border-radius:0;padding:0;white-space:nowrap}
+        .hotel-name{border-top:1px dashed #d2d6dd;border-bottom:1px solid #c7cbd2;color:#a77d22;text-align:center;font-size:7.8px;font-weight:900;padding:3px 0;margin:0 0 4px}
         ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-        li{display:grid;grid-template-columns:13px 1fr;gap:5px;align-items:center;padding:0 2px;min-height:14px;border:0;background:transparent}
-        li span{color:#111827;font-size:9px;font-weight:900;text-align:center}
-        li b{font-size:10.5px;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        li{display:grid;grid-template-columns:11px 1fr;gap:4px;align-items:center;padding:0 2px;min-height:12px;border:0;background:transparent}
+        li span{color:#111827;font-size:7.6px;font-weight:900;text-align:center}
+        li b{font-size:8.6px;font-weight:700;color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         li.empty b{color:#9ca3af;font-weight:700}
         .print-footer{position:fixed;left:0;right:0;bottom:0;color:#0f172a;font-size:9px;display:flex;justify-content:center;gap:18px;align-items:center}
         .print-footer::before,.print-footer::after{content:"";width:38mm;height:1px;background:linear-gradient(90deg,transparent,#d5ad5a)}
@@ -4127,7 +4170,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           .hero,.summary,.hotel-section,.rooms-grid,.print-footer{background:transparent !important;background-color:transparent !important;box-shadow:none !important;border-image:none !important;outline:none !important}
           .hotel-section,.rooms-grid{border:none !important}
           .summary-card,.room-card{box-shadow:none !important;filter:none !important}
-          .rooms-grid{grid-template-columns:repeat(5,1fr)}
+          .rooms-grid{grid-template-columns:repeat(6,1fr)}
           .room-card{break-inside:avoid;page-break-inside:avoid}
           .hotel-title{break-after:avoid;page-break-after:avoid}
           .report-header{break-after:avoid;page-break-after:avoid}
@@ -4286,36 +4329,66 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (!pendingDrop) return null;
     const hasRoomType = pendingDrop.conflicts.includes("roomType");
     const hasHotel = pendingDrop.conflicts.includes("hotel");
+    const hasGenderAssignment = pendingDrop.conflicts.includes("genderAssignment");
+    const hasFamilyMixed = pendingDrop.conflicts.includes("familyMixed");
     const conflictCity = pendingDrop.city || city;
     const hotelLabel = conflictCity === "madinah" ? (t.hotelMadina || "فندق المدينة") : (t.hotelMecca || "فندق مكة");
-    if (hasRoomType && hasHotel) {
+    const genderTarget = pendingDrop.genderAssignment === "female"
+      ? (lang === "fr" ? "femme" : lang === "en" ? "female" : "أنثى")
+      : (lang === "fr" ? "homme" : lang === "en" ? "male" : "ذكر");
+    const conflictCount = [hasRoomType, hasHotel, hasGenderAssignment, hasFamilyMixed].filter(Boolean).length;
+    const makeDetails = (labels) => [
+      ...(hasRoomType ? [{ currentLabel: labels.roomCurrent, currentValue: pendingDrop.currentRoomTypeLabel || "—", targetLabel: labels.roomTarget, targetValue: pendingDrop.targetRoomTypeLabel || "—" }] : []),
+      ...(hasHotel ? [{ currentLabel: labels.hotelCurrent, currentValue: pendingDrop.currentHotel || "—", targetLabel: labels.hotelTarget, targetValue: pendingDrop.targetHotel || "—" }] : []),
+      ...(hasGenderAssignment ? [{ currentLabel: labels.genderCurrent, currentValue: labels.unknownGender, targetLabel: labels.genderTarget, targetValue: genderTarget }] : []),
+      ...(hasFamilyMixed ? [{ note: labels.familyNote }] : []),
+    ];
+    if (conflictCount > 1) {
       if (lang === "fr") return {
         title: "Mettre à jour les informations de répartition ?",
         intro: "Certaines informations sont différentes entre le dossier du pèlerin et la chambre choisie :",
-        roomCurrent: "Type de chambre actuel",
-        roomTarget: "Nouveau type de chambre",
-        hotelCurrent: "Hôtel actuel",
-        hotelTarget: "Nouvel hôtel",
+        details: makeDetails({
+          roomCurrent: "Type de chambre actuel",
+          roomTarget: "Nouveau type de chambre",
+          hotelCurrent: "Hôtel actuel",
+          hotelTarget: "Nouvel hôtel",
+          genderCurrent: "Sexe actuel",
+          genderTarget: "Nouveau sexe",
+          unknownGender: "Non défini",
+          familyNote: "La chambre familiale peut inclure des hommes et des femmes.",
+        }),
         question: "Voulez-vous mettre à jour ces informations et ajouter le pèlerin à cette chambre ?",
         primary: "Mettre à jour et ajouter",
       };
       if (lang === "en") return {
         title: "Update rooming details?",
         intro: "Some details differ between the pilgrim file and the selected room:",
-        roomCurrent: "Current room type",
-        roomTarget: "New room type",
-        hotelCurrent: "Current hotel",
-        hotelTarget: "New hotel",
+        details: makeDetails({
+          roomCurrent: "Current room type",
+          roomTarget: "New room type",
+          hotelCurrent: "Current hotel",
+          hotelTarget: "New hotel",
+          genderCurrent: "Current gender",
+          genderTarget: "New gender",
+          unknownGender: "Not set",
+          familyNote: "The family room may include both men and women.",
+        }),
         question: "Do you want to update these details and add the pilgrim to this room?",
         primary: "Update and add",
       };
       return {
         title: "تحديث بيانات التسكين؟",
         intro: "توجد معلومات مختلفة بين ملف المعتمر والغرفة المختارة:",
-        roomCurrent: "نوع الغرفة الحالي",
-        roomTarget: "نوع الغرفة الجديد",
-        hotelCurrent: "الفندق الحالي",
-        hotelTarget: "الفندق الجديد",
+        details: makeDetails({
+          roomCurrent: "نوع الغرفة الحالي",
+          roomTarget: "نوع الغرفة الجديد",
+          hotelCurrent: "الفندق الحالي",
+          hotelTarget: "الفندق الجديد",
+          genderCurrent: "الجنس الحالي",
+          genderTarget: "الجنس الجديد",
+          unknownGender: "غير محدد",
+          familyNote: "الغرفة العائلية يمكن أن تضم رجالًا ونساءً.",
+        }),
         question: "هل تريد تحديث هذه البيانات وإضافة المعتمر إلى الغرفة؟",
         primary: "تحديث وإضافة",
       };
@@ -4338,6 +4411,58 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         intro: `هذا المعتمر محدد حاليًا كـ ${pendingDrop.currentRoomTypeLabel}، والغرفة المختارة هي ${pendingDrop.targetRoomTypeLabel}.`,
         question: "هل تريد تحديث نوع الغرفة وإضافته إلى هذه الغرفة؟",
         primary: "تحديث وإضافة",
+      };
+    }
+    if (hasGenderAssignment) {
+      if (lang === "fr") return {
+        title: "Définir le sexe ?",
+        intro: pendingDrop.genderAssignment === "female"
+          ? "Cette pèlerine n’a pas de sexe défini dans son dossier.\nLa chambre sélectionnée est réservée aux femmes."
+          : "Ce pèlerin n’a pas de sexe défini dans son dossier.\nLa chambre sélectionnée est réservée aux hommes.",
+        question: pendingDrop.genderAssignment === "female"
+          ? "Voulez-vous définir le sexe comme femme et l’ajouter à cette chambre ?"
+          : "Voulez-vous définir le sexe comme homme et l’ajouter à cette chambre ?",
+        primary: pendingDrop.genderAssignment === "female" ? "Définir comme femme et ajouter" : "Définir comme homme et ajouter",
+      };
+      if (lang === "en") return {
+        title: "Set gender?",
+        intro: pendingDrop.genderAssignment === "female"
+          ? "This pilgrim does not have a gender set in their file.\nThe selected room is women-only."
+          : "This pilgrim does not have a gender set in their file.\nThe selected room is men-only.",
+        question: pendingDrop.genderAssignment === "female"
+          ? "Do you want to set gender as female and add them to this room?"
+          : "Do you want to set gender as male and add them to this room?",
+        primary: pendingDrop.genderAssignment === "female" ? "Set as female and add" : "Set as male and add",
+      };
+      return {
+        title: "تحديد الجنس؟",
+        intro: pendingDrop.genderAssignment === "female"
+          ? "هذه المعتمرة لا يوجد لها جنس محدد في ملفها.\nالغرفة المختارة مصنفة كـ نساء فقط."
+          : "هذا المعتمر لا يوجد له جنس محدد في ملفه.\nالغرفة المختارة مصنفة كـ رجال فقط.",
+        question: pendingDrop.genderAssignment === "female"
+          ? "هل تريد تحديد الجنس كأنثى وإضافتها إلى هذه الغرفة؟"
+          : "هل تريد تحديد الجنس كذكر وإضافته إلى هذه الغرفة؟",
+        primary: pendingDrop.genderAssignment === "female" ? "تحديد كأنثى وإضافة" : "تحديد كذكر وإضافة",
+      };
+    }
+    if (hasFamilyMixed) {
+      if (lang === "fr") return {
+        title: "Confirmer la chambre familiale",
+        intro: "Cette chambre est définie comme familiale et peut contenir des hommes et des femmes.",
+        question: "Voulez-vous ajouter ce pèlerin à cette chambre ?",
+        primary: "Confirmer et ajouter",
+      };
+      if (lang === "en") return {
+        title: "Confirm family room",
+        intro: "This room is marked as a family room and may include both men and women.",
+        question: "Do you want to add this pilgrim to this room?",
+        primary: "Confirm and add",
+      };
+      return {
+        title: "تأكيد غرفة عائلية",
+        intro: "هذه الغرفة مصنفة كغرفة عائلة، وستضم رجالًا ونساءً.",
+        question: "هل تريد إضافة هذا المعتمر إلى هذه الغرفة؟",
+        primary: "تأكيد وإضافة",
       };
     }
     if (lang === "fr") return {
@@ -4364,7 +4489,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   }, [city, lang, pendingDrop, t.hotelMadina, t.hotelMecca]);
   const confirmPendingDrop = React.useCallback(() => {
     if (!pendingDrop) return;
-    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId);
+    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId, { genderAssignment: pendingDrop.genderAssignment });
+    if (pendingDrop.source === "picker") {
+      setSelectedPilgrimIds([]);
+      setPickerOpen(false);
+    }
     setPendingDrop(null);
   }, [commitClientDropIntoRoom, pendingDrop]);
   const cancelPendingDrop = React.useCallback(() => {
@@ -4767,6 +4896,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   {filteredUnassigned.map((item) => {
                     const client = clientsById[item.clientId];
                     const context = client ? getClientContext(client) : {};
+                    const genderMissing = client && !normalizeRoomingGender(client.gender);
                     const selectedRoomReason = client && selectedRoom ? getCompatibilityReason(client, selectedRoom) : "";
                     const canAddToSelected = Boolean(client && selectedRoom && !selectedRoomReason);
                     const displayReason = item.reason && item.reason !== "يحتاج مراجعة" ? item.reason : "";
@@ -4786,8 +4916,25 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                         style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(148,163,184,.18)", background: draggingClientId === item.clientId ? "#eff6ff" : "#f8fafc", borderRadius: 10, padding: 9 }}
                       >
                         <strong style={{ display: "block", color: "#0f172a", fontSize: 12 }}>{context.name}</strong>
-                        <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
-                          {[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}
+                        <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                          <span>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}</span>
+                          {genderMissing && (
+                            <span style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              border: "1px solid rgba(148,163,184,.24)",
+                              background: "#fff",
+                              color: "#64748b",
+                              borderRadius: 999,
+                              padding: "1px 6px",
+                              fontSize: 9,
+                              fontWeight: 800,
+                              lineHeight: 1.45,
+                              whiteSpace: "nowrap",
+                            }}>
+                              {unknownGenderBadgeLabel}
+                            </span>
+                          )}
                         </span>
                         {displayReason && <span style={{ display: "block", color: "#b45309", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
                         {selectedRoom && (
@@ -4830,28 +4977,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
                 {pendingDropCopy.intro}
               </p>
-              {pendingDrop.conflicts.length > 1 ? (
+              {pendingDropCopy.details?.length ? (
                 <div style={{ display: "grid", gap: 9, padding: 12, border: "1px solid rgba(148,163,184,.18)", background: "#f8fafc", borderRadius: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.roomCurrent}</p>
-                      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{pendingDrop.currentRoomTypeLabel || "—"}</p>
+                  {pendingDropCopy.details.map((detail, index) => detail.note ? (
+                    <p key={`note-${index}`} style={{ color: "#475569", fontSize: 12, fontWeight: 800, lineHeight: 1.7, margin: 0 }}>{detail.note}</p>
+                  ) : (
+                    <div key={`${detail.currentLabel}-${index}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{detail.currentLabel}</p>
+                        <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{detail.currentValue}</p>
+                      </div>
+                      <div>
+                        <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{detail.targetLabel}</p>
+                        <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{detail.targetValue}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.roomTarget}</p>
-                      <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{pendingDrop.targetRoomTypeLabel || "—"}</p>
-                    </div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.hotelCurrent}</p>
-                      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{pendingDrop.currentHotel || "—"}</p>
-                    </div>
-                    <div>
-                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.hotelTarget}</p>
-                      <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{pendingDrop.targetHotel || "—"}</p>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               ) : pendingDropCopy.target ? (
                 <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>{pendingDropCopy.target}</p>

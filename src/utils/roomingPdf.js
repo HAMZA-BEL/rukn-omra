@@ -3,7 +3,7 @@ const PDF_SCALE = 2;
 const ROOM_TYPE_ORDER = ["double", "triple", "quad", "quint"];
 const CITY_ORDER = ["makkah", "madinah"];
 const FLOW_LAYOUT = {
-  contentTop: 88,
+  contentTop: 72,
   contentBottom: 576,
   columns: 6,
   gapX: 7,
@@ -169,32 +169,32 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
   const right = page.width - page.margin;
   const left = page.margin;
   const center = page.width / 2;
-  const logoSize = 38;
+  const logoSize = 30;
   if (logoImage) {
-    drawContainImage(ctx, logoImage, left, 16, logoSize, logoSize);
+    drawContainImage(ctx, logoImage, left, 12, logoSize, logoSize);
   } else {
     ctx.strokeStyle = "#d7dbe2";
     ctx.lineWidth = 1;
-    drawRoundRect(ctx, left, 16, logoSize, logoSize, 8);
+    drawRoundRect(ctx, left, 12, logoSize, logoSize, 7);
     ctx.stroke();
-    drawText(ctx, "R", left + logoSize / 2, 25, {
-      size: 16,
+    drawText(ctx, "R", left + logoSize / 2, 19, {
+      size: 13,
       weight: 800,
       color: "#9a7418",
       align: "center",
       direction: "ltr",
     });
   }
-  drawText(ctx, agencyName || "", left + logoSize + 8, 22, {
-    size: 10.2,
+  drawText(ctx, agencyName || "", left + logoSize + 7, 18, {
+    size: 8.8,
     weight: 800,
     color: "#0f172a",
     align: "left",
     direction,
     maxWidth: 150,
   });
-  drawText(ctx, section.cityLabel || "", center, section.combined ? 16 : 12, {
-    size: section.combined ? 15.5 : 29,
+  drawText(ctx, section.cityLabel || "", center, section.combined ? 12 : 9, {
+    size: section.combined ? 12.8 : 20,
     weight: 900,
     color: "#0f172a",
     align: "center",
@@ -204,8 +204,8 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
   if (section.combined && Array.isArray(section.dateRanges)) {
     section.dateRanges.slice(0, 2).forEach((range, index) => {
       const line = `${range.label}: ${labels.checkIn} ${formatDate(range.checkIn)} / ${labels.checkOut} ${formatDate(range.checkOut)}`;
-      drawText(ctx, line, center, 39 + index * 15, {
-        size: 8.4,
+      drawText(ctx, line, center, 31 + index * 12, {
+        size: 7.4,
         weight: 800,
         color: index === 0 ? "#7c641f" : "#475569",
         align: "center",
@@ -214,8 +214,8 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
       });
     });
   } else {
-    drawText(ctx, section.hotel || "", center, 49, {
-      size: 12,
+    drawText(ctx, section.hotel || "", center, 37, {
+      size: 9.8,
       weight: 800,
       color: "#9a7418",
       align: "center",
@@ -235,19 +235,19 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
       ctx.strokeStyle = "#d9c491";
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.moveTo(x + metricWidth, 18);
-      ctx.lineTo(x + metricWidth, 55);
+      ctx.moveTo(x + metricWidth, 13);
+      ctx.lineTo(x + metricWidth, 45);
       ctx.stroke();
     }
-    drawText(ctx, item.label, x + metricWidth / 2, 18, {
-      size: 8.6,
+    drawText(ctx, item.label, x + metricWidth / 2, 13, {
+      size: 7.4,
       weight: 700,
       color: "#475569",
       align: "center",
       direction,
     });
-    drawText(ctx, item.value, x + metricWidth / 2, 36, {
-      size: 10.2,
+    drawText(ctx, item.value, x + metricWidth / 2, 29, {
+      size: 8.8,
       weight: 800,
       color: "#0f172a",
       align: "center",
@@ -257,8 +257,8 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
   ctx.strokeStyle = "#b99235";
   ctx.lineWidth = 1.05;
   ctx.beginPath();
-  ctx.moveTo(left, 78);
-  ctx.lineTo(right, 78);
+  ctx.moveTo(left, 60);
+  ctx.lineTo(right, 60);
   ctx.stroke();
 };
 
