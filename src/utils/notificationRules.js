@@ -1,5 +1,4 @@
 const DAY_MS = 1000 * 60 * 60 * 24;
-const PASSPORT_EXPIRY_DAYS = 213;
 
 const trimText = (value) => (typeof value === "string" ? value.trim() : "");
 
@@ -32,12 +31,35 @@ export const getDaysUntil = (value) => {
   return Math.ceil((parsed.getTime() - todayLocal().getTime()) / DAY_MS);
 };
 
+const addMonthsLocal = (date, months) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return new Date(date.getFullYear(), date.getMonth() + months, date.getDate());
+};
+
+const getDaysBetween = (fromValue, toValue) => {
+  const from = parseLocalDate(fromValue);
+  const to = parseLocalDate(toValue);
+  if (!from || !to) return null;
+  return Math.floor((to.getTime() - from.getTime()) / DAY_MS);
+};
+
+export const getProgramDepartureDate = (program = {}) => trimText(
+  program.departure
+  || program.departureDate
+  || program.departure_date
+  || program.travelDate
+  || program.travel_date
+  || program.outboundDate
+  || program.outbound_date
+  || ""
+);
+
 export const createProgramDeparture11DaysKey = (program = {}) => (
-  program.id && program.departure ? `program-departure-11days-${program.id}-${program.departure}` : ""
+  program.id && getProgramDepartureDate(program) ? `program-departure-11days-${program.id}-${getProgramDepartureDate(program)}` : ""
 );
 
 export const createProgramDeparture3DaysKey = (program = {}) => (
-  program.id && program.departure ? `program-departure-3days-${program.id}-${program.departure}` : ""
+  program.id && getProgramDepartureDate(program) ? `program-departure-3days-${program.id}-${getProgramDepartureDate(program)}` : ""
 );
 
 export const getClientPassportExpiryDate = (client = {}) => {
@@ -53,25 +75,31 @@ export const getClientPassportExpiryDate = (client = {}) => {
   );
 };
 
-export const createPassportExpiryKey = (client = {}) => {
+export const createPassportExpiryKey = (client = {}, program = {}) => {
   const expiryDate = getClientPassportExpiryDate(client);
-  return client.id && expiryDate ? `passport-expiry-7months-${client.id}-${expiryDate}` : "";
+  const departureDate = getProgramDepartureDate(program);
+  return client.id && expiryDate && departureDate
+    ? `passport-expiry-7months-${client.id}-${program.id || client.programId || "program"}-${departureDate}-${expiryDate}`
+    : "";
 };
 
 export const isUpcomingTrip = (program = {}) => {
-  const daysLeft = getDaysUntil(program.departure);
+  const daysLeft = getDaysUntil(getProgramDepartureDate(program));
   return daysLeft !== null && daysLeft >= 0 && daysLeft <= 11;
 };
 
 export const isUrgentTrip = (program = {}) => {
-  const daysLeft = getDaysUntil(program.departure);
+  const daysLeft = getDaysUntil(getProgramDepartureDate(program));
   return daysLeft !== null && daysLeft >= 0 && daysLeft < 3;
 };
 
-export const isPassportExpiringSoon = (client = {}) => {
+export const isPassportExpiringSoon = (client = {}, program = {}) => {
   const expiryDate = getClientPassportExpiryDate(client);
-  const daysLeft = getDaysUntil(expiryDate);
-  return daysLeft !== null && daysLeft >= 0 && daysLeft <= PASSPORT_EXPIRY_DAYS;
+  const departureDate = getProgramDepartureDate(program);
+  const departure = parseLocalDate(departureDate);
+  const expiry = parseLocalDate(expiryDate);
+  const sevenMonthsAfterDeparture = addMonthsLocal(departure, 7);
+  return Boolean(expiry && sevenMonthsAfterDeparture && expiry < sevenMonthsAfterDeparture);
 };
 
 export const hasNotificationKey = (
@@ -101,7 +129,8 @@ export function buildSystemNotificationCandidates({
   const candidates = [];
 
   programs.forEach((program) => {
-    const daysLeft = getDaysUntil(program.departure);
+    const departureDate = getProgramDepartureDate(program);
+    const daysLeft = getDaysUntil(departureDate);
     if (daysLeft === null || daysLeft < 0) return;
 
     if (daysLeft <= 11) {
@@ -117,11 +146,11 @@ export function buildSystemNotificationCandidates({
           targetType: "program",
           targetId: program.id,
           actionRoute: "programs",
-          stateHash: `departure_11days:${program.departure}`,
+          stateHash: `departure_11days:${departureDate}`,
           meta: {
             persistKey,
             programName: program.name || "",
-            departureDate: program.departure,
+            departureDate,
             daysLeft,
           },
         });
@@ -141,11 +170,11 @@ export function buildSystemNotificationCandidates({
           targetType: "program",
           targetId: program.id,
           actionRoute: "programs",
-          stateHash: `departure_3days:${program.departure}`,
+          stateHash: `departure_3days:${departureDate}`,
           meta: {
             persistKey,
             programName: program.name || "",
-            departureDate: program.departure,
+            departureDate,
             daysLeft,
           },
         });
@@ -154,32 +183,38 @@ export function buildSystemNotificationCandidates({
   });
 
   clients.forEach((client) => {
+    const program = programsById.get(client.programId);
+    const departureDate = getProgramDepartureDate(program);
     const expiryDate = getClientPassportExpiryDate(client);
-    const daysLeft = getDaysUntil(expiryDate);
-    if (daysLeft === null || daysLeft < 0 || daysLeft > PASSPORT_EXPIRY_DAYS) return;
+    if (!program || !departureDate || !expiryDate) return;
+    if (!isPassportExpiringSoon(client, program)) return;
 
-    const persistKey = createPassportExpiryKey(client);
+    const remainingDaysFromDeparture = getDaysBetween(departureDate, expiryDate);
+    if (remainingDaysFromDeparture === null) return;
+
+    const persistKey = createPassportExpiryKey(client, program);
     if (!persistKey) return;
 
-    const program = programsById.get(client.programId);
     const clientName = (typeof getClientName === "function" ? getClientName(client) : "") || client.name || client.id || "";
     candidates.push({
       type: "system:passport_expiry",
       title: clientName || defaultTitle,
       message: "",
-      severity: "warn",
+      severity: remainingDaysFromDeparture < 0 ? "critical" : "warn",
       persistKey,
       programId: client.programId || null,
       targetType: "client",
       targetId: client.id,
       actionRoute: "clients",
-      stateHash: `passport_expiry:${expiryDate}`,
+      stateHash: `passport_expiry:${client.programId || ""}:${departureDate}:${expiryDate}`,
       meta: {
         persistKey,
         clientName,
         programName: program?.name || defaultProgramName || "",
+        departureDate,
         expiryDate,
-        daysLeft,
+        remainingDaysFromDeparture,
+        expiredBeforeTravel: remainingDaysFromDeparture < 0,
       },
     });
   });

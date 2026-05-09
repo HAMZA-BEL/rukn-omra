@@ -75,7 +75,9 @@ export function formatNotificationMessage(notification, { programs = [], activeC
       case "notificationsDepartureUrgent":
         return `Urgent alert: ${vars.program} departure is very close\nDeparture: ${vars.date}\nRemaining: ${vars.days} day(s)`;
       case "notificationsPassportExpiry":
-        return `Passport for ${vars.client} will expire soon\nProgram: ${vars.program}\nExpiry date: ${vars.date}`;
+        return `Passport validity alert: ${vars.client}'s passport does not have 7 months validity from the departure date of ${vars.program}.\nDeparture: ${vars.departureDate}\nExpiry date: ${vars.date}\nValidity from departure: ${vars.validity}`;
+      case "notificationsPassportExpiredBeforeTravel":
+        return `${vars.client}'s passport expires before the departure date of ${vars.program}.\nDeparture: ${vars.departureDate}\nExpiry date: ${vars.date}`;
       default:
         return "";
     }
@@ -136,11 +138,16 @@ export function formatNotificationMessage(notification, { programs = [], activeC
     }
     case "system:passport_expiry": {
       const meta = notification.meta || {};
-      return translate("notificationsPassportExpiry", {
+      const validity = meta.remainingDaysFromDeparture !== undefined && meta.remainingDaysFromDeparture !== null
+        ? `${meta.remainingDaysFromDeparture} ${meta.remainingDaysFromDeparture === 1 ? "day" : "days"}`
+        : "";
+      return translate(meta.expiredBeforeTravel ? "notificationsPassportExpiredBeforeTravel" : "notificationsPassportExpiry", {
         client: meta.clientName || notification.title || "",
         program: meta.programName || "",
+        departureDate: meta.departureDate || "",
         date: meta.expiryDate || "",
-        days: meta.daysLeft ?? "",
+        days: meta.remainingDaysFromDeparture ?? "",
+        validity,
       });
     }
     default:

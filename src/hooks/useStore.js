@@ -39,7 +39,7 @@ import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
-import { buildSystemNotificationCandidates, getDaysUntil } from "../utils/notificationRules";
+import { buildSystemNotificationCandidates, getDaysUntil, getProgramDepartureDate } from "../utils/notificationRules";
 import {
   canUseBadgePhotoStorage,
   getPilgrimPhotoUrl,
@@ -170,6 +170,18 @@ const localizedPaymentRestoreMessage = () => {
   if (lang === "en") return "Payment restored";
   return "تم استرجاع الدفعة";
 };
+
+const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
+
+const isInactiveLinkedPayment = (payment = {}) => {
+  const status = trimString(payment.status).toLowerCase();
+  if (["trashed", "deleted", "inactive", "archived", "void", "cancelled", "canceled"].includes(status)) return true;
+  if (payment.trashedAt || payment.trashed_at || payment.deletedAt || payment.deleted_at) return true;
+  if (payment.deleted === true || payment.trashed === true || payment.archived === true) return true;
+  return false;
+};
+
+const isActiveLinkedPayment = (payment = {}) => !isInactiveLinkedPayment(payment);
 
 const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new Date().toISOString()) => ({
   snapshotVersion: 1,
@@ -849,6 +861,70 @@ export function useStore(agencyId, onToast) {
   }, [getClientTotalPaid]);
   const getProgramById    = useCallback((id) => programs.find(p => p.id === id), [programs]);
   const getProgramClients = useCallback((id) => clients.filter(c => c.programId === id), [clients]);
+  const getLinkedPaymentsForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!ids.length) return [];
+
+    if (!isSupabaseEnabled || !agencyId) {
+      const idSet = new Set(ids);
+      return [...payments, ...deletedPayments].filter((payment) => idSet.has(getPaymentClientId(payment)));
+    }
+
+    const { data, error } = await supabase
+      .from("payments")
+      .select("id, client_id, status, trashed_at, deleted_at")
+      .eq("agency_id", agencyId)
+      .in("client_id", ids);
+    if (error) {
+      console.error("[Store] Failed to inspect linked payments before permanent delete:", error);
+      throw error;
+    }
+    return data || [];
+  }, [agencyId, deletedPayments, isSupabaseEnabled, payments]);
+
+  const getActivePaymentCountsForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    const counts = new Map(ids.map((id) => [id, 0]));
+    if (!ids.length) return counts;
+
+    const linkedPayments = await getLinkedPaymentsForClientIds(ids);
+    linkedPayments.forEach((payment) => {
+      if (!isActiveLinkedPayment(payment)) return;
+      const clientId = getPaymentClientId(payment);
+      if (!counts.has(clientId)) return;
+      counts.set(clientId, (counts.get(clientId) || 0) + 1);
+    });
+    return counts;
+  }, [getLinkedPaymentsForClientIds]);
+
+  const permanentlyDeleteClientRemote = useCallback(async (clientId) => {
+    if (!isSupabaseEnabled || !agencyId || !clientId) return { error: null };
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) return { error: sessionError };
+    const token = sessionData?.session?.access_token;
+    if (!token) return { error: { message: "Missing auth session", status: 401 } };
+
+    const response = await fetch("/.netlify/functions/permanent-delete-client", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ clientId, agencyId, type: "client" }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      return {
+        error: {
+          message: payload?.error || payload?.message || "Permanent delete failed",
+          code: payload?.code || response.status,
+          status: response.status,
+          details: payload,
+        },
+      };
+    }
+    return { data: payload, error: null };
+  }, [agencyId, isSupabaseEnabled]);
 
   // ── Stats (operational clients only) ──────────────────────────────────────
   const localStats = useMemo(() => {
@@ -900,13 +976,14 @@ export function useStore(agencyId, onToast) {
         const ret = p.returnDate ? new Date(p.returnDate) : (p.departure ? new Date(p.departure) : null);
         if (!ret) return null;
         const daysAgo = Math.floor((today - ret) / (1000*60*60*24));
-        if (daysAgo < 30) return null;
+        if (daysAgo <= 30) return null;
         const active = activeClients.filter(c => c.programId === p.id);
         if (active.length === 0) return null;
+        if (!active.every((client) => getClientStatus(client) === "cleared")) return null;
         return { program: p, daysAgo, count: active.length };
       })
       .filter(Boolean);
-  }, [programs, activeClients]);
+  }, [programs, activeClients, getClientStatus]);
 
   useEffect(() => {
     if (!storeHydrated) return;
@@ -953,8 +1030,9 @@ export function useStore(agencyId, onToast) {
           meta: { seats },
         });
       }
-      if (program.departure) {
-        const daysLeft = getDaysUntil(program.departure);
+      const departureDate = getProgramDepartureDate(program);
+      if (departureDate) {
+        const daysLeft = getDaysUntil(departureDate);
         if (daysLeft !== null && daysLeft > 0 && daysLeft <= 7) {
           const unsettled = assigned.filter(c => getClientStatus(c) !== "cleared");
           if (unsettled.length > 0) {
@@ -1457,8 +1535,8 @@ export function useStore(agencyId, onToast) {
     });
   }, [agencyId, deletedPrograms, deletedClients, logActivity, restoreClients, restoreProgram, sync]);
 
-  const purgeTrashItems = useCallback(({ programIds = [], clientIds = [] }) => {
-    if (!programIds.length && !clientIds.length) return;
+  const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [] }) => {
+    if (!programIds.length && !clientIds.length) return { purged: false };
     const programsToPurge = deletedPrograms.filter(p => programIds.includes(p.id));
     const batchIds = new Set(
       programsToPurge
@@ -1482,6 +1560,29 @@ export function useStore(agencyId, onToast) {
     });
     const preservedProgramClientIds = new Set(linkedClientsById.keys());
     const finalClientIds = Array.from(new Set(clientIds)).filter((id) => !preservedProgramClientIds.has(id));
+    let inactiveLinkedPaymentIds = [];
+    if (finalClientIds.length) {
+      const linkedPayments = await getLinkedPaymentsForClientIds(finalClientIds);
+      const activePaymentCounts = new Map(finalClientIds.map((id) => [id, 0]));
+      inactiveLinkedPaymentIds = linkedPayments
+        .filter(isInactiveLinkedPayment)
+        .map((payment) => payment.id)
+        .filter(Boolean);
+      linkedPayments.filter(isActiveLinkedPayment).forEach((payment) => {
+        const paymentClientId = getPaymentClientId(payment);
+        if (!activePaymentCounts.has(paymentClientId)) return;
+        activePaymentCounts.set(paymentClientId, (activePaymentCounts.get(paymentClientId) || 0) + 1);
+      });
+      const blockedClientIds = finalClientIds.filter((id) => (activePaymentCounts.get(id) || 0) > 0);
+      if (blockedClientIds.length) {
+        return {
+          purged: false,
+          blocked: true,
+          blockedClientIds,
+          blockedPaymentCount: blockedClientIds.reduce((sum, id) => sum + (activePaymentCounts.get(id) || 0), 0),
+        };
+      }
+    }
     const snapshotDeletedAt = new Date().toISOString();
     const clientsToPreserve = Array.from(linkedClientsById.values()).map((client) => {
       const program = programById.get(client.programId)
@@ -1500,21 +1601,24 @@ export function useStore(agencyId, onToast) {
       };
     });
 
-    setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
-    setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
-    if (clientsToPreserve.length) {
-      const preservedIds = new Set(clientsToPreserve.map((client) => client.id));
-      setClients(prev => [
-        ...prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)),
-        ...clientsToPreserve,
-      ]);
-      setDeletedClients(prev => prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)));
-    } else {
-      setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
-      setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
-    }
+    const applyLocalPurge = () => {
+      setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
+      setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
+      if (clientsToPreserve.length) {
+        const preservedIds = new Set(clientsToPreserve.map((client) => client.id));
+        setClients(prev => [
+          ...prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)),
+          ...clientsToPreserve,
+        ]);
+        setDeletedClients(prev => prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)));
+      } else {
+        setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+        setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+      }
+      inactiveLinkedPaymentIds.forEach((id) => purgePaymentLocal(id));
+    };
 
-    sync(async () => {
+    const persistPurge = async () => {
       for (const client of clientsToPreserve) {
         const response = await saveClient(client, agencyId);
         if (response?.error) return { error: response.error };
@@ -1524,12 +1628,33 @@ export function useStore(agencyId, onToast) {
         if (response?.error) return { error: response.error };
       }
       if (finalClientIds.length) {
-        const response = await deleteClientsPermanent(finalClientIds, agencyId);
-        if (response?.error) return { error: response.error };
+        if (isSupabaseEnabled && agencyId) {
+          for (const clientId of finalClientIds) {
+            const response = await permanentlyDeleteClientRemote(clientId);
+            if (response?.error) return { error: response.error };
+          }
+        } else {
+          const response = await deleteClientsPermanent(finalClientIds, agencyId);
+          if (response?.error) return { error: response.error };
+        }
       }
       return { error: null };
-    });
-  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, sync]);
+    };
+
+    if (isSupabaseEnabled && agencyId) {
+      const result = await persistPurge();
+      if (result?.error) {
+        console.error("[Store] Permanent delete failed:", result.error);
+        return { purged: false, error: result.error };
+      }
+      applyLocalPurge();
+      return { purged: true };
+    }
+
+    applyLocalPurge();
+    sync(persistPurge);
+    return { purged: true };
+  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getLinkedPaymentsForClientIds, isSupabaseEnabled, permanentlyDeleteClientRemote, purgePaymentLocal, saveClient, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));
@@ -1605,7 +1730,7 @@ export function useStore(agencyId, onToast) {
     unreadNotifications,
     unreadNotificationsCount,
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
-    getClientPayments, getClientTotalPaid, getClientStatus,
+    getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
     addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, deleteClient, deleteClientsBulk,
     transferClients,

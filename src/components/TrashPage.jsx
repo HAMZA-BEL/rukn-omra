@@ -22,6 +22,28 @@ const FILTERS = [
   { id: "payments", key: "trashFilter_payments" },
 ];
 
+const trashPaymentMessages = (lang) => {
+  if (lang === "fr") {
+    return {
+      block: "Impossible de supprimer définitivement ce pèlerin car il contient des paiements enregistrés. Supprimez d’abord les paiements si vous êtes sûr.",
+      allowed: "Aucun paiement actif lié — suppression définitive possible",
+      blocked: "Paiements enregistrés liés — suppression définitive impossible",
+    };
+  }
+  if (lang === "en") {
+    return {
+      block: "This pilgrim cannot be permanently deleted because they still have saved payments. Delete the payments first if you are sure.",
+      allowed: "No active linked payments — permanent deletion allowed",
+      blocked: "Saved linked payments exist — permanent deletion blocked",
+    };
+  }
+  return {
+    block: "لا يمكن حذف هذا المعتمر نهائيًا لأنه يحتوي على دفعات محفوظة. احذف الدفعات أولًا إذا كنت متأكدًا.",
+    allowed: "لا توجد دفعات نشطة مرتبطة — يمكن الحذف النهائي",
+    blocked: "توجد دفعات محفوظة مرتبطة — لا يمكن الحذف النهائي",
+  };
+};
+
 export default function TrashPage({ store, onToast }) {
   const { t, lang, dir } = useLang();
   const invoicesAreRemote = Boolean(store.invoiceApi?.isRemote);
@@ -39,6 +61,20 @@ export default function TrashPage({ store, onToast }) {
 
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
   const paymentLabel = lang === "fr" ? "Paiements" : lang === "en" ? "Payments" : "الدفعات";
+  const paymentGuardText = React.useMemo(() => {
+    const fallback = trashPaymentMessages(lang);
+    return {
+      block: t.trashClientDeleteBlockedPayments || fallback.block,
+      allowed: t.trashClientNoLinkedPayments || fallback.allowed,
+      blocked: t.trashClientHasLinkedPayments || fallback.blocked,
+    };
+  }, [lang, t]);
+  const permanentDeleteText = React.useMemo(() => ({
+    clientSuccess: t.trashClientPermanentDeleteSuccess || (lang === "fr" ? "Pèlerin supprimé définitivement" : lang === "en" ? "Pilgrim permanently deleted" : "تم حذف المعتمر نهائيًا"),
+    failure: t.trashPermanentDeleteFailed || (lang === "fr" ? "La suppression définitive a échoué. Réessayez ou vérifiez les enregistrements liés." : lang === "en" ? "Permanent deletion failed. Try again or check linked records." : "تعذر الحذف النهائي. حاول مرة أخرى أو تحقق من السجلات المرتبطة."),
+    linkedFailure: t.trashPermanentDeleteLinkedRecordsFailed || (lang === "fr" ? "La suppression définitive a échoué car des enregistrements sont liés à ce pèlerin. Vérifiez les paiements ou les enregistrements liés puis réessayez." : lang === "en" ? "Permanent deletion failed because linked records still exist for this pilgrim. Check payments or linked records, then try again." : "تعذر الحذف النهائي لأن هناك سجلات مرتبطة بهذا المعتمر. تحقق من الدفعات أو السجلات المرتبطة ثم حاول مرة أخرى."),
+  }), [lang, t]);
+  const [activePaymentCountsByClient, setActivePaymentCountsByClient] = React.useState({});
   const formatDate = React.useCallback((value) => {
     if (!value) return "--";
     const date = new Date(value);
@@ -49,6 +85,26 @@ export default function TrashPage({ store, onToast }) {
   const deletedPrograms = store.deletedPrograms || [];
   const deletedClients = store.deletedClients || [];
   const deletedPayments = store.deletedPayments || [];
+  const getActivePaymentCountsForClientIds = store.getActivePaymentCountsForClientIds;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const clientIds = deletedClients.map((client) => client.id).filter(Boolean);
+    if (!clientIds.length || typeof getActivePaymentCountsForClientIds !== "function") {
+      setActivePaymentCountsByClient({});
+      return undefined;
+    }
+    getActivePaymentCountsForClientIds(clientIds)
+      .then((counts) => {
+        if (cancelled) return;
+        setActivePaymentCountsByClient(Object.fromEntries(counts || []));
+      })
+      .catch((error) => {
+        console.error("[Trash] Failed to check linked payments:", error);
+        if (!cancelled) setActivePaymentCountsByClient({});
+      });
+    return () => { cancelled = true; };
+  }, [deletedClients, getActivePaymentCountsForClientIds]);
 
   const refreshTrashedInvoices = React.useCallback(async () => {
     if (invoicesAreRemote) {
@@ -155,6 +211,7 @@ export default function TrashPage({ store, onToast }) {
       meta: t.programs,
     }));
     const clientItems = deletedClients.map((client) => ({
+      activePaymentCount: Number(activePaymentCountsByClient[client.id] || 0),
       key: `client-${client.id}`,
       id: client.id,
       type: "client",
@@ -200,7 +257,7 @@ export default function TrashPage({ store, onToast }) {
       return bDate - aDate;
     });
     return merged;
-  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, formatDate, lang, paymentLabel, t.programs, t.clients, t.fullName, t.trashFilter_invoices]);
+  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, activePaymentCountsByClient, formatDate, lang, paymentLabel, t.programs, t.clients, t.fullName, t.trashFilter_invoices]);
 
   const visibleItems = React.useMemo(() => {
     if (filter === "programs") return allItems.filter((item) => item.type === "program");
@@ -215,6 +272,10 @@ export default function TrashPage({ store, onToast }) {
     [allItems, selection]
   );
   const selectedCount = selectedItems.length;
+  const selectedBlockedClientItems = React.useMemo(
+    () => selectedItems.filter((item) => item.type === "client" && Number(item.activePaymentCount || 0) > 0),
+    [selectedItems]
+  );
   const selectedVisibleCount = visibleItems.filter((item) => selection[item.key]).length;
   const allVisibleSelected = visibleItems.length > 0 && selectedVisibleCount === visibleItems.length;
 
@@ -278,8 +339,43 @@ export default function TrashPage({ store, onToast }) {
 
   const confirmDelete = React.useCallback(async () => {
     if (!selectedCount) return;
+    if (selectedBlockedClientItems.length) {
+      if (onToast) onToast(paymentGuardText.block, "error");
+      setConfirmOpen(false);
+      return;
+    }
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
-      store.purgeTrashItems(selectionPayload);
+      let result = null;
+      try {
+        result = await store.purgeTrashItems(selectionPayload);
+      } catch (error) {
+        console.error("[Trash] Permanent delete payment check failed:", error);
+        if (onToast) onToast(error.message || "Delete failed", "error");
+        setConfirmOpen(false);
+        return;
+      }
+      if (result?.blocked) {
+        if (onToast) onToast(paymentGuardText.block, "error");
+        setConfirmOpen(false);
+        return;
+      }
+      if (result?.error) {
+        const technicalMessage = String(result.error.message || result.error.details || "");
+        const isPaymentBlockError = result.error.code === "ACTIVE_PAYMENTS";
+        const isLinkedRecordError = result.error.code === "LINKED_RECORDS"
+          || result.error.code === "23503"
+          || /foreign key|violates foreign key|constraint/i.test(technicalMessage);
+        if (onToast) {
+          onToast(
+            isPaymentBlockError
+              ? paymentGuardText.block
+              : (isLinkedRecordError ? permanentDeleteText.linkedFailure : permanentDeleteText.failure),
+            "error"
+          );
+        }
+        setConfirmOpen(false);
+        return;
+      }
     }
     if (invoicesAreRemote && selectionPayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
       const responses = await Promise.all(selectionPayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
@@ -299,8 +395,15 @@ export default function TrashPage({ store, onToast }) {
     }
     setSelection({});
     setConfirmOpen(false);
-    if (onToast) onToast(t.deleteSuccess || "Deleted", "success");
-  }, [invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, t.deleteSuccess]);
+    if (onToast) {
+      const onlyClients = selectedCount > 0
+        && selectionPayload.clientIds.length === selectedCount
+        && !selectionPayload.programIds.length
+        && !selectionPayload.invoiceIds.length
+        && !selectionPayload.paymentIds.length;
+      onToast(onlyClients ? permanentDeleteText.clientSuccess : (t.deleteSuccess || "Deleted"), "success");
+    }
+  }, [invoicesAreRemote, refreshTrashedInvoices, selectedBlockedClientItems.length, selectedCount, selectionPayload, store, onToast, paymentGuardText.block, permanentDeleteText, t.deleteSuccess]);
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);
@@ -445,8 +548,9 @@ export default function TrashPage({ store, onToast }) {
               variant="danger"
               size="sm"
               icon="trash"
-              disabled={!selectedCount}
+              disabled={!selectedCount || selectedBlockedClientItems.length > 0}
               onClick={handleDelete}
+              title={selectedBlockedClientItems.length ? paymentGuardText.block : undefined}
             >
               {t.trashDeleteSelected}
             </Button>
@@ -470,6 +574,7 @@ export default function TrashPage({ store, onToast }) {
             const badgeBorder = isInvoice ? "rgba(96,165,250,.35)" : isPayment ? "rgba(245,158,11,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)";
             const badgeBackground = isInvoice ? "rgba(96,165,250,.1)" : isPayment ? "rgba(245,158,11,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)";
             const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
+            const activePaymentCount = Number(item.activePaymentCount || 0);
             return (
               <GlassCard
                 key={item.key}
@@ -518,6 +623,16 @@ export default function TrashPage({ store, onToast }) {
                     {item.programName && (
                       <p style={{ marginTop: 2, fontSize: 12, color: "var(--rukn-text-muted)" }}>
                         {item.programName}
+                      </p>
+                    )}
+                    {item.type === "client" && (
+                      <p style={{
+                        marginTop: 2,
+                        fontSize: 12,
+                        color: activePaymentCount > 0 ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
+                        fontWeight: activePaymentCount > 0 ? 800 : 700,
+                      }}>
+                        {activePaymentCount > 0 ? paymentGuardText.blocked : paymentGuardText.allowed}
                       </p>
                     )}
                     {isProgram && item.linkedCount > 0 && (
