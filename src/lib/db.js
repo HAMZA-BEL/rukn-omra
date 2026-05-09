@@ -455,6 +455,33 @@ const fromAgency = (row) => ({
   logoUrl:           row.logo_url || "",
 });
 
+const normalizeRoomingLocation = (location) => (
+  location === "madinah" ? "madinah" : "makkah"
+);
+
+const toRoomingAssignment = (assignment, agencyId) => ({
+  agency_id:      agencyId,
+  program_id:     assignment.programId,
+  location:       normalizeRoomingLocation(assignment.location),
+  rooms:          Array.isArray(assignment.rooms) ? assignment.rooms : [],
+  unassigned:     Array.isArray(assignment.unassigned) ? assignment.unassigned : [],
+  meta:           assignment.meta && typeof assignment.meta === "object" ? assignment.meta : {},
+  canvas_version: Number(assignment.version || assignment.canvasVersion || 4),
+});
+
+const fromRoomingAssignment = (row) => ({
+  id:            row.id,
+  agencyId:      row.agency_id,
+  programId:     row.program_id,
+  location:      row.location,
+  rooms:         Array.isArray(row.rooms) ? row.rooms : [],
+  unassigned:    Array.isArray(row.unassigned) ? row.unassigned : [],
+  meta:          row.meta || {},
+  version:       Number(row.canvas_version || 4),
+  updatedAt:     row.updated_at,
+  updatedBy:     row.updated_by,
+});
+
 // ─── DB operations ────────────────────────────────────────────────────────────
 
 export const db = {
@@ -544,6 +571,29 @@ export const db = {
         },
         error: null,
       };
+    },
+  },
+
+  roomingAssignments: {
+    async fetch(agencyId, programId, location) {
+      if (!agencyId || !programId || !location) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("rooming_assignments")
+        .select("id, agency_id, program_id, location, rooms, unassigned, meta, canvas_version, updated_at, updated_by")
+        .eq("agency_id", agencyId)
+        .eq("program_id", programId)
+        .eq("location", normalizeRoomingLocation(location))
+        .maybeSingle();
+      return { data: data ? fromRoomingAssignment(data) : null, error };
+    },
+    async upsert(assignment, agencyId) {
+      if (!agencyId || !assignment?.programId || !assignment?.location) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("rooming_assignments")
+        .upsert(toRoomingAssignment(assignment, agencyId), { onConflict: "agency_id,program_id,location" })
+        .select("id, agency_id, program_id, location, rooms, unassigned, meta, canvas_version, updated_at, updated_by")
+        .single();
+      return { data: data ? fromRoomingAssignment(data) : null, error };
     },
   },
 

@@ -34,6 +34,7 @@ import {
   normalizeVisitOrder,
 } from "../utils/hotelDates";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
+import { db } from "../lib/db";
 import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
 import {
@@ -296,6 +297,40 @@ const getProgramHotelsForCity = (program, packages, city) => {
 };
 
 const createRoomId = () => `room-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const getRoomingStorageKey = (programId, city, agencyId = null) => (
+  agencyId
+    ? `rukn_rooming_sheet_${agencyId}_${programId}_${city}`
+    : `rukn_rooming_sheet_${programId}_${city}`
+);
+
+const getLegacyRoomingStorageKey = (programId, city) => `rukn_rooming_sheet_${programId}_${city}`;
+
+const normalizeRoomingCanvasState = (payload = {}, clients = []) => {
+  const parsed = payload || {};
+  if (parsed.kind === "rooming-canvas" || Array.isArray(parsed.rooms)) {
+    return {
+      rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
+      unassigned: Array.isArray(parsed.unassigned) ? parsed.unassigned : [],
+      version: Number(parsed.version || parsed.canvasVersion || 4),
+    };
+  }
+  const legacyRooms = Object.values(parsed?.meta?.rooms || {});
+  const legacyInserted = new Set(Object.keys(parsed?.meta?.insertedClients || {}));
+  return {
+    rooms: legacyRooms.map((room, index) => ({
+      ...room,
+      id: room.id || createRoomId(),
+      order: index,
+      x: room.x ?? ((index % 3) * 280),
+      y: room.y ?? (Math.floor(index / 3) * 190),
+    })),
+    unassigned: clients
+      .filter((client) => !legacyInserted.has(client.id))
+      .map((client) => ({ clientId: client.id, reason: "" })),
+    version: 4,
+  };
+};
 
 const getRoomBlockHeight = (capacity) => Math.max(1, Number(capacity) || 1) + 3;
 
@@ -2243,6 +2278,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           clients={progClients}
           packages={packages}
           agency={agency}
+          agencyId={store.agencyId}
+          supabaseRoomingEnabled={store.isSupabaseEnabled}
           onToast={onToast}
         />
       ) : (
@@ -2879,7 +2916,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   );
 }
 
-function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) {
+function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = null, supabaseRoomingEnabled = false, onToast }) {
   const { t, tr, lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
@@ -2904,6 +2941,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
+  const [roomingLoadStatus, setRoomingLoadStatus] = React.useState("idle");
+  const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const flowRef = React.useRef(null);
   const flowNodesRef = React.useRef([]);
@@ -2911,8 +2950,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   const dragStartPositionRef = React.useRef(new Map());
   const lastValidPositionRef = React.useRef(new Map());
   const dragInvalidRef = React.useRef(new Map());
+  const roomingLoadSeqRef = React.useRef(0);
+  const roomingRevisionRef = React.useRef(0);
 
-  const storageKey = React.useMemo(() => `rukn_rooming_sheet_${program.id}_${city}`, [program.id, city]);
+  const canPersistRoomingRemote = Boolean(supabaseRoomingEnabled && agencyId && program?.id);
   const packageByLevel = React.useMemo(() => {
     const map = new Map();
     packages.forEach((pkg) => map.set(pkg.level, pkg));
@@ -2984,46 +3025,96 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     return Array.from(values);
   }, [program, packages, city, clients, getClientContext]);
 
-  const readCanvasState = React.useCallback(() => {
+  const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = []) => ({
+    kind: "rooming-canvas",
+    version: 4,
+    city: targetCity,
+    rooms: Array.isArray(nextRooms) ? nextRooms : [],
+    unassigned: Array.isArray(nextUnassigned) ? nextUnassigned : [],
+    updatedAt: new Date().toISOString(),
+  }), []);
+
+  const writeCanvasCache = React.useCallback((targetCity, payload) => {
     try {
-      const raw = localStorage.getItem(storageKey);
-      if (!raw) return { rooms: [], unassigned: [], version: 4 };
-      const parsed = JSON.parse(raw);
-      if (parsed.kind === "rooming-canvas") {
-        return {
-          rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
-          unassigned: Array.isArray(parsed.unassigned) ? parsed.unassigned : [],
-          version: 4,
-        };
-      }
-      const legacyRooms = Object.values(parsed?.meta?.rooms || {});
-      const legacyInserted = new Set(Object.keys(parsed?.meta?.insertedClients || {}));
-      return {
-        rooms: legacyRooms.map((room, index) => ({
-          ...room,
-          id: room.id || createRoomId(),
-          order: index,
-          x: room.x ?? ((index % 3) * 280),
-          y: room.y ?? (Math.floor(index / 3) * 190),
-        })),
-        unassigned: clients
-          .filter((client) => !legacyInserted.has(client.id))
-          .map((client) => ({ clientId: client.id, reason: "" })),
-        version: 4,
-      };
-    } catch {
-      return { rooms: [], unassigned: [], version: 4 };
+      localStorage.setItem(
+        getRoomingStorageKey(program.id, targetCity, agencyId),
+        JSON.stringify(payload)
+      );
+    } catch (error) {
+      console.warn("[rooming] local cache write failed", error);
     }
-  }, [storageKey, clients]);
+  }, [agencyId, program.id]);
+
+  const readCanvasStateFromStorage = React.useCallback((targetCity) => {
+    const keys = [
+      getRoomingStorageKey(program.id, targetCity, agencyId),
+      getLegacyRoomingStorageKey(program.id, targetCity),
+    ].filter((key, index, list) => key && list.indexOf(key) === index);
+
+    for (const key of keys) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        return normalizeRoomingCanvasState(JSON.parse(raw), clients);
+      } catch (error) {
+        console.warn("[rooming] local cache read failed", error);
+      }
+    }
+    return { rooms: [], unassigned: [], version: 4 };
+  }, [agencyId, clients, program.id]);
 
   React.useEffect(() => {
-    const loaded = readCanvasState();
-    setRooms(loaded.rooms);
-    setUnassigned(loaded.unassigned);
-    setDirty(false);
-    setSavedAt(null);
-    setSelectedRoomId(null);
-  }, [readCanvasState]);
+    let active = true;
+    const loadSeq = roomingLoadSeqRef.current + 1;
+    roomingLoadSeqRef.current = loadSeq;
+
+    const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
+      if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+      setRooms(Array.isArray(loaded.rooms) ? loaded.rooms : []);
+      setUnassigned(Array.isArray(loaded.unassigned) ? loaded.unassigned : []);
+      setDirty(false);
+      roomingRevisionRef.current += 1;
+      setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
+      setSelectedRoomId(null);
+      setRoomingSaveStatus("idle");
+    };
+
+    const loadRooming = async () => {
+      if (!canPersistRoomingRemote) {
+        applyLoadedState(readCanvasStateFromStorage(city));
+        setRoomingLoadStatus("local");
+        return;
+      }
+
+      setRoomingLoadStatus("loading");
+      const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, city);
+      if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+
+      if (error) {
+        console.error("[rooming] Supabase load failed", error);
+        onToast?.(t.roomingLoadFailed || "تعذر تحميل التسكين. سيتم استخدام النسخة المحلية إن وجدت.", "error");
+        applyLoadedState(readCanvasStateFromStorage(city));
+        setRoomingLoadStatus("local");
+        return;
+      }
+
+      if (data) {
+        const loaded = normalizeRoomingCanvasState(data, clients);
+        writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned));
+        applyLoadedState(loaded, data.updatedAt);
+        setRoomingLoadStatus("remote");
+        return;
+      }
+
+      applyLoadedState(readCanvasStateFromStorage(city));
+      setRoomingLoadStatus("local");
+    };
+
+    loadRooming();
+    return () => {
+      active = false;
+    };
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, clients, onToast, program.id, readCanvasStateFromStorage, t.roomingLoadFailed, writeCanvasCache]);
 
   React.useEffect(() => {
     if (!fullscreen) return undefined;
@@ -3039,25 +3130,55 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     };
   }, [fullscreen]);
 
-  const saveCanvas = React.useCallback((notify = true) => {
+  const saveCanvas = React.useCallback(async (notify = true) => {
+    const revision = roomingRevisionRef.current;
+    const payload = buildCanvasPayload(city, rooms, unassigned);
     try {
-      localStorage.setItem(storageKey, JSON.stringify({
-        kind: "rooming-canvas",
-        version: 4,
-        city,
-        rooms,
-        unassigned,
-        updatedAt: new Date().toISOString(),
-      }));
-      setDirty(false);
-      setSavedAt(new Date());
-      if (notify) onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
-    } catch {
-      onToast?.(t.roomingSaveFailedLocal || "تعذر حفظ مصمم التسكين محليًا", "error");
-    }
-  }, [storageKey, city, rooms, unassigned, onToast, t]);
+      writeCanvasCache(city, payload);
 
-  const markDirty = React.useCallback(() => setDirty(true), []);
+      if (canPersistRoomingRemote) {
+        setRoomingSaveStatus("saving");
+        const { data, error } = await db.roomingAssignments.upsert({
+          programId: program.id,
+          location: city,
+          rooms: payload.rooms,
+          unassigned: payload.unassigned,
+          version: payload.version,
+          meta: { kind: payload.kind, city },
+        }, agencyId);
+        if (error) throw error;
+        if (roomingRevisionRef.current === revision) {
+          setDirty(false);
+          setSavedAt(data?.updatedAt ? new Date(data.updatedAt) : new Date());
+          setRoomingSaveStatus("saved");
+        }
+        if (notify) onToast?.(t.roomingSaved || "تم حفظ التسكين", "success");
+        return;
+      }
+
+      if (roomingRevisionRef.current === revision) {
+        setDirty(false);
+        setSavedAt(new Date());
+        setRoomingSaveStatus("saved");
+      }
+      if (notify) onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
+    } catch (error) {
+      console.error("[rooming] save failed", error);
+      setRoomingSaveStatus("error");
+      if (notify || canPersistRoomingRemote) {
+        onToast?.(
+          t.roomingSaveFailed || "تعذر حفظ التسكين. تحقق من الاتصال ثم حاول مرة أخرى.",
+          "error"
+        );
+      }
+    }
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, t, unassigned, writeCanvasCache]);
+
+  const markDirty = React.useCallback(() => {
+    roomingRevisionRef.current += 1;
+    setDirty(true);
+    setRoomingSaveStatus("dirty");
+  }, []);
 
   React.useEffect(() => {
     if (!dirty) return undefined;
@@ -3215,16 +3336,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
   }), [rooms, panelHotel, panelRoomType, roomOccupancyFilter]);
 
   const getRoomingProgressForCity = React.useCallback((targetCity) => {
-    const sourceRooms = targetCity === city ? rooms : (() => {
-      try {
-        const raw = localStorage.getItem(`rukn_rooming_sheet_${program.id}_${targetCity}`);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed?.rooms) ? parsed.rooms : [];
-      } catch {
-        return [];
-      }
-    })();
+    const sourceRooms = targetCity === city ? rooms : readCanvasStateFromStorage(targetCity).rooms;
     const assigned = new Set();
     sourceRooms.forEach((room) => (room.occupantIds || []).forEach((id) => {
       if (clientsById[id]) assigned.add(id);
@@ -3232,12 +3344,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
     const total = clients.length;
     const percent = total ? Math.round((assigned.size / total) * 100) : 0;
     return { assigned: assigned.size, total, percent };
-  }, [city, rooms, program.id, clients.length, clientsById]);
+  }, [city, rooms, readCanvasStateFromStorage, clients.length, clientsById]);
 
   const roomingProgress = React.useMemo(() => ({
     makkah: getRoomingProgressForCity("makkah"),
     madinah: getRoomingProgressForCity("madinah"),
   }), [getRoomingProgressForCity]);
+
+  const roomingStatusText = React.useMemo(() => {
+    if (roomingLoadStatus === "loading") return t.loading || "جاري التحميل...";
+    if (roomingSaveStatus === "saving") return t.saving || "جارٍ الحفظ";
+    if (roomingSaveStatus === "error") return t.roomingSaveFailedShort || "تعذر الحفظ";
+    if (dirty) return t.unsavedChanges || "تغييرات غير محفوظة";
+    if (savedAt) return tr("lastSaved", { time: savedAt.toLocaleTimeString("ar-MA") }) || `آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}`;
+    if (roomingLoadStatus === "remote") return t.roomingLoadedFromCloud || "محفوظ في السحابة";
+    return "";
+  }, [dirty, roomingLoadStatus, roomingSaveStatus, savedAt, t, tr]);
 
   const roomNeeds = React.useMemo(() => {
     const counts = new Map();
@@ -3848,16 +3970,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
-    try {
-      const raw = localStorage.getItem(`rukn_rooming_sheet_${program.id}_${targetCity}`);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (parsed?.kind === "rooming-canvas") return Array.isArray(parsed.rooms) ? parsed.rooms : [];
-      return Object.values(parsed?.meta?.rooms || {});
-    } catch {
-      return [];
-    }
-  }, [city, rooms, program.id]);
+    return readCanvasStateFromStorage(targetCity).rooms;
+  }, [city, rooms, readCanvasStateFromStorage]);
 
   const getRoomingStayDates = React.useCallback((targetCity, room) => {
     const firstClient = (room.occupantIds || []).map((id) => clientsById[id]).find(Boolean);
@@ -4054,7 +4168,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
             <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
             <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
               {program.name || "—"} • {roomingCityLabels[city]} • {clients.length} {t.pilgrimUnit || "معتمر"}
-              {dirty ? ` • ${t.unsavedChanges || "تغييرات غير محفوظة"}` : savedAt ? ` • ${tr("lastSaved", { time: savedAt.toLocaleTimeString("ar-MA") }) || `آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}`}` : ""}
+              {roomingStatusText ? ` • ${roomingStatusText}` : ""}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: "1 1 280px", justifyContent: "center" }}>
@@ -4113,7 +4227,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, onToast }) 
             />
           <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
-          <RoomingToolbarButton title={t.roomingSave || "حفظ"} onClick={() => saveCanvas(true)} active={dirty} icon={<AppIcon name="save" size={15} />} />
+          <RoomingToolbarButton
+            title={t.roomingSave || "حفظ"}
+            onClick={() => saveCanvas(true)}
+            active={dirty || roomingSaveStatus === "saving"}
+            disabled={roomingLoadStatus === "loading" || roomingSaveStatus === "saving"}
+            icon={<AppIcon name="save" size={15} />}
+          />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
           <RoomingToolbarButton
             title={t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF")}
