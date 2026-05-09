@@ -191,9 +191,15 @@ const normalizeRoomingText = (value) => String(value || "")
 
 const normalizeRoomingHotel = (value) => normalizeRoomingText(value);
 
+const isMissingRoomingValue = (value) => {
+  const text = normalizeRoomingText(value);
+  return !text
+    || ["-", "—", "null", "undefined", "غير محدد", "غير محددة", "بدون", "aucun", "non défini", "non defini", "unspecified", "not specified", "n/a"].includes(text);
+};
+
 const normalizeRoomingGender = (value) => {
   const text = normalizeRoomingText(value);
-  if (!text) return "";
+  if (!text || isMissingRoomingValue(text)) return "";
   if (["male", "m", "man", "homme", "ذكر", "رجل", "رجال"].includes(text)) return "male";
   if (["female", "f", "woman", "femme", "أنثى", "انثى", "امرأة", "نساء"].includes(text)) return "female";
   return text;
@@ -382,6 +388,133 @@ const buildRoomingGroupsFromClients = (clients, city) => {
       updatedAt: new Date().toISOString(),
     };
   });
+};
+
+const getRoomingRoomTypeFromCapacity = (capacity) => {
+  const value = Math.max(1, Number(capacity) || 0);
+  if (value >= 5) return "quint";
+  if (value === 4) return "quad";
+  if (value === 3) return "triple";
+  if (value === 2) return "double";
+  return "single";
+};
+
+const getExplicitClientHotelForRoomingCity = (client = {}, city = "makkah") => {
+  const value = city === "madinah"
+    ? (client.hotelMadina || client.hotel_madina || "")
+    : (client.hotelMecca || client.hotel_mecca || "");
+  return isMissingRoomingValue(value) ? "" : String(value).trim();
+};
+
+const clampRoomingContextMenuPoint = (x, y, width = 170, height = 132) => {
+  if (typeof window === "undefined") return { x, y };
+  const margin = 8;
+  return {
+    x: Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - width - margin)),
+    y: Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - height - margin)),
+  };
+};
+
+const getRoomingPackageHotel = (pkg, city) => (
+  city === "madinah" ? pkg?.hotelMadina : pkg?.hotelMecca
+);
+
+const findRoomingPackageFromRoom = (room = {}, packages = [], city = "makkah") => {
+  const packageId = String(room.packageId || room.package_id || "").trim();
+  if (packageId) {
+    const byId = packages.find((pkg) => pkg.id === packageId);
+    if (byId) return byId;
+  }
+  const explicitLevel = String(room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
+  if (explicitLevel) {
+    const byLevel = packages.find((pkg) => String(pkg.level || "").trim() === explicitLevel);
+    if (byLevel) return byLevel;
+  }
+  const roomHotel = normalizeRoomingHotel(room.hotel);
+  if (!roomHotel) return null;
+  const matches = packages.filter((pkg) => normalizeRoomingHotel(getRoomingPackageHotel(pkg, city)) === roomHotel);
+  const uniqueLevels = new Set(matches.map((pkg) => String(pkg.level || "").trim()).filter(Boolean));
+  if (uniqueLevels.size === 1) return matches.find((pkg) => String(pkg.level || "").trim() === Array.from(uniqueLevels)[0]) || null;
+  return null;
+};
+
+const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = "", city = "makkah", packages = [] }) => {
+  const clientsById = new Map(clients.map((client) => [client.id, client]));
+  const seen = new Set();
+  const updates = [];
+  rooms.forEach((room) => {
+    const validOccupantIds = (Array.isArray(room.occupantIds) ? room.occupantIds : [])
+      .filter((clientId) => {
+        const client = clientsById.get(clientId);
+        return client && String(client.programId || "") === String(programId || "");
+      });
+    if (!validOccupantIds.length) return;
+    const roomType = normalizeRoomingRoomType(room.roomType) || getRoomingRoomTypeFromCapacity(room.capacity);
+    const roomTypeLabel = getRoomTypeLabel(roomType) || getRoomingRoomLabel(roomType);
+    const category = ["male_only", "female_only", "family"].includes(room.category) ? room.category : "";
+    const categoryLabel = category ? getRoomingCategoryLabel(category) : "";
+    const roomingGroupId = String(room.roomingGroupId || room.id || "").trim();
+    const roomingGroupName = String(room.roomingGroupName || (room.roomNumber ? `غرفة ${room.roomNumber}` : "")).trim();
+    const roomHotel = String(room.hotel || "").trim();
+    const roomPackage = findRoomingPackageFromRoom(room, packages, city);
+    const roomLevel = String(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
+    const locationPatch = roomHotel
+      ? (city === "madinah" ? { hotelMadina: roomHotel } : { hotelMecca: roomHotel })
+      : {};
+    const levelPatch = roomLevel
+      ? { packageId: roomPackage?.id || room.packageId || room.package_id || "", hotelLevel: roomLevel, packageLevel: roomLevel }
+      : {};
+    validOccupantIds.forEach((clientId, index) => {
+      if (seen.has(clientId)) return;
+      seen.add(clientId);
+      const client = clientsById.get(clientId);
+      const roomingPatch = {
+        groupId: roomingGroupId,
+        groupName: roomingGroupName,
+        category,
+        categoryLabel,
+        groupSize: validOccupantIds.length,
+        seatIndex: index + 1,
+      };
+      const unchanged = client.roomType === roomType
+        && client.roomTypeLabel === roomTypeLabel
+        && (client.roomCategory || "") === category
+        && (client.roomCategoryLabel || "") === categoryLabel
+        && (client.roomingGroupId || "") === roomingGroupId
+        && (client.roomingGroupName || "") === roomingGroupName
+        && Number(client.roomingGroupSize || 0) === validOccupantIds.length
+        && Number(client.roomingSeatIndex || 0) === index + 1
+        && (!locationPatch.hotelMecca || client.hotelMecca === locationPatch.hotelMecca)
+        && (!locationPatch.hotelMadina || client.hotelMadina === locationPatch.hotelMadina)
+        && (!levelPatch.packageLevel || client.packageLevel === levelPatch.packageLevel)
+        && (!levelPatch.hotelLevel || client.hotelLevel === levelPatch.hotelLevel)
+        && (!levelPatch.packageId || client.packageId === levelPatch.packageId);
+      if (unchanged) return;
+      updates.push({
+        id: clientId,
+        patch: {
+          roomType,
+          roomTypeLabel,
+          roomCategory: category,
+          roomCategoryLabel: categoryLabel,
+          roomingGroupId,
+          roomingGroupName,
+          roomingGroupSize: validOccupantIds.length,
+          roomingSeatIndex: index + 1,
+          ...locationPatch,
+          ...levelPatch,
+          docs: {
+            ...(client.docs || {}),
+            rooming: {
+              ...((client.docs && client.docs.rooming) || {}),
+              ...roomingPatch,
+            },
+          },
+        },
+      });
+    });
+  });
+  return updates;
 };
 
 const getRoomingCategoryAccent = (category) => {
@@ -2280,6 +2413,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           agency={agency}
           agencyId={store.agencyId}
           supabaseRoomingEnabled={store.isSupabaseEnabled}
+          syncRoomingClientFields={store.syncRoomingClientFields}
           onToast={onToast}
         />
       ) : (
@@ -2916,7 +3050,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   );
 }
 
-function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = null, supabaseRoomingEnabled = false, onToast }) {
+function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = null, supabaseRoomingEnabled = false, syncRoomingClientFields, onToast }) {
   const { t, tr, lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
@@ -2933,6 +3067,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [canvasMenu, setCanvasMenu] = React.useState({ open: false, x: 0, y: 0, position: { x: 0, y: 0 } });
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
+  const [pendingDrop, setPendingDrop] = React.useState(null);
   const [panelSearch, setPanelSearch] = React.useState("");
   const [panelHotel, setPanelHotel] = React.useState("all");
   const [panelRoomType, setPanelRoomType] = React.useState("all");
@@ -2993,6 +3128,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const getLocalizedCategoryLabel = React.useCallback((category) => {
     return roomingCategoryOptions.find((option) => option.value === category)?.label || getRoomingCategoryLabel(category);
   }, [roomingCategoryOptions]);
+  const roomingClientSyncWarning = React.useMemo(() => {
+    if (lang === "fr") return "La répartition a été enregistrée, mais certaines informations des pèlerins n’ont pas pu être mises à jour.";
+    if (lang === "en") return "Rooming was saved, but some pilgrim details could not be updated.";
+    return "تم حفظ التسكين، لكن تعذر تحديث بعض بيانات المعتمرين.";
+  }, [lang]);
 
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
@@ -3033,6 +3173,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     unassigned: Array.isArray(nextUnassigned) ? nextUnassigned : [],
     updatedAt: new Date().toISOString(),
   }), []);
+
+  const syncRoomingClientsFromRooms = React.useCallback(async (nextRooms = []) => {
+    if (typeof syncRoomingClientFields !== "function") return { error: null, updatedCount: 0, skippedCount: 0 };
+    const updates = buildRoomingClientFieldUpdates({ rooms: nextRooms, clients, programId: program.id, city, packages });
+    if (!updates.length) return { error: null, updatedCount: 0, skippedCount: 0 };
+    return syncRoomingClientFields(program.id, updates);
+  }, [city, clients, packages, program.id, syncRoomingClientFields]);
 
   const writeCanvasCache = React.useCallback((targetCity, payload) => {
     try {
@@ -3147,21 +3294,33 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           meta: { kind: payload.kind, city },
         }, agencyId);
         if (error) throw error;
+        const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
         if (roomingRevisionRef.current === revision) {
           setDirty(false);
           setSavedAt(data?.updatedAt ? new Date(data.updatedAt) : new Date());
           setRoomingSaveStatus("saved");
         }
-        if (notify) onToast?.(t.roomingSaved || "تم حفظ التسكين", "success");
+        if (clientSync?.error) {
+          console.error("[rooming] client field sync failed", clientSync.error);
+          if (notify) onToast?.(roomingClientSyncWarning, "warning");
+        } else if (notify) {
+          onToast?.(t.roomingSaved || "تم حفظ التسكين", "success");
+        }
         return;
       }
 
+      const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
       if (roomingRevisionRef.current === revision) {
         setDirty(false);
         setSavedAt(new Date());
         setRoomingSaveStatus("saved");
       }
-      if (notify) onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
+      if (clientSync?.error) {
+        console.error("[rooming] client field sync failed", clientSync.error);
+        if (notify) onToast?.(roomingClientSyncWarning, "warning");
+      } else if (notify) {
+        onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
+      }
     } catch (error) {
       console.error("[rooming] save failed", error);
       setRoomingSaveStatus("error");
@@ -3172,7 +3331,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         );
       }
     }
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, t, unassigned, writeCanvasCache]);
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomingClientSyncWarning, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
 
   const markDirty = React.useCallback(() => {
     roomingRevisionRef.current += 1;
@@ -3260,22 +3419,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const getCompatibilityResult = React.useCallback((client, room) => {
     if (!client || !room) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
+    if (String(client.programId || "") !== String(program.id || "")) return { ok: false, reason: t.programNotFound || "البرنامج غير متاح" };
     const context = getClientContext(client);
     const occupantIds = room.occupantIds || [];
     const roomType = normalizeRoomingRoomType(room.roomType);
-    const clientRoomType = normalizeRoomingRoomType(context.roomType, client.roomTypeLabel, client.room);
     const capacity = room.capacity || getRoomingCapacity(roomType);
     const clientGender = normalizeRoomingGender(context.gender);
-    const roomHotel = normalizeRoomingHotel(room.hotel);
-    const clientHotel = normalizeRoomingHotel(context.hotel);
     if (occupantIds.includes(client.id)) return { ok: false, reason: t.roomingAlreadyInserted || "المعتمر مدرج مسبقا" };
     if (occupantIds.length >= capacity) return { ok: false, reason: t.roomFull || "الغرفة ممتلئة" };
-    if (!clientGender) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
-    if (room.category === "male_only" && clientGender !== "male") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
-    if (room.category === "female_only" && clientGender !== "female") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
-    if (roomHotel && clientHotel && roomHotel !== clientHotel) return { ok: false, reason: t.roomingHotelMismatch || "الفندق غير متوافق" };
-    if (roomType && clientRoomType && roomType !== clientRoomType) return { ok: false, reason: t.roomingRoomTypeMismatch || "نوع الغرفة غير متوافق" };
-    if (room.category === "family") {
+    if (room.category === "male_only" && clientGender === "female") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
+    if (room.category === "female_only" && clientGender === "male") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
+    if (room.category === "family" && ["male", "female"].includes(clientGender)) {
       const occupants = occupantIds.map((id) => clientsById[id]).filter(Boolean);
       const mixed = occupants.some((occupant) => normalizeRoomingGender(occupant.gender) && normalizeRoomingGender(occupant.gender) !== clientGender);
       if (mixed) {
@@ -3284,7 +3438,31 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       }
     }
     return { ok: true };
-  }, [clientsById, getClientContext, t]);
+  }, [clientsById, getClientContext, program.id, t]);
+
+  const getRoomingDropConflicts = React.useCallback((client, room) => {
+    if (!client || !room) return null;
+    const targetRoomType = normalizeRoomingRoomType(room.roomType);
+    const currentRoomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
+    const targetHotel = isMissingRoomingValue(room.hotel) ? "" : String(room.hotel).trim();
+    const currentHotel = getExplicitClientHotelForRoomingCity(client, city);
+    const conflicts = [];
+    if (targetRoomType && currentRoomType && targetRoomType !== currentRoomType) conflicts.push("roomType");
+    if (targetHotel && currentHotel && normalizeRoomingHotel(targetHotel) !== normalizeRoomingHotel(currentHotel)) conflicts.push("hotel");
+    if (!conflicts.length) return null;
+    return {
+      clientId: client.id,
+      roomId: room.id,
+      city,
+      conflicts,
+      currentRoomType,
+      targetRoomType,
+      currentRoomTypeLabel: currentRoomType ? getLocalizedRoomTypeLabel(currentRoomType) : "",
+      targetRoomTypeLabel: targetRoomType ? getLocalizedRoomTypeLabel(targetRoomType) : "",
+      currentHotel,
+      targetHotel,
+    };
+  }, [city, getLocalizedRoomTypeLabel]);
 
   const getCompatibilityReason = React.useCallback((client, room) => {
     const result = getCompatibilityResult(client, room);
@@ -3608,15 +3786,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     markDirty();
   }, [markDirty]);
 
-  const insertClientIntoRoom = React.useCallback((roomId, clientId, notify = true) => {
+  const commitClientDropIntoRoom = React.useCallback((roomId, clientId) => {
     const room = rooms.find((item) => item.id === roomId);
-    const client = clientsById[clientId];
-    if (!room || !client) return false;
-    const reason = getCompatibilityReason(client, room);
-    if (reason) {
-      if (notify) onToast?.(reason, "error");
-      return false;
-    }
+    if (!room) return false;
     setRooms((prev) => prev.map((item) => {
       if (item.id !== room.id) return item;
       const occupantIds = item.occupantIds || [];
@@ -3627,7 +3799,24 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setSelectedRoomId(room.id);
     markDirty();
     return true;
-  }, [rooms, clientsById, getCompatibilityReason, markDirty, onToast]);
+  }, [markDirty, rooms]);
+
+  const insertClientIntoRoom = React.useCallback((roomId, clientId, notify = true, options = {}) => {
+    const room = rooms.find((item) => item.id === roomId);
+    const client = clientsById[clientId];
+    if (!room || !client) return false;
+    const reason = getCompatibilityReason(client, room);
+    if (reason) {
+      if (notify) onToast?.(reason, "error");
+      return false;
+    }
+    const conflict = getRoomingDropConflicts(client, room);
+    if (conflict && !options.confirmed) {
+      setPendingDrop(conflict);
+      return false;
+    }
+    return commitClientDropIntoRoom(roomId, clientId);
+  }, [rooms, clientsById, getCompatibilityReason, getRoomingDropConflicts, commitClientDropIntoRoom, onToast]);
 
   const addSelectedPilgrimsToRoom = React.useCallback(() => {
     const room = rooms.find((item) => item.id === selectedRoomId);
@@ -3771,13 +3960,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const openCanvasContextMenu = React.useCallback((event) => {
     event.preventDefault();
     event.stopPropagation();
+    const menuPoint = clampRoomingContextMenuPoint(event.clientX, event.clientY);
     const position = flowRef.current?.screenToFlowPosition
       ? flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
       : { x: 0, y: 0 };
     setCanvasMenu({
       open: true,
-      x: event.clientX,
-      y: event.clientY,
+      x: menuPoint.x,
+      y: menuPoint.y,
       position,
     });
   }, []);
@@ -4092,6 +4282,94 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
+  const pendingDropCopy = React.useMemo(() => {
+    if (!pendingDrop) return null;
+    const hasRoomType = pendingDrop.conflicts.includes("roomType");
+    const hasHotel = pendingDrop.conflicts.includes("hotel");
+    const conflictCity = pendingDrop.city || city;
+    const hotelLabel = conflictCity === "madinah" ? (t.hotelMadina || "فندق المدينة") : (t.hotelMecca || "فندق مكة");
+    if (hasRoomType && hasHotel) {
+      if (lang === "fr") return {
+        title: "Mettre à jour les informations de répartition ?",
+        intro: "Certaines informations sont différentes entre le dossier du pèlerin et la chambre choisie :",
+        roomCurrent: "Type de chambre actuel",
+        roomTarget: "Nouveau type de chambre",
+        hotelCurrent: "Hôtel actuel",
+        hotelTarget: "Nouvel hôtel",
+        question: "Voulez-vous mettre à jour ces informations et ajouter le pèlerin à cette chambre ?",
+        primary: "Mettre à jour et ajouter",
+      };
+      if (lang === "en") return {
+        title: "Update rooming details?",
+        intro: "Some details differ between the pilgrim file and the selected room:",
+        roomCurrent: "Current room type",
+        roomTarget: "New room type",
+        hotelCurrent: "Current hotel",
+        hotelTarget: "New hotel",
+        question: "Do you want to update these details and add the pilgrim to this room?",
+        primary: "Update and add",
+      };
+      return {
+        title: "تحديث بيانات التسكين؟",
+        intro: "توجد معلومات مختلفة بين ملف المعتمر والغرفة المختارة:",
+        roomCurrent: "نوع الغرفة الحالي",
+        roomTarget: "نوع الغرفة الجديد",
+        hotelCurrent: "الفندق الحالي",
+        hotelTarget: "الفندق الجديد",
+        question: "هل تريد تحديث هذه البيانات وإضافة المعتمر إلى الغرفة؟",
+        primary: "تحديث وإضافة",
+      };
+    }
+    if (hasRoomType) {
+      if (lang === "fr") return {
+        title: "Mettre à jour le type de chambre ?",
+        intro: `Ce pèlerin est actuellement défini en ${pendingDrop.currentRoomTypeLabel}, mais la chambre sélectionnée est ${pendingDrop.targetRoomTypeLabel}.`,
+        question: "Voulez-vous mettre à jour le type de chambre et l’ajouter à cette chambre ?",
+        primary: "Mettre à jour et ajouter",
+      };
+      if (lang === "en") return {
+        title: "Update room type?",
+        intro: `This pilgrim is currently assigned to ${pendingDrop.currentRoomTypeLabel}, but the selected room is ${pendingDrop.targetRoomTypeLabel}.`,
+        question: "Do you want to update the room type and add them to this room?",
+        primary: "Update and add",
+      };
+      return {
+        title: "تحديث نوع الغرفة؟",
+        intro: `هذا المعتمر محدد حاليًا كـ ${pendingDrop.currentRoomTypeLabel}، والغرفة المختارة هي ${pendingDrop.targetRoomTypeLabel}.`,
+        question: "هل تريد تحديث نوع الغرفة وإضافته إلى هذه الغرفة؟",
+        primary: "تحديث وإضافة",
+      };
+    }
+    if (lang === "fr") return {
+      title: `Mettre à jour ${hotelLabel} ?`,
+      intro: `Ce pèlerin est actuellement lié à l’hôtel : ${pendingDrop.currentHotel}`,
+      target: `La chambre sélectionnée dépend de l’hôtel : ${pendingDrop.targetHotel}`,
+      question: `Voulez-vous mettre à jour ${hotelLabel} et l’ajouter à cette chambre ?`,
+      primary: "Mettre à jour et ajouter",
+    };
+    if (lang === "en") return {
+      title: `Update ${hotelLabel}?`,
+      intro: `This pilgrim is currently linked to hotel: ${pendingDrop.currentHotel}`,
+      target: `The selected room belongs to hotel: ${pendingDrop.targetHotel}`,
+      question: `Do you want to update ${hotelLabel} and add them to this room?`,
+      primary: "Update and add",
+    };
+    return {
+      title: conflictCity === "madinah" ? "تحديث فندق المدينة؟" : "تحديث فندق مكة؟",
+      intro: `هذا المعتمر مرتبط حاليًا بـ${hotelLabel}: ${pendingDrop.currentHotel}`,
+      target: `والغرفة المختارة تابعة لفندق: ${pendingDrop.targetHotel}`,
+      question: `هل تريد تحديث ${hotelLabel} وإضافته إلى هذه الغرفة؟`,
+      primary: "تحديث وإضافة",
+    };
+  }, [city, lang, pendingDrop, t.hotelMadina, t.hotelMecca]);
+  const confirmPendingDrop = React.useCallback(() => {
+    if (!pendingDrop) return;
+    commitClientDropIntoRoom(pendingDrop.roomId, pendingDrop.clientId);
+    setPendingDrop(null);
+  }, [commitClientDropIntoRoom, pendingDrop]);
+  const cancelPendingDrop = React.useCallback(() => {
+    setPendingDrop(null);
+  }, []);
 
   return (
     <div style={fullscreen ? { position: "fixed", inset: 0, zIndex: 90, background: "#f3f5f8" } : undefined}>
@@ -4366,10 +4644,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 onContextMenu={(event) => {
                   event.preventDefault();
                   const rect = event.currentTarget.getBoundingClientRect();
+                  const menuPoint = clampRoomingContextMenuPoint(event.clientX, event.clientY);
                   setCanvasMenu({
                     open: true,
-                    x: event.clientX,
-                    y: event.clientY,
+                    x: menuPoint.x,
+                    y: menuPoint.y,
                     position: {
                       x: Math.max(0, event.clientX - rect.left),
                       y: Math.max(0, event.clientY - rect.top),
@@ -4433,7 +4712,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   position: "fixed",
                   top: canvasMenu.y,
                   left: canvasMenu.x,
-                  transform: "translate(-8px, 8px)",
                   width: 170,
                   background: "#fff",
                   border: "1px solid rgba(148,163,184,.22)",
@@ -4545,6 +4823,49 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             </aside>
           )}
         </div>
+
+        <Modal open={Boolean(pendingDrop)} onClose={cancelPendingDrop} title={pendingDropCopy?.title || ""} width={520}>
+          {pendingDrop && pendingDropCopy && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
+                {pendingDropCopy.intro}
+              </p>
+              {pendingDrop.conflicts.length > 1 ? (
+                <div style={{ display: "grid", gap: 9, padding: 12, border: "1px solid rgba(148,163,184,.18)", background: "#f8fafc", borderRadius: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.roomCurrent}</p>
+                      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{pendingDrop.currentRoomTypeLabel || "—"}</p>
+                    </div>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.roomTarget}</p>
+                      <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{pendingDrop.targetRoomTypeLabel || "—"}</p>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.hotelCurrent}</p>
+                      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{pendingDrop.currentHotel || "—"}</p>
+                    </div>
+                    <div>
+                      <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{pendingDropCopy.hotelTarget}</p>
+                      <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{pendingDrop.targetHotel || "—"}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : pendingDropCopy.target ? (
+                <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>{pendingDropCopy.target}</p>
+              ) : null}
+              <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.8, margin: 0 }}>
+                {pendingDropCopy.question}
+              </p>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+                <Button variant="ghost" onClick={cancelPendingDrop}>{t.cancel || "إلغاء"}</Button>
+                <Button onClick={confirmPendingDrop}>{pendingDropCopy.primary}</Button>
+              </div>
+            </div>
+          )}
+        </Modal>
 
         <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRoom || "إضافة غرفة") : (t.editRoom || "تعديل الغرفة")} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

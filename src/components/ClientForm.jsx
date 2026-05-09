@@ -147,6 +147,12 @@ const getRoomCategoryLabel = (category) => {
   return ROOM_CATEGORY_OPTIONS.find((option) => option.value === category)?.label || "رجال فقط";
 };
 
+const getProgramPlaceholder = (lang) => {
+  if (lang === "fr") return "Choisir un programme";
+  if (lang === "en") return "Select program";
+  return "اختيار برنامج";
+};
+
 const createGroupPerson = (index = 0) => ({
   id: `grp-person-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
   firstName: "",
@@ -212,14 +218,14 @@ const extractLatinNames = (client) => {
 const buildFormState = (client, defaultProgramId, programs) => {
   const { firstName, lastName } = extractArabicNames(client);
   const { nom, prenom }         = extractLatinNames(client);
+  const isEdit = Boolean(client);
 
-  const programId = pickString(
+  const clientProgramId = pickString(
     client?.programId,
     client?.program_id,
-    client?.program?.id,
-    defaultProgramId,
-    programs[0]?.id
+    client?.program?.id
   );
+  const programId = clientProgramId || (isEdit ? "" : pickString(defaultProgramId));
   const selectedProgram = programs.find(p => p.id === programId);
   const firstPackage = selectedProgram ? normalizeProgramPackages(selectedProgram)[0] : null;
   const packageLevel = pickString(client?.packageLevel, client?.hotelLevel, client?.hotel_level, firstPackage?.level);
@@ -236,8 +242,8 @@ const buildFormState = (client, defaultProgramId, programs) => {
     client?.price,
     officialPrice
   );
-  const normalizedRoomType = normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, "double"));
-  const supportedRoomType = PROGRAM_ROOM_PRICE_KEYS.includes(normalizedRoomType) ? normalizedRoomType : "double";
+  const normalizedRoomType = normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, selectedProgram ? "double" : ""));
+  const supportedRoomType = selectedProgram && PROGRAM_ROOM_PRICE_KEYS.includes(normalizedRoomType) ? normalizedRoomType : "";
 
   const passport = client?.passport || {};
   const docs     = client?.docs     || {};
@@ -255,15 +261,15 @@ const buildFormState = (client, defaultProgramId, programs) => {
     cin:         pickString(client?.cin, client?.CIN, client?.nationalId, client?.national_id, passport.cin, passport.nationalId),
     city:        pickString(client?.city, client?.ville, client?.addressCity),
     programId:   programId || "",
-    packageId,
-    hotelLevel:  packageLevel,
-    packageLevel,
-    hotelMecca:  pickString(client?.hotelMecca, client?.hotel_mecca),
-    hotelMadina: pickString(client?.hotelMadina, client?.hotel_madina),
+    packageId: selectedProgram ? packageId : "",
+    hotelLevel:  selectedProgram ? packageLevel : "",
+    packageLevel: selectedProgram ? packageLevel : "",
+    hotelMecca:  selectedProgram ? pickString(client?.hotelMecca, client?.hotel_mecca) : "",
+    hotelMadina: selectedProgram ? pickString(client?.hotelMadina, client?.hotel_madina) : "",
     roomType:    supportedRoomType,
-    roomTypeLabel: pickString(client?.roomTypeLabel, client?.room_type_label, getRoomTypeLabel(supportedRoomType)),
-    officialPrice,
-    salePrice,
+    roomTypeLabel: supportedRoomType ? pickString(client?.roomTypeLabel, client?.room_type_label, getRoomTypeLabel(supportedRoomType)) : "",
+    officialPrice: selectedProgram ? officialPrice : 0,
+    salePrice: selectedProgram ? salePrice : "",
     ticketNo: pickString(client?.ticketNo, client?.ticket_no, client?.ticketNumber, client?.ticket),
     representedByClientId: pickString(client?.representedByClientId, client?.represented_by_client_id, client?.guardianClientId, client?.guardian_client_id),
     representedByRelationship: normalizeRepresentativeRelationship(pickString(client?.representedByRelationship, client?.represented_by_relationship, client?.guardianRelationship, client?.guardian_relationship)),
@@ -300,6 +306,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
   const currencyLabel = CURRENCY_BY_LANG[lang] || "د.م";
   const formatPrice = (value) => (typeof value === "number" ? value.toLocaleString(numberLocale) : (value ?? "—"));
+  const programPlaceholder = React.useMemo(() => getProgramPlaceholder(lang), [lang]);
   const localizedRoomTypeOptions = React.useMemo(
     () => getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
     [lang]
@@ -356,6 +363,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const [errors,  setErrors]  = React.useState({});
   const [autoPriceNote, setAutoPriceNote] = React.useState("");
   const representationLabels = React.useMemo(() => representationText(lang), [lang]);
+  const salePriceOptionalText = React.useMemo(() => {
+    if (lang === "fr") return "Optionnel — peut être défini plus tard";
+    if (lang === "en") return "Optional — can be set later";
+    return "اختياري — يمكن تحديده لاحقًا";
+  }, [lang]);
   const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
     ...option,
     label: option.value === "male_only"
@@ -431,6 +443,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     () => programs.find(p => p.id === form.programId) ?? null,
     [programs, form.programId]
   );
+  const hasSelectedProgram = Boolean(selectedProgram);
   const representationClient = React.useMemo(() => ({
     ...form,
     id: client?.id || "",
@@ -588,8 +601,10 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       packageLevel: firstPackage?.level || "",
       hotelMecca: firstPackage?.hotelMecca || "",
       hotelMadina: firstPackage?.hotelMadina || "",
-      roomType: "double",
-      roomTypeLabel: getRoomTypeLabel("double"),
+      roomType: firstPackage ? "double" : "",
+      roomTypeLabel: firstPackage ? getRoomTypeLabel("double") : "",
+      officialPrice: 0,
+      salePrice: firstPackage ? f.salePrice : "",
     }));
   }, [form.programId, programPackages]);
 
@@ -615,7 +630,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const validate = () => {
     const e = {};
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
-      if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
       const peopleErrors = groupPeople.map((person) => {
         const rowErrors = {};
         if (!pickString(person.lastName)) rowErrors.lastName = t.lastNameError || "يرجى إدخال الاسم العائلي";
@@ -630,7 +644,6 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     }
     if (!form.firstName.trim() && !form.lastName.trim()) e.firstName = t.firstNameError;
     if (!form.phone.trim())    e.phone    = t.phoneError;
-    if (!form.salePrice || form.salePrice <= 0) e.salePrice = t.salePriceError;
     if (!form.gender) e.gender = t.genderRequired || "يرجى تحديد الجنس";
     if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
     if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
@@ -698,7 +711,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       const roomingGroupName = form.roomingGroupName || `مجموعة ${getRoomTypeLabel(form.roomType)} ${String(Date.now()).slice(-4)}`;
       const sharedBase = {
         ...form,
-        programId: lockProgramId || form.programId,
+        programId: lockProgramId || form.programId || null,
         packageId: selectedPackage?.id || form.packageId || "",
         packageLevel: selectedPackage?.level || form.packageLevel || form.hotelLevel || "",
         hotelLevel: selectedPackage?.level || form.hotelLevel || "",
@@ -761,7 +774,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     setBadgePhotoError("");
     const baseData = {
       ...form,
-      programId: lockProgramId || form.programId,
+      programId: lockProgramId || form.programId || null,
       packageId: selectedPackage?.id || form.packageId || "",
       packageLevel: selectedPackage?.level || form.packageLevel || form.hotelLevel || "",
       hotelLevel: selectedPackage?.level || form.hotelLevel || "",
@@ -771,6 +784,12 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       roomTypeLabel: getRoomTypeLabel(form.roomType),
       officialPrice: Number(derivedOfficialPrice || 0),
       salePrice:     Number(form.salePrice),
+      registrationDate: client?.registrationDate ?? client?.registration_date ?? form.registrationDate ?? null,
+      archived: client?.archived ?? form.archived ?? false,
+      archivedAt: client?.archivedAt ?? client?.archived_at ?? form.archivedAt ?? null,
+      deleted: client?.deleted ?? form.deleted ?? false,
+      deletedAt: client?.deletedAt ?? client?.deleted_at ?? form.deletedAt ?? null,
+      deletedBatchId: client?.deletedBatchId ?? client?.deleted_batch_id ?? form.deletedBatchId ?? null,
       gender: form.gender,
       passport: {
         ...form.passport,
@@ -842,11 +861,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             label={t.program}
             value={form.programId}
             onChange={set("programId")}
-            options={(lockProgramId ? programs.filter((p) => p.id === lockProgramId) : programs).map((p) => ({ value: p.id, label: p.name }))}
+            options={[
+              ...(lockProgramId ? [] : [{ value: "", label: programPlaceholder }]),
+              ...(lockProgramId ? programs.filter((p) => p.id === lockProgramId) : programs).map((p) => ({ value: p.id, label: p.name })),
+            ]}
             disabled={Boolean(lockProgramId)}
             style={{ gridColumn:"1/-1" }}
           />
-          {programPackages.length > 0 && (
+          {hasSelectedProgram ? (
             <Select
               label={t.level || "المستوى"}
               value={selectedPackage?.id || ""}
@@ -856,12 +878,21 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                 ...programPackages.map(pkg => ({ value:pkg.id, label:formatLevelLabel(pkg.level) })),
               ]}
             />
+          ) : (
+            <Select
+              label={t.level || "المستوى"}
+              value=""
+              onChange={() => {}}
+              options={[{ value:"", label:t.selectLevelPlaceholder }]}
+              disabled
+            />
           )}
           <Select
             label={t.roomType}
             value={form.roomType}
             onChange={handleRoomTypeChange}
-            options={localizedRoomTypeOptions}
+            options={hasSelectedProgram ? localizedRoomTypeOptions : [{ value:"", label:t.roomType || "نوع الغرفة" }]}
+            disabled={!hasSelectedProgram}
           />
           <Select
             label={t.roomCategory || "تصنيف الغرفة"}
@@ -1128,8 +1159,19 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
           />
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <Input label={`${t.salePrice} (${currencyLabel})`} value={form.salePrice} onChange={setSalePrice}
-              type="number" required error={errors.salePrice}
-              inputStyle={{ border:`1px solid ${tc.gold}`, color:tc.gold, fontWeight:700 }} />
+              type="number" error={errors.salePrice}
+              inputStyle={{
+                border:`1px solid ${hasSelectedProgram ? tc.gold : "var(--rukn-border-soft)"}`,
+                color:hasSelectedProgram ? tc.gold : "var(--rukn-text-muted)",
+                fontWeight:700,
+                background:hasSelectedProgram ? undefined : "var(--rukn-bg-soft)",
+                cursor:hasSelectedProgram ? "text" : "not-allowed",
+              }}
+              disabled={!hasSelectedProgram}
+            />
+            {hasSelectedProgram && (
+              <p style={{ fontSize:11, color:"var(--rukn-text-muted)", marginTop:-4 }}>{salePriceOptionalText}</p>
+            )}
             <button
               type="button"
               onClick={applyOfficialPriceToSale}

@@ -13,6 +13,8 @@ import {
 import { getClientDisplayName } from "../utils/clientNames";
 
 const tc = theme.colors;
+const DEFAULT_PAGE_SIZE = 25;
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 const FILTERS = [
   { id: "all", key: "trashFilter_all" },
@@ -48,6 +50,8 @@ export default function TrashPage({ store, onToast }) {
   const { t, lang, dir } = useLang();
   const invoicesAreRemote = Boolean(store.invoiceApi?.isRemote);
   const [filter, setFilter] = React.useState("all");
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(DEFAULT_PAGE_SIZE);
   const [selection, setSelection] = React.useState({});
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [filterOpen, setFilterOpen] = React.useState(false);
@@ -86,25 +90,6 @@ export default function TrashPage({ store, onToast }) {
   const deletedClients = store.deletedClients || [];
   const deletedPayments = store.deletedPayments || [];
   const getActivePaymentCountsForClientIds = store.getActivePaymentCountsForClientIds;
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const clientIds = deletedClients.map((client) => client.id).filter(Boolean);
-    if (!clientIds.length || typeof getActivePaymentCountsForClientIds !== "function") {
-      setActivePaymentCountsByClient({});
-      return undefined;
-    }
-    getActivePaymentCountsForClientIds(clientIds)
-      .then((counts) => {
-        if (cancelled) return;
-        setActivePaymentCountsByClient(Object.fromEntries(counts || []));
-      })
-      .catch((error) => {
-        console.error("[Trash] Failed to check linked payments:", error);
-        if (!cancelled) setActivePaymentCountsByClient({});
-      });
-    return () => { cancelled = true; };
-  }, [deletedClients, getActivePaymentCountsForClientIds]);
 
   const refreshTrashedInvoices = React.useCallback(async () => {
     if (invoicesAreRemote) {
@@ -267,17 +252,63 @@ export default function TrashPage({ store, onToast }) {
     return allItems;
   }, [allItems, filter]);
 
+  const totalItems = visibleItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+
+  React.useEffect(() => {
+    if (currentPage <= totalPages) return;
+    setCurrentPage(totalPages);
+    setSelection({});
+  }, [currentPage, totalPages]);
+
+  const paginatedItems = React.useMemo(() => {
+    const startIndex = (safePage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return visibleItems.slice(startIndex, endIndex);
+  }, [safePage, pageSize, visibleItems]);
+
   const selectedItems = React.useMemo(
-    () => allItems.filter((item) => selection[item.key]),
-    [allItems, selection]
+    () => paginatedItems.filter((item) => selection[item.key]),
+    [paginatedItems, selection]
   );
   const selectedCount = selectedItems.length;
   const selectedBlockedClientItems = React.useMemo(
     () => selectedItems.filter((item) => item.type === "client" && Number(item.activePaymentCount || 0) > 0),
     [selectedItems]
   );
-  const selectedVisibleCount = visibleItems.filter((item) => selection[item.key]).length;
-  const allVisibleSelected = visibleItems.length > 0 && selectedVisibleCount === visibleItems.length;
+  const selectedVisibleCount = paginatedItems.filter((item) => selection[item.key]).length;
+  const allVisibleSelected = paginatedItems.length > 0 && selectedVisibleCount === paginatedItems.length;
+
+  const paymentCheckClientKey = React.useMemo(() => {
+    const ids = new Set();
+    paginatedItems.forEach((item) => {
+      if (item.type === "client" && item.id) ids.add(item.id);
+    });
+    selectedItems.forEach((item) => {
+      if (item.type === "client" && item.id) ids.add(item.id);
+    });
+    return Array.from(ids).join("|");
+  }, [paginatedItems, selectedItems]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const clientIds = paymentCheckClientKey ? paymentCheckClientKey.split("|").filter(Boolean) : [];
+    if (!clientIds.length || typeof getActivePaymentCountsForClientIds !== "function") {
+      setActivePaymentCountsByClient({});
+      return undefined;
+    }
+    getActivePaymentCountsForClientIds(clientIds)
+      .then((counts) => {
+        if (cancelled) return;
+        setActivePaymentCountsByClient(Object.fromEntries(counts || []));
+      })
+      .catch((error) => {
+        console.error("[Trash] Failed to check linked payments:", error);
+        if (!cancelled) setActivePaymentCountsByClient({});
+      });
+    return () => { cancelled = true; };
+  }, [paymentCheckClientKey, getActivePaymentCountsForClientIds]);
 
   const toggleItem = React.useCallback((key) => {
     setSelection((prev) => {
@@ -292,13 +323,13 @@ export default function TrashPage({ store, onToast }) {
     setSelection((prev) => {
       const next = { ...prev };
       if (allVisibleSelected) {
-        visibleItems.forEach((item) => { delete next[item.key]; });
+        paginatedItems.forEach((item) => { delete next[item.key]; });
       } else {
-        visibleItems.forEach((item) => { next[item.key] = true; });
+        paginatedItems.forEach((item) => { next[item.key] = true; });
       }
       return next;
     });
-  }, [allVisibleSelected, visibleItems]);
+  }, [allVisibleSelected, paginatedItems]);
 
   const selectionPayload = React.useMemo(() => ({
     programIds: selectedItems.filter((item) => item.type === "program").map((item) => item.id),
@@ -407,7 +438,55 @@ export default function TrashPage({ store, onToast }) {
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);
+    setCurrentPage(1);
+    setSelection({});
   };
+
+  const changePage = React.useCallback((nextPage) => {
+    const boundedPage = Math.max(1, Math.min(totalPages, nextPage));
+    setCurrentPage(boundedPage);
+    setSelection({});
+  }, [totalPages]);
+
+  const handlePageSizeChange = React.useCallback((event) => {
+    setPageSize(Number(event.target.value) || DEFAULT_PAGE_SIZE);
+    setCurrentPage(1);
+    setSelection({});
+  }, []);
+
+  const paginationText = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        previous: "Précédent",
+        next: "Suivant",
+        page: "Page",
+        range: (start, end, total) => `Afficher ${start} - ${end} sur ${total}`,
+        showPerPage: (size) => `Afficher ${size} par page`,
+      };
+    }
+    if (lang === "en") {
+      return {
+        previous: "Previous",
+        next: "Next",
+        page: "Page",
+        range: (start, end, total) => `Showing ${start} - ${end} of ${total}`,
+        showPerPage: (size) => `Show ${size} per page`,
+      };
+    }
+    return {
+      previous: "السابق",
+      next: "التالي",
+      page: "صفحة",
+      range: (start, end, total) => `عرض ${start} - ${end} من ${total}`,
+      showPerPage: (size) => `عرض ${size} في الصفحة`,
+    };
+  }, [lang]);
+
+  const showPaginationControls = totalItems > 0 && (totalPages > 1 || totalItems > Math.min(...PAGE_SIZE_OPTIONS));
+  const pageStart = totalItems ? ((safePage - 1) * pageSize) + 1 : 0;
+  const pageEnd = Math.min(totalItems, safePage * pageSize);
+  const pageLabel = `${paginationText.page} ${safePage} / ${totalPages}`;
+  const rangeLabel = totalItems ? paginationText.range(pageStart, pageEnd, totalItems) : "";
 
   const selectedLabel = (t.trashSelectedCount || "{count}").replace("{count}", selectedCount);
   const confirmMessage = (t.trashConfirmDeleteMessage || "{count}").replace("{count}", selectedCount);
@@ -530,7 +609,7 @@ export default function TrashPage({ store, onToast }) {
                 onChange={toggleAllVisible}
                 style={{ width: 17, height: 17 }}
               />
-              {t.selectAllCount ? t.selectAllCount.replace("{count}", visibleItems.length) : t.selectAll}
+              {t.selectAllCount ? t.selectAllCount.replace("{count}", paginatedItems.length) : t.selectAll}
             </label>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
@@ -560,12 +639,12 @@ export default function TrashPage({ store, onToast }) {
       {filterMenu}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {visibleItems.length === 0 ? (
+        {totalItems === 0 ? (
           <GlassCard style={{ padding: 24 }}>
             <EmptyState icon="trash" title={t.trashEmptyTitle} sub={t.trashEmptySubtitle} />
           </GlassCard>
         ) : (
-          visibleItems.map((item) => {
+          paginatedItems.map((item) => {
             const checked = !!selection[item.key];
             const isProgram = item.type === "program";
             const isInvoice = item.type === "invoice";
@@ -660,6 +739,97 @@ export default function TrashPage({ store, onToast }) {
           })
         )}
       </div>
+
+      {showPaginationControls && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          paddingTop: 4,
+        }}>
+          <select
+            value={pageSize}
+            onChange={handlePageSizeChange}
+            aria-label={paginationText.showPerPage(pageSize)}
+            style={{
+              height: 34,
+              borderRadius: 999,
+              border: "1px solid var(--rukn-border-soft)",
+              background: "var(--rukn-bg-card)",
+              color: "var(--rukn-text)",
+              padding: "0 12px",
+              fontSize: 12,
+              fontWeight: 800,
+              fontFamily: "'Cairo',sans-serif",
+              cursor: "pointer",
+            }}
+          >
+            <option value={DEFAULT_PAGE_SIZE} hidden>
+              {paginationText.showPerPage(DEFAULT_PAGE_SIZE)}
+            </option>
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {paginationText.showPerPage(size)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => changePage(safePage - 1)}
+            disabled={safePage === 1}
+            style={{
+              height: 34,
+              padding: "0 14px",
+              borderRadius: 999,
+              border: "1px solid var(--rukn-border-soft)",
+              background: "var(--rukn-bg-card)",
+              color: safePage === 1 ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
+              fontSize: 12,
+              fontWeight: 800,
+              fontFamily: "'Cairo',sans-serif",
+              cursor: safePage === 1 ? "default" : "pointer",
+              opacity: safePage === 1 ? 0.55 : 1,
+            }}
+          >
+            {paginationText.previous}
+          </button>
+          <div style={{
+            minWidth: 140,
+            display: "grid",
+            gap: 2,
+            textAlign: "center",
+            color: "var(--rukn-text-muted)",
+            fontSize: 12,
+            fontWeight: 800,
+            lineHeight: 1.35,
+          }}>
+            <span>{pageLabel}</span>
+            {rangeLabel && <span style={{ fontSize: 11, fontWeight: 700 }}>{rangeLabel}</span>}
+          </div>
+          <button
+            type="button"
+            onClick={() => changePage(safePage + 1)}
+            disabled={safePage === totalPages}
+            style={{
+              height: 34,
+              padding: "0 14px",
+              borderRadius: 999,
+              border: "1px solid var(--rukn-border-soft)",
+              background: "var(--rukn-bg-card)",
+              color: safePage === totalPages ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
+              fontSize: 12,
+              fontWeight: 800,
+              fontFamily: "'Cairo',sans-serif",
+              cursor: safePage === totalPages ? "default" : "pointer",
+              opacity: safePage === totalPages ? 0.55 : 1,
+            }}
+          >
+            {paginationText.next}
+          </button>
+        </div>
+      )}
 
       <Modal
         open={confirmOpen}

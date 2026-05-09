@@ -1170,6 +1170,64 @@ export function useStore(agencyId, onToast) {
     sync(() => saveClient({ id, ...updated }, agencyId));
   }, [clients, programs, updateClientLocal, logActivity, sync, agencyId, notify]);
 
+  const syncRoomingClientFields = useCallback(async (programId, updates = []) => {
+    if (!programId || !Array.isArray(updates) || !updates.length) {
+      return { updatedCount: 0, skippedCount: Array.isArray(updates) ? updates.length : 0, error: null };
+    }
+    const clientsById = new Map(clients.map((client) => [client.id, client]));
+    const seen = new Set();
+    const updatedClients = [];
+    let skippedCount = 0;
+
+    updates.forEach((entry) => {
+      const id = entry?.id;
+      if (!id || seen.has(id)) {
+        skippedCount += 1;
+        return;
+      }
+      seen.add(id);
+      const current = clientsById.get(id);
+      if (!current || String(current.programId || "") !== String(programId || "")) {
+        skippedCount += 1;
+        return;
+      }
+      const patch = entry.patch && typeof entry.patch === "object" ? entry.patch : {};
+      const prepared = prepareClientForSave({
+        ...current,
+        ...patch,
+        id: current.id,
+        programId: current.programId,
+      });
+      const updated = {
+        ...prepared,
+        id: current.id,
+        registrationDate: current.registrationDate,
+        lastModified: current.lastModified,
+        archived: current.archived,
+        archivedAt: current.archivedAt,
+      };
+      if (getClientIdentityName(current) && !getClientIdentityName(updated)) {
+        skippedCount += 1;
+        return;
+      }
+      updatedClients.push(updated);
+    });
+
+    if (!updatedClients.length) {
+      return { updatedCount: 0, skippedCount, error: null };
+    }
+
+    updatedClients.forEach((client) => updateClientLocal(client.id, client));
+
+    if (isSupabaseEnabled && agencyId) {
+      const responses = await Promise.all(updatedClients.map((client) => saveClient(client, agencyId)));
+      const error = responses.find((response) => response?.error)?.error ?? null;
+      if (error) return { updatedCount: updatedClients.length, skippedCount, error };
+    }
+
+    return { updatedCount: updatedClients.length, skippedCount, error: null };
+  }, [agencyId, clients, updateClientLocal]);
+
   const transferClients = useCallback((ids, programId) => {
     if (!Array.isArray(ids) || ids.length === 0 || !programId) return 0;
     const idSet = new Set(ids);
@@ -1730,7 +1788,7 @@ export function useStore(agencyId, onToast) {
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
     getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
-    addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, deleteClient, deleteClientsBulk,
+    addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, syncRoomingClientFields, deleteClient, deleteClientsBulk,
     transferClients,
     createAgencyUser,
     updateAgencyUser,
