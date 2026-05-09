@@ -810,7 +810,6 @@ export function useStore(agencyId, onToast) {
           const mapped = mapClientRow(row);
           if (mapped.deleted) {
             setClients(prev => prev.filter(c => c.id !== mapped.id));
-            removePaymentsByClient(mapped.id);
             setDeletedClients(prev => {
               const exists = prev.find(c => c.id === mapped.id);
               return exists
@@ -1224,15 +1223,14 @@ export function useStore(agencyId, onToast) {
     const batchId   = generateUUID();
     const deletedAt = new Date().toISOString();
     softDeleteClientsLocal(entries, deletedAt, batchId);
-    removePaymentsByClient(ids);
     logActivity(
       "client_bulk_delete",
-      translateActivityDescription(`تم حذف ${entries.length} معتمر`),
+      translateActivityDescription(`تم نقل ${entries.length} معتمر إلى سلة المحذوفات`),
       ""
     );
     sync(() => markClientsDeleted(ids, agencyId, batchId));
     return entries.length;
-  }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
+  }, [clients, softDeleteClientsLocal, logActivity, sync, agencyId]);
 
   const createAgencyUser = useCallback(async ({ email, fullName, role = "staff", status = "invited" }) => {
     if (!isSupabaseEnabled || !agencyId) {

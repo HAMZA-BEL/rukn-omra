@@ -205,6 +205,16 @@ export default function ClientsPage({ store, onToast }) {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
+  const selectionScopeKey = React.useMemo(
+    () => [tab, search, filter, filterProg, currentPage].join("|"),
+    [tab, search, filter, filterProg, currentPage]
+  );
+  const previousSelectionScopeKey = React.useRef(selectionScopeKey);
+  React.useEffect(() => {
+    if (previousSelectionScopeKey.current === selectionScopeKey) return;
+    previousSelectionScopeKey.current = selectionScopeKey;
+    clearSelection();
+  }, [selectionScopeKey, clearSelection]);
   const removeFromRemotePage = React.useCallback((ids) => {
     const idList = Array.isArray(ids) ? ids : [ids];
     const idSet = new Set(idList.filter(Boolean));
@@ -226,37 +236,49 @@ export default function ClientsPage({ store, onToast }) {
     setTransferTargets([]);
     setTransferSheetOpen(false);
   }, [clearSelection, setSelectMode, setTransferTargets, setTransferSheetOpen]);
+  const selectedPageIds = React.useMemo(() => {
+    const pageIds = new Set(pageSelectionScope.map((client) => client.id));
+    return Array.from(checkedIds).filter((id) => pageIds.has(id));
+  }, [checkedIds, pageSelectionScope]);
 
   const handleBulkDelete = React.useCallback(() => {
-    const ids = Array.from(checkedIds);
+    const ids = selectedPageIds;
     if (!ids.length) return;
     if (!window.confirm(tr("confirmBulkDelete", { count: ids.length }))) return;
     const removed = deleteClientsBulk(ids);
     if (removed) {
       removeFromRemotePage(ids);
-      onToast(tr("bulkDeleteSuccess", { count: removed }), "info");
+      onToast(
+        removed === ids.length
+          ? tr("bulkDeleteSuccess", { count: removed })
+          : (t.bulkDeletePartial || "تعذر نقل بعض العناصر لأنها غير موجودة أو تم تحديثها."),
+        removed === ids.length ? "success" : "warning"
+      );
     } else {
-      onToast(t.noClientsSelected || "لم يتم اختيار أي معتمر", "info");
+      onToast(
+        t.bulkDeleteFailure || "تعذر نقل المحددين إلى سلة المحذوفات. حدّث الصفحة وحاول مرة أخرى.",
+        "error"
+      );
     }
     exitSelectMode();
-  }, [checkedIds, deleteClientsBulk, exitSelectMode, onToast, removeFromRemotePage, tr, t.noClientsSelected]);
+  }, [selectedPageIds, deleteClientsBulk, exitSelectMode, onToast, removeFromRemotePage, tr, t.bulkDeleteFailure, t.bulkDeletePartial]);
 
   const handleBulkArchive = () => {
-    if (!checkedIds.size) return;
-    if (!window.confirm(tr("confirmBulkArchive", { count: checkedIds.size }))) return;
-    const ids = [...checkedIds];
+    if (!selectedPageIds.length) return;
+    if (!window.confirm(tr("confirmBulkArchive", { count: selectedPageIds.length }))) return;
+    const ids = selectedPageIds;
     archiveClients(ids);
     removeFromRemotePage(ids);
-    onToast(tr("bulkArchiveSuccess", { count: checkedIds.size }), "success");
+    onToast(tr("bulkArchiveSuccess", { count: ids.length }), "success");
     exitSelectMode();
   };
 
   const handleTransferSelected = () => {
-    if (!checkedIds.size) {
+    if (!selectedPageIds.length) {
       onToast(t.noClientsSelected || "يرجى اختيار معتمر واحد على الأقل", "info");
       return;
     }
-    openTransferSheet([...checkedIds]);
+    openTransferSheet(selectedPageIds);
   };
 
   const handleSingleDelete = (client) => {
@@ -283,7 +305,8 @@ export default function ClientsPage({ store, onToast }) {
   };
 
   const allChecked = pageSelectionScope.length > 0 && pageSelectionScope.every(c => checkedIds.has(c.id));
-  const hasSelection = checkedIds.size > 0;
+  const selectedCount = selectedPageIds.length;
+  const hasSelection = selectedCount > 0;
   const paginationLabels = React.useMemo(() => {
     if (lang === "fr") return { previous: "Précédent", next: "Suivant", loading: "Chargement...", page: "Page" };
     if (lang === "en") return { previous: "Previous", next: "Next", loading: "Loading...", page: "Page" };
@@ -734,7 +757,7 @@ export default function ClientsPage({ store, onToast }) {
             justifyContent:"space-between",
           }}>
             <span style={{ fontSize:13, color:tc.gold, fontWeight:700 }}>
-              {tr("selectedCount", { count: checkedIds.size })}
+              {tr("selectedCount", { count: selectedCount })}
             </span>
             <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
               <Button
