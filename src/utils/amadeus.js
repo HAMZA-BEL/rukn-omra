@@ -13,26 +13,33 @@ import {
 const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 const AIRLINE_PLACEHOLDER = "[AIRLINE]";
 
-const LAST_NAME_KEYS = [
-  "nom",
-  "latinNom",
-  "nomLatin",
-  "lastNameLatin",
+const LATIN_LAST_NAME_KEYS = [
   "latinLastName",
+  "lastNameLatin",
+  "surnameLatin",
   "familyNameLatin",
-  "surname",
-  "lastName",
-  "familyName",
+  "nomLatin",
+  "latinNom",
+  "nom",
 ];
 
-const FIRST_NAME_KEYS = [
-  "prenom",
-  "latinPrenom",
-  "prenomLatin",
-  "firstNameLatin",
+const LATIN_FIRST_NAME_KEYS = [
   "latinFirstName",
+  "firstNameLatin",
   "givenNameLatin",
   "givenNamesLatin",
+  "prenomLatin",
+  "latinPrenom",
+  "prenom",
+];
+
+const FALLBACK_LAST_NAME_KEYS = [
+  "lastName",
+  "familyName",
+  "surname",
+];
+
+const FALLBACK_FIRST_NAME_KEYS = [
   "givenName",
   "givenNames",
   "firstName",
@@ -62,6 +69,11 @@ const removeDiacritics = (value) => String(value || "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "");
 
+const isLatinCompatible = (value) => {
+  const text = cleanText(value);
+  return Boolean(text) && /^[A-Za-zÀ-ÖØ-öø-ÿ\s'.,/-]+$/.test(text);
+};
+
 const normalizeSortText = (value) => removeDiacritics(value)
   .trim()
   .toUpperCase()
@@ -71,6 +83,14 @@ const normalizeSortText = (value) => removeDiacritics(value)
 const normalizeAmadeusNamePart = (value) => removeDiacritics(value)
   .toUpperCase()
   .replace(/[^A-Z]/g, "");
+
+const pickLatinCompatibleText = (source, keys = []) => {
+  for (const key of keys) {
+    const value = pickText(source, [key]);
+    if (isLatinCompatible(value)) return value;
+  }
+  return "";
+};
 
 const safeFilePart = (value) => String(value || "program")
   .trim()
@@ -132,8 +152,18 @@ const splitFullLatinName = (value) => {
 
 const getLatinNameParts = (client = {}) => {
   const passport = client.passport || {};
-  let lastName = pickText(client, LAST_NAME_KEYS) || pickText(passport, LAST_NAME_KEYS);
-  let firstName = pickText(client, FIRST_NAME_KEYS) || pickText(passport, FIRST_NAME_KEYS);
+  const explicitLastName = pickText(client, LATIN_LAST_NAME_KEYS) || pickText(passport, LATIN_LAST_NAME_KEYS);
+  const explicitFirstName = pickText(client, LATIN_FIRST_NAME_KEYS) || pickText(passport, LATIN_FIRST_NAME_KEYS);
+  const fallbackLastName = !explicitLastName
+    ? pickLatinCompatibleText(client, FALLBACK_LAST_NAME_KEYS) || pickLatinCompatibleText(passport, FALLBACK_LAST_NAME_KEYS)
+    : "";
+  const fallbackFirstName = !explicitFirstName
+    ? pickLatinCompatibleText(client, FALLBACK_FIRST_NAME_KEYS) || pickLatinCompatibleText(passport, FALLBACK_FIRST_NAME_KEYS)
+    : "";
+  let lastName = explicitLastName || fallbackLastName;
+  let firstName = explicitFirstName || fallbackFirstName;
+  const separatedLastName = lastName;
+  const separatedFirstName = firstName;
 
   if (!lastName || !firstName) {
     const fullLatin = pickText(client, FULL_LATIN_KEYS) || pickText(passport, FULL_LATIN_KEYS);
@@ -143,11 +173,31 @@ const getLatinNameParts = (client = {}) => {
     if (!firstName && split.firstName) firstName = split.firstName;
   }
 
+  let amadeusLastName = normalizeAmadeusNamePart(lastName);
+  let amadeusFirstName = normalizeAmadeusNamePart(firstName);
+  const separatedAmadeusLastName = normalizeAmadeusNamePart(separatedLastName);
+  const separatedAmadeusFirstName = normalizeAmadeusNamePart(separatedFirstName);
+  const hasSeparatedName = Boolean(separatedAmadeusLastName && separatedAmadeusFirstName);
+  if (
+    hasSeparatedName
+    && amadeusLastName === `${separatedAmadeusLastName}${separatedAmadeusFirstName}`
+    && amadeusFirstName === separatedAmadeusLastName
+  ) {
+    amadeusLastName = separatedAmadeusLastName;
+    amadeusFirstName = separatedAmadeusFirstName;
+  }
+  const nameNeedsReview = !hasSeparatedName
+    && amadeusLastName
+    && amadeusFirstName
+    && amadeusLastName.startsWith(amadeusFirstName)
+    && amadeusLastName.length > amadeusFirstName.length;
+
   return {
     lastName: cleanText(lastName),
     firstName: cleanText(firstName),
-    amadeusLastName: normalizeAmadeusNamePart(lastName),
-    amadeusFirstName: normalizeAmadeusNamePart(firstName),
+    amadeusLastName,
+    amadeusFirstName,
+    nameNeedsReview,
   };
 };
 
@@ -184,12 +234,14 @@ const getPassportData = (client = {}) => {
 };
 
 const buildNameCommand = (index, parts) => {
+  if (parts.nameNeedsReview) return "";
   if (!parts.amadeusLastName || !parts.amadeusFirstName) return "";
   const prefix = index === 0 ? "NM1" : "1";
   return `${prefix}${parts.amadeusLastName}/${parts.amadeusFirstName}`;
 };
 
 const buildDocsCommand = ({ row, airlineCode }) => {
+  if (row.parts.nameNeedsReview) return "";
   if (!row.parts.amadeusLastName || !row.parts.amadeusFirstName) return "";
   if (!row.docs.nationality) return "";
   if (!row.docs.passportNumber) return "";

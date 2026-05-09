@@ -33,12 +33,12 @@ const FIELD_DEFS = [
   {
     key: "latinFullName",
     label: { ar: "الاسم اللاتيني", fr: "Nom complet latin", en: "Full latin name" },
-    aliases: ["الاسم اللاتيني", "الاسم بالحروف اللاتينية", "nom latin", "nom complet latin", "full latin name", "latin name"],
+    aliases: ["الاسم اللاتيني", "الاسم بالحروف اللاتينية", "nom complet latin", "full latin name", "latin name"],
   },
   {
     key: "latinLastName",
     label: { ar: "اللقب اللاتيني", fr: "Nom latin", en: "Latin last name" },
-    aliases: ["اللقب اللاتيني", "الاسم العائلي اللاتيني", "nom", "surname", "latin last name", "last name"],
+    aliases: ["اللقب اللاتيني", "الاسم العائلي اللاتيني", "nom latin", "latin last name", "nom", "surname", "last name"],
   },
   {
     key: "latinFirstName",
@@ -64,6 +64,11 @@ const FIELD_DEFS = [
     key: "birthDate",
     label: { ar: "تاريخ الميلاد", fr: "Date de naissance", en: "Birth date" },
     aliases: ["تاريخ الميلاد", "تاريخ الازدياد", "date naissance", "date de naissance", "birth date", "date of birth"],
+  },
+  {
+    key: "passportIssue",
+    label: { ar: "إصدار الجواز", fr: "Délivrance passeport", en: "Passport issue" },
+    aliases: ["تاريخ إصدار الجواز", "تاريخ اصدار الجواز", "date de delivrance du passeport", "date de délivrance du passeport", "date delivrance passeport", "passport issue date", "issue date"],
   },
   {
     key: "passportExpiry",
@@ -112,6 +117,114 @@ const FIELD_DEFS = [
   },
 ];
 
+const OFFICIAL_TEMPLATE_BY_LANG = {
+  ar: {
+    title: "قالب استيراد المعتمرين والحجاج - ركن",
+    sheetName: "قالب ركن",
+    filename: "rukn-excel-template-ar.xlsx",
+    direction: "rtl",
+    genderOptions: ["ذكر", "أنثى"],
+    roomTypeOptions: ["ثنائية", "ثلاثية", "رباعية", "خماسية"],
+    headers: [
+      "الاسم العائلي بالعربية",
+      "الاسم الشخصي بالعربية",
+      "Nom latin",
+      "Prénom latin",
+      "رقم الهاتف",
+      "رقم الجواز",
+      "الجنسية",
+      "تاريخ الميلاد",
+      "تاريخ إصدار الجواز",
+      "تاريخ انتهاء الجواز",
+      "الجنس",
+      "CIN",
+      "جهة التسجيل",
+      "نوع الغرفة",
+      "ملاحظات",
+    ],
+  },
+  fr: {
+    title: "Modèle d’import des pèlerins - Rukn",
+    sheetName: "Modèle Rukn",
+    filename: "modele-excel-rukn-fr.xlsx",
+    direction: "ltr",
+    genderOptions: ["Homme", "Femme"],
+    roomTypeOptions: ["Double", "Triple", "Quadruple", "Quintuple"],
+    headers: [
+      "Nom en arabe",
+      "Prénom en arabe",
+      "Nom latin",
+      "Prénom latin",
+      "Téléphone",
+      "Numéro de passeport",
+      "Nationalité",
+      "Date de naissance",
+      "Date de délivrance du passeport",
+      "Date d’expiration du passeport",
+      "Sexe",
+      "CIN",
+      "Source d’inscription",
+      "Type de chambre",
+      "Notes",
+    ],
+  },
+  en: {
+    title: "Rukn Pilgrims Import Template",
+    sheetName: "Rukn Template",
+    filename: "rukn-excel-template-en.xlsx",
+    direction: "ltr",
+    genderOptions: ["Male", "Female"],
+    roomTypeOptions: ["Double", "Triple", "Quad", "Quint"],
+    headers: [
+      "Arabic last name",
+      "Arabic first name",
+      "Latin last name",
+      "Latin first name",
+      "Phone",
+      "Passport number",
+      "Nationality",
+      "Date of birth",
+      "Passport issue date",
+      "Passport expiry date",
+      "Gender",
+      "National ID",
+      "Registration source",
+      "Room type",
+      "Notes",
+    ],
+  },
+};
+
+const OFFICIAL_TEMPLATE_FIELD_KEYS = [
+  "arabicLastName",
+  "arabicFirstName",
+  "latinLastName",
+  "latinFirstName",
+  "phone",
+  "passportNo",
+  "nationality",
+  "birthDate",
+  "passportIssue",
+  "passportExpiry",
+  "gender",
+  "cin",
+  "registrationSource",
+  "roomType",
+  "notes",
+];
+
+const getTemplateConfig = (lang) => OFFICIAL_TEMPLATE_BY_LANG[lang] || OFFICIAL_TEMPLATE_BY_LANG.ar;
+
+const getOfficialHeaderMap = () => {
+  const entries = [];
+  Object.values(OFFICIAL_TEMPLATE_BY_LANG).forEach((config) => {
+    config.headers.forEach((header, index) => {
+      entries.push([normalizeHeader(header), OFFICIAL_TEMPLATE_FIELD_KEYS[index]]);
+    });
+  });
+  return new Map(entries);
+};
+
 const normalizeHeader = (value) => String(value || "")
   .trim()
   .toLowerCase()
@@ -120,6 +233,8 @@ const normalizeHeader = (value) => String(value || "")
   .replace(/[’'`´.،:;()_[\]{}#№°/-]+/g, " ")
   .replace(/\s+/g, " ")
   .trim();
+
+const OFFICIAL_HEADER_MAP = getOfficialHeaderMap();
 
 const normalizeComparable = (value) => normalizeHeader(value)
   .replace(/[^\p{L}\p{N}\s]/gu, "")
@@ -158,7 +273,25 @@ const setMappingIfFound = (mapping, used, key, index, { reserve = true } = {}) =
   return true;
 };
 
+const detectOfficialTemplateColumns = (headers = []) => {
+  const mapping = {};
+  headers.forEach((header, index) => {
+    const key = OFFICIAL_HEADER_MAP.get(normalizeHeader(header));
+    if (key && mapping[key] === undefined) mapping[key] = String(index);
+  });
+  const matchedCount = Object.keys(mapping).length;
+  const hasSeparatedLatin = mapping.latinLastName !== undefined && mapping.latinFirstName !== undefined;
+  const hasCoreIdentity = mapping.arabicLastName !== undefined && mapping.arabicFirstName !== undefined;
+  return {
+    mapping,
+    isOfficial: matchedCount >= 10 && hasSeparatedLatin && hasCoreIdentity,
+  };
+};
+
 const detectColumns = (headers = []) => {
+  const official = detectOfficialTemplateColumns(headers);
+  if (official.isOfficial) return official.mapping;
+
   const normalizedHeaders = headers.map(normalizeHeader);
   const mapping = {};
   const used = new Set();
@@ -337,6 +470,142 @@ const labelsFor = (lang, t = {}) => ({
   recognizedColumns: t.importRecognizedColumns || (lang === "fr" ? "Colonnes reconnues" : lang === "en" ? "Recognized columns" : "الأعمدة التي تم التعرف عليها"),
 });
 
+const setCellStyle = (ws, cell, style) => {
+  if (!ws[cell]) return;
+  ws[cell].s = style;
+};
+
+const applyColumnFormat = (ws, XLSX, columns, rowStart = 4, rowEnd = 200, format = "@") => {
+  columns.forEach((index) => {
+    const col = XLSX.utils.encode_col(index);
+    for (let row = rowStart; row <= rowEnd; row += 1) {
+      const cell = `${col}${row}`;
+      if (!ws[cell]) ws[cell] = { t: "s", v: "" };
+      ws[cell].z = format;
+    }
+  });
+};
+
+const addListValidation = (ws, XLSX, columnIndex, values, rowStart = 4, rowEnd = 200) => {
+  const col = XLSX.utils.encode_col(columnIndex);
+  const sqref = `${col}${rowStart}:${col}${rowEnd}`;
+  const formula = `"${values.join(",").replace(/"/g, '""')}"`;
+  const validation = {
+    sqref,
+    type: "list",
+    allowBlank: true,
+    showErrorMessage: true,
+    formula1: formula,
+    formulas: [formula],
+  };
+  ws["!dataValidations"] = [...(ws["!dataValidations"] || []), validation];
+  ws["!dataValidation"] = [...(ws["!dataValidation"] || []), validation];
+};
+
+const escapeXml = (value) => String(value || "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;");
+
+const injectExcelDataValidations = async (workbookArray, validations = []) => {
+  if (!validations.length) return workbookArray;
+  const zipModule = await import("pizzip");
+  const PizZip = zipModule.default || zipModule;
+  const zip = new PizZip(workbookArray);
+  const sheetPath = "xl/worksheets/sheet1.xml";
+  const sheetFile = zip.file(sheetPath);
+  if (!sheetFile) return workbookArray;
+  const xml = sheetFile.asText();
+  if (xml.includes("<dataValidations")) return workbookArray;
+  const validationXml = `<dataValidations count="${validations.length}">${validations.map((validation) => (
+    `<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="${escapeXml(validation.sqref)}"><formula1>${escapeXml(validation.formula)}</formula1></dataValidation>`
+  )).join("")}</dataValidations>`;
+  const insertionPoint = xml.includes("<pageMargins")
+    ? xml.indexOf("<pageMargins")
+    : xml.indexOf("</worksheet>");
+  if (insertionPoint === -1) return workbookArray;
+  zip.file(sheetPath, `${xml.slice(0, insertionPoint)}${validationXml}${xml.slice(insertionPoint)}`);
+  return zip.generate({
+    type: "arraybuffer",
+    compression: "DEFLATE",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+};
+
+const saveWorkbookArray = (workbookArray, filename) => {
+  const blob = new Blob([workbookArray], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
+
+const downloadOfficialTemplate = async (lang) => {
+  const XLSX = await import("xlsx");
+  const config = getTemplateConfig(lang);
+  const rows = [[config.title], [], config.headers];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const lastColumn = config.headers.length - 1;
+  const lastDataRow = 200;
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: lastDataRow - 1, c: lastColumn } });
+  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } }];
+  ws["!autofilter"] = {
+    ref: XLSX.utils.encode_range({ s: { r: 2, c: 0 }, e: { r: 2, c: lastColumn } }),
+  };
+  ws["!freeze"] = {
+    xSplit: 0,
+    ySplit: 3,
+    topLeftCell: "A4",
+    activePane: "bottomLeft",
+    state: "frozen",
+  };
+  ws["!cols"] = config.headers.map((header) => ({
+    wch: Math.min(Math.max(String(header).length + 4, 16), 30),
+  }));
+  ws["!dir"] = config.direction;
+
+  setCellStyle(ws, "A1", {
+    font: { bold: true, sz: 15, color: { rgb: "111827" } },
+    alignment: { horizontal: "center" },
+  });
+  config.headers.forEach((_, index) => {
+    const cell = `${XLSX.utils.encode_col(index)}3`;
+    setCellStyle(ws, cell, {
+      font: { bold: true, color: { rgb: "111827" } },
+      alignment: { horizontal: config.direction === "rtl" ? "right" : "left" },
+    });
+  });
+
+  applyColumnFormat(ws, XLSX, [4, 5, 11], 4, lastDataRow, "@");
+  applyColumnFormat(ws, XLSX, [7, 8, 9], 4, lastDataRow, "yyyy-mm-dd");
+  const validations = [
+    {
+      sqref: `${XLSX.utils.encode_col(10)}4:${XLSX.utils.encode_col(10)}${lastDataRow}`,
+      formula: `"${config.genderOptions.join(",")}"`,
+    },
+    {
+      sqref: `${XLSX.utils.encode_col(13)}4:${XLSX.utils.encode_col(13)}${lastDataRow}`,
+      formula: `"${config.roomTypeOptions.join(",")}"`,
+    },
+  ];
+  addListValidation(ws, XLSX, 10, config.genderOptions, 4, lastDataRow);
+  addListValidation(ws, XLSX, 13, config.roomTypeOptions, 4, lastDataRow);
+
+  const wb = XLSX.utils.book_new();
+  wb.Workbook = { Views: [{ RTL: config.direction === "rtl" }] };
+  XLSX.utils.book_append_sheet(wb, ws, config.sheetName);
+  const workbookArray = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true });
+  const workbookWithDropdowns = await injectExcelDataValidations(workbookArray, validations);
+  saveWorkbookArray(workbookWithDropdowns, config.filename);
+};
+
 const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, programContext }) => {
   const labels = labelsFor(lang, t);
   const existingPassports = new Map();
@@ -360,8 +629,10 @@ const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, p
     Object.assign(fields, edited);
 
     const birth = parseDateValue(edited.birthDate !== undefined ? edited.birthDate : getMappedCell(entry.values, mapping, "birthDate"));
+    const issue = parseDateValue(edited.passportIssue !== undefined ? edited.passportIssue : getMappedCell(entry.values, mapping, "passportIssue"));
     const expiry = parseDateValue(edited.passportExpiry !== undefined ? edited.passportExpiry : getMappedCell(entry.values, mapping, "passportExpiry"));
     fields.birthDate = birth.value;
+    fields.passportIssue = issue.value;
     fields.passportExpiry = expiry.value;
     fields.gender = normalizeGender(fields.gender);
     fields.salePrice = parsePrice(fields.salePrice);
@@ -381,7 +652,7 @@ const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, p
     const rejectionReasons = [];
     if (!rowHasValue(entry.values)) rejectionReasons.push(labels.emptyRow);
     if (!displayName) rejectionReasons.push(labels.missingName);
-    if (birth.invalid || expiry.invalid) warnings.push(labels.invalidDate);
+    if (birth.invalid || issue.invalid || expiry.invalid) warnings.push(labels.invalidDate);
     if (!fields.phone || !fields.passportNo || !fields.birthDate || !fields.passportExpiry || !fields.gender) warnings.push(labels.needsCompletion);
     if (!programContext?.id) warnings.push(labels.unassigned);
 
@@ -441,7 +712,7 @@ const makeClientPayload = (previewRow, programContext) => {
       birthDate: fields.birthDate,
       expiry: fields.passportExpiry,
       gender: fields.gender === "male" ? "M" : fields.gender === "female" ? "F" : "",
-      issueDate: "",
+      issueDate: fields.passportIssue || "",
     },
   };
 };
@@ -459,6 +730,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   const [dragging, setDragging] = React.useState(false);
   const [showColumnCorrection, setShowColumnCorrection] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [templateBusy, setTemplateBusy] = React.useState(false);
   const fileRef = React.useRef();
 
   const existingClients = store?.clients || [];
@@ -501,6 +773,19 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
       ...prev,
       [rowId]: { ...(prev[rowId] || {}), [key]: value },
     }));
+  };
+
+  const handleTemplateDownload = async (event) => {
+    event?.stopPropagation?.();
+    setError("");
+    setTemplateBusy(true);
+    try {
+      await downloadOfficialTemplate(lang);
+    } catch (templateError) {
+      setError(t.importTemplateDownloadError || (lang === "fr" ? "Impossible de générer le modèle Excel." : lang === "en" ? "Unable to generate the Excel template." : "تعذر إنشاء قالب Excel."));
+    } finally {
+      setTemplateBusy(false);
+    }
   };
 
   React.useEffect(() => {
@@ -547,15 +832,25 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         const wb = XLSX.read(event.target.result, { type: "array", cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true });
-        const nonEmptyRows = (data || []).filter(rowHasValue);
-        if (!nonEmptyRows.length) {
+        const rowsWithIndex = (data || [])
+          .map((values, index) => ({ values, rowNumber: index + 1 }))
+          .filter((entry) => rowHasValue(entry.values));
+        if (!rowsWithIndex.length) {
           setError(t.importEmptyFile || "الملف فارغ أو لا يحتوي على بيانات");
           return;
         }
-        const maxCols = Math.max(...nonEmptyRows.map((row) => row.length), 1);
-        const firstRow = nonEmptyRows[0] || [];
-        const firstHeaders = Array.from({ length: maxCols }, (_, index) => cellText(firstRow[index]));
-        let detected = detectColumns(firstHeaders);
+        const officialHeaderEntry = rowsWithIndex
+          .map((entry) => {
+            const headersForDetection = Array.from({ length: Math.max(entry.values.length, 1) }, (_, index) => cellText(entry.values[index]));
+            const official = detectOfficialTemplateColumns(headersForDetection);
+            return official.isOfficial ? { ...entry, headersForDetection, detected: official.mapping } : null;
+          })
+          .find(Boolean);
+        const headerEntry = officialHeaderEntry || rowsWithIndex[0];
+        const maxCols = Math.max(...rowsWithIndex.map((entry) => entry.values.length), headerEntry.values.length, 1);
+        const firstHeaders = officialHeaderEntry?.headersForDetection
+          || Array.from({ length: maxCols }, (_, index) => cellText(headerEntry.values[index]));
+        let detected = officialHeaderEntry?.detected || detectColumns(firstHeaders);
         const hasRecognizedHeader = Object.keys(detected).length > 0;
         const hdrs = hasRecognizedHeader
           ? firstHeaders
@@ -565,12 +860,14 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
             return `عمود ${index + 1}`;
           });
         if (!hasRecognizedHeader) detected = { fullName: "0" };
-        const body = hasRecognizedHeader ? nonEmptyRows.slice(1) : nonEmptyRows;
+        const body = hasRecognizedHeader
+          ? rowsWithIndex.filter((entry) => entry.rowNumber > headerEntry.rowNumber)
+          : rowsWithIndex;
         setHeaders(hdrs);
-        setRawRows(body.map((values, index) => ({
+        setRawRows(body.map((entry, index) => ({
           id: `${Date.now()}-${index}`,
-          rowNumber: hasRecognizedHeader ? index + 2 : index + 1,
-          values,
+          rowNumber: entry.rowNumber,
+          values: entry.values,
         })));
         setMapping(detected);
         setEdits({});
@@ -676,6 +973,37 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           <li>{t.importTip2 || "سيحاول النظام التعرف على الأعمدة تلقائيًا، ويمكنك تصحيحها قبل الحفظ."}</li>
           <li>{t.importTip3 || "يكفي وجود اسم المعتمر على الأقل. باقي المعلومات يمكن إكمالها لاحقًا."}</li>
         </ul>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          marginTop: 12,
+          paddingTop: 12,
+          borderTop: "1px solid rgba(255,255,255,.08)",
+        }}>
+          <p style={{ margin: 0, color: tc.grey, fontSize: 12, lineHeight: 1.7, flex: "1 1 280px" }}>
+            {lang === "fr"
+              ? "Il est recommandé d’utiliser le modèle officiel Rukn pour éviter les erreurs de colonnes et de noms, notamment pour Amadeus."
+              : lang === "en"
+                ? "Use the official Rukn template to avoid column and name errors, especially for Amadeus."
+                : "يُفضّل استعمال قالب ركن الرسمي لتفادي أخطاء الأعمدة والأسماء، خصوصًا أسماء Amadeus."}
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon="download"
+            onClick={handleTemplateDownload}
+            disabled={templateBusy}
+          >
+            {lang === "fr"
+              ? "Télécharger le modèle Excel Rukn"
+              : lang === "en"
+                ? "Download Rukn Excel template"
+                : "تحميل قالب Excel ركن"}
+          </Button>
+        </div>
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
