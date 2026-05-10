@@ -419,6 +419,9 @@ export function useStore(agencyId, onToast) {
   } = usePaymentsSlice();
 
   const [dbLoading,   setDbLoading]   = useState(false);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashLoaded, setTrashLoaded] = useState(false);
+  const [trashError, setTrashError] = useState(null);
   // syncStatus: 'synced' | 'syncing' | 'offline'
   const [syncStatus,  setSyncStatus]  = useState("synced");
   const [storeHydrated, setStoreHydrated] = useState(false);
@@ -430,6 +433,8 @@ export function useStore(agencyId, onToast) {
   });
   const [agencyUsers, setAgencyUsers] = useState([]);
   const [dashboardStats, setDashboardStats] = useState(null);
+  const [trashedInvoicesCache, setTrashedInvoicesCache] = useState([]);
+  const [trashedInvoicesLoaded, setTrashedInvoicesLoaded] = useState(false);
 
   // Prevent double-fetch in React StrictMode
   const fetchedRef = useRef(false);
@@ -502,10 +507,16 @@ export function useStore(agencyId, onToast) {
     return db.invoices.fetch(agencyId);
   }, [agencyId]);
 
-  const fetchTrashedFinalInvoices = useCallback(() => {
+  const fetchTrashedFinalInvoices = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
-    return db.invoices.fetchTrashed(agencyId);
-  }, [agencyId]);
+    if (!force && trashedInvoicesLoaded) return { data: trashedInvoicesCache, error: null };
+    const result = await db.invoices.fetchTrashed(agencyId);
+    if (!result.error) {
+      setTrashedInvoicesCache(Array.isArray(result.data) ? result.data : []);
+      setTrashedInvoicesLoaded(true);
+    }
+    return result;
+  }, [agencyId, isSupabaseEnabled, trashedInvoicesCache, trashedInvoicesLoaded]);
 
   const issueFinalInvoiceSnapshot = useCallback((draft) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
@@ -523,6 +534,7 @@ export function useStore(agencyId, onToast) {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     const result = await db.invoices.trash(agencyId, id);
     if (!result.error && result.data) {
+      setTrashedInvoicesLoaded(false);
       logActivity(
         "invoice_trash",
         translateActivityDescription(`تم نقل فاتورة ${result.data.invoiceDisplayNumber || id} إلى سلة المحذوفات`),
@@ -536,6 +548,7 @@ export function useStore(agencyId, onToast) {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     const result = await db.invoices.restore(agencyId, id);
     if (!result.error && result.data) {
+      setTrashedInvoicesLoaded(false);
       logActivity(
         "invoice_restore",
         translateActivityDescription(`تمت استعادة فاتورة ${result.data.invoiceDisplayNumber || id}`),
@@ -545,9 +558,11 @@ export function useStore(agencyId, onToast) {
     return result;
   }, [agencyId, getInvoiceActivityName, logActivity]);
 
-  const deleteFinalInvoice = useCallback((id) => {
+  const deleteFinalInvoice = useCallback(async (id) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
-    return db.invoices.markDeleted(agencyId, id);
+    const result = await db.invoices.markDeleted(agencyId, id);
+    if (!result.error) setTrashedInvoicesLoaded(false);
+    return result;
   }, [agencyId]);
 
   const invoiceApi = useMemo(() => (
@@ -605,6 +620,49 @@ export function useStore(agencyId, onToast) {
     return result;
   }, [agencyId, isSupabaseEnabled]);
 
+  const loadTrashData = useCallback(async ({ force = false } = {}) => {
+    if (!force && (trashLoaded || trashLoading)) return { error: null };
+    if (!isSupabaseEnabled || !agencyId) {
+      setTrashLoaded(true);
+      setTrashLoading(false);
+      setTrashError(null);
+      return { error: null };
+    }
+    setTrashLoading(true);
+    setTrashError(null);
+    try {
+      const [programResult, clientResult, paymentResult] = await Promise.all([
+        fetchDeletedPrograms(agencyId),
+        fetchDeletedClients(agencyId),
+        fetchTrashedPayments(agencyId),
+      ]);
+      const error = programResult?.error || clientResult?.error || paymentResult?.error || null;
+      if (error) {
+        setTrashError(error);
+        return { error };
+      }
+      setDeletedPrograms(Array.isArray(programResult.data) ? programResult.data : []);
+      setDeletedClients(Array.isArray(clientResult.data) ? clientResult.data : []);
+      setInitialDeletedPayments(Array.isArray(paymentResult.data) ? paymentResult.data : []);
+      setTrashLoaded(true);
+      return { error: null };
+    } catch (error) {
+      console.error("[Store] Trash fetch failed:", error);
+      setTrashError(error);
+      return { error };
+    } finally {
+      setTrashLoading(false);
+    }
+  }, [
+    agencyId,
+    isSupabaseEnabled,
+    setDeletedPrograms,
+    setDeletedClients,
+    setInitialDeletedPayments,
+    trashLoaded,
+    trashLoading,
+  ]);
+
   // ── Legacy ID migration (ensures Supabase-compatible UUIDs) ───────────────
   useEffect(() => {
     const {
@@ -652,29 +710,19 @@ export function useStore(agencyId, onToast) {
     Promise.all([
       fetchPrograms(agencyId),
       fetchClients(agencyId),
-      fetchDeletedPrograms(agencyId),
-      fetchDeletedClients(agencyId),
       fetchPayments(agencyId),
-      fetchTrashedPayments(agencyId),
       db.agency.fetch(agencyId),
       fetchNotifications(agencyId),
       fetchAgencyUsers(agencyId),
       fetchRecentActivity(agencyId, 5),
-    ]).then(([p, c, dp, dc, pay, trashedPay, ag, notif, usersResp, act]) => {
+    ]).then(([p, c, pay, ag, notif, usersResp, act]) => {
       const programData  = !p.error  && p.data  ? p.data  : [];
       const clientData   = !c.error  && c.data  ? c.data  : [];
-      const trashPrograms = !dp.error && dp.data ? dp.data : [];
-      const trashClients  = !dc.error && dc.data ? dc.data : [];
       if (programData) setPrograms(programData);
       setInitialClients(clientData);
-      setDeletedPrograms(trashPrograms);
-      setDeletedClients(trashClients);
       if (!pay.error && pay.data) {
         const clientIds = new Set(clientData.map(cl => cl.id));
         setInitialPayments(pay.data.filter(pmt => clientIds.has(pmt.clientId)));
-      }
-      if (!trashedPay.error && trashedPay.data) {
-        setInitialDeletedPayments(trashedPay.data);
       }
       setAgencyUsers(usersResp?.data ?? []);
       if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
@@ -1789,6 +1837,7 @@ export function useStore(agencyId, onToast) {
     unreadNotifications,
     unreadNotificationsCount,
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
+    trashLoading, trashLoaded, trashError, loadTrashData,
     paymentsByClient, paidByClient, lastPaymentByClient,
     getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,

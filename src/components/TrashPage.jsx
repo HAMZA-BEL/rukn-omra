@@ -58,6 +58,7 @@ export default function TrashPage({ store, onToast }) {
   const [trashedInvoices, setTrashedInvoices] = React.useState(() => (
     invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
   ));
+  const [invoicesLoading, setInvoicesLoading] = React.useState(false);
   const filterRef = React.useRef(null);
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
@@ -90,19 +91,38 @@ export default function TrashPage({ store, onToast }) {
   const deletedClients = store.deletedClients || [];
   const deletedPayments = store.deletedPayments || [];
   const getActivePaymentCountsForClientIds = store.getActivePaymentCountsForClientIds;
+  const trashLoading = Boolean(store.trashLoading);
+  const trashLoaded = Boolean(store.trashLoaded);
+  const trashError = store.trashError;
+  const loadTrashData = store.loadTrashData;
+  const trashDataLoading = trashLoading || invoicesLoading;
 
-  const refreshTrashedInvoices = React.useCallback(async () => {
+  React.useEffect(() => {
+    if (trashLoaded || trashLoading || typeof loadTrashData !== "function") return undefined;
+    let cancelled = false;
+    loadTrashData().then((result) => {
+      if (cancelled || !result?.error || !onToast) return;
+      onToast(result.error.message || t.activityError || "Failed to load Trash", "error");
+    });
+    return () => { cancelled = true; };
+  }, [loadTrashData, onToast, t.activityError, trashLoaded, trashLoading]);
+
+  const refreshTrashedInvoices = React.useCallback(async ({ force = false } = {}) => {
+    setInvoicesLoading(true);
     if (invoicesAreRemote) {
-      const { data, error } = await (store.invoiceApi?.fetchTrashedFinalInvoices?.() || Promise.resolve({ data: [], error: null }));
+      const { data, error } = await (store.invoiceApi?.fetchTrashedFinalInvoices?.({ force }) || Promise.resolve({ data: [], error: null }));
       if (error) {
         if (onToast) onToast(error.message || "Failed to load trashed invoices", "error");
+        setInvoicesLoading(false);
         return [];
       }
       setTrashedInvoices(data || []);
+      setInvoicesLoading(false);
       return data || [];
     }
     const localInvoices = readSavedInvoices().filter((invoice) => invoice.status === "trashed");
     setTrashedInvoices(localInvoices);
+    setInvoicesLoading(false);
     return localInvoices;
   }, [invoicesAreRemote, onToast, store.invoiceApi]);
 
@@ -350,7 +370,7 @@ export default function TrashPage({ store, onToast }) {
         if (onToast) onToast(error.message || "Restore failed", "error");
         return;
       }
-      await refreshTrashedInvoices();
+      await refreshTrashedInvoices({ force: true });
     }
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => restoreSavedInvoiceSnapshot(id));
@@ -415,7 +435,7 @@ export default function TrashPage({ store, onToast }) {
         if (onToast) onToast(error.message || "Delete failed", "error");
         return;
       }
-      await refreshTrashedInvoices();
+      await refreshTrashedInvoices({ force: true });
     }
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
@@ -639,7 +659,15 @@ export default function TrashPage({ store, onToast }) {
       {filterMenu}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {totalItems === 0 ? (
+        {trashDataLoading ? (
+          <GlassCard style={{ padding: 24, textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 13, fontWeight: 700 }}>
+            {t.loading || "Loading..."}
+          </GlassCard>
+        ) : trashError ? (
+          <GlassCard style={{ padding: 24, textAlign: "center", color: "var(--rukn-danger)", fontSize: 13, fontWeight: 700 }}>
+            {trashError.message || t.activityError || "Failed to load Trash"}
+          </GlassCard>
+        ) : totalItems === 0 ? (
           <GlassCard style={{ padding: 24 }}>
             <EmptyState icon="trash" title={t.trashEmptyTitle} sub={t.trashEmptySubtitle} />
           </GlassCard>
