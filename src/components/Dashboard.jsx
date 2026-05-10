@@ -16,6 +16,9 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
           getClientStatus, getClientTotalPaid, getProgramClients, getProgramById } = store;
   const [search, setSearch] = React.useState("");
   const [brandHover, setBrandHover] = React.useState(false);
+  const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const searchDataLoading = Boolean(search.trim()) && (!clientsReady || !paymentsReady);
   const handleBrandClick = React.useCallback(() => {
     if (typeof onBrandNavigate === "function") {
       onBrandNavigate();
@@ -36,6 +39,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
 
   const results = React.useMemo(() => {
     if (!search.trim()) return [];
+    if (!clientsReady) return [];
     const q = search.toLowerCase();
     const byClient = clients.filter(c =>
       c.name.toLowerCase().includes(q) || c.phone.includes(q) ||
@@ -45,7 +49,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
     const progMatch = programs.find(p => p.name.toLowerCase().includes(q));
     const byProg = progMatch ? clients.filter(c => c.programId === progMatch.id) : [];
     return [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
-  }, [search, clients, programs]);
+  }, [search, clients, clientsReady, programs]);
 
   const programClientCounts = stats.programClientCounts || {};
 
@@ -134,7 +138,13 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
                 {results.length}
               </span>
             </div>
-            {results.length === 0 ? (
+            {searchDataLoading ? (
+              <div style={{ padding:18, textAlign:"center", color:tc.grey,
+                background:"rgba(255,255,255,.02)", borderRadius:12,
+                border:"1px solid rgba(255,255,255,.05)" }}>
+                {t.loading || "Loading..."}
+              </div>
+            ) : results.length === 0 ? (
               <div style={{ padding:28, textAlign:"center", color:tc.grey,
                 background:"rgba(255,255,255,.02)", borderRadius:12,
                 border:"1px solid rgba(255,255,255,.05)" }}>

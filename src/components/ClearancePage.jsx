@@ -466,6 +466,9 @@ export default function ClearancePage({ store }) {
     invoiceApi,
   } = store;
   const invoicesAreRemote = Boolean(invoiceApi?.isRemote);
+  const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const clearanceDataReady = clientsReady && paymentsReady;
   const [filter, setFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
   const [paymentMethodFilter, setPaymentMethodFilter] = React.useState("all");
@@ -484,6 +487,7 @@ export default function ClearancePage({ store }) {
     invoicesAreRemote ? [] : readSavedInvoices()
   ));
   const paymentMethodRef = React.useRef(null);
+  const clearanceHydrationRequestedRef = React.useRef(false);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
@@ -510,6 +514,23 @@ export default function ClearancePage({ store }) {
     setSavedInvoices(localInvoices);
     return localInvoices;
   }, [invoiceApi, invoicesAreRemote]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (clientsReady && paymentsReady) return;
+    if (clearanceHydrationRequestedRef.current) return;
+    clearanceHydrationRequestedRef.current = true;
+    if (!clientsReady && !store.clientsLoading) store.ensureClientsLoaded?.();
+    if (!paymentsReady && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+  }, [
+    clientsReady,
+    paymentsReady,
+    store.isSupabaseEnabled,
+    store.clientsLoading,
+    store.paymentsLoading,
+    store.ensureClientsLoaded,
+    store.ensurePaymentsLoaded,
+  ]);
 
   React.useEffect(() => {
     if (activeTab === "invoices") refreshSavedInvoices();
@@ -911,12 +932,12 @@ export default function ClearancePage({ store }) {
           <Button
             variant="primary"
             icon="download"
-            disabled={!selectedProgram}
+            disabled={!selectedProgram || !clearanceDataReady}
             onClick={handleExportExcel}
           >
             {labels.exportExcel}
           </Button>
-          <Button variant="ghost" icon="print" disabled={!data.length} onClick={() => {
+          <Button variant="ghost" icon="print" disabled={!clearanceDataReady || !data.length} onClick={() => {
             if (data.length === 0) return;
             printClearancePDF({
               data,
@@ -932,6 +953,12 @@ export default function ClearancePage({ store }) {
         </div>
       </GlassCard>
 
+      {!clearanceDataReady ? (
+        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+          {t.loading || "Loading..."}
+        </GlassCard>
+      ) : (
+      <>
       {/* KPIs */}
       <div className="kpi-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:24 }}>
         {[
@@ -1216,6 +1243,8 @@ export default function ClearancePage({ store }) {
           </div>
         )}
       </div>
+      </>
+      )}
       </>
       )}
 

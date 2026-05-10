@@ -1136,6 +1136,9 @@ export default function ProgramsPage({ store, onToast }) {
           getClientTotalPaid, getClientStatus } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
+  const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const programMetricsReady = clientsReady && paymentsReady;
   const tr = React.useCallback((key, vars = {}) => {
     const template = t?.[key] ?? key;
     if (typeof template === "function") return template(vars);
@@ -1165,6 +1168,24 @@ export default function ProgramsPage({ store, onToast }) {
   const yearButtonRef = React.useRef(null);
   const programTypeMenuRef = React.useRef(null);
   const programTypeButtonRef = React.useRef(null);
+  const metricsHydrationRequestedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (clientsReady && paymentsReady) return;
+    if (metricsHydrationRequestedRef.current) return;
+    metricsHydrationRequestedRef.current = true;
+    if (!clientsReady && !store.clientsLoading) store.ensureClientsLoaded?.();
+    if (!paymentsReady && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+  }, [
+    clientsReady,
+    paymentsReady,
+    store.isSupabaseEnabled,
+    store.clientsLoading,
+    store.paymentsLoading,
+    store.ensureClientsLoaded,
+    store.ensurePaymentsLoaded,
+  ]);
 
   const searchPlaceholder = React.useMemo(() => {
     if (lang === "fr") return "Rechercher un programme...";
@@ -1635,6 +1656,10 @@ export default function ProgramsPage({ store, onToast }) {
 
       {programs.length === 0 ? (
         <EmptyState icon="program" title={t.noProgramsTitle} sub={t.noProgramsSub} />
+      ) : !programMetricsReady ? (
+        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+          {t.loading || "Loading..."}
+        </GlassCard>
       ) : !filteredPrograms.length ? (
         <EmptyState icon="search" title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
@@ -1969,6 +1994,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
+  const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const detailDataReady = clientsReady && paymentsReady;
   const tr = React.useCallback((key, vars = {}) => {
     const template = t?.[key] ?? key;
     if (typeof template === "function") return template(vars);
@@ -2007,6 +2035,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const bulkActionsMenuRef = React.useRef(null);
   const packageFilterRef = React.useRef(null);
   const statusFilterRef = React.useRef(null);
+  const detailHydrationRequestedRef = React.useRef(false);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
   const participantExcelImportLabel = React.useMemo(() => {
@@ -2022,6 +2051,23 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     rtl: isRTL,
     offset: MENU_OFFSET_PX,
   });
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (clientsReady && paymentsReady) return;
+    if (detailHydrationRequestedRef.current) return;
+    detailHydrationRequestedRef.current = true;
+    if (!clientsReady && !store.clientsLoading) store.ensureClientsLoaded?.();
+    if (!paymentsReady && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+  }, [
+    clientsReady,
+    paymentsReady,
+    store.isSupabaseEnabled,
+    store.clientsLoading,
+    store.paymentsLoading,
+    store.ensureClientsLoaded,
+    store.ensurePaymentsLoaded,
+  ]);
 
   const progClients = React.useMemo(() =>
     clients.filter(c => c.programId === program.id), [clients, program.id]);
@@ -2735,7 +2781,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         ))}
       </div>
 
-      {programTab === "rooming" ? (
+      {!detailDataReady ? (
+        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+          {t.loading || "Loading..."}
+        </GlassCard>
+      ) : programTab === "rooming" ? (
         <RoomingWorkflowCanvas
           program={program}
           clients={progClients}

@@ -186,6 +186,14 @@ const isInactiveLinkedPayment = (payment = {}) => {
 
 const isActiveLinkedPayment = (payment = {}) => !isInactiveLinkedPayment(payment);
 
+const filterPaymentsForClients = (paymentData = [], clientData = []) => {
+  const safePayments = Array.isArray(paymentData) ? paymentData : [];
+  const safeClients = Array.isArray(clientData) ? clientData : [];
+  const clientIds = new Set(safeClients.map((client) => client?.id).filter(Boolean));
+  if (!clientIds.size) return [];
+  return safePayments.filter((payment) => clientIds.has(getPaymentClientId(payment)));
+};
+
 const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new Date().toISOString()) => ({
   snapshotVersion: 1,
   kind: "deleted_program",
@@ -436,11 +444,44 @@ export function useStore(agencyId, onToast) {
   });
   const [agencyUsers, setAgencyUsers] = useState([]);
   const [dashboardStats, setDashboardStats] = useState(null);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsLoaded, setClientsLoaded] = useState(!isSupabaseEnabled || !agencyId);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [paymentsLoaded, setPaymentsLoaded] = useState(!isSupabaseEnabled || !agencyId);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsLoaded, setNotificationsLoaded] = useState(!isSupabaseEnabled || !agencyId);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersLoaded, setUsersLoaded] = useState(!isSupabaseEnabled || !agencyId);
+  const [backgroundHydrationLoading, setBackgroundHydrationLoading] = useState(false);
+  const [backgroundHydrationDone, setBackgroundHydrationDone] = useState(!isSupabaseEnabled || !agencyId);
   const [trashedInvoicesCache, setTrashedInvoicesCache] = useState([]);
   const [trashedInvoicesLoaded, setTrashedInvoicesLoaded] = useState(false);
 
   // Prevent double-fetch in React StrictMode
   const fetchedRef = useRef(false);
+  const clientsRef = useRef(clients);
+  const paymentsRef = useRef(payments);
+  const notificationsRef = useRef(notifications);
+  const agencyUsersRef = useRef(agencyUsers);
+  const clientsLoadedRef = useRef(clientsLoaded);
+  const paymentsLoadedRef = useRef(paymentsLoaded);
+  const notificationsLoadedRef = useRef(notificationsLoaded);
+  const usersLoadedRef = useRef(usersLoaded);
+  const clientsLoadPromiseRef = useRef(null);
+  const paymentsLoadPromiseRef = useRef(null);
+  const notificationsLoadPromiseRef = useRef(null);
+  const usersLoadPromiseRef = useRef(null);
+  const backgroundHydrationStartedRef = useRef(false);
+  const dashboardStatsPromiseRef = useRef(null);
+
+  useEffect(() => { clientsRef.current = clients; }, [clients]);
+  useEffect(() => { paymentsRef.current = payments; }, [payments]);
+  useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
+  useEffect(() => { agencyUsersRef.current = agencyUsers; }, [agencyUsers]);
+  useEffect(() => { clientsLoadedRef.current = clientsLoaded; }, [clientsLoaded]);
+  useEffect(() => { paymentsLoadedRef.current = paymentsLoaded; }, [paymentsLoaded]);
+  useEffect(() => { notificationsLoadedRef.current = notificationsLoaded; }, [notificationsLoaded]);
+  useEffect(() => { usersLoadedRef.current = usersLoaded; }, [usersLoaded]);
 
   const notify = useCallback((msg, type = "error") => {
     if (onToast) onToast(msg, type);
@@ -452,21 +493,31 @@ export function useStore(agencyId, onToast) {
       setDashboardStats(null);
       return { data: null, error: null };
     }
-    const summaryResult = await db.dashboard.fetchSummary();
-    if (!summaryResult.error && summaryResult.data) {
-      setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...summaryResult.data });
-      return summaryResult;
-    }
 
-    if (summaryResult.error) {
-      console.warn("[Store] Dashboard summary RPC failed; falling back to raw stats.", summaryResult.error);
-    }
+    if (dashboardStatsPromiseRef.current) return dashboardStatsPromiseRef.current;
 
-    const result = await db.dashboard.fetchStats(agencyId);
-    if (!result.error && result.data) {
-      setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...result.data });
-    }
-    return result;
+    const promise = (async () => {
+      const summaryResult = await db.dashboard.fetchSummary();
+      if (!summaryResult.error && summaryResult.data) {
+        setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...summaryResult.data });
+        return summaryResult;
+      }
+
+      if (summaryResult.error) {
+        console.warn("[Store] Dashboard summary RPC failed; falling back to raw stats.", summaryResult.error);
+      }
+
+      const result = await db.dashboard.fetchStats(agencyId);
+      if (!result.error && result.data) {
+        setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...result.data });
+      }
+      return result;
+    })().finally(() => {
+      dashboardStatsPromiseRef.current = null;
+    });
+
+    dashboardStatsPromiseRef.current = promise;
+    return promise;
   }, [agencyId, isSupabaseEnabled]);
 
   useEffect(() => {
@@ -518,7 +569,7 @@ export function useStore(agencyId, onToast) {
   const fetchFinalInvoices = useCallback(() => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
     return db.invoices.fetch(agencyId);
-  }, [agencyId]);
+  }, [agencyId, isSupabaseEnabled]);
 
   const fetchTrashedFinalInvoices = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: [], error: null });
@@ -534,7 +585,7 @@ export function useStore(agencyId, onToast) {
   const issueFinalInvoiceSnapshot = useCallback((draft) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     return db.invoices.issueFinal(agencyId, draft);
-  }, [agencyId]);
+  }, [agencyId, isSupabaseEnabled]);
 
   const getInvoiceActivityName = useCallback((invoice) => {
     const recipient = invoice?.recipientSnapshot || {};
@@ -576,7 +627,7 @@ export function useStore(agencyId, onToast) {
     const result = await db.invoices.markDeleted(agencyId, id);
     if (!result.error) setTrashedInvoicesLoaded(false);
     return result;
-  }, [agencyId]);
+  }, [agencyId, isSupabaseEnabled]);
 
   const invoiceApi = useMemo(() => (
     isSupabaseEnabled && agencyId
@@ -621,17 +672,188 @@ export function useStore(agencyId, onToast) {
     }
   }, [agencyId, ns]);
 
-  const refreshAgencyUsers = useCallback(async () => {
+  const loadClients = useCallback(async ({ force = false } = {}) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      setClientsLoading(false);
+      setClientsLoaded(true);
+      return { data: clientsRef.current, error: null };
+    }
+    if (!force && clientsLoadedRef.current) {
+      return { data: clientsRef.current, error: null };
+    }
+    if (clientsLoadPromiseRef.current) return clientsLoadPromiseRef.current;
+
+    setClientsLoading(true);
+    const promise = fetchClients(agencyId)
+      .then((result) => {
+        if (!result?.error && Array.isArray(result?.data)) {
+          clientsRef.current = result.data;
+          setInitialClients(result.data);
+          clientsLoadedRef.current = true;
+          setClientsLoaded(true);
+        } else if (result?.error) {
+          console.error("[Store] Background clients fetch failed:", result.error);
+        }
+        return result;
+      })
+      .catch((error) => {
+        console.error("[Store] Background clients fetch failed:", error);
+        return { data: null, error };
+      })
+      .finally(() => {
+        setClientsLoading(false);
+        clientsLoadPromiseRef.current = null;
+      });
+
+    clientsLoadPromiseRef.current = promise;
+    return promise;
+  }, [agencyId, isSupabaseEnabled, setInitialClients]);
+
+  const loadPayments = useCallback(async ({ force = false, clientData = null } = {}) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      setPaymentsLoading(false);
+      setPaymentsLoaded(true);
+      return { data: paymentsRef.current, error: null };
+    }
+    if (!force && paymentsLoadedRef.current) {
+      return { data: paymentsRef.current, error: null };
+    }
+    if (paymentsLoadPromiseRef.current) return paymentsLoadPromiseRef.current;
+
+    setPaymentsLoading(true);
+    const promise = (async () => {
+      const clientsForFilter = Array.isArray(clientData)
+        ? clientData
+        : clientsLoadedRef.current
+          ? clientsRef.current
+          : (await loadClients()).data;
+      if (!Array.isArray(clientsForFilter)) {
+        return { data: null, error: new Error("Clients must load before payments") };
+      }
+
+      const result = await fetchPayments(agencyId);
+      if (!result?.error && Array.isArray(result?.data)) {
+        const filteredPayments = filterPaymentsForClients(result.data, clientsForFilter);
+        paymentsRef.current = filteredPayments;
+        setInitialPayments(filteredPayments);
+        paymentsLoadedRef.current = true;
+        setPaymentsLoaded(true);
+        return { ...result, data: filteredPayments };
+      }
+      if (result?.error) console.error("[Store] Background payments fetch failed:", result.error);
+      return result;
+    })()
+      .catch((error) => {
+        console.error("[Store] Background payments fetch failed:", error);
+        return { data: null, error };
+      })
+      .finally(() => {
+        setPaymentsLoading(false);
+        paymentsLoadPromiseRef.current = null;
+      });
+
+    paymentsLoadPromiseRef.current = promise;
+    return promise;
+  }, [agencyId, isSupabaseEnabled, loadClients, setInitialPayments]);
+
+  const loadNotifications = useCallback(async ({ force = false } = {}) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      setNotificationsLoading(false);
+      setNotificationsLoaded(true);
+      return { data: notificationsRef.current, error: null };
+    }
+    if (!force && notificationsLoadedRef.current) {
+      return { data: notificationsRef.current, error: null };
+    }
+    if (notificationsLoadPromiseRef.current) return notificationsLoadPromiseRef.current;
+
+    setNotificationsLoading(true);
+    const promise = fetchNotifications(agencyId)
+      .then((result) => {
+        if (!result?.error && Array.isArray(result?.data)) {
+          notificationsRef.current = result.data;
+          setInitialNotifications(result.data);
+          notificationsLoadedRef.current = true;
+          setNotificationsLoaded(true);
+        } else if (result?.error) {
+          console.error("[Store] Background notifications fetch failed:", result.error);
+        }
+        return result;
+      })
+      .catch((error) => {
+        console.error("[Store] Background notifications fetch failed:", error);
+        return { data: null, error };
+      })
+      .finally(() => {
+        setNotificationsLoading(false);
+        notificationsLoadPromiseRef.current = null;
+      });
+
+    notificationsLoadPromiseRef.current = promise;
+    return promise;
+  }, [agencyId, isSupabaseEnabled, setInitialNotifications]);
+
+  const refreshAgencyUsers = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) {
       setAgencyUsers([]);
+      setUsersLoading(false);
+      setUsersLoaded(true);
       return { data: [], error: null };
     }
-    const result = await fetchAgencyUsers(agencyId);
-    if (!result.error && Array.isArray(result.data)) {
-      setAgencyUsers(result.data);
+    if (!force && usersLoadedRef.current) {
+      return { data: agencyUsersRef.current, error: null };
     }
-    return result;
+    if (usersLoadPromiseRef.current) return usersLoadPromiseRef.current;
+
+    setUsersLoading(true);
+    const promise = fetchAgencyUsers(agencyId)
+      .then((result) => {
+        if (!result?.error && Array.isArray(result?.data)) {
+          agencyUsersRef.current = result.data;
+          setAgencyUsers(result.data);
+          usersLoadedRef.current = true;
+          setUsersLoaded(true);
+        } else if (result?.error) {
+          console.error("[Store] Agency users fetch failed:", result.error);
+        }
+        return result;
+      })
+      .catch((error) => {
+        console.error("[Store] Agency users fetch failed:", error);
+        return { data: null, error };
+      })
+      .finally(() => {
+        setUsersLoading(false);
+        usersLoadPromiseRef.current = null;
+      });
+
+    usersLoadPromiseRef.current = promise;
+    return promise;
   }, [agencyId, isSupabaseEnabled]);
+
+  const startBackgroundHydration = useCallback(() => {
+    if (!isSupabaseEnabled || !agencyId || backgroundHydrationStartedRef.current) return;
+    backgroundHydrationStartedRef.current = true;
+    setBackgroundHydrationLoading(true);
+    setBackgroundHydrationDone(false);
+
+    (async () => {
+      const clientsResult = await loadClients();
+      const clientData = Array.isArray(clientsResult?.data) ? clientsResult.data : null;
+      await Promise.allSettled([
+        loadPayments({ clientData }),
+        loadNotifications(),
+        refreshAgencyUsers(),
+      ]);
+    })()
+      .catch((error) => {
+        console.error("[Store] Background hydration failed:", error);
+      })
+      .finally(() => {
+        setBackgroundHydrationLoading(false);
+        setBackgroundHydrationDone(true);
+      });
+  }, [agencyId, isSupabaseEnabled, loadClients, loadNotifications, loadPayments, refreshAgencyUsers]);
 
   const loadTrashData = useCallback(async ({ force = false } = {}) => {
     if (!force && (trashLoaded || trashLoading)) return { error: null };
@@ -719,27 +941,26 @@ export function useStore(agencyId, onToast) {
     if (!isSupabaseEnabled || !agencyId || fetchedRef.current) return;
     fetchedRef.current = true;
     setDbLoading(true);
+    clientsLoadedRef.current = false;
+    paymentsLoadedRef.current = false;
+    notificationsLoadedRef.current = false;
+    usersLoadedRef.current = false;
+    backgroundHydrationStartedRef.current = false;
+    setClientsLoaded(false);
+    setPaymentsLoaded(false);
+    setNotificationsLoaded(false);
+    setUsersLoaded(false);
+    setBackgroundHydrationDone(false);
 
     Promise.all([
       fetchPrograms(agencyId),
-      fetchClients(agencyId),
-      fetchPayments(agencyId),
       db.agency.fetch(agencyId),
-      fetchNotifications(agencyId),
-      fetchAgencyUsers(agencyId),
+      refreshDashboardStats(),
       fetchRecentActivity(agencyId, 5),
-    ]).then(([p, c, pay, ag, notif, usersResp, act]) => {
+    ]).then(([p, ag, _summary, act]) => {
       const programData  = !p.error  && p.data  ? p.data  : [];
-      const clientData   = !c.error  && c.data  ? c.data  : [];
       if (programData) setPrograms(programData);
-      setInitialClients(clientData);
-      if (!pay.error && pay.data) {
-        const clientIds = new Set(clientData.map(cl => cl.id));
-        setInitialPayments(pay.data.filter(pmt => clientIds.has(pmt.clientId)));
-      }
-      setAgencyUsers(usersResp?.data ?? []);
       if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
-      if (!notif.error && notif.data) setInitialNotifications(notif.data);
       if (!act.error && act.data) setInitialActivity(act.data);
       const now = new Date();
       setLastSynced(now);
@@ -752,14 +973,25 @@ export function useStore(agencyId, onToast) {
     }).finally(() => {
       setDbLoading(false);
       setStoreHydrated(true);
+      startBackgroundHydration();
     });
-  }, [agencyId, ns, notify]); 
+  }, [agencyId, ns, notify, refreshDashboardStats, startBackgroundHydration]);
 
   useEffect(() => {
     if (!isSupabaseEnabled || !agencyId) {
+      setClientsLoading(false);
+      setClientsLoaded(true);
+      setPaymentsLoading(false);
+      setPaymentsLoaded(true);
+      setNotificationsLoading(false);
+      setNotificationsLoaded(true);
+      setUsersLoading(false);
+      setUsersLoaded(true);
+      setBackgroundHydrationLoading(false);
+      setBackgroundHydrationDone(true);
       setStoreHydrated(true);
     }
-  }, [agencyId]);
+  }, [agencyId, isSupabaseEnabled]);
 
   useEffect(() => {
     if (!isSupabaseEnabled || !agencyId) return;
@@ -1050,6 +1282,7 @@ export function useStore(agencyId, onToast) {
 
   useEffect(() => {
     if (!storeHydrated) return;
+    if (isSupabaseEnabled && (!clientsLoaded || !paymentsLoaded || !notificationsLoaded)) return;
     const activeKeys = new Set();
     const track = (notif) => {
       const key = getNotificationKey(notif);
@@ -1157,6 +1390,10 @@ export function useStore(agencyId, onToast) {
     ensureNotificationExists,
     archiveNotification,
     storeHydrated,
+    isSupabaseEnabled,
+    clientsLoaded,
+    paymentsLoaded,
+    notificationsLoaded,
   ]);
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -1374,7 +1611,7 @@ export function useStore(agencyId, onToast) {
     if (!response.ok) {
       throw new Error(payload.error || "Failed to create user");
     }
-    await refreshAgencyUsers();
+    await refreshAgencyUsers({ force: true });
     return payload;
   }, [agencyId, refreshAgencyUsers, isSupabaseEnabled]);
 
@@ -1398,7 +1635,7 @@ export function useStore(agencyId, onToast) {
     if (!response.ok) {
       throw new Error(payload.error || "Failed to update user");
     }
-    await refreshAgencyUsers();
+    await refreshAgencyUsers({ force: true });
     return payload;
   }, [agencyId, refreshAgencyUsers, isSupabaseEnabled]);
 
@@ -1837,6 +2074,9 @@ export function useStore(agencyId, onToast) {
   });
 
   const dbSyncing = syncStatus === "syncing";
+  const effectiveUnreadNotificationsCount = isSupabaseEnabled && !notificationsLoaded && dashboardStats
+    ? stats.unreadNotificationsCount
+    : unreadNotificationsCount;
 
   return {
     programs, clients, payments, agency, agencyId, activityLog, stats,
@@ -1848,8 +2088,13 @@ export function useStore(agencyId, onToast) {
     agencyLogoApi,
     notifications,
     unreadNotifications,
-    unreadNotificationsCount,
+    unreadNotificationsCount: effectiveUnreadNotificationsCount,
     dbLoading, dbSyncing, syncStatus, lastSynced, isSupabaseEnabled,
+    clientsLoading, clientsLoaded,
+    paymentsLoading, paymentsLoaded,
+    notificationsLoading, notificationsLoaded,
+    usersLoading, usersLoaded,
+    backgroundHydrationLoading, backgroundHydrationDone,
     trashLoading, trashLoaded, trashError, loadTrashData,
     paymentsByClient, paidByClient, lastPaymentByClient,
     getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds,
@@ -1863,6 +2108,9 @@ export function useStore(agencyId, onToast) {
     addProgram, updateProgram, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
+    ensureClientsLoaded: loadClients,
+    ensurePaymentsLoaded: loadPayments,
+    ensureNotificationsLoaded: loadNotifications,
     markNotificationRead, markAllNotificationsRead, archiveNotification, restoreNotification,
     ensureNotificationExists,
     deleteNotification,

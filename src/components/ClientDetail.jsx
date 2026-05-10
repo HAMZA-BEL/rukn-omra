@@ -79,11 +79,15 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
           getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi } = store;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const paymentDataLoading = Boolean(store.isSupabaseEnabled && !paymentsReady);
+  const loadingLabel = t.loading || "Loading...";
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
   const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
+  const paymentsHydrationRequestedRef = React.useRef(false);
 
   const clientProgramId = getClientProgramId(client);
   const program     = getProgramById(clientProgramId);
@@ -91,16 +95,16 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
   const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, client, lang), [client, program, lang]);
-  const payments    = getClientPayments(client.id);
-  const totalPaid   = getClientTotalPaid(client.id);
+  const payments    = paymentsReady ? getClientPayments(client.id) : [];
+  const totalPaid   = paymentsReady ? getClientTotalPaid(client.id) : 0;
   const salePrice   = client.salePrice   || client.price || 0;
   const offPrice    = client.officialPrice || salePrice;
-  const remaining   = Math.max(0, salePrice - totalPaid);
+  const remaining   = paymentsReady ? Math.max(0, salePrice - totalPaid) : null;
   const discount    = Math.max(0, offPrice - salePrice);
-  const status      = getClientStatus(client);
-  const displayStatus = getClientDisplayStatus(client, program, status);
-  const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
-  const lastPmt     = getClientLastPayment(client.id);
+  const status      = paymentsReady ? getClientStatus(client) : "";
+  const displayStatus = paymentsReady ? getClientDisplayStatus(client, program, status) : "";
+  const pct         = paymentsReady && salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
+  const lastPmt     = paymentsReady ? getClientLastPayment(client.id) : null;
   const sortedPayments = React.useMemo(
     () => [...payments].sort((a,b) => new Date(b.date)-new Date(a.date)),
     [payments]
@@ -197,6 +201,10 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         : lang === "en" ? "Contract downloaded"
         : "تم تحميل العقد",
     };
+    if (!paymentsReady) {
+      onToast?.(loadingLabel, "info");
+      return null;
+    }
     if (!program) {
       onToast?.(labels.noProgram, "error");
       return;
@@ -256,7 +264,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
     } finally {
       setContractBusy(false);
     }
-  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, onToast, program, store]);
+  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, loadingLabel, onToast, paymentsReady, program, store]);
 
   const openReceiptSelector = React.useCallback((payment) => {
     if (payment) setReceiptPayment(payment);
@@ -279,12 +287,34 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
     ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
     : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel);
   const handleAddPaymentClick = React.useCallback(() => {
+    if (!paymentsReady) {
+      onToast?.(loadingLabel, "info");
+      return;
+    }
     if (!paymentEligibility.canAddPayment) {
       onToast?.(paymentBlockMessage, "error");
       return;
     }
     setShowPayForm(true);
-  }, [onToast, paymentBlockMessage, paymentEligibility.canAddPayment]);
+  }, [loadingLabel, onToast, paymentBlockMessage, paymentEligibility.canAddPayment, paymentsReady]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled || paymentsReady || store.paymentsLoading) return;
+    if (paymentsHydrationRequestedRef.current) return;
+    paymentsHydrationRequestedRef.current = true;
+    store.ensurePaymentsLoaded?.();
+  }, [paymentsReady, store.ensurePaymentsLoaded, store.isSupabaseEnabled, store.paymentsLoading]);
+
+  const financialCards = React.useMemo(() => ([
+    { label:t.officialPrice, val:money(offPrice), color:tc.grey },
+    { label:t.salePrice,     val:money(salePrice), color:tc.gold },
+    { label:t.paid,          val:paymentsReady ? money(totalPaid) : loadingLabel, color:paymentsReady ? tc.greenLight : tc.grey },
+    {
+      label:t.remaining,
+      val:paymentsReady ? money(remaining) : loadingLabel,
+      color:paymentsReady && remaining > 0 ? tc.warning : paymentsReady ? tc.greenLight : tc.grey,
+    },
+  ]), [loadingLabel, money, offPrice, paymentsReady, remaining, salePrice, t.officialPrice, t.paid, t.remaining, t.salePrice, totalPaid]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -370,12 +400,26 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             {client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
           </div>
         </div>
-        <StatusBadge status={displayStatus} />
+        {paymentsReady ? (
+          <StatusBadge status={displayStatus} />
+        ) : (
+          <span style={{
+            padding:"3px 8px",
+            borderRadius:999,
+            fontSize:11,
+            fontWeight:800,
+            color:tc.grey,
+            border:"1px solid rgba(148,163,184,.25)",
+            background:"rgba(148,163,184,.1)",
+          }}>
+            {loadingLabel}
+          </span>
+        )}
       </div>
 
       {/* Print buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
-        {payments.map && payments.length > 0 && lastPmt && (
+        {paymentsReady && payments.map && payments.length > 0 && lastPmt && (
           <Button variant="secondary" size="sm" icon="print"
             style={printActionButtonStyle}
             onClick={() => openReceiptSelector(lastPmt)}>
@@ -395,7 +439,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         </Button>
         <Button variant="secondary" size="sm" icon="file"
           style={printActionButtonStyle}
-          disabled={contractBusy}
+          disabled={contractBusy || !paymentsReady}
           onClick={handleDownloadContract}>
           {lang === "fr" ? "Télécharger contrat" : lang === "en" ? "Download contract" : "تحميل العقد"}
         </Button>
@@ -453,18 +497,13 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {/* Financials */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
-        {[
-          { label:t.officialPrice, val:offPrice,   color:tc.grey },
-          { label:t.salePrice,     val:salePrice,  color:tc.gold },
-          { label:t.paid,          val:totalPaid,  color:tc.greenLight },
-          { label:t.remaining,     val:remaining,  color:remaining>0?tc.warning:tc.greenLight },
-        ].map(({label,val,color}) => (
+        {financialCards.map(({label,val,color}) => (
           <div key={label} style={{ background:"var(--rukn-bg-soft)",
             border:"1px solid var(--rukn-border-soft)",
             borderRadius:10, padding:"10px 12px", textAlign:"center" }}>
             <p style={{ fontSize:10, color:tc.grey, marginBottom:4 }}>{label}</p>
             <p style={{ fontSize:15, fontWeight:800, color, fontFamily:"'Amiri',serif" }}>
-              {money(val)}
+              {val}
             </p>
           </div>
         ))}
@@ -485,7 +524,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       <div style={{ marginBottom:14 }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:12 }}>
           <span style={{ color:tc.grey }}>{t.paymentProgress}</span>
-          <span style={{ color:tc.gold, fontWeight:700 }}>{Math.round(pct)}%</span>
+          <span style={{ color:tc.gold, fontWeight:700 }}>{paymentsReady ? `${Math.round(pct)}%` : loadingLabel}</span>
         </div>
         <div style={{ height:7, background:"var(--rukn-border-soft)", borderRadius:4, overflow:"hidden" }}>
           <div style={{ height:"100%", width:`${pct}%`, borderRadius:4, transition:"width 1.2s",
@@ -576,7 +615,13 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       )}
 
       {/* Add payment */}
-      {displayStatus !== "cleared" && !showPayForm && (
+      {paymentDataLoading && (
+        <div style={{ textAlign:"center", padding:14, color:tc.grey, fontSize:13 }}>
+          {loadingLabel}
+        </div>
+      )}
+
+      {paymentsReady && displayStatus !== "cleared" && !showPayForm && (
         <Button
           variant={paymentEligibility.canAddPayment ? "success" : "warning"}
           icon={paymentEligibility.canAddPayment ? "plus" : "alert"}
@@ -586,14 +631,18 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           {paymentEligibility.canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
         </Button>
       )}
-      {showPayForm && (
+      {paymentsReady && showPayForm && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
           onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); }}
           onCancel={() => setShowPayForm(false)} />
       )}
 
       {/* Payments */}
-      {payments.length === 0 ? (
+      {!paymentsReady ? (
+        <div style={{ textAlign:"center", padding:20, color:tc.grey, fontSize:13 }}>
+          {loadingLabel}
+        </div>
+      ) : payments.length === 0 ? (
         <div style={{ textAlign:"center", padding:20, color:tc.grey, fontSize:13 }}>
           {t.noPayments}
         </div>

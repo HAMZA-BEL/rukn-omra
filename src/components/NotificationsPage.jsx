@@ -33,8 +33,13 @@ export default function NotificationsPage({ store, onNotificationAction }) {
   const [confirmState, setConfirmState] = React.useState({ open: false, mode: null, ids: [], count: 0 });
   const filtersRef = React.useRef(null);
   const actionMenuRef = React.useRef(null);
+  const hydrationRequestedRef = React.useRef(false);
 
   const notifications = store.notifications || [];
+  const notificationsReady = !store.isSupabaseEnabled
+    || (store.notificationsLoaded && store.clientsLoaded && store.paymentsLoaded);
+  const notificationsLoading = Boolean(store.isSupabaseEnabled && !notificationsReady);
+  const loadingLabel = t.loading || "Loading...";
   const sorted = React.useMemo(() => {
     const list = [...notifications];
     return list.sort((a, b) => {
@@ -87,6 +92,27 @@ export default function NotificationsPage({ store, onNotificationAction }) {
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
   }, [actionMenuId]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled || notificationsReady) return;
+    if (hydrationRequestedRef.current) return;
+    hydrationRequestedRef.current = true;
+    if (!store.clientsLoaded && !store.clientsLoading) store.ensureClientsLoaded?.();
+    if (!store.paymentsLoaded && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+    if (!store.notificationsLoaded && !store.notificationsLoading) store.ensureNotificationsLoaded?.();
+  }, [
+    notificationsReady,
+    store.clientsLoaded,
+    store.clientsLoading,
+    store.ensureClientsLoaded,
+    store.ensureNotificationsLoaded,
+    store.ensurePaymentsLoaded,
+    store.isSupabaseEnabled,
+    store.notificationsLoading,
+    store.notificationsLoaded,
+    store.paymentsLoaded,
+    store.paymentsLoading,
+  ]);
 
   const selectionCount = selectedIds.length;
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
@@ -198,7 +224,7 @@ export default function NotificationsPage({ store, onNotificationAction }) {
           <Button
             variant="secondary"
             size="sm"
-            disabled={unreadCount === 0}
+            disabled={notificationsLoading || unreadCount === 0}
             onClick={() => store.markAllNotificationsRead?.()}
           >
             {t.markAllRead || "تحديد كمقروء"}
@@ -339,7 +365,13 @@ export default function NotificationsPage({ store, onNotificationAction }) {
       )}
 
       <div className="list-stack" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {filtered.map((notification) => {
+        {notificationsLoading ? (
+          <GlassCard style={{ padding: 32, textAlign: "center" }}>
+            <p style={{ fontSize: 14, color: tc.grey }}>
+              {loadingLabel}
+            </p>
+          </GlassCard>
+        ) : filtered.map((notification) => {
           const colors = severityColors[notification.severity] || severityColors.info;
           const createdAt = notification.createdAt
             ? new Date(notification.createdAt).toLocaleString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US")
@@ -477,7 +509,7 @@ export default function NotificationsPage({ store, onNotificationAction }) {
           );
         })}
 
-        {filtered.length === 0 && (
+        {!notificationsLoading && filtered.length === 0 && (
           <GlassCard style={{ padding: 32, textAlign: "center" }}>
             <p style={{ fontSize: 14, color: tc.grey }}>
               {t.notificationsNoResults || t.noNotifications || "لا توجد إشعارات"}

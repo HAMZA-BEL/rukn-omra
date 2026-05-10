@@ -23,9 +23,23 @@ export function useAuth() {
   const [loading,          setLoading]          = useState(isSupabaseEnabled);
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
   const [profileError,     setProfileError]     = useState(null);
+  const [profileLoading,   setProfileLoading]   = useState(false);
+  const [profileChecked,   setProfileChecked]   = useState(!isSupabaseEnabled);
 
   const loadProfile = useCallback(async (authUser) => {
-    if (!authUser) { setUser(null); setAgencyId(null); setProfileError(null); return; }
+    if (!authUser) {
+      setUser(null);
+      setAgencyId(null);
+      setProfileError(null);
+      setProfileLoading(false);
+      setProfileChecked(true);
+      return;
+    }
+
+    setProfileLoading(true);
+    setProfileChecked(false);
+    setProfileError(null);
+
     try {
       const { data, error } = await db.users.fetchProfile(authUser.id);
       if (error || !data?.agency_id) {
@@ -54,11 +68,19 @@ export function useAuth() {
       setUser(authUser);
       setAgencyId(null);
       setProfileError("no_profile");
+    } finally {
+      setProfileLoading(false);
+      setProfileChecked(true);
     }
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseEnabled) { setLoading(false); return; }
+    if (!isSupabaseEnabled) {
+      setProfileLoading(false);
+      setProfileChecked(true);
+      setLoading(false);
+      return;
+    }
 
     // Restore existing session on mount (normal login / page refresh)
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -67,6 +89,8 @@ export function useAuth() {
       if (session?.user && urlType !== "invite" && urlType !== "recovery") {
         loadProfile(session.user).finally(() => setLoading(false));
       } else if (!urlType) {
+        setProfileLoading(false);
+        setProfileChecked(true);
         setLoading(false);
       }
       // else: wait for onAuthStateChange to call setLoading(false)
@@ -78,13 +102,21 @@ export function useAuth() {
         if (event === "PASSWORD_RECOVERY") {
           // Password-reset link → ask user to set new password
           setNeedsPasswordSet(true);
-          if (session?.user) loadProfile(session.user);
-          setLoading(false);
+          if (session?.user) loadProfile(session.user).finally(() => setLoading(false));
+          else {
+            setProfileLoading(false);
+            setProfileChecked(true);
+            setLoading(false);
+          }
         } else if (event === "SIGNED_IN" && urlType === "invite") {
           // First-time invite link → ask user to set their password
           setNeedsPasswordSet(true);
-          if (session?.user) loadProfile(session.user);
-          setLoading(false);
+          if (session?.user) loadProfile(session.user).finally(() => setLoading(false));
+          else {
+            setProfileLoading(false);
+            setProfileChecked(true);
+            setLoading(false);
+          }
         } else if (event === "USER_UPDATED") {
           // Password was successfully updated → clear the set-password gate
           setNeedsPasswordSet(false);
@@ -96,12 +128,18 @@ export function useAuth() {
         } else if (event === "SIGNED_OUT") {
           setUser(null);
           setAgencyId(null);
+          setProfileError(null);
+          setProfileLoading(false);
+          setProfileChecked(true);
           setLoading(false);
         } else if (session?.user) {
           loadProfile(session.user).finally(() => setLoading(false));
         } else {
           setUser(null);
           setAgencyId(null);
+          setProfileError(null);
+          setProfileLoading(false);
+          setProfileChecked(true);
           setLoading(false);
         }
       }
@@ -123,7 +161,20 @@ export function useAuth() {
     clearSupabaseLogoutAppStorage(currentAgencyId);
     setUser(null);
     setAgencyId(null);
+    setProfileError(null);
+    setProfileLoading(false);
+    setProfileChecked(true);
   }, [agencyId]);
 
-  return { user, agencyId, loading, login, logout, needsPasswordSet, profileError };
+  return {
+    user,
+    agencyId,
+    loading,
+    login,
+    logout,
+    needsPasswordSet,
+    profileError,
+    profileLoading,
+    profileChecked,
+  };
 }

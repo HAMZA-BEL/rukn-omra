@@ -429,12 +429,15 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
   const dropdownRef = React.useRef(null);
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
   const unreadCount = store.unreadNotificationsCount || 0;
+  const notificationsReady = !store.isSupabaseEnabled
+    || (store.notificationsLoaded && store.clientsLoaded && store.paymentsLoaded);
   const buttonSize = size === "sm" ? 36 : 44;
   const iconSize = size === "sm" ? 16 : 18;
   const defaultAlign = React.useMemo(() => (dir === "rtl" ? "start" : "end"), [dir]);
   const [dropdownAlign, setDropdownAlign] = React.useState(defaultAlign);
 
   const latestNotifications = React.useMemo(() => {
+    if (!notificationsReady) return [];
     const list = (store.notifications || []).filter((n) => !n.isArchived);
     list.sort((a, b) => {
       const aDate = new Date(a.createdAt || 0).getTime();
@@ -442,7 +445,7 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
       return bDate - aDate;
     });
     return list.slice(0, 5);
-  }, [store.notifications]);
+  }, [notificationsReady, store.notifications]);
 
   const formatRelativeTime = React.useCallback((value) => {
     if (!value) return "";
@@ -522,6 +525,7 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
     setOpen(false);
   };
   const handleMarkAll = () => {
+    if (!notificationsReady) return;
     if (store.markAllNotificationsRead) store.markAllNotificationsRead();
   };
 
@@ -558,7 +562,11 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
           style={dropdownPositionStyle}
         >
           <div className="notification-dropdown__list">
-            {latestNotifications.length === 0 ? (
+            {!notificationsReady ? (
+              <p style={{ fontSize: 13, color: "var(--rukn-text-muted)", margin: 0 }}>
+                {t.loading || "Loading..."}
+              </p>
+            ) : latestNotifications.length === 0 ? (
               <p style={{ fontSize: 13, color: "var(--rukn-text-muted)", margin: 0 }}>
                 {t.noNotifications || "لا توجد إشعارات"}
               </p>
@@ -598,7 +606,7 @@ function NotificationBell({ store, dir, lang, tr, t, onNavigate, page, size = "m
               type="button"
               className="notification-dropdown__cta notification-dropdown__cta--ghost"
               onClick={handleMarkAll}
-              disabled={!unreadCount}
+              disabled={!notificationsReady || !unreadCount}
             >
               {t.markAllRead || "وضع الكل كمقروء"}
             </button>
@@ -875,7 +883,18 @@ function AuthGate() {
   // Captured synchronously on first render — all three tokens must be present.
   const [authFromURL] = React.useState(() => detectAuthFromURL());
 
-  const { user, agencyId, loading, login, logout, needsPasswordSet, profileError } = useAuth();
+  const {
+    user,
+    agencyId,
+    loading,
+    login,
+    logout,
+    needsPasswordSet,
+    profileError,
+    profileLoading,
+    profileChecked,
+  } = useAuth();
+  const profileReady = !profileLoading && (!user || profileChecked);
 
   // Local-only mode: bypass auth entirely
   if (!isSupabaseEnabled) {
@@ -887,14 +906,14 @@ function AuthGate() {
     return <SetPasswordPage authData={authFromURL} />;
   }
 
-  if (loading) return <AppLoadingScreen />;
+  if (loading || !profileReady) return <AppLoadingScreen />;
 
   if (profileError === "disabled") {
     return <DisabledAccountScreen onLogout={logout} />;
   }
 
   // Logged in but no row in public.users → show actionable error
-  if (user && profileError === "no_profile") {
+  if (user && !agencyId && profileReady && profileError === "no_profile") {
     return (
       <div style={{
         minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",

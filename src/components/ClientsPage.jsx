@@ -97,6 +97,7 @@ export default function ClientsPage({ store, onToast }) {
   const typeFilterRef = React.useRef(null);
   const importMenuRef = React.useRef(null);
   const searchInputRef = React.useRef(null);
+  const hydrationRequestedRef = React.useRef(false);
   const getClientProgram = React.useCallback(
     (client) => programs.find((program) => program.id === getClientProgramId(client)) || null,
     [programs]
@@ -125,6 +126,9 @@ export default function ClientsPage({ store, onToast }) {
   const fallbackClients = tab === "active" ? activeClients : archivedClients;
   const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all" && typeFilter === CLIENT_TYPE_FILTERS.ALL);
   const shouldUseFullFallback = !useRemotePaging || Boolean(remotePage.error);
+  const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const hydrationLoading = Boolean(store.isSupabaseEnabled && (!clientsReady || !paymentsReady));
   const programById = React.useMemo(() => new Map(programs.map((program) => [program.id, program])), [programs]);
   const getDisplayStatusForClient = React.useCallback((client) => (
     getClientDisplayStatus(client, programById.get(getClientProgramId(client)), getClientStatus(client))
@@ -200,6 +204,23 @@ export default function ClientsPage({ store, onToast }) {
 
     return () => { cancelled = true; };
   }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, tab, filterProg, search]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (clientsReady && paymentsReady) return;
+    if (hydrationRequestedRef.current) return;
+    hydrationRequestedRef.current = true;
+    if (!clientsReady && !store.clientsLoading) store.ensureClientsLoaded?.();
+    if (!paymentsReady && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+  }, [
+    clientsReady,
+    paymentsReady,
+    store.isSupabaseEnabled,
+    store.clientsLoading,
+    store.paymentsLoading,
+    store.ensureClientsLoaded,
+    store.ensurePaymentsLoaded,
+  ]);
 
   const useRemoteResults = useRemotePaging && !remotePage.error;
   const filteredCount = useRemoteResults ? remotePage.count : fallbackFilteredClients.length;
@@ -520,7 +541,10 @@ export default function ClientsPage({ store, onToast }) {
         <div>
           <h1 style={{ fontSize:21, fontWeight:800, color:tc.white }}>{t.clients}</h1>
           <p style={{ fontSize:12, color:tc.grey, marginTop:3 }}>
-            {tr("clientsTotal", { total: displayedTotalCount, filtered: filteredCount })}
+            {tr("clientsTotal", {
+              total: hydrationLoading ? "..." : displayedTotalCount,
+              filtered: hydrationLoading ? "..." : filteredCount,
+            })}
           </p>
         </div>
         {tab === "active" && (
@@ -984,7 +1008,11 @@ export default function ClientsPage({ store, onToast }) {
       )}
 
       {/* List */}
-      {isPageLoading ? (
+      {hydrationLoading ? (
+        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+          {paginationLabels.loading}
+        </GlassCard>
+      ) : isPageLoading ? (
         <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
           {paginationLabels.loading}
         </GlassCard>

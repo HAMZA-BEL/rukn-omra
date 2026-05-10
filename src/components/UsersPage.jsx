@@ -17,12 +17,14 @@ export default function UsersPage({
   currentUserId = null,
 }) {
   const { t, dir, lang } = useLang();
-  const [loading, setLoading] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
   const [isDesktop, setIsDesktop] = React.useState(() => {
     if (typeof window === "undefined") return true;
     return window.innerWidth > 900;
   });
   const users = store.agencyUsers || [];
+  const usersLoading = Boolean(store.usersLoading && !store.usersLoaded);
+  const loading = refreshing || usersLoading;
   const refreshUsersFn = store.refreshAgencyUsers;
   const createUserFn = store.createAgencyUser;
   const updateUserFn = store.updateAgencyUser;
@@ -44,7 +46,7 @@ export default function UsersPage({
 
   const refresh = React.useCallback(async () => {
     if (typeof refreshUsersFn !== "function") return;
-    setLoading(true);
+    setRefreshing(true);
     try {
       const { error } = await refreshUsersFn();
       if (error) throw error;
@@ -52,7 +54,7 @@ export default function UsersPage({
       console.error("refreshAgencyUsers", err);
       if (onToast) onToast(t.usersLoadError || "تعذّر تحميل المستخدمين", "error");
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   }, [refreshUsersFn, onToast, t.usersLoadError]);
 
@@ -227,7 +229,11 @@ export default function UsersPage({
         </div>
       </header>
 
-      {users.length === 0 ? (
+      {loading && users.length === 0 ? (
+        <GlassCard style={{ padding: 28, textAlign: "center", color: tc.grey }}>
+          {t.loading || "..."}
+        </GlassCard>
+      ) : users.length === 0 ? (
         <EmptyState title={t.usersEmpty || "لا يوجد مستخدمون"} icon="users" />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
