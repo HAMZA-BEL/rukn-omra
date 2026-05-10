@@ -3,6 +3,7 @@ import { Button } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { AppIcon, IconBubble } from "./Icon";
+import { getPackageRoomPrice, getRoomTypeLabel, normalizeProgramPackages, normalizeRoomTypeKey } from "../utils/programPackages";
 
 const tc = theme.colors;
 const previewText = "var(--rukn-text)";
@@ -102,8 +103,8 @@ const FIELD_DEFS = [
   },
   {
     key: "salePrice",
-    label: { ar: "السعر", fr: "Prix", en: "Price" },
-    aliases: ["السعر", "سعر البيع", "price", "prix", "tarif", "montant", "مبلغ"],
+    label: { ar: "سعر البيع", fr: "Prix de vente", en: "Sale price" },
+    aliases: ["السعر", "سعر البيع", "price", "prix", "prix de vente", "sale price", "selling price", "tarif", "montant", "مبلغ"],
   },
   {
     key: "level",
@@ -123,8 +124,6 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
     sheetName: "قالب ركن",
     filename: "rukn-excel-template-ar.xlsx",
     direction: "rtl",
-    genderOptions: ["ذكر", "أنثى"],
-    roomTypeOptions: ["ثنائية", "ثلاثية", "رباعية", "خماسية"],
     headers: [
       "الاسم العائلي بالعربية",
       "الاسم الشخصي بالعربية",
@@ -140,6 +139,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "CIN",
       "جهة التسجيل",
       "نوع الغرفة",
+      "سعر البيع",
       "ملاحظات",
     ],
   },
@@ -148,8 +148,6 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
     sheetName: "Modèle Rukn",
     filename: "modele-excel-rukn-fr.xlsx",
     direction: "ltr",
-    genderOptions: ["Homme", "Femme"],
-    roomTypeOptions: ["Double", "Triple", "Quadruple", "Quintuple"],
     headers: [
       "Nom en arabe",
       "Prénom en arabe",
@@ -165,6 +163,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "CIN",
       "Source d’inscription",
       "Type de chambre",
+      "Prix de vente",
       "Notes",
     ],
   },
@@ -173,8 +172,6 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
     sheetName: "Rukn Template",
     filename: "rukn-excel-template-en.xlsx",
     direction: "ltr",
-    genderOptions: ["Male", "Female"],
-    roomTypeOptions: ["Double", "Triple", "Quad", "Quint"],
     headers: [
       "Arabic last name",
       "Arabic first name",
@@ -190,6 +187,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "National ID",
       "Registration source",
       "Room type",
+      "Sale price",
       "Notes",
     ],
   },
@@ -210,6 +208,7 @@ const OFFICIAL_TEMPLATE_FIELD_KEYS = [
   "cin",
   "registrationSource",
   "roomType",
+  "salePrice",
   "notes",
 ];
 
@@ -422,6 +421,38 @@ const parsePrice = (value) => {
   return Number.isFinite(number) && number > 0 ? number : 0;
 };
 
+const normalizeImportRoomType = (value) => {
+  const raw = cellText(value);
+  if (!raw) return "";
+  const direct = normalizeRoomTypeKey(raw);
+  if (["single", "double", "triple", "quad", "quint"].includes(direct)) return direct;
+  const normalized = normalizeHeader(raw);
+  const map = {
+    "غرفة مفردة": "single",
+    "فردية": "single",
+    single: "single",
+    individuelle: "single",
+    individuel: "single",
+    "غرفة مزدوجة": "double",
+    "غرفة ثنائية": "double",
+    "ثنائية": "double",
+    double: "double",
+    twin: "double",
+    "غرفة ثلاثية": "triple",
+    "ثلاثية": "triple",
+    triple: "triple",
+    "غرفة رباعية": "quad",
+    "رباعية": "quad",
+    quad: "quad",
+    quadruple: "quad",
+    "غرفة خماسية": "quint",
+    "خماسية": "quint",
+    quint: "quint",
+    quintuple: "quint",
+  };
+  return map[normalized] || "";
+};
+
 const splitName = (value) => {
   const parts = cellText(value).split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return { first: parts[0] || "", last: "" };
@@ -486,53 +517,6 @@ const applyColumnFormat = (ws, XLSX, columns, rowStart = 4, rowEnd = 200, format
   });
 };
 
-const addListValidation = (ws, XLSX, columnIndex, values, rowStart = 4, rowEnd = 200) => {
-  const col = XLSX.utils.encode_col(columnIndex);
-  const sqref = `${col}${rowStart}:${col}${rowEnd}`;
-  const formula = `"${values.join(",").replace(/"/g, '""')}"`;
-  const validation = {
-    sqref,
-    type: "list",
-    allowBlank: true,
-    showErrorMessage: true,
-    formula1: formula,
-    formulas: [formula],
-  };
-  ws["!dataValidations"] = [...(ws["!dataValidations"] || []), validation];
-  ws["!dataValidation"] = [...(ws["!dataValidation"] || []), validation];
-};
-
-const escapeXml = (value) => String(value || "")
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;");
-
-const injectExcelDataValidations = async (workbookArray, validations = []) => {
-  if (!validations.length) return workbookArray;
-  const zipModule = await import("pizzip");
-  const PizZip = zipModule.default || zipModule;
-  const zip = new PizZip(workbookArray);
-  const sheetPath = "xl/worksheets/sheet1.xml";
-  const sheetFile = zip.file(sheetPath);
-  if (!sheetFile) return workbookArray;
-  const xml = sheetFile.asText();
-  if (xml.includes("<dataValidations")) return workbookArray;
-  const validationXml = `<dataValidations count="${validations.length}">${validations.map((validation) => (
-    `<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="${escapeXml(validation.sqref)}"><formula1>${escapeXml(validation.formula)}</formula1></dataValidation>`
-  )).join("")}</dataValidations>`;
-  const insertionPoint = xml.includes("<pageMargins")
-    ? xml.indexOf("<pageMargins")
-    : xml.indexOf("</worksheet>");
-  if (insertionPoint === -1) return workbookArray;
-  zip.file(sheetPath, `${xml.slice(0, insertionPoint)}${validationXml}${xml.slice(insertionPoint)}`);
-  return zip.generate({
-    type: "arraybuffer",
-    compression: "DEFLATE",
-    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-};
-
 const saveWorkbookArray = (workbookArray, filename) => {
   const blob = new Blob([workbookArray], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -585,25 +569,11 @@ const downloadOfficialTemplate = async (lang) => {
 
   applyColumnFormat(ws, XLSX, [4, 5, 11], 4, lastDataRow, "@");
   applyColumnFormat(ws, XLSX, [7, 8, 9], 4, lastDataRow, "yyyy-mm-dd");
-  const validations = [
-    {
-      sqref: `${XLSX.utils.encode_col(10)}4:${XLSX.utils.encode_col(10)}${lastDataRow}`,
-      formula: `"${config.genderOptions.join(",")}"`,
-    },
-    {
-      sqref: `${XLSX.utils.encode_col(13)}4:${XLSX.utils.encode_col(13)}${lastDataRow}`,
-      formula: `"${config.roomTypeOptions.join(",")}"`,
-    },
-  ];
-  addListValidation(ws, XLSX, 10, config.genderOptions, 4, lastDataRow);
-  addListValidation(ws, XLSX, 13, config.roomTypeOptions, 4, lastDataRow);
-
   const wb = XLSX.utils.book_new();
   wb.Workbook = { Views: [{ RTL: config.direction === "rtl" }] };
   XLSX.utils.book_append_sheet(wb, ws, config.sheetName);
   const workbookArray = XLSX.write(wb, { bookType: "xlsx", type: "array", compression: true });
-  const workbookWithDropdowns = await injectExcelDataValidations(workbookArray, validations);
-  saveWorkbookArray(workbookWithDropdowns, config.filename);
+  saveWorkbookArray(workbookArray, config.filename);
 };
 
 const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, programContext }) => {
@@ -678,7 +648,53 @@ const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, p
   });
 };
 
-const makeClientPayload = (previewRow, programContext) => {
+const getProgramImportPackages = (programContext = {}) => (
+  Array.isArray(programContext?.packages)
+    ? programContext.packages.filter(Boolean)
+    : Array.isArray(programContext?.priceTable) && programContext.priceTable.length
+      ? normalizeProgramPackages(programContext).filter(Boolean)
+      : []
+);
+
+const getProgramImportName = (program = {}) => cellText(program.name || program.title || program.nameFr || program.type || program.id);
+
+const toImportProgramContext = (program = null) => {
+  if (!program?.id) return null;
+  return {
+    ...program,
+    id: program.id,
+    name: getProgramImportName(program),
+    packages: getProgramImportPackages(program),
+  };
+};
+
+const getImportCityLabel = (city, lang) => {
+  if (city === "madinah") return lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة";
+  return lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة";
+};
+
+const getProgramImportHotelOptions = (programContext = {}, lang = "ar") => {
+  if (!programContext?.id) return [];
+  return getProgramImportPackages(programContext).map((pkg, index) => {
+    const pkgId = pkg.id || `pkg-${index + 1}`;
+    const level = cellText(pkg.level);
+    const hotelMecca = cellText(pkg.hotelMecca);
+    const hotelMadina = cellText(pkg.hotelMadina);
+    const hotelParts = [
+      hotelMecca ? `${getImportCityLabel("makkah", lang)}: ${hotelMecca}` : "",
+      hotelMadina ? `${getImportCityLabel("madinah", lang)}: ${hotelMadina}` : "",
+    ].filter(Boolean);
+    return {
+      pkg,
+      key: `package::${pkgId}::${index}`,
+      hotelMecca,
+      hotelMadina,
+      label: [level || pkgId, hotelParts.join(" | ")].filter(Boolean).join(" — "),
+    };
+  });
+};
+
+const makeClientPayload = (previewRow, programContext, selectedImportHotel = null) => {
   const fields = { ...previewRow.fields, fullName: previewRow.displayName };
   const arabicFromFull = splitName(fields.fullName);
   const latinFromFull = splitName(fields.latinFullName);
@@ -686,6 +702,19 @@ const makeClientPayload = (previewRow, programContext) => {
   const arabicLast = fields.arabicLastName || arabicFromFull.last;
   const latinFirst = fields.latinFirstName || latinFromFull.first;
   const latinLast = fields.latinLastName || latinFromFull.last;
+  const programSelected = Boolean(programContext?.id);
+  const selectedPackage = selectedImportHotel?.pkg || null;
+  const normalizedRoomType = programSelected ? normalizeImportRoomType(fields.roomType) : "";
+  const derivedOfficialPrice = selectedPackage && normalizedRoomType
+    ? getPackageRoomPrice(selectedPackage, normalizedRoomType)
+    : 0;
+  const explicitSalePrice = Number(fields.salePrice || 0);
+  const level = programSelected && selectedPackage ? (selectedPackage.level || "") : "";
+  const hotelMecca = selectedImportHotel?.hotelMecca || "";
+  const hotelMadina = selectedImportHotel?.hotelMadina || "";
+  const salePrice = derivedOfficialPrice
+    ? (explicitSalePrice || derivedOfficialPrice)
+    : (explicitSalePrice || 0);
   return {
     name: fields.fullName,
     firstName: arabicFirst,
@@ -697,12 +726,16 @@ const makeClientPayload = (previewRow, programContext) => {
     cin: fields.cin,
     city: fields.city,
     registrationSource: fields.registrationSource,
-    programId: programContext?.id || null,
-    packageLevel: programContext?.id ? fields.level || "" : "",
-    hotelLevel: programContext?.id ? fields.level || "" : "",
-    roomType: programContext?.id ? fields.roomType || "" : "",
-    salePrice: fields.salePrice || 0,
-    officialPrice: fields.salePrice || 0,
+    programId: programSelected ? programContext.id : null,
+    packageId: selectedPackage?.id || "",
+    packageLevel: level,
+    hotelLevel: level,
+    hotelMecca,
+    hotelMadina,
+    roomType: normalizedRoomType,
+    roomTypeLabel: getRoomTypeLabel(normalizedRoomType),
+    salePrice,
+    officialPrice: derivedOfficialPrice || 0,
     notes: fields.notes,
     gender: fields.gender,
     passport: {
@@ -731,9 +764,36 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   const [showColumnCorrection, setShowColumnCorrection] = React.useState(false);
   const [error, setError] = React.useState("");
   const [templateBusy, setTemplateBusy] = React.useState(false);
+  const [selectedImportProgramId, setSelectedImportProgramId] = React.useState("");
+  const [selectedImportHotelKey, setSelectedImportHotelKey] = React.useState("");
   const fileRef = React.useRef();
 
   const existingClients = store?.clients || [];
+  const importProgramOptions = React.useMemo(
+    () => (Array.isArray(store?.programs) ? store.programs : [])
+      .filter((program) => program?.id)
+      .map((program) => toImportProgramContext(program))
+      .filter(Boolean),
+    [store?.programs]
+  );
+  const selectedImportProgram = React.useMemo(
+    () => importProgramOptions.find((program) => program.id === selectedImportProgramId) || null,
+    [importProgramOptions, selectedImportProgramId]
+  );
+  const effectiveProgramContext = React.useMemo(
+    () => (programContext?.id ? toImportProgramContext(programContext) : selectedImportProgram),
+    [programContext, selectedImportProgram]
+  );
+  const importHotelOptions = React.useMemo(
+    () => getProgramImportHotelOptions(effectiveProgramContext, lang),
+    [effectiveProgramContext, lang]
+  );
+  const selectedImportHotel = React.useMemo(
+    () => importHotelOptions.find((option) => option.key === selectedImportHotelKey) || null,
+    [importHotelOptions, selectedImportHotelKey]
+  );
+  const showProgramSelector = Boolean(!programContext?.id);
+  const showImportHotelSelector = Boolean(effectiveProgramContext?.id);
   const previewRows = React.useMemo(() => buildPreviewRows({
     rawRows,
     mapping,
@@ -741,8 +801,8 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
     existingClients,
     lang,
     t,
-    programContext,
-  }), [rawRows, mapping, edits, existingClients, lang, t, programContext]);
+    programContext: effectiveProgramContext,
+  }), [rawRows, mapping, edits, existingClients, lang, t, effectiveProgramContext]);
   const acceptedCount = previewRows.filter((row) => row.accepted).length;
   const rejectedCount = previewRows.length - acceptedCount;
   const acceptedRowsMissingDisplayName = acceptedCount > 0 && previewRows
@@ -766,6 +826,16 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
       })
       .filter(Boolean)
   ), [headers, lang, mapping]);
+
+  React.useEffect(() => {
+    setSelectedImportHotelKey("");
+  }, [selectedImportProgramId]);
+
+  React.useEffect(() => {
+    if (!selectedImportHotelKey) return;
+    if (importHotelOptions.some((option) => option.key === selectedImportHotelKey)) return;
+    setSelectedImportHotelKey("");
+  }, [importHotelOptions, selectedImportHotelKey]);
 
   const updateEdit = (rowId, key, value) => {
     setError("");
@@ -900,7 +970,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         skipped += 1;
         return;
       }
-      store.addClient(makeClientPayload(row, programContext));
+      store.addClient(makeClientPayload(row, effectiveProgramContext, selectedImportHotel));
       imported += 1;
     });
     setReport({ imported, skipped });
@@ -911,8 +981,155 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
     }
   };
 
+  const renderImportHotelSelector = (marginBottom = 12) => {
+    if (!showProgramSelector && !showImportHotelSelector) return null;
+    return (
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr)",
+        gap: 8,
+        padding: "10px 12px",
+        borderRadius: 12,
+        background: previewSectionBg,
+        border: `1px solid ${previewBorder}`,
+        marginBottom,
+      }}>
+        {showProgramSelector && (
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: showImportHotelSelector ? 10 : 0 }}>
+            <div style={{ minWidth: 220, flex: "1 1 320px" }}>
+              <label style={{
+                display: "block",
+                color: previewStrongText,
+                fontSize: 12,
+                fontWeight: 800,
+                marginBottom: 5,
+              }}>
+                {lang === "fr"
+                  ? "Choisir le programme pour cet import"
+                  : lang === "en"
+                    ? "Choose program for this import"
+                    : "اختر البرنامج لهذا الاستيراد"}
+              </label>
+              <p style={{ margin: 0, color: previewMutedText, fontSize: 11, lineHeight: 1.6 }}>
+                {lang === "fr"
+                  ? "La sélection du programme est optionnelle. Vous pourrez compléter les informations plus tard."
+                  : lang === "en"
+                    ? "Program selection is optional. You can complete details later."
+                    : "اختيار البرنامج اختياري. يمكنك إكمال المعلومات لاحقًا."}
+              </p>
+            </div>
+            <select
+              value={selectedImportProgramId}
+              onChange={(event) => setSelectedImportProgramId(event.target.value)}
+              style={{
+                flex: "0 1 360px",
+                minWidth: 240,
+                height: 38,
+                borderRadius: 10,
+                border: `1px solid ${previewInputBorder}`,
+                background: previewInputBg,
+                color: previewText,
+                padding: "0 10px",
+                fontFamily: "'Cairo',sans-serif",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              <option value="">
+                {lang === "fr"
+                  ? "Importer sans sélectionner un programme"
+                  : lang === "en"
+                    ? "Import without selecting a program"
+                    : "استيراد بدون تحديد برنامج"}
+              </option>
+              {importProgramOptions.map((program) => (
+                <option key={program.id} value={program.id}>{program.name || program.id}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {showImportHotelSelector && (
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 220, flex: "1 1 320px" }}>
+            <label style={{
+              display: "block",
+              color: previewStrongText,
+              fontSize: 12,
+              fontWeight: 800,
+              marginBottom: 5,
+            }}>
+              {lang === "fr"
+                ? "Choisir l’hôtel pour cet import"
+                : lang === "en"
+                  ? "Choose hotel for this import"
+                  : "اختر الفندق لهذا الاستيراد"}
+            </label>
+            <p style={{ margin: 0, color: previewMutedText, fontSize: 11, lineHeight: 1.6 }}>
+              {lang === "fr"
+                ? "Optionnel : cela aide Rukn à définir le niveau et le prix officiel selon le type de chambre."
+                : lang === "en"
+                  ? "Optional: this helps Rukn set the level and official price from the file room type."
+                  : "اختيار الفندق اختياري، لكنه يساعد ركن على تحديد المستوى والسعر الرسمي حسب نوع الغرفة في الملف."}
+            </p>
+          </div>
+          <select
+            value={selectedImportHotelKey}
+            onChange={(event) => setSelectedImportHotelKey(event.target.value)}
+            disabled={!importHotelOptions.length}
+            style={{
+              flex: "0 1 360px",
+              minWidth: 240,
+              height: 38,
+              borderRadius: 10,
+              border: `1px solid ${previewInputBorder}`,
+              background: previewInputBg,
+              color: previewText,
+              padding: "0 10px",
+              fontFamily: "'Cairo',sans-serif",
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            <option value="">
+              {lang === "fr"
+                ? "Importer sans sélectionner d’hôtel"
+                : lang === "en"
+                  ? "Import without selecting a hotel"
+                  : "استيراد بدون تحديد فندق"}
+            </option>
+            {importHotelOptions.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+          </div>
+        )}
+        {showImportHotelSelector && !importHotelOptions.length && (
+          <p style={{ margin: 0, color: previewMutedText, fontSize: 11 }}>
+            {lang === "fr"
+              ? "Aucun hôtel n’est défini dans les packages de ce programme."
+              : lang === "en"
+                ? "No hotels are defined in this program’s packages."
+              : "لا توجد فنادق محددة في باقات هذا البرنامج."}
+          </p>
+        )}
+        {showProgramSelector && effectiveProgramContext?.id && (
+          <p style={{ margin: 0, color: previewMutedText, fontSize: 11, lineHeight: 1.6 }}>
+            {lang === "fr"
+              ? "Si vous sélectionnez un programme et un forfait, les hôtels, le niveau et les prix seront remplis automatiquement selon le type de chambre du fichier."
+              : lang === "en"
+                ? "If you select a program and package, hotels, level, and prices will be filled automatically based on the room type in the file."
+                : "إذا اخترت برنامجا وحزمة، سيتم ملء الفنادق والمستوى والأسعار تلقائيا حسب نوع الغرفة في الملف."}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   if (stage === 1) return (
     <div style={{ direction: dir, fontFamily: "'Cairo',sans-serif" }}>
+      {renderImportHotelSelector(14)}
+
       <div
         onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
@@ -1025,16 +1242,18 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         <div style={{
           padding: "10px 12px",
           borderRadius: 12,
-          background: programContext?.id ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
+          background: effectiveProgramContext?.id ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
           border: `1px solid ${previewBorder}`,
           color: previewMutedText,
           fontSize: 12,
           marginBottom: 14,
         }}>
-          {programContext?.id
-            ? (lang === "fr" ? `Les pèlerins seront ajoutés au programme : ${programContext.name || ""}` : lang === "en" ? `Pilgrims will be added to program: ${programContext.name || ""}` : `سيتم حفظ المعتمرين داخل البرنامج: ${programContext.name || ""}`)
+          {effectiveProgramContext?.id
+            ? (lang === "fr" ? `Les pèlerins seront ajoutés au programme : ${effectiveProgramContext.name || ""}` : lang === "en" ? `Pilgrims will be added to program: ${effectiveProgramContext.name || ""}` : `سيتم حفظ المعتمرين داخل البرنامج: ${effectiveProgramContext.name || ""}`)
             : labels.unassigned}
         </div>
+
+        {renderImportHotelSelector(12)}
 
         {(error || previewNameError) && (
           <div style={{

@@ -9,8 +9,9 @@ import {
   normalizeMRZOCRText,
 } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
-import { AppIcon } from "./Icon";
+import { AppIcon, IconBubble } from "./Icon";
 import { validateLatinName } from "../utils/passportMrzEngine";
+import { normalizeProgramPackages } from "../utils/programPackages";
 
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
@@ -44,6 +45,30 @@ const LABELS = {
   ar: {
     title: "استيراد بيانات الجوازات",
     desc: "ارفع صورة جواز أو عدة صور جوازات، وسيتم استخراج بيانات MRZ تلقائيًا. كل نتيجة تمر عبر المراجعة قبل الحفظ.",
+    workflow: "اختر الطريقة، ارفع الصور، استخرج البيانات، ثم راجع النتائج قبل الحفظ.",
+    methodSection: "طريقة الاستيراد",
+    methodHint: "اختر قراءة جواز واحد أو معالجة عدة جوازات دفعة واحدة.",
+    uploadSection: "رفع وقراءة الجواز",
+    uploadHint: "ارفع صورة واضحة يظهر فيها شريط MRZ أسفل الجواز بشكل كامل.",
+    bulkUploadHint: "اختر حتى 10 صور جوازات واضحة لمعالجتها دفعة واحدة.",
+    reviewSection: "مراجعة النتائج",
+    reviewHint: "صحح الحقول التي تحتاج مراجعة، ثم احفظ الصفوف المقبولة فقط.",
+    emptyReviewTitle: "النتائج ستظهر هنا",
+    emptyReviewDesc: "بعد قراءة الجوازات ستظهر بيانات MRZ في جدول مراجعة قابل للتعديل قبل الحفظ.",
+    workflowChoose: "الطريقة",
+    workflowUpload: "الرفع",
+    workflowExtract: "القراءة",
+    workflowReview: "المراجعة",
+    importConfigSection: "إعدادات الربط الاختيارية",
+    importConfigHint: "إذا اخترت برنامجا وحزمة، سيتم ربط الجوازات بالبرنامج وملء الفنادق والمستوى فقط. نوع الغرفة والأسعار تحدد لاحقا من التسكين أو التعديل اليدوي.",
+    chooseProgram: "اختر البرنامج لهذا الاستيراد",
+    importWithoutProgram: "استيراد بدون تحديد برنامج",
+    choosePackage: "اختر الفندق لهذا الاستيراد",
+    importWithoutHotel: "استيراد بدون تحديد فندق",
+    noPackageOptions: "لا توجد فنادق محددة في باقات هذا البرنامج.",
+    selectedNoProgramInfo: "سيتم حفظ المعتمرين دون ربطهم بأي برنامج.",
+    selectedProgramOnlyInfo: "سيتم ربط المعتمرين بالبرنامج فقط دون تحديد الفنادق أو المستوى.",
+    selectedProgramPackageInfo: "سيتم ربط المعتمرين بالبرنامج وملء الفنادق والمستوى فقط، دون تحديد نوع الغرفة أو الأسعار.",
     image: "صورة الجواز",
     bulk: "استيراد من الجوازات",
     uploadOne: "رفع صورة جواز",
@@ -150,6 +175,30 @@ const LABELS = {
   fr: {
     title: "Import des données passeport",
     desc: "Importez une photo de passeport ou plusieurs photos, puis les données MRZ seront extraites automatiquement. Chaque résultat passe par une revue avant l'enregistrement.",
+    workflow: "Choisissez la méthode, importez les images, extrayez les données, puis vérifiez les résultats avant l’enregistrement.",
+    methodSection: "Méthode d’import",
+    methodHint: "Choisissez un passeport unique ou le traitement de plusieurs passeports.",
+    uploadSection: "Import et lecture",
+    uploadHint: "Importez une photo nette où la zone MRZ en bas du passeport est entièrement visible.",
+    bulkUploadHint: "Choisissez jusqu’à 10 photos nettes de passeports pour un traitement groupé.",
+    reviewSection: "Vérification des résultats",
+    reviewHint: "Corrigez les champs à vérifier, puis enregistrez uniquement les lignes acceptées.",
+    emptyReviewTitle: "Les résultats apparaîtront ici",
+    emptyReviewDesc: "Après lecture, les données MRZ apparaîtront dans un tableau de vérification modifiable.",
+    workflowChoose: "Méthode",
+    workflowUpload: "Import",
+    workflowExtract: "Lecture",
+    workflowReview: "Vérification",
+    importConfigSection: "Options de liaison",
+    importConfigHint: "Si vous sélectionnez un programme et un forfait, les passeports seront liés au programme avec les hôtels et le niveau uniquement. Le type de chambre et les prix seront définis plus tard depuis l’hébergement ou la modification manuelle.",
+    chooseProgram: "Choisir le programme pour cet import",
+    importWithoutProgram: "Importer sans sélectionner un programme",
+    choosePackage: "Choisir l’hôtel pour cet import",
+    importWithoutHotel: "Importer sans sélectionner d’hôtel",
+    noPackageOptions: "Aucun hôtel n’est défini dans les packages de ce programme.",
+    selectedNoProgramInfo: "Les pèlerins seront enregistrés sans être liés à un programme.",
+    selectedProgramOnlyInfo: "Les pèlerins seront liés au programme uniquement, sans hôtels ni niveau.",
+    selectedProgramPackageInfo: "Les pèlerins seront liés au programme avec les hôtels et le niveau uniquement, sans type de chambre ni prix.",
     image: "Photo passeport",
     bulk: "Import depuis les passeports",
     uploadOne: "Importer une photo",
@@ -256,6 +305,30 @@ const LABELS = {
   en: {
     title: "Import Passport Data",
     desc: "Upload one passport image or several passport images and the MRZ data will be extracted automatically. Every result is reviewed before saving.",
+    workflow: "Choose a method, upload images, extract the data, then review results before saving.",
+    methodSection: "Import method",
+    methodHint: "Choose a single passport or bulk passport processing.",
+    uploadSection: "Upload and read",
+    uploadHint: "Upload a clear passport photo with the bottom MRZ strip fully visible.",
+    bulkUploadHint: "Choose up to 10 clear passport photos for batch processing.",
+    reviewSection: "Review results",
+    reviewHint: "Correct fields that need review, then save accepted rows only.",
+    emptyReviewTitle: "Results will appear here",
+    emptyReviewDesc: "After reading passports, MRZ data will appear in an editable review table.",
+    workflowChoose: "Method",
+    workflowUpload: "Upload",
+    workflowExtract: "Read",
+    workflowReview: "Review",
+    importConfigSection: "Optional linking",
+    importConfigHint: "If you select a program and package, passports will be linked to the program with hotels and level only. Room type and prices will be set later from rooming or manual editing.",
+    chooseProgram: "Choose program for this import",
+    importWithoutProgram: "Import without selecting a program",
+    choosePackage: "Choose hotel for this import",
+    importWithoutHotel: "Import without selecting a hotel",
+    noPackageOptions: "No hotels are defined in this program’s packages.",
+    selectedNoProgramInfo: "Pilgrims will be saved without being linked to any program.",
+    selectedProgramOnlyInfo: "Pilgrims will be linked to the program only, without hotels or level.",
+    selectedProgramPackageInfo: "Pilgrims will be linked to the program with hotels and level only, without room type or prices.",
     image: "Passport photo",
     bulk: "Import from passports",
     uploadOne: "Upload passport photo",
@@ -1000,6 +1073,56 @@ const sanitizeDebugValue = (value) => {
   );
 };
 
+const textValue = (value) => String(value || "").trim();
+
+const getImportCityLabel = (city, lang) => {
+  if (city === "madinah") return lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة";
+  return lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة";
+};
+
+const getImportProgramName = (program = {}) => textValue(program.name || program.title || program.nameFr || program.type || program.id);
+
+const getImportProgramPackages = (program = {}) => (
+  Array.isArray(program?.packages)
+    ? program.packages.filter(Boolean)
+    : Array.isArray(program?.priceTable) && program.priceTable.length
+      ? normalizeProgramPackages(program).filter(Boolean)
+      : []
+);
+
+const toPassportImportProgramContext = (program = null) => {
+  if (!program?.id) return null;
+  return {
+    ...program,
+    id: program.id,
+    name: getImportProgramName(program),
+    packages: getImportProgramPackages(program),
+  };
+};
+
+const getPassportImportPackageOptions = (program = {}, lang = "ar") => {
+  if (!program?.id) return [];
+  return getImportProgramPackages(program).map((pkg, index) => {
+    const pkgId = pkg.id || `pkg-${index + 1}`;
+    const level = textValue(pkg.level || pkg.name);
+    const hotelMecca = textValue(pkg.hotelMecca);
+    const hotelMadina = textValue(pkg.hotelMadina);
+    const hotelParts = [
+      hotelMecca ? `${getImportCityLabel("makkah", lang)}: ${hotelMecca}` : "",
+      hotelMadina ? `${getImportCityLabel("madinah", lang)}: ${hotelMadina}` : "",
+    ].filter(Boolean);
+    return {
+      pkg,
+      key: `package::${pkgId}::${index}`,
+      packageId: pkg.id || "",
+      packageLevel: level,
+      hotelMecca,
+      hotelMadina,
+      label: [level || pkgId, hotelParts.join(" | ")].filter(Boolean).join(" — "),
+    };
+  });
+};
+
 const getMrzLine2FieldsFromParsed = (parsed = {}) => {
   const engineFields = parsed?.engineResult?.fields || {};
   const data = parsed?.data || {};
@@ -1601,9 +1724,10 @@ function MRZDiagnosticLab({ rows = [], onCopyDebug }) {
 export default function MRZReader({ store, onToast, onResult, onClose, programContext = null }) {
   const { t, lang } = useLang();
   const l = LABELS[lang] || LABELS.ar;
+  const dir = lang === "ar" ? "rtl" : "ltr";
   const importProgram = programContext?.program || programContext || null;
-  const importProgramId = importProgram?.id || "";
-  const importProgramName = importProgram?.name || "";
+  const lockedImportProgram = toPassportImportProgramContext(importProgram);
+  const lockedImportProgramId = lockedImportProgram?.id || "";
   const [mode, setMode] = React.useState("image");
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
@@ -1611,6 +1735,8 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const [singleFile, setSingleFile] = React.useState(null);
   const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
   const [bulkFiles, setBulkFiles] = React.useState([]);
+  const [selectedImportProgramId, setSelectedImportProgramId] = React.useState("");
+  const [selectedImportPackageKey, setSelectedImportPackageKey] = React.useState("");
   const [cropModal, setCropModal] = React.useState({ open: false, rowId: "", url: "", fileName: "" });
   const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
   const [cropReading, setCropReading] = React.useState(false);
@@ -1623,6 +1749,30 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
+  const importProgramOptions = React.useMemo(
+    () => (Array.isArray(store?.programs) ? store.programs : [])
+      .filter((program) => program?.id && !program.deleted && !program.archived)
+      .map((program) => toPassportImportProgramContext(program))
+      .filter(Boolean),
+    [store?.programs]
+  );
+  const selectedImportProgram = React.useMemo(
+    () => importProgramOptions.find((program) => program.id === selectedImportProgramId) || null,
+    [importProgramOptions, selectedImportProgramId]
+  );
+  const effectiveImportProgram = lockedImportProgram || selectedImportProgram;
+  const effectiveImportProgramId = effectiveImportProgram?.id || "";
+  const effectiveImportProgramName = effectiveImportProgram?.name || "";
+  const importPackageOptions = React.useMemo(
+    () => getPassportImportPackageOptions(effectiveImportProgram, lang),
+    [effectiveImportProgram, lang]
+  );
+  const selectedImportPackage = React.useMemo(
+    () => importPackageOptions.find((option) => option.key === selectedImportPackageKey) || null,
+    [importPackageOptions, selectedImportPackageKey]
+  );
+  const showProgramSelector = !lockedImportProgramId;
+  const showPackageSelector = Boolean(effectiveImportProgramId);
 
   const createDebugOriginalImageUrl = React.useCallback((file) => {
     if (!MRZ_DEV || !file) return "";
@@ -1646,9 +1796,19 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     revokeAllDebugUrls();
   }, [revokeAllDebugUrls]);
 
-  const rowProgramDefaults = React.useCallback(() => importProgramId ? ({
-    programId: importProgramId,
-  }) : {}, [importProgramId]);
+  React.useEffect(() => {
+    setSelectedImportPackageKey("");
+  }, [selectedImportProgramId]);
+
+  React.useEffect(() => {
+    if (!selectedImportPackageKey) return;
+    if (importPackageOptions.some((option) => option.key === selectedImportPackageKey)) return;
+    setSelectedImportPackageKey("");
+  }, [importPackageOptions, selectedImportPackageKey]);
+
+  const rowProgramDefaults = React.useCallback(() => effectiveImportProgramId ? ({
+    programId: effectiveImportProgramId,
+  }) : {}, [effectiveImportProgramId]);
 
   const clientByPassport = React.useMemo(() => {
     const map = new Map();
@@ -1794,7 +1954,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
           reviewReasonsAfter: updatedRow.reviewReasons || [],
           manualAccepted,
           accepted,
-          requiredFieldsCheck: getRequiredFieldsCheck(updatedRow, { programMode: Boolean(importProgramId) }),
+          requiredFieldsCheck: getRequiredFieldsCheck(updatedRow, { programMode: Boolean(effectiveImportProgramId) }),
           requiredFieldsValid: rowHasEssentialPassportData(updatedRow),
           cleanFieldsValid: rowHasRequiredPassportData(updatedRow),
           saveEligible: isRowSaveEligible(updatedRow),
@@ -1803,7 +1963,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       return updatedRow;
     }));
     if (manualAcceptRequested) onToast?.(l.manualAcceptToast, "success");
-  }, [importProgramId, l.manualAcceptToast, onToast]);
+  }, [effectiveImportProgramId, l.manualAcceptToast, onToast]);
 
   const removeRow = React.useCallback((id) => {
     rowFilesRef.current.delete(id);
@@ -1950,7 +2110,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         });
       }
       const requiredFieldsCheck = getRequiredFieldsCheck(merged, {
-        programMode: Boolean(importProgramId),
+        programMode: Boolean(effectiveImportProgramId),
       });
       if (process.env.NODE_ENV !== "production") {
         const line2Mapping = buildMRZPriorityRowFields({
@@ -2021,7 +2181,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       return merged;
     }));
     return { hasParsedData, succeeded };
-  }, [cropModal.rowId, cropRect, findExisting, importProgramId, l]);
+  }, [cropModal.rowId, cropRect, findExisting, effectiveImportProgramId, l]);
 
   const readSelectedCrop = React.useCallback(async () => {
     const file = rowFilesRef.current.get(cropModal.rowId);
@@ -2086,7 +2246,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   }, []);
 
   const toClientPayload = React.useCallback((row) => {
-    const roomType = row.roomType || "";
     const roomingData = row.roomingGroupId ? {
       groupId: row.roomingGroupId,
       groupName: row.roomingGroupName || l.groupInRoom,
@@ -2108,17 +2267,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       nameLatin: [row.latinLastName, row.latinFirstName].filter(Boolean).join(" "),
       phone: row.phone || "",
       gender: row.gender || "",
-      programId: importProgramId || row.programId || null,
-      packageId: row.packageId || "",
-      packageLevel: row.packageLevel || "",
-      hotelLevel: row.hotelLevel || "",
-      hotelMecca: row.hotelMecca || "",
-      hotelMadina: row.hotelMadina || "",
-      roomType,
-      roomTypeLabel: row.roomTypeLabel || "",
-      officialPrice: 0,
-      salePrice: 0,
-      price: 0,
+      programId: effectiveImportProgramId || row.programId || null,
+      packageId: selectedImportPackage?.packageId || "",
+      packageLevel: selectedImportPackage?.packageLevel || "",
+      hotelLevel: selectedImportPackage?.packageLevel || "",
+      hotelMecca: selectedImportPackage?.hotelMecca || "",
+      hotelMadina: selectedImportPackage?.hotelMadina || "",
       roomingGroupId: row.roomingGroupId || "",
       familyGroupId: row.familyGroupId || "",
       importGroupId: row.importGroupId || "",
@@ -2140,7 +2294,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       },
       notes: row.note || "",
     };
-  }, [buildPartialBirthDateDocs, importProgramId, l.groupInRoom]);
+  }, [buildPartialBirthDateDocs, effectiveImportProgramId, l.groupInRoom, selectedImportPackage]);
 
   const saveAccepted = React.useCallback(async () => {
     const accepted = rows.filter(isRowSaveEligible);
@@ -2152,7 +2306,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         manualAccepted: Boolean(row.manualAccepted),
         duplicateAction: row.duplicateAction,
         reviewReasons: row.reviewReasons || [],
-        requiredFieldsCheck: getRequiredFieldsCheck(row, { programMode: Boolean(importProgramId) }),
+        requiredFieldsCheck: getRequiredFieldsCheck(row, { programMode: Boolean(effectiveImportProgramId) }),
         requiredFieldsValid: rowHasEssentialPassportData(row),
         cleanFieldsValid: rowHasRequiredPassportData(row),
         saveEligible: isRowSaveEligible(row),
@@ -2179,7 +2333,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         const nextPayload = {
           ...existing,
           ...payload,
-          programId: importProgramId ? payload.programId : (existing.programId || payload.programId || null),
+          programId: effectiveImportProgramId ? payload.programId : (existing.programId || payload.programId || null),
           packageId: payload.packageId || existing.packageId || "",
           packageLevel: payload.packageLevel || existing.packageLevel || "",
           hotelLevel: payload.hotelLevel || existing.hotelLevel || "",
@@ -2224,7 +2378,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     }
     onToast?.(l.saved, "success");
     onClose?.();
-  }, [clients, importProgramId, l, onClose, onToast, rows, store, toClientPayload]);
+  }, [clients, effectiveImportProgramId, l, onClose, onToast, rows, store, toClientPayload]);
 
   const firstAccepted = rows.find((row) => row.accepted && !row.existingClientId);
   const applySingleToForm = React.useCallback(() => {
@@ -2264,185 +2418,447 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     ["image", l.image],
     ["bulk", l.bulk],
   ];
+  const readyCount = rows.filter((row) => row.status === ROW_STATUS.READY || row.status === ROW_STATUS.MANUALLY_ACCEPTED).length;
+  const reviewCount = rows.filter((row) => row.status === ROW_STATUS.NEEDS_REVIEW).length;
+  const failedCount = rows.filter((row) => row.status === ROW_STATUS.FAILED).length;
+  const acceptedCount = rows.filter(isRowSaveEligible).length;
+  const workflowSteps = [
+    l.workflowChoose,
+    l.workflowUpload,
+    l.workflowExtract,
+    l.workflowReview,
+  ];
+  const passportImportLinkingInfo = effectiveImportProgramId
+    ? selectedImportPackage
+      ? l.selectedProgramPackageInfo
+      : l.selectedProgramOnlyInfo
+    : l.selectedNoProgramInfo;
 
   return (
-    <div style={{ maxWidth: 980, color: "var(--rukn-text)" }}>
+    <div style={{ maxWidth: 1120, color: "var(--rukn-text)", direction: dir }}>
       <div style={{
-        padding: 16,
-        borderRadius: 14,
+        overflow: "hidden",
+        borderRadius: 18,
         background: "var(--rukn-bg-modal)",
         border: "1px solid var(--rukn-border-soft)",
-        boxShadow: "var(--rukn-shadow-card)",
+        boxShadow: "0 22px 70px rgba(0,0,0,.28)",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 14 }}>
-          <div>
-            <h3 style={{ color: tc.gold, fontSize: 17, fontWeight: 900, margin: 0 }}>{l.title}</h3>
-            <p style={{ color: "var(--rukn-text-muted)", fontSize: 12, marginTop: 5, lineHeight: 1.6 }}>{l.desc}</p>
-          </div>
-          {progress.total > 0 && (
-            <div style={{ minWidth: 90, textAlign: "center", border: "1px solid var(--rukn-border-soft)", borderRadius: 12, padding: "8px 10px", color: "var(--rukn-gold)", fontWeight: 900, background: "var(--rukn-bg-soft)" }}>
-              {formatMessage(l.progress, progress)}
-            </div>
-          )}
-        </div>
-
-        {importProgramId && (
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 12,
-            padding: "9px 11px",
-            borderRadius: 12,
-            border: "1px solid var(--rukn-border)",
-            background: "var(--rukn-gold-dim)",
-            color: "var(--rukn-gold)",
-            fontSize: 12,
-            fontWeight: 800,
-          }}>
-            <AppIcon name="program" size={15} color="var(--rukn-gold)" />
-            {formatMessage(l.programContext, { program: importProgramName || "—" })}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 14 }}>
-          {modeButtons.map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setMode(key)}
-              style={{
-                border: `1px solid ${mode === key ? "var(--rukn-border-hover)" : "var(--rukn-border-soft)"}`,
-                background: mode === key ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
-                color: mode === key ? tc.gold : "var(--rukn-text-muted)",
-                borderRadius: 10,
-                padding: "8px 12px",
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: "pointer",
-                fontFamily: "'Cairo',sans-serif",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {mode === "image" && (
-          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Button variant="secondary" icon="camera" onClick={() => fileRef.current?.click()} disabled={progress.active}>{l.uploadOne}</Button>
-              <Button variant="primary" icon="scan" onClick={readSinglePassport} disabled={progress.active || !singleFile}>{l.readPassport}</Button>
-              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(event) => { selectSingleFile(event.target.files); event.target.value = ""; }} />
-            </div>
-            {singlePreviewUrl && (
-              <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 12, overflow: "hidden", background: "var(--rukn-bg-soft)", maxHeight: 260 }}>
-                <img src={singlePreviewUrl} alt="" style={{ display: "block", width: "100%", maxHeight: 260, objectFit: "contain" }} />
-              </div>
-            )}
-          </div>
-        )}
-
-        {mode === "bulk" && (
-          <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Button variant="secondary" icon="upload" onClick={() => bulkRef.current?.click()} disabled={progress.active}>{l.uploadBulk}</Button>
-              <Button variant="primary" icon="scan" onClick={readBulkPassports} disabled={progress.active || !bulkFiles.length}>{l.readPassports}</Button>
-              <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(event) => { selectBulkFiles(event.target.files); event.target.value = ""; }} />
-            </div>
-            {bulkFiles.length > 0 && (
-              <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 10, padding: 10, background: "var(--rukn-bg-soft)" }}>
-                <p style={{ margin: "0 0 6px", color: "var(--rukn-text)", fontSize: 12, fontWeight: 800 }}>{l.selectedFiles}: {bulkFiles.length}</p>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {bulkFiles.map((file, index) => (
-                    <span key={`${file.name}-${index}`} style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", border: "1px solid var(--rukn-border-soft)", borderRadius: 999, padding: "4px 8px", color: "var(--rukn-text-muted)", fontSize: 11, background: "var(--rukn-bg-card)" }}>
-                      {file.name || `image-${index + 1}`}
+        <div style={{
+          padding: "22px 24px 18px",
+          borderBottom: "1px solid var(--rukn-border-soft)",
+          background: "linear-gradient(135deg, rgba(212,175,55,.10), rgba(255,255,255,.025) 46%, rgba(37,99,235,.055))",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start" }}>
+            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", minWidth: 0 }}>
+              <IconBubble name="passport" boxSize={44} iconSize={22} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ color: "var(--rukn-text-strong)", fontSize: 21, lineHeight: 1.25, fontWeight: 950, margin: 0 }}>{l.title}</h2>
+                <p style={{ color: "var(--rukn-text-muted)", fontSize: 12.5, margin: "7px 0 0", lineHeight: 1.75, maxWidth: 760 }}>{l.desc}</p>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 13 }}>
+                  {workflowSteps.map((step, index) => (
+                    <span key={`${step}-${index}`} style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 9px",
+                      borderRadius: 999,
+                      background: index === 0 ? "rgba(212,175,55,.11)" : "rgba(255,255,255,.045)",
+                      border: "1px solid var(--rukn-border-soft)",
+                      color: index === 0 ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                      fontSize: 11,
+                      fontWeight: 850,
+                    }}>
+                      <span style={{ width: 18, height: 18, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.06)", color: "inherit", fontSize: 10 }}>{index + 1}</span>
+                      {step}
                     </span>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
-        )}
-
-        {progress.active && (
-          <div style={{ height: 5, background: "var(--rukn-bg-soft)", borderRadius: 999, overflow: "hidden", marginBottom: 12 }}>
-            <div style={{ height: "100%", width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%`, background: "linear-gradient(90deg,#2563eb,#d4af37)" }} />
-          </div>
-        )}
-
-        {error && <div style={{ color: "var(--rukn-danger)", border: "1px solid var(--rukn-danger)", background: "var(--rukn-danger-dim)", borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 12 }}>{error}</div>}
-
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 12,
-          padding: "9px 11px",
-          borderRadius: 12,
-          border: "1px solid var(--rukn-border-soft)",
-          background: importProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
-          color: importProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
-          fontSize: 12,
-          fontWeight: 800,
-          lineHeight: 1.6,
-        }}>
-          <AppIcon name={importProgramId ? "alert" : "program"} size={15} color={importProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
-          {importProgramId ? l.programIncompleteNotice : l.unassignedImportNotice}
-        </div>
-
-        <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 12, overflow: "auto", maxHeight: 360, background: "var(--rukn-bg-card)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1520 }}>
-            <thead style={{ position: "sticky", top: 0, background: "var(--rukn-bg-card)", zIndex: 1 }}>
-              <tr>
-                {[
-                  "#",
-                  l.source,
-                  l.dataSource,
-                  l.status,
-                  l.phone,
-                  l.latinLast,
-                  l.latinFirst,
-                  l.arabicLast,
-                  l.arabicFirst,
-                  l.passportNo,
-                  l.nationality,
-                  l.birthDate,
-                  l.expiry,
-                  l.gender,
-                  l.notes,
-                  l.selectMRZ,
-                  l.duplicateAction,
-                  "",
-                ].map((head, idx) => (
-                  <th key={`${idx}-${head || "blank"}`} style={{ padding: 8, color: "var(--rukn-text-muted)", fontSize: 11, textAlign: "start", whiteSpace: "nowrap" }}>{head}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length ? rows.map((row, index) => (
-                <ReviewRow
-                  key={row.id}
-                  row={row}
-                  index={index}
-                  labels={l}
-                  onChange={updateRow}
-                  onRemove={removeRow}
-                  onSelectMRZ={openCropModal}
-                />
-              )) : (
-                <tr><td colSpan={18} style={{ padding: 22, textAlign: "center", color: "var(--rukn-text-muted)", fontWeight: 800 }}>{l.noRows}</td></tr>
+            </div>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, flexShrink: 0 }}>
+              {progress.total > 0 && (
+                <div style={{ minWidth: 100, textAlign: "center", border: "1px solid rgba(212,175,55,.24)", borderRadius: 13, padding: "8px 11px", color: "var(--rukn-gold)", fontWeight: 950, background: "rgba(212,175,55,.08)" }}>
+                  <div style={{ fontSize: 10, color: "var(--rukn-text-muted)", fontWeight: 800, marginBottom: 2 }}>{l.processing}</div>
+                  {formatMessage(l.progress, progress)}
+                </div>
               )}
-            </tbody>
-          </table>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={t.cancel || "Close"}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 11,
+                  border: "1px solid var(--rukn-border-soft)",
+                  background: "rgba(255,255,255,.045)",
+                  color: "var(--rukn-text-muted)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+              >
+                <AppIcon name="x" size={17} />
+              </button>
+            </div>
+          </div>
         </div>
 
-        <MRZDiagnosticLab rows={rows} onCopyDebug={copyMrzDebugJson} />
+        <div style={{ padding: 20, display: "grid", gap: 14 }}>
+          {lockedImportProgramId && (
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              padding: "10px 12px",
+              borderRadius: 13,
+              border: "1px solid rgba(212,175,55,.22)",
+              background: "var(--rukn-gold-dim)",
+              color: "var(--rukn-gold)",
+              fontSize: 12,
+              fontWeight: 850,
+            }}>
+              <AppIcon name="program" size={16} color="var(--rukn-gold)" />
+              {formatMessage(l.programContext, { program: lockedImportProgram?.name || "—" })}
+            </div>
+          )}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-          <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
-          {onResult && firstAccepted && <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>}
-          <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || saving}>{saving ? l.processing : l.saveAccepted}</Button>
+          <section style={{
+            padding: 15,
+            borderRadius: 15,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "rgba(255,255,255,.028)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 12 }}>
+              <div>
+                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.methodSection}</p>
+                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>{l.methodHint}</p>
+              </div>
+            </div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 9,
+            }}>
+              {modeButtons.map(([key, label]) => {
+                const active = mode === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setMode(key)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      textAlign: "start",
+                      border: `1px solid ${active ? "rgba(212,175,55,.42)" : "var(--rukn-border-soft)"}`,
+                      background: active ? "rgba(212,175,55,.10)" : "var(--rukn-bg-soft)",
+                      color: active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                      borderRadius: 13,
+                      padding: "11px 12px",
+                      fontSize: 13,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      fontFamily: "'Cairo',sans-serif",
+                      boxShadow: active ? "0 10px 26px rgba(212,175,55,.08)" : "none",
+                    }}
+                  >
+                    <span style={{ width: 34, height: 34, borderRadius: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", background: active ? "rgba(212,175,55,.13)" : "rgba(255,255,255,.045)", border: "1px solid var(--rukn-border-soft)" }}>
+                      <AppIcon name={key === "image" ? "camera" : "import"} size={17} />
+                    </span>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section style={{
+            padding: 15,
+            borderRadius: 15,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "rgba(255,255,255,.028)",
+          }}>
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.importConfigSection}</p>
+              <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.7 }}>{l.importConfigHint}</p>
+            </div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: showProgramSelector && showPackageSelector ? "repeat(auto-fit, minmax(260px, 1fr))" : "minmax(0, 1fr)",
+              gap: 10,
+            }}>
+              {showProgramSelector && (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>{l.chooseProgram}</span>
+                  <select
+                    value={selectedImportProgramId}
+                    onChange={(event) => setSelectedImportProgramId(event.target.value)}
+                    style={{
+                      height: 40,
+                      borderRadius: 11,
+                      border: "1px solid var(--rukn-border-input)",
+                      background: "var(--rukn-bg-input)",
+                      color: "var(--rukn-text)",
+                      padding: "0 11px",
+                      fontFamily: "'Cairo',sans-serif",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      outline: "none",
+                    }}
+                  >
+                    <option value="">{l.importWithoutProgram}</option>
+                    {importProgramOptions.map((program) => (
+                      <option key={program.id} value={program.id}>{program.name || program.id}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              {showPackageSelector && (
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>{l.choosePackage}</span>
+                  <select
+                    value={selectedImportPackageKey}
+                    onChange={(event) => setSelectedImportPackageKey(event.target.value)}
+                    disabled={!importPackageOptions.length}
+                    style={{
+                      height: 40,
+                      borderRadius: 11,
+                      border: "1px solid var(--rukn-border-input)",
+                      background: "var(--rukn-bg-input)",
+                      color: "var(--rukn-text)",
+                      padding: "0 11px",
+                      fontFamily: "'Cairo',sans-serif",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      outline: "none",
+                      opacity: importPackageOptions.length ? 1 : 0.72,
+                    }}
+                  >
+                    <option value="">{l.importWithoutHotel}</option>
+                    {importPackageOptions.map((option) => (
+                      <option key={option.key} value={option.key}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            {showPackageSelector && !importPackageOptions.length && (
+              <p style={{ margin: "9px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>
+                {l.noPackageOptions}
+              </p>
+            )}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              marginTop: 12,
+              padding: "9px 11px",
+              borderRadius: 12,
+              border: "1px solid var(--rukn-border-soft)",
+              background: effectiveImportProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
+              color: effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
+              fontSize: 12,
+              fontWeight: 850,
+              lineHeight: 1.6,
+            }}>
+              <AppIcon name={effectiveImportProgramId ? "alert" : "program"} size={15} color={effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
+              {passportImportLinkingInfo}
+            </div>
+          </section>
+
+          <section style={{
+            padding: 15,
+            borderRadius: 15,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "var(--rukn-bg-card)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12, flexWrap: "wrap" }}>
+              <div>
+                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.uploadSection}</p>
+                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>
+                  {mode === "bulk" ? l.bulkUploadHint : l.uploadHint}
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {mode === "image" ? (
+                  <>
+                    <Button variant="secondary" icon="camera" onClick={() => fileRef.current?.click()} disabled={progress.active}>{l.uploadOne}</Button>
+                    <Button variant="primary" icon="search" onClick={readSinglePassport} disabled={progress.active || !singleFile}>{l.readPassport}</Button>
+                    <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(event) => { selectSingleFile(event.target.files); event.target.value = ""; }} />
+                  </>
+                ) : (
+                  <>
+                    <Button variant="secondary" icon="upload" onClick={() => bulkRef.current?.click()} disabled={progress.active}>{l.uploadBulk}</Button>
+                    <Button variant="primary" icon="search" onClick={readBulkPassports} disabled={progress.active || !bulkFiles.length}>{l.readPassports}</Button>
+                    <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(event) => { selectBulkFiles(event.target.files); event.target.value = ""; }} />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {mode === "image" && (
+              singlePreviewUrl ? (
+                <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 14, overflow: "hidden", background: "var(--rukn-bg-soft)", maxHeight: 285 }}>
+                  <img src={singlePreviewUrl} alt="" style={{ display: "block", width: "100%", maxHeight: 285, objectFit: "contain" }} />
+                </div>
+              ) : (
+                <div style={{ minHeight: 132, border: "1px dashed rgba(212,175,55,.28)", borderRadius: 14, background: "rgba(212,175,55,.045)", display: "grid", placeItems: "center", textAlign: "center", padding: 18 }}>
+                  <div>
+                    <IconBubble name="camera" boxSize={42} iconSize={20} style={{ margin: "0 auto 9px" }} />
+                    <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 13, fontWeight: 900 }}>{l.noImageSelected}</p>
+                    <p style={{ margin: "5px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5 }}>{l.uploadHint}</p>
+                  </div>
+                </div>
+              )
+            )}
+
+            {mode === "bulk" && (
+              bulkFiles.length > 0 ? (
+                <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 14, padding: 12, background: "var(--rukn-bg-soft)" }}>
+                  <p style={{ margin: "0 0 9px", color: "var(--rukn-text-strong)", fontSize: 12, fontWeight: 900 }}>{l.selectedFiles}: {bulkFiles.length}</p>
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                    {bulkFiles.map((file, index) => (
+                      <span key={`${file.name}-${index}`} style={{ maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", border: "1px solid var(--rukn-border-soft)", borderRadius: 999, padding: "5px 9px", color: "var(--rukn-text-muted)", fontSize: 11, background: "var(--rukn-bg-card)" }}>
+                        {file.name || `image-${index + 1}`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ minHeight: 132, border: "1px dashed rgba(212,175,55,.28)", borderRadius: 14, background: "rgba(212,175,55,.045)", display: "grid", placeItems: "center", textAlign: "center", padding: 18 }}>
+                  <div>
+                    <IconBubble name="upload" boxSize={42} iconSize={20} style={{ margin: "0 auto 9px" }} />
+                    <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 13, fontWeight: 900 }}>{l.uploadBulk}</p>
+                    <p style={{ margin: "5px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5 }}>{l.bulkUploadHint}</p>
+                  </div>
+                </div>
+              )
+            )}
+
+            {progress.active && (
+              <div style={{ height: 7, background: "rgba(255,255,255,.06)", borderRadius: 999, overflow: "hidden", marginTop: 13 }}>
+                <div style={{ height: "100%", width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%`, background: "linear-gradient(90deg,#2563eb,#d4af37)", transition: "width .25s ease" }} />
+              </div>
+            )}
+          </section>
+
+          {error && <div style={{ color: "var(--rukn-danger)", border: "1px solid rgba(239,68,68,.32)", background: "var(--rukn-danger-dim)", borderRadius: 13, padding: "10px 12px", fontSize: 12, fontWeight: 800 }}>{error}</div>}
+
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "11px 13px",
+            borderRadius: 14,
+            border: "1px solid var(--rukn-border-soft)",
+            background: effectiveImportProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
+            color: effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
+            fontSize: 12,
+            fontWeight: 850,
+            lineHeight: 1.6,
+          }}>
+            <span style={{ width: 30, height: 30, borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.05)", flexShrink: 0 }}>
+              <AppIcon name={effectiveImportProgramId ? "alert" : "program"} size={16} color={effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
+            </span>
+            {passportImportLinkingInfo}
+          </div>
+
+          <section style={{
+            border: "1px solid var(--rukn-border-soft)",
+            borderRadius: 16,
+            overflow: "hidden",
+            background: "var(--rukn-bg-card)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", padding: "14px 15px", borderBottom: "1px solid var(--rukn-border-soft)", flexWrap: "wrap" }}>
+              <div>
+                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.reviewSection}</p>
+                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>{l.reviewHint}</p>
+              </div>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                {[
+                  [l.ready, readyCount, tc.greenLight],
+                  [l.needs_review, reviewCount, "var(--rukn-warning)"],
+                  [l.failed, failedCount, "var(--rukn-danger)"],
+                ].map(([label, count, color]) => (
+                  <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--rukn-border-soft)", borderRadius: 999, padding: "5px 9px", color, background: "rgba(255,255,255,.035)", fontSize: 11, fontWeight: 900 }}>
+                    <span>{count}</span>
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {rows.length ? (
+              <div style={{ overflow: "auto", maxHeight: 390 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1520 }}>
+                  <thead style={{ position: "sticky", top: 0, background: "var(--rukn-bg-card)", zIndex: 1, boxShadow: "0 1px 0 var(--rukn-border-soft)" }}>
+                    <tr>
+                      {[
+                        "#",
+                        l.source,
+                        l.dataSource,
+                        l.status,
+                        l.phone,
+                        l.latinLast,
+                        l.latinFirst,
+                        l.arabicLast,
+                        l.arabicFirst,
+                        l.passportNo,
+                        l.nationality,
+                        l.birthDate,
+                        l.expiry,
+                        l.gender,
+                        l.notes,
+                        l.selectMRZ,
+                        l.duplicateAction,
+                        "",
+                      ].map((head, idx) => (
+                        <th key={`${idx}-${head || "blank"}`} style={{ padding: "10px 9px", color: "var(--rukn-text-muted)", fontSize: 11, textAlign: "start", whiteSpace: "nowrap", fontWeight: 900 }}>{head}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <ReviewRow
+                        key={row.id}
+                        row={row}
+                        index={index}
+                        labels={l}
+                        onChange={updateRow}
+                        onRemove={removeRow}
+                        onSelectMRZ={openCropModal}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ minHeight: 145, display: "grid", placeItems: "center", padding: 22, textAlign: "center" }}>
+                <div>
+                  <IconBubble name="list" boxSize={44} iconSize={21} style={{ margin: "0 auto 10px" }} />
+                  <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.emptyReviewTitle}</p>
+                  <p style={{ margin: "6px auto 0", color: "var(--rukn-text-muted)", fontSize: 12, lineHeight: 1.7, maxWidth: 460 }}>{l.emptyReviewDesc}</p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <MRZDiagnosticLab rows={rows} onCopyDebug={copyMrzDebugJson} />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "15px 20px", borderTop: "1px solid var(--rukn-border-soft)", background: "rgba(255,255,255,.026)", flexWrap: "wrap" }}>
+          <div style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>
+            {acceptedCount > 0 ? `${acceptedCount} ${l.saveAccepted}` : l.noRows}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
+            {onResult && firstAccepted && <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>}
+            <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || saving}>{saving ? l.processing : l.saveAccepted}</Button>
+          </div>
         </div>
       </div>
       {cropModal.open && (
