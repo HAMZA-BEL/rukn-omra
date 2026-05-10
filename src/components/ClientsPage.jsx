@@ -12,9 +12,8 @@ import { formatCurrency } from "../utils/currency";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
-import { getParticipantTerminology } from "../utils/participantTerminology";
+import { getExplicitProgramKind, getParticipantTerminology } from "../utils/participantTerminology";
 import {
-  UNASSIGNED_PROGRAM_FILTER,
   getClientDisplayStatus,
   getClientCompletionBadges,
   getClientCompletionLabels,
@@ -27,6 +26,12 @@ import { fetchClientsPage } from "../services/clientsService";
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
 const CLIENTS_PAGE_SIZE = 10;
+const CLIENT_TYPE_FILTERS = {
+  ALL: "all",
+  UMRAH: "umrah",
+  HAJJ: "hajj",
+  UNASSIGNED: "unassigned",
+};
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REF_KEYS = [
   "fileRef", "file_ref",
@@ -71,6 +76,7 @@ export default function ClientsPage({ store, onToast }) {
   const [tab,        setTab]        = React.useState("active");
   const [search,     setSearch]     = React.useState("");
   const [filter,     setFilter]     = React.useState("all");
+  const [typeFilter, setTypeFilter] = React.useState(CLIENT_TYPE_FILTERS.ALL);
   const [filterProg, setFilterProg] = React.useState("all");
   const [currentPage, setCurrentPage] = React.useState(1);
   const [remotePage, setRemotePage] = React.useState({ data: [], count: 0, loading: false, error: null, page: 1 });
@@ -84,9 +90,11 @@ export default function ClientsPage({ store, onToast }) {
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
+  const [typeFilterOpen, setTypeFilterOpen] = React.useState(false);
   const [importMenuOpen, setImportMenuOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const statusFilterRef = React.useRef(null);
+  const typeFilterRef = React.useRef(null);
   const importMenuRef = React.useRef(null);
   const searchInputRef = React.useRef(null);
   const getClientProgram = React.useCallback(
@@ -103,8 +111,10 @@ export default function ClientsPage({ store, onToast }) {
     setTab(newTab);
     setSearch("");
     setFilter("all");
+    setTypeFilter(CLIENT_TYPE_FILTERS.ALL);
     setFilterProg("all");
     setStatusFilterOpen(false);
+    setTypeFilterOpen(false);
     setImportMenuOpen(false);
     setSearchOpen(false);
     setTransferTargets([]);
@@ -113,12 +123,18 @@ export default function ClientsPage({ store, onToast }) {
   };
 
   const fallbackClients = tab === "active" ? activeClients : archivedClients;
-  const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all");
+  const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all" && typeFilter === CLIENT_TYPE_FILTERS.ALL);
   const shouldUseFullFallback = !useRemotePaging || Boolean(remotePage.error);
   const programById = React.useMemo(() => new Map(programs.map((program) => [program.id, program])), [programs]);
   const getDisplayStatusForClient = React.useCallback((client) => (
     getClientDisplayStatus(client, programById.get(getClientProgramId(client)), getClientStatus(client))
   ), [getClientStatus, programById]);
+  const getClientType = React.useCallback((client) => {
+    const programId = getClientProgramId(client);
+    if (!programId) return CLIENT_TYPE_FILTERS.UNASSIGNED;
+    const program = programById.get(programId) || client?.docs?.deletedProgramSnapshot || null;
+    return getExplicitProgramKind(program, client) || "unknown";
+  }, [programById]);
 
   // The full store list is only used for payment-status filters and local mode.
   // When remote paging is available, the visible page comes from Supabase range().
@@ -128,19 +144,21 @@ export default function ClientsPage({ store, onToast }) {
       const status = getDisplayStatusForClient(c);
       const ok1 = tab === "archived"
         || filter === "all"
-        || (filter === UNASSIGNED_PROGRAM_FILTER ? status === "unassigned_program" : status === filter);
-      const ok2 = filterProg === "all" || getClientProgramId(c) === filterProg;
+        || status === filter;
+      const clientType = getClientType(c);
+      const okType = typeFilter === CLIENT_TYPE_FILTERS.ALL || clientType === typeFilter;
+      const ok2 = typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED || filterProg === "all" || getClientProgramId(c) === filterProg;
       const q   = search.toLowerCase();
       const displayName = getClientDisplayName(c, "");
       const ok3 = !q || displayName.toLowerCase().includes(q) ||
         (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
         (c.ticketNo||"").toLowerCase().includes(q);
-      return ok1 && ok2 && ok3;
+      return ok1 && okType && ok2 && ok3;
     });
-  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, tab, shouldUseFullFallback]);
+  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, tab, typeFilter, shouldUseFullFallback]);
 
   // Reset to page 1 whenever filters or tab change
-  React.useEffect(() => { setCurrentPage(1); }, [search, filter, filterProg, tab]);
+  React.useEffect(() => { setCurrentPage(1); }, [search, filter, typeFilter, filterProg, tab]);
 
   React.useEffect(() => {
     if (!useRemotePaging) {
@@ -206,8 +224,8 @@ export default function ClientsPage({ store, onToast }) {
   });
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
   const selectionScopeKey = React.useMemo(
-    () => [tab, search, filter, filterProg, currentPage].join("|"),
-    [tab, search, filter, filterProg, currentPage]
+    () => [tab, search, filter, typeFilter, filterProg, currentPage].join("|"),
+    [tab, search, filter, typeFilter, filterProg, currentPage]
   );
   const previousSelectionScopeKey = React.useRef(selectionScopeKey);
   React.useEffect(() => {
@@ -317,24 +335,95 @@ export default function ClientsPage({ store, onToast }) {
     if (lang === "en") return "deleted";
     return "محذوف";
   }, [lang]);
+  const globalPassportImportLabel = React.useMemo(() => {
+    if (lang === "fr") return "Importer les passeports des pèlerins Hajj et Omra";
+    if (lang === "en") return "Import Hajj & Umrah pilgrims passports";
+    return "استيراد جوازات الحجاج والمعتمرين";
+  }, [lang]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
+  const typeFilterLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        all: "Tous les types",
+        umrah: "Pèlerins Omra",
+        hajj: "Pèlerins Hajj",
+        unassigned: "Non liés à un programme",
+        allPrograms: "Tous les programmes",
+        allHajjPrograms: "Tous les programmes Hajj",
+        allUmrahPrograms: "Tous les programmes Omra",
+        inactiveProgram: "Programme non applicable",
+      };
+    }
+    if (lang === "en") {
+      return {
+        all: "All types",
+        umrah: "Umrah pilgrims",
+        hajj: "Hajj pilgrims",
+        unassigned: "Not linked to any program",
+        allPrograms: "All programs",
+        allHajjPrograms: "All Hajj programs",
+        allUmrahPrograms: "All Umrah programs",
+        inactiveProgram: "Program not applicable",
+      };
+    }
+    return {
+      all: "كل الأنواع",
+      umrah: "معتمرون",
+      hajj: "حجاج",
+      unassigned: "غير مدرجين في أي برنامج",
+      allPrograms: "كل البرامج",
+      allHajjPrograms: "كل برامج الحج",
+      allUmrahPrograms: "كل برامج العمرة",
+      inactiveProgram: "البرنامج غير قابل للتطبيق",
+    };
+  }, [lang]);
   const statusFilters = React.useMemo(() => ([
     { key:"all", label:t.all, icon:"users" },
     { key:"cleared", label:t.status_cleared || t.clearedFilter, icon:"success" },
     { key:"partial", label:t.status_partial || t.partialFilter, icon:"partial" },
     { key:"unpaid", label:t.status_unpaid || t.unpaidFilter, icon:"unpaid" },
-    { key:UNASSIGNED_PROGRAM_FILTER, label:t.unassignedProgramFilter || completionLabels.unassignedProgram, icon:"program" },
-  ]), [completionLabels.unassignedProgram, t]);
+    { key:"information_incomplete", label:t.informationIncompleteBadge || completionLabels.informationIncomplete, icon:"alert" },
+  ]), [completionLabels.informationIncomplete, t]);
   const activeStatusFilter = statusFilters.find((item) => item.key === filter) || statusFilters[0];
+  const typeFilters = React.useMemo(() => ([
+    { key:CLIENT_TYPE_FILTERS.ALL, label:typeFilterLabels.all, icon:"users" },
+    { key:CLIENT_TYPE_FILTERS.UMRAH, label:typeFilterLabels.umrah, icon:"users" },
+    { key:CLIENT_TYPE_FILTERS.HAJJ, label:typeFilterLabels.hajj, icon:"program" },
+    { key:CLIENT_TYPE_FILTERS.UNASSIGNED, label:typeFilterLabels.unassigned, icon:"program" },
+  ]), [typeFilterLabels]);
+  const activeTypeFilter = typeFilters.find((item) => item.key === typeFilter) || typeFilters[0];
+  const availablePrograms = React.useMemo(() => {
+    if (typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED) return [];
+    if (typeFilter === CLIENT_TYPE_FILTERS.HAJJ || typeFilter === CLIENT_TYPE_FILTERS.UMRAH) {
+      return programs.filter((program) => getExplicitProgramKind(program) === typeFilter);
+    }
+    return programs;
+  }, [programs, typeFilter]);
+  const programDefaultLabel = React.useMemo(() => {
+    if (typeFilter === CLIENT_TYPE_FILTERS.HAJJ) return typeFilterLabels.allHajjPrograms;
+    if (typeFilter === CLIENT_TYPE_FILTERS.UMRAH) return typeFilterLabels.allUmrahPrograms;
+    if (typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED) return typeFilterLabels.inactiveProgram;
+    return t.allPrograms || typeFilterLabels.allPrograms;
+  }, [t.allPrograms, typeFilter, typeFilterLabels]);
   React.useEffect(() => {
-    if (!statusFilterOpen) return undefined;
+    if (typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED) {
+      if (filterProg !== "all") setFilterProg("all");
+      return;
+    }
+    if (filterProg === "all") return;
+    if (!availablePrograms.some((program) => program.id === filterProg)) {
+      setFilterProg("all");
+    }
+  }, [availablePrograms, filterProg, typeFilter]);
+  React.useEffect(() => {
+    if (!statusFilterOpen && !typeFilterOpen) return undefined;
     const handleOutside = (event) => {
-      if (statusFilterRef.current?.contains(event.target)) return;
-      setStatusFilterOpen(false);
+      if (statusFilterOpen && !statusFilterRef.current?.contains(event.target)) setStatusFilterOpen(false);
+      if (typeFilterOpen && !typeFilterRef.current?.contains(event.target)) setTypeFilterOpen(false);
     };
     document.addEventListener("pointerdown", handleOutside);
     return () => document.removeEventListener("pointerdown", handleOutside);
-  }, [statusFilterOpen]);
+  }, [statusFilterOpen, typeFilterOpen]);
   React.useEffect(() => {
     if (!importMenuOpen) return undefined;
     const handleOutside = (event) => {
@@ -469,7 +558,7 @@ export default function ClientsPage({ store, onToast }) {
                     {
                       key:"passport",
                       icon:"passport",
-                      label:t.passportImport || completionLabels.passportImport,
+                      label:t.passportImport || globalPassportImportLabel,
                       onClick:() => {
                         setImportMenuOpen(false);
                         setShowPassportImport(true);
@@ -620,15 +709,120 @@ export default function ClientsPage({ store, onToast }) {
             )}
           </div>
         )}
+        <div ref={typeFilterRef} style={{ position:"relative", flex:"0 0 auto" }}>
+          <button
+            type="button"
+            onClick={() => setTypeFilterOpen(open => !open)}
+            style={{
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"space-between",
+              gap:6,
+              minWidth:118,
+              height:34,
+              padding:"0 9px",
+              borderRadius:11,
+              background:typeFilter !== CLIENT_TYPE_FILTERS.ALL ? "rgba(212,175,55,.1)" : "var(--rukn-bg-soft)",
+              border:`1px solid ${typeFilter !== CLIENT_TYPE_FILTERS.ALL ? "rgba(212,175,55,.35)" : "var(--rukn-border-soft)"}`,
+              color:typeFilter !== CLIENT_TYPE_FILTERS.ALL ? tc.gold : tc.grey,
+              fontSize:12,
+              fontWeight:800,
+              cursor:"pointer",
+              fontFamily:"'Cairo',sans-serif",
+            }}
+          >
+            <span style={{ display:"inline-flex", alignItems:"center", gap:6, minWidth:0 }}>
+              <AppIcon name="users" size={14} color={typeFilter !== CLIENT_TYPE_FILTERS.ALL ? tc.gold : tc.grey} />
+              <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{activeTypeFilter.label}</span>
+            </span>
+          </button>
+          {typeFilterOpen && (
+            <div style={{
+              position:"absolute",
+              top:"calc(100% + 6px)",
+              insetInlineStart:0,
+              width:240,
+              zIndex:30,
+              padding:6,
+              borderRadius:12,
+              background:"var(--rukn-menu-bg)",
+              border:"1px solid var(--rukn-menu-border)",
+              boxShadow:"var(--rukn-menu-shadow)",
+            }}>
+              {typeFilters.map((option) => {
+                const active = typeFilter === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => {
+                      setTypeFilter(option.key);
+                      setTypeFilterOpen(false);
+                    }}
+                    style={{
+                      width:"100%",
+                      display:"flex",
+                      alignItems:"center",
+                      justifyContent:"space-between",
+                      gap:8,
+                      padding:"8px 10px",
+                      border:0,
+                      borderRadius:9,
+                      background:active ? "rgba(212,175,55,.12)" : "transparent",
+                      color:active ? tc.gold : "var(--rukn-text-strong)",
+                      fontSize:12,
+                      fontWeight:active ? 900 : 700,
+                      cursor:"pointer",
+                      fontFamily:"'Cairo',sans-serif",
+                      textAlign:"start",
+                    }}
+                  >
+                    <span style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
+                      <AppIcon name={option.icon} size={13} color={active ? tc.gold : tc.grey} />
+                      {option.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <select
+          value={filterProg}
+          onChange={e=>setFilterProg(e.target.value)}
+          disabled={typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED}
+          style={{
+            flex:"0 0 190px",
+            maxWidth:"100%",
+            height:34,
+            background:typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED
+              ? "rgba(148,163,184,.05)"
+              : filterProg!=="all" ? "rgba(212,175,55,.1)" : "var(--rukn-bg-input)",
+            border:`1px solid ${filterProg!=="all" && typeFilter !== CLIENT_TYPE_FILTERS.UNASSIGNED ? tc.gold : "var(--rukn-border-soft)"}`,
+            borderRadius:10,
+            padding:"0 12px",
+            color:typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED
+              ? "rgba(148,163,184,.55)"
+              : filterProg!=="all" ? tc.gold : tc.grey,
+            fontSize:12,
+            fontFamily:"'Cairo',sans-serif",
+            cursor:typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED ? "not-allowed" : "pointer",
+            direction:dir,
+            opacity:typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED ? .72 : 1,
+          }}
+        >
+          <option value="all">{programDefaultLabel}</option>
+          {availablePrograms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
         <div
           onMouseEnter={() => setSearchOpen(true)}
           onMouseLeave={() => {
             if (!search.trim() && document.activeElement !== searchInputRef.current) setSearchOpen(false);
           }}
           style={{
-            width:searchExpanded ? "min(460px, 100%)" : 34,
+            width:searchExpanded ? "min(280px, 100%)" : 34,
             height:34,
-            flex:searchExpanded ? "1 1 360px" : "0 0 38px",
+            flex:searchExpanded ? "0 1 280px" : "0 0 38px",
             maxWidth:"100%",
             display:"flex",
             alignItems:"center",
@@ -705,23 +899,6 @@ export default function ClientsPage({ store, onToast }) {
             </>
           )}
         </div>
-        <select value={filterProg} onChange={e=>setFilterProg(e.target.value)} style={{
-          flex:"0 0 178px",
-          maxWidth:"100%",
-          height:34,
-          background:filterProg!=="all"?"rgba(212,175,55,.1)":"var(--rukn-bg-input)",
-          border:`1px solid ${filterProg!=="all"?tc.gold:"var(--rukn-border-soft)"}`,
-          borderRadius:10,
-          padding:"0 12px",
-          color:filterProg!=="all"?tc.gold:tc.grey,
-          fontSize:12,
-          fontFamily:"'Cairo',sans-serif",
-          cursor:"pointer",
-          direction:dir,
-        }}>
-          <option value="all">{t.allPrograms}</option>
-          {programs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
         {tab === "active" && filteredCount > 0 && (
           <div style={{ marginInlineStart:"auto" }}>
             <Button
@@ -821,6 +998,7 @@ export default function ClientsPage({ store, onToast }) {
             const deletedProgramSnapshot = c.docs?.deletedProgramSnapshot;
             const clientProgramId = getClientProgramId(c);
             const liveProgram = clientProgramId ? store.getProgramById(clientProgramId) : null;
+            const explicitProgramKind = getExplicitProgramKind(liveProgram || deletedProgramSnapshot, c);
             const prog      = liveProgram
               || (deletedProgramSnapshot?.programName || deletedProgramSnapshot?.programNameFr
                 ? {
@@ -837,6 +1015,7 @@ export default function ClientsPage({ store, onToast }) {
                 paid={paid} remaining={remaining}
                 status={status} index={i}
                 isRTL={isRTL} lang={lang}
+                isHajjRecord={explicitProgramKind === "hajj"}
                 isMobileCard={isMobileCardLayout}
                 editLabel={t.editLabel}
                 deleteLabel={t.deleteLabel}
@@ -932,7 +1111,7 @@ export default function ClientsPage({ store, onToast }) {
           />
         )}
       </Modal>
-      <Modal open={showPassportImport} onClose={() => setShowPassportImport(false)} title={completionLabels.passportImport} width={1040}>
+      <Modal open={showPassportImport} onClose={() => setShowPassportImport(false)} title={t.passportImport || globalPassportImportLabel} width={1040}>
         {showPassportImport && (
           <MRZReader
             store={store}
@@ -971,7 +1150,7 @@ const clientCompletionBadgeStyle = (tone) => ({
 // ── ClientRow ─────────────────────────────────────────────────────────────────
 const ClientRow = React.memo(function ClientRow({ client, program, paid, remaining, status, onClick,
   index, isRTL, lang, selectMode, showCheckbox, isChecked, onCheck, onEdit, onDelete, onArchive, onRestore,
-  onTransfer, editLabel, deleteLabel, archiveLabel, restoreLabel, isArchived, isMobileCard }) {
+  onTransfer, editLabel, deleteLabel, archiveLabel, restoreLabel, isArchived, isMobileCard, isHajjRecord }) {
   const { t } = useLang();
   const [hov,      setHov]      = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -1011,6 +1190,20 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
     ? (hasDeletedProgramContext(client) ? getClientDeletedProgramLabel(client, lang) : "")
     : (!genericProgramLabels.has(programName) ? programName : "");
   const contextLine = [reference, phoneLine, cityLine, contextLabel, registrationSource, ticketLine].filter(Boolean).join(" • ");
+  const hajjBadgeLabel = lang === "fr" || lang === "en" ? "Hajj" : "حاج";
+  const hajjBadgeStyle = {
+    display:"inline-flex",
+    alignItems:"center",
+    padding:"1px 7px",
+    borderRadius:999,
+    border:"1px solid rgba(212,175,55,.28)",
+    background:"rgba(212,175,55,.08)",
+    color:tc.gold,
+    fontSize:10,
+    fontWeight:900,
+    lineHeight:1.45,
+    whiteSpace:"nowrap",
+  };
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
       onCheck();
@@ -1079,6 +1272,9 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
         <div
           className={`client-card-mobile${isChecked ? " is-selected" : ""}`}
           onClick={handleRowClick}
+          style={{
+            borderInlineStart:"3px solid rgba(212,175,55,.38)",
+          }}
         >
           <div className="client-card-mobile-heading">
             <div className="client-card-mobile-main">
@@ -1090,6 +1286,11 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 <p className="client-card-mobile-name-text" title={displayName}>
                   {displayName}
                 </p>
+                {isHajjRecord && (
+                  <div style={{ display:"flex", marginTop:3 }}>
+                    <span style={hajjBadgeStyle}>{hajjBadgeLabel}</span>
+                  </div>
+                )}
                 {secondaryBadges.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:2 }}>
                     {secondaryBadges.map((badge) => (
@@ -1149,16 +1350,35 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
     );
   }
 
+  const rowBackground = isChecked
+    ? "rgba(212,175,55,.1)"
+    : hov
+      ? "var(--rukn-row-hover)"
+      : "var(--rukn-row-bg)";
+  const rowBorder = isChecked
+    ? "rgba(212,175,55,.4)"
+    : hov
+      ? "var(--rukn-row-border-hover)"
+      : "var(--rukn-row-border)";
+
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.025}s` }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
       <div style={{
         display:"flex", alignItems:"center", gap:9, padding:"8px 12px",
-        background:isChecked?"rgba(212,175,55,.1)":hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
-        border:`1px solid ${isChecked?"rgba(212,175,55,.4)":hov?"var(--rukn-row-border-hover)":"var(--rukn-row-border)"}`,
+        background:rowBackground,
+        border:`1px solid ${rowBorder}`,
         borderRadius:12, transition:"all .18s", position:"relative",
+        overflow:"hidden",
         boxShadow: hov ? "0 8px 20px rgba(15,23,42,.05)" : "none",
       }}>
+        <span style={{
+          position:"absolute",
+          insetBlock:0,
+          insetInlineStart:0,
+          width:3,
+          background:"rgba(212,175,55,.38)",
+        }} />
 
         <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
           <span style={{ width:20, textAlign:"center", fontSize:11, color:tc.grey, fontWeight:600 }}>
@@ -1197,6 +1417,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", minWidth:0 }}>
               <p style={{ fontWeight:700, fontSize:13, color:tc.white, margin:0 }}>{displayName}</p>
+              {isHajjRecord && <span style={hajjBadgeStyle}>{hajjBadgeLabel}</span>}
               {secondaryBadges.map((badge) => (
                 <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>
                   {badge.label}

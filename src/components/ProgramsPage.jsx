@@ -186,6 +186,76 @@ const normalizeProgramType = (value) => {
   return "عمرة";
 };
 
+const deepCloneProgramConfigValue = (value) => {
+  if (value === undefined || value === null) return value;
+  if (typeof structuredClone === "function") {
+    try { return structuredClone(value); } catch (error) { void error; }
+  }
+  try { return JSON.parse(JSON.stringify(value)); } catch (error) {
+    if (Array.isArray(value)) return value.map((item) => deepCloneProgramConfigValue(item));
+    if (typeof value === "object") return { ...value };
+    return value;
+  }
+};
+
+const normalizeDuplicateProgramName = (value) => String(value || "").trim();
+
+const buildDuplicateProgramName = (program = {}, programs = [], lang = "ar") => {
+  const originalName = normalizeDuplicateProgramName(program.name) || (
+    lang === "fr" ? "Programme" : lang === "en" ? "Program" : "برنامج"
+  );
+  const suffix = lang === "ar" ? "نسخة" : "Copy";
+  const names = new Set((programs || []).map((item) => normalizeDuplicateProgramName(item?.name)).filter(Boolean));
+  const first = `${originalName} - ${suffix}`;
+  if (!names.has(first)) return first;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${originalName} - ${suffix} ${index}`;
+    if (!names.has(candidate)) return candidate;
+  }
+  return `${originalName} - ${suffix} ${Date.now()}`;
+};
+
+const isDuplicateProgramNameAvailable = (name, programs = []) => {
+  const cleanName = normalizeDuplicateProgramName(name);
+  return Boolean(cleanName) && !(programs || []).some((program) => normalizeDuplicateProgramName(program?.name) === cleanName);
+};
+
+const createDuplicateProgramPayload = (program = {}, newName = "") => {
+  const source = program || {};
+  const payload = {
+    name: normalizeDuplicateProgramName(newName),
+    type: normalizeProgramType(source.type),
+    duration: source.duration || "",
+    departure: source.departure || "",
+    returnDate: source.returnDate || "",
+    visitOrder: normalizeVisitOrder(source.visitOrder || source.visit_order),
+    price: Number(source.price || 0),
+    seats: Number(source.seats || 0),
+    transport: source.transport || "",
+    airlineCode: source.airlineCode || "",
+    airlineName: source.airlineName || "",
+    mealPlan: source.mealPlan || "",
+    hotelMecca: source.hotelMecca || "",
+    hotelMadina: source.hotelMadina || "",
+    guidePhone: source.guidePhone || "",
+    saudiPhone1: source.saudiPhone1 || "",
+    saudiPhone2: source.saudiPhone2 || "",
+    badgeNote: source.badgeNote || "",
+    badgeTemplateId: source.badgeTemplateId || "",
+    notes: source.notes || "",
+    priceTable: deepCloneProgramConfigValue(Array.isArray(source.priceTable) ? source.priceTable : []),
+    deleted: false,
+    deletedAt: null,
+    deletedBatchId: null,
+    status: "active",
+  };
+  if (source.nameFr) payload.nameFr = normalizeDuplicateProgramName(newName);
+  if (source.currency) payload.currency = source.currency;
+  if (source.city) payload.city = source.city;
+  if (source.departureCity) payload.departureCity = source.departureCity;
+  return payload;
+};
+
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
   .toLowerCase()
@@ -1090,6 +1160,7 @@ export default function ProgramsPage({ store, onToast }) {
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
+  const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
   const programTypeMenuRef = React.useRef(null);
@@ -1234,6 +1305,42 @@ export default function ProgramsPage({ store, onToast }) {
     setDeletePrompt(null);
     onToast(t.deleteSuccess, "info");
   }, [deletePrompt, deleteProgram, activeProgram, setActiveProgram, onToast, t.deleteSuccess]);
+  const openDuplicatePrompt = React.useCallback((program) => {
+    if (!program || program.deleted || program.deletedAt || program.status === "archived") return;
+    setDuplicatePrompt({
+      program,
+      name: buildDuplicateProgramName(program, programs, lang),
+      error: "",
+    });
+  }, [programs, lang]);
+  const closeDuplicatePrompt = React.useCallback(() => {
+    setDuplicatePrompt(null);
+  }, []);
+  const handleDuplicateNameChange = React.useCallback((event) => {
+    const value = event.target.value;
+    setDuplicatePrompt((current) => current ? { ...current, name: value, error: "" } : current);
+  }, []);
+  const handleConfirmDuplicateProgram = React.useCallback(() => {
+    if (!duplicatePrompt?.program) return;
+    const cleanName = normalizeDuplicateProgramName(duplicatePrompt.name);
+    if (!cleanName) {
+      setDuplicatePrompt((current) => current ? {
+        ...current,
+        error: t.programDuplicateNameRequired || (lang === "fr" ? "Le nom du programme est obligatoire." : lang === "en" ? "Program name is required." : "اسم البرنامج مطلوب."),
+      } : current);
+      return;
+    }
+    if (!isDuplicateProgramNameAvailable(cleanName, programs)) {
+      setDuplicatePrompt((current) => current ? {
+        ...current,
+        error: t.programDuplicateNameExists || (lang === "fr" ? "Un programme porte déjà ce nom." : lang === "en" ? "A program with this name already exists." : "يوجد برنامج بنفس الاسم."),
+      } : current);
+      return;
+    }
+    addProgram(createDuplicateProgramPayload(duplicatePrompt.program, cleanName));
+    setDuplicatePrompt(null);
+    onToast?.(t.programDuplicateSuccess || (lang === "fr" ? "Programme dupliqué" : lang === "en" ? "Program duplicated" : "تم إنشاء نسخة من البرنامج"), "success");
+  }, [addProgram, duplicatePrompt, lang, onToast, programs, t.programDuplicateNameExists, t.programDuplicateNameRequired, t.programDuplicateSuccess]);
   const closeProgramForm = React.useCallback(() => {
     setShowForm(false);
     setEditing(null);
@@ -1548,6 +1655,10 @@ export default function ProgramsPage({ store, onToast }) {
                 cleared={cl} unpaid={un} delay={i*.06}
                 onClick={() => openProgramDetail(p.id)}
                 onEdit={e => { e.stopPropagation(); setEditing(p); }}
+                onDuplicate={e => {
+                  e.stopPropagation();
+                  openDuplicatePrompt(p);
+                }}
                 onDelete={e => {
                   e.stopPropagation();
                   setDeletePrompt({ program: p, clients: pc });
@@ -1568,6 +1679,14 @@ export default function ProgramsPage({ store, onToast }) {
         title={editing ? t.editProgramTitle : t.addProgramTitle}
         onSaved={handleProgramFormSaved}
         onClose={closeProgramForm}
+      />
+      <DuplicateProgramModal
+        prompt={duplicatePrompt}
+        onNameChange={handleDuplicateNameChange}
+        onCreate={handleConfirmDuplicateProgram}
+        onClose={closeDuplicatePrompt}
+        lang={lang}
+        t={t}
       />
       <Modal
         open={!!deletePrompt}
@@ -1606,9 +1725,10 @@ export default function ProgramsPage({ store, onToast }) {
 // PROGRAM CARD
 // ═══════════════════════════════════════
 function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
-  cleared, unpaid, delay, onClick, onEdit, onDelete, lang, formatCurrencyForLang }) {
+  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onDelete, lang, formatCurrencyForLang }) {
   const [hov, setHov] = React.useState(false);
   const { t } = useLang();
+  const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const packages = normalizeProgramPackages(program);
   const packageCount = getProgramPackageCount(program);
   const startingPriceValue = getProgramStartingPrice(program);
@@ -1649,8 +1769,16 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
             </div>
           </div>
           <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
-            <SmallBtn icon="edit" onClick={onEdit}   color={tc.gold} />
-            <SmallBtn icon="trash" onClick={onDelete} color={tc.danger} />
+            <SmallBtn icon="edit" onClick={onEdit} color={tc.gold} title={t.edit} />
+            {canDuplicate && (
+              <SmallBtn
+                icon="copy"
+                onClick={onDuplicate}
+                color={tc.gold}
+                title={t.programDuplicateAction || (lang === "fr" ? "Dupliquer le programme" : lang === "en" ? "Duplicate program" : "نسخ البرنامج")}
+              />
+            )}
+            <SmallBtn icon="trash" onClick={onDelete} color={tc.danger} title={t.delete} />
           </div>
         </div>
 
@@ -1711,6 +1839,52 @@ function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
         </div>
       </GlassCard>
     </div>
+  );
+}
+
+function DuplicateProgramModal({ prompt, onNameChange, onCreate, onClose, lang, t }) {
+  const duplicateTitle = t.programDuplicateAction || (lang === "fr" ? "Dupliquer le programme" : lang === "en" ? "Duplicate program" : "نسخ البرنامج");
+  const createLabel = t.programDuplicateCreate || (lang === "fr" ? "Créer la copie" : lang === "en" ? "Create duplicate" : "إنشاء النسخة");
+  const nameLabel = t.programDuplicateNameLabel || (lang === "fr" ? "Nouveau nom du programme" : lang === "en" ? "New program name" : "اسم البرنامج الجديد");
+  const hint = t.programDuplicateHint || (
+    lang === "fr"
+      ? "La copie reprend uniquement la configuration du programme. Les pèlerins et les données financières ne sont pas copiés."
+      : lang === "en"
+        ? "The duplicate copies program configuration only. Pilgrims and financial data are not copied."
+        : "سيتم نسخ إعدادات البرنامج فقط، بدون الحجاج/المعتمرين أو البيانات المالية."
+  );
+
+  return (
+    <Modal open={!!prompt} onClose={onClose} title={duplicateTitle} width={480}>
+      {prompt && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <p style={{ margin:0, color:tc.grey, fontSize:13, lineHeight:1.7 }}>
+            {hint}
+          </p>
+          <Input
+            label={nameLabel}
+            value={prompt.name}
+            onChange={onNameChange}
+            required
+            error={prompt.error}
+            autoFocus
+          />
+          {prompt.error && (
+            <p style={{ margin:0, color:tc.danger, fontSize:12, fontWeight:700 }}>
+              {prompt.error}
+            </p>
+          )}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+            <Button variant="ghost" onClick={onClose}>
+              {t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء")}
+            </Button>
+            <Button variant="primary" icon="copy" onClick={onCreate}>
+              {createLabel}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1835,6 +2009,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const statusFilterRef = React.useRef(null);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const participantExcelImportLabel = React.useMemo(() => {
+    if (lang === "fr") return `${participantTerms.importAction} depuis Excel / CSV`;
+    if (lang === "en") return `${participantTerms.importAction} from Excel / CSV`;
+    return `${participantTerms.importAction} من Excel / CSV`;
+  }, [lang, participantTerms.importAction]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
   const bulkActionsMenuPos = useDropdownPosition({
     anchorRef: bulkActionsBtnRef,
@@ -2389,13 +2568,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     {
       key: "excel-import",
       icon: "import",
-      label: t.excelImport || t.importExcel || (lang === "fr" ? "Importer depuis Excel / CSV" : lang === "en" ? "Import from Excel / CSV" : "استيراد من Excel / CSV"),
+      label: participantExcelImportLabel,
       onClick: handleExcelImportOpen,
     },
     {
       key: "passport",
       icon: "passport",
-      label: completionLabels.passportImport,
+      label: participantTerms.passportImport || completionLabels.passportImport,
       onClick: handlePassportImportOpen,
     },
     {
@@ -2428,7 +2607,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantTerms.exportListAction, t.editProgramTitle, t.excelImport, t.exportPilgrimsList, t.importExcel]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -3204,7 +3383,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
       </Modal>
-      <Modal open={showExcelImport} onClose={() => setShowExcelImport(false)} title={t.importModalTitle} width={920}>
+      <Modal open={showExcelImport} onClose={() => setShowExcelImport(false)} title={participantExcelImportLabel} width={920}>
         {showExcelImport && (
           <ImportClientsModal
             store={store}
@@ -3213,6 +3392,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             programContext={{
               id: program.id,
               name: program.name,
+              type: program.type,
+              programType: program.programType,
+              program_type: program.program_type,
+              category: program.category,
               packages,
             }}
           />
@@ -3221,7 +3404,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       <Modal
         open={showPassportImport}
         onClose={() => setShowPassportImport(false)}
-        title={completionLabels.passportImport}
+        title={participantTerms.passportImport || completionLabels.passportImport}
         width={1040}
       >
         {showPassportImport && (
@@ -3232,6 +3415,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             programContext={{
               id: program.id,
               name: program.name,
+              type: program.type,
+              programType: program.programType,
+              program_type: program.program_type,
+              category: program.category,
               packages,
             }}
           />
@@ -7875,10 +8062,14 @@ function InnerMenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
   );
 }
 
-function SmallBtn({ icon, onClick, color }) {
+function SmallBtn({ icon, onClick, color, title }) {
   const [hov, setHov] = React.useState(false);
   return (
-    <button onClick={e=>{e.stopPropagation();onClick(e);}}
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={e=>{e.stopPropagation();onClick(e);}}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{ width:30, height:30, background:hov?`${color}22`:"rgba(255,255,255,.05)",
         border:`1px solid ${hov?color:"rgba(255,255,255,.08)"}`,

@@ -1,4 +1,4 @@
-import { BADGE_FIELD_DEFINITIONS } from "./badgeDefaults";
+import { ALL_BADGE_FIELD_DEFINITIONS, BADGE_FIELD_DEFINITIONS } from "./badgeDefaults";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const roundPct = (value) => Math.round(value * 100) / 100;
@@ -8,7 +8,7 @@ const pct = (value, fallback) => {
 };
 
 export const getBadgeFieldDefinition = (key) => (
-  BADGE_FIELD_DEFINITIONS.find((field) => field.key === key) || null
+  ALL_BADGE_FIELD_DEFINITIONS.find((field) => field.key === key) || null
 );
 
 export const createBadgeField = (key, index = 0, position = {}) => {
@@ -91,6 +91,8 @@ export const sampleBadgeData = {
   passportNumber: "AB123456",
   primaryPhone: "+966 56 625 7665",
   extraPhone: "+966 56 655 1580",
+  hotelMecca: "فندق مكة",
+  hotelMadina: "فندق المدينة",
   programName: "اسم البرنامج",
   badgeNote: "ملاحظة الشارة",
   agencyName: "اسم الوكالة",

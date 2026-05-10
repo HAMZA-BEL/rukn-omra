@@ -43,8 +43,18 @@ export const BADGE_FIELD_DEFINITIONS = [
   { key: "passportNumber", labelKey: "badgeFieldPassport", labelAr: "رقم جواز السفر", type: "text", wPct: 52, hPct: 7, fontSize: 12, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "primaryPhone", labelKey: "badgeFieldPrimaryPhone", labelAr: "رقم المؤطر / الرقم السعودي", type: "text", wPct: 66, hPct: 7, fontSize: 11, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "extraPhone", labelKey: "badgeFieldExtraPhone", labelAr: "رقم سعودي إضافي", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1, repeatable: true },
+  { key: "hotelMecca", labelKey: "badgeFieldHotelMecca", labelAr: "فندق مكة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
+  { key: "hotelMadina", labelKey: "badgeFieldHotelMadina", labelAr: "فندق المدينة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
+  { key: "agencyName", labelKey: "badgeFieldAgencyName", labelAr: "اسم الوكالة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
+];
+
+export const LEGACY_BADGE_FIELD_DEFINITIONS = [
   { key: "programName", labelKey: "badgeFieldProgramName", labelAr: "اسم البرنامج", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "badgeNote", labelKey: "badgeFieldNote", labelAr: "ملاحظة الشارة", type: "text", wPct: 70, hPct: 6, fontSize: 9, fontWeight: 600, align: "center", color: "#111111", maxLines: 2 },
-  { key: "agencyName", labelKey: "badgeFieldAgencyName", labelAr: "اسم الوكالة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "fileNumber", labelKey: "badgeFieldFileNumber", labelAr: "رقم الملف", type: "text", wPct: 36, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
+];
+
+export const ALL_BADGE_FIELD_DEFINITIONS = [
+  ...BADGE_FIELD_DEFINITIONS,
+  ...LEGACY_BADGE_FIELD_DEFINITIONS,
 ];

@@ -48,6 +48,8 @@ const dataForField = ({ field, client, program, agency, fileNumber }) => {
     passportNumber: passportNumber(client),
     primaryPhone: phones[0] || "",
     extraPhone: phones[1] || phones[2] || "",
+    hotelMecca: client?.hotelMecca || client?.hotel_mecca || program?.hotelMecca || "",
+    hotelMadina: client?.hotelMadina || client?.hotel_madina || program?.hotelMadina || "",
     programName: program?.name || "",
     badgeNote: program?.badgeNote || "",
     agencyName: agency?.nameAr || agency?.nameFr || "",

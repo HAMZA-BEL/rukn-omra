@@ -4,6 +4,7 @@ import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { AppIcon, IconBubble } from "./Icon";
 import { getPackageRoomPrice, getRoomTypeLabel, normalizeProgramPackages, normalizeRoomTypeKey } from "../utils/programPackages";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 
 const tc = theme.colors;
 const previewText = "var(--rukn-text)";
@@ -784,6 +785,39 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
     () => (programContext?.id ? toImportProgramContext(programContext) : selectedImportProgram),
     [programContext, selectedImportProgram]
   );
+  const effectiveParticipantTerms = React.useMemo(
+    () => (effectiveProgramContext?.id ? getParticipantTerminology(effectiveProgramContext, lang) : null),
+    [effectiveProgramContext, lang]
+  );
+  const importModalTitle = React.useMemo(() => {
+    if (effectiveProgramContext?.id) {
+      const terms = effectiveParticipantTerms || getParticipantTerminology(effectiveProgramContext, lang);
+      if (lang === "fr") return `${terms.importAction} depuis Excel / CSV`;
+      if (lang === "en") return `${terms.importAction} from Excel / CSV`;
+      return `${terms.importAction} من Excel / CSV`;
+    }
+    return t.importModalTitle || (
+      lang === "fr"
+        ? "Importer des pèlerins Hajj et Omra depuis Excel / CSV"
+        : lang === "en"
+          ? "Import Hajj & Umrah pilgrims from Excel / CSV"
+          : "استيراد حجاج ومعتمرين من Excel / CSV"
+    );
+  }, [effectiveProgramContext, effectiveParticipantTerms, lang, t.importModalTitle]);
+  const importTip3 = React.useMemo(() => {
+    if (effectiveParticipantTerms?.singular) {
+      if (lang === "fr") return `Le nom du ${effectiveParticipantTerms.singular} suffit. Les autres informations peuvent être complétées plus tard.`;
+      if (lang === "en") return `The ${effectiveParticipantTerms.singular} name is enough. Other information can be completed later.`;
+      return `يكفي وجود اسم ${effectiveParticipantTerms.singular} على الأقل. باقي المعلومات يمكن إكمالها لاحقًا.`;
+    }
+    return t.importTip3 || (
+      lang === "fr"
+        ? "Le nom du pèlerin Hajj/Omra suffit. Les autres informations peuvent être complétées plus tard."
+        : lang === "en"
+          ? "The Hajj/Umrah pilgrim name is enough. Other information can be completed later."
+          : "يكفي وجود اسم الحاج/المعتمر على الأقل. باقي المعلومات يمكن إكمالها لاحقًا."
+    );
+  }, [effectiveParticipantTerms, lang, t.importTip3]);
   const importHotelOptions = React.useMemo(
     () => getProgramImportHotelOptions(effectiveProgramContext, lang),
     [effectiveProgramContext, lang]
@@ -1130,6 +1164,50 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
     <div style={{ direction: dir, fontFamily: "'Cairo',sans-serif" }}>
       {renderImportHotelSelector(14)}
 
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+        padding: "10px 12px",
+        borderRadius: 12,
+        background: "rgba(212,175,55,.06)",
+        border: "1px solid rgba(212,175,55,.18)",
+        marginBottom: 14,
+      }}>
+        <div style={{ minWidth: 0, flex: "1 1 260px" }}>
+          <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 12, fontWeight: 900 }}>
+            {lang === "fr"
+              ? "Modèle officiel Rukn pour l’import"
+              : lang === "en"
+                ? "Official Rukn import template"
+                : "قالب ركن الرسمي للاستيراد"}
+          </p>
+          <p style={{ margin: "3px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.55 }}>
+            {lang === "fr"
+              ? "Utilisez ce modèle pour éviter les erreurs de colonnes et garantir un import organisé."
+              : lang === "en"
+                ? "Use this template to avoid column errors and ensure a clean import."
+                : "استعمل القالب لتفادي أخطاء الأعمدة وضمان استيراد منظم."}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon="download"
+          onClick={handleTemplateDownload}
+          disabled={templateBusy}
+          style={{ flexShrink: 0 }}
+        >
+          {lang === "fr"
+            ? "Télécharger le modèle Excel Rukn"
+            : lang === "en"
+              ? "Download Rukn Excel template"
+              : "تحميل قالب Excel ركن"}
+        </Button>
+      </div>
+
       <div
         onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
@@ -1147,7 +1225,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         }}>
         <IconBubble name="import" size={44} iconSize={24} style={{ margin: "0 auto 12px" }} />
         <p style={{ fontSize: 16, fontWeight: 800, color: "#f8fafc", marginBottom: 6 }}>
-          {t.importModalTitle || (lang === "fr" ? "Importer depuis Excel / CSV" : lang === "en" ? "Import from Excel / CSV" : "استيراد من Excel / CSV")}
+          {importModalTitle}
         </p>
         <p style={{ fontSize: 12, color: tc.grey, marginBottom: 20 }}>
           {t.importDropHint || "اسحب ملف Excel أو CSV وأفلته هنا"} — .xlsx, .xls, .csv
@@ -1188,39 +1266,8 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         <ul style={{ fontSize: 12, color: tc.grey, paddingInlineStart: 20, lineHeight: 2 }}>
           <li>{t.importTip1 || "يُفضّل أن يحتوي السطر الأول من الملف على أسماء الأعمدة، مثل: الاسم، الهاتف، رقم الجواز."}</li>
           <li>{t.importTip2 || "سيحاول النظام التعرف على الأعمدة تلقائيًا، ويمكنك تصحيحها قبل الحفظ."}</li>
-          <li>{t.importTip3 || "يكفي وجود اسم المعتمر على الأقل. باقي المعلومات يمكن إكمالها لاحقًا."}</li>
+          <li>{importTip3}</li>
         </ul>
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          marginTop: 12,
-          paddingTop: 12,
-          borderTop: "1px solid rgba(255,255,255,.08)",
-        }}>
-          <p style={{ margin: 0, color: tc.grey, fontSize: 12, lineHeight: 1.7, flex: "1 1 280px" }}>
-            {lang === "fr"
-              ? "Il est recommandé d’utiliser le modèle officiel Rukn pour éviter les erreurs de colonnes et de noms, notamment pour Amadeus."
-              : lang === "en"
-                ? "Use the official Rukn template to avoid column and name errors, especially for Amadeus."
-                : "يُفضّل استعمال قالب ركن الرسمي لتفادي أخطاء الأعمدة والأسماء، خصوصًا أسماء Amadeus."}
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon="download"
-            onClick={handleTemplateDownload}
-            disabled={templateBusy}
-          >
-            {lang === "fr"
-              ? "Télécharger le modèle Excel Rukn"
-              : lang === "en"
-                ? "Download Rukn Excel template"
-                : "تحميل قالب Excel ركن"}
-          </Button>
-        </div>
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
@@ -1249,7 +1296,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           marginBottom: 14,
         }}>
           {effectiveProgramContext?.id
-            ? (lang === "fr" ? `Les pèlerins seront ajoutés au programme : ${effectiveProgramContext.name || ""}` : lang === "en" ? `Pilgrims will be added to program: ${effectiveProgramContext.name || ""}` : `سيتم حفظ المعتمرين داخل البرنامج: ${effectiveProgramContext.name || ""}`)
+            ? (lang === "fr" ? `Les ${effectiveParticipantTerms?.plural || "pèlerins"} seront ajoutés au programme : ${effectiveProgramContext.name || ""}` : lang === "en" ? `${effectiveParticipantTerms?.plural || "Pilgrims"} will be added to program: ${effectiveProgramContext.name || ""}` : `سيتم حفظ ${effectiveParticipantTerms?.plural || "الحجاج والمعتمرين"} داخل البرنامج: ${effectiveProgramContext.name || ""}`)
             : labels.unassigned}
         </div>
 

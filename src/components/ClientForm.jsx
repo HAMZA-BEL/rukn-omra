@@ -16,6 +16,7 @@ import {
   normalizeRoomTypeKey,
 } from "../utils/programPackages";
 import { translateRoomType } from "../utils/i18nValues";
+import { getProgramKind } from "../utils/participantTerminology";
 import {
   REPRESENTED_BY_RELATIONSHIPS,
   clientHasCin,
@@ -70,6 +71,19 @@ const ROOM_CAPACITY = {
   triple: 3,
   quad: 4,
   quint: 5,
+};
+
+const getProgramAddLabel = (program, lang, fallback) => {
+  if (!program) return fallback;
+  const kind = getProgramKind(program);
+  if (kind === "hajj") {
+    if (lang === "fr") return "Ajouter un pèlerin Hajj";
+    if (lang === "en") return "Add Hajj pilgrim";
+    return "إضافة حاج";
+  }
+  if (lang === "fr") return "Ajouter un pèlerin Omra";
+  if (lang === "en") return "Add Umrah pilgrim";
+  return "إضافة معتمر";
 };
 
 const getLocalizedValue = (value, map, t) => {
@@ -444,6 +458,10 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     [programs, form.programId]
   );
   const hasSelectedProgram = Boolean(selectedProgram);
+  const addSubmitLabel = React.useMemo(
+    () => getProgramAddLabel(selectedProgram, lang, t.addClient),
+    [lang, selectedProgram, t.addClient]
+  );
   const representationClient = React.useMemo(() => ({
     ...form,
     id: client?.id || "",
@@ -1374,7 +1392,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
         <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave} disabled={saving}>
-          {saving ? (t.loading || "جاري الحفظ...") : isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? (t.saveRoom || "حفظ الغرفة") : t.addClient}
+          {saving ? (t.loading || "جاري الحفظ...") : isEdit ? t.save : entryMode === ROOM_ENTRY_MODES.GROUP ? (t.saveRoom || "حفظ الغرفة") : addSubmitLabel}
         </Button>
       </div>
     </div>
