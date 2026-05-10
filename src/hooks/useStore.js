@@ -66,6 +66,9 @@ const EMPTY_DASHBOARD_STATS = {
   totalDiscount: 0,
   docsIncomplete: 0,
   programClientCounts: {},
+  hajjClientsCount: 0,
+  umrahClientsCount: 0,
+  unreadNotificationsCount: 0,
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -449,6 +452,16 @@ export function useStore(agencyId, onToast) {
       setDashboardStats(null);
       return { data: null, error: null };
     }
+    const summaryResult = await db.dashboard.fetchSummary();
+    if (!summaryResult.error && summaryResult.data) {
+      setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...summaryResult.data });
+      return summaryResult;
+    }
+
+    if (summaryResult.error) {
+      console.warn("[Store] Dashboard summary RPC failed; falling back to raw stats.", summaryResult.error);
+    }
+
     const result = await db.dashboard.fetchStats(agencyId);
     if (!result.error && result.data) {
       setDashboardStats({ ...EMPTY_DASHBOARD_STATS, ...result.data });

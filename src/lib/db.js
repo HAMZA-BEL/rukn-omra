@@ -40,6 +40,49 @@ const fetchPagedRows = async (buildQuery, pageSize = 1000) => {
   }
 };
 
+const toFiniteNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const parseRpcJson = (value) => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeDashboardProgramCounts = (counts = {}) => {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return {};
+  return Object.entries(counts).reduce((acc, [programId, count]) => {
+    if (programId) acc[programId] = toFiniteNumber(count);
+    return acc;
+  }, {});
+};
+
+const normalizeDashboardSummary = (summary = {}) => {
+  const source = parseRpcJson(summary) || {};
+  return {
+    totalClients: toFiniteNumber(source.active_clients_count),
+    archivedCount: 0,
+    totalPrograms: toFiniteNumber(source.active_programs_count),
+    cleared: toFiniteNumber(source.cleared_count ?? source.fully_paid_count),
+    partial: toFiniteNumber(source.partial_paid_count),
+    unpaid: toFiniteNumber(source.unpaid_count),
+    totalRevenue: toFiniteNumber(source.total_sales_amount ?? source.expected_total),
+    totalCollected: toFiniteNumber(source.total_paid),
+    totalRemaining: toFiniteNumber(source.total_remaining),
+    totalDiscount: toFiniteNumber(source.total_discount),
+    docsIncomplete: toFiniteNumber(source.incomplete_info_count),
+    programClientCounts: normalizeDashboardProgramCounts(source.program_client_counts),
+    hajjClientsCount: toFiniteNumber(source.hajj_clients_count),
+    umrahClientsCount: toFiniteNumber(source.umrah_clients_count),
+    unreadNotificationsCount: toFiniteNumber(source.unread_notifications_count),
+  };
+};
+
 const composeClientName = (row) => {
   const first = typeof row.first_name === "string" ? row.first_name.trim() : "";
   const last  = typeof row.last_name === "string" ? row.last_name.trim() : "";
@@ -487,6 +530,13 @@ const fromRoomingAssignment = (row) => ({
 export const db = {
 
   dashboard: {
+    async fetchSummary() {
+      const { data, error } = await supabase.rpc("get_dashboard_summary");
+      if (error) return { data: null, error };
+      if (!data) return { data: null, error: null };
+      return { data: normalizeDashboardSummary(data), error: null };
+    },
+
     async fetchStats(agencyId) {
       if (!agencyId) return { data: null, error: null };
 
