@@ -149,6 +149,10 @@ export function Button({ children, onClick, variant = "primary", size = "md",
   );
 }
 
+export function preventNumberInputWheelChange(event) {
+  event.currentTarget.blur();
+}
+
 // ── Input ─────────────────────────────────────────────────────────────────────
 export function Input({
   label,
@@ -160,10 +164,15 @@ export function Input({
   error,
   style,
   inputStyle,
+  onWheel,
   ...rest
 }) {
   const { dir } = useLang();
   const [focused, setFocused] = React.useState(false);
+  const handleWheel = React.useCallback((event) => {
+    if (type === "number") preventNumberInputWheelChange(event);
+    onWheel?.(event);
+  }, [onWheel, type]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, ...style }}>
       {label && (
@@ -178,6 +187,7 @@ export function Input({
         placeholder={placeholder}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onWheel={handleWheel}
         {...rest}
         style={{
           background: v.bgInput,

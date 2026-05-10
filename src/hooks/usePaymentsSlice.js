@@ -1,4 +1,18 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
+
+const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
+
+const getPaymentAmount = (payment = {}) => {
+  const value = Number(payment.amount);
+  return Number.isFinite(value) ? value : 0;
+};
+
+const comparePaymentsByRecentDate = (a = {}, b = {}) => new Date(b.date) - new Date(a.date);
+
+const isPaymentMoreRecent = (payment, current) => {
+  if (!current) return true;
+  return comparePaymentsByRecentDate(payment, current) < 0;
+};
 
 export function usePaymentsSlice() {
   const [payments, setPayments] = useState([]);
@@ -141,24 +155,46 @@ export function usePaymentsSlice() {
     }
   }, []);
 
+  const paymentSummaryMaps = useMemo(() => {
+    const paymentsByClient = new Map();
+    const paidByClient = new Map();
+    const lastPaymentByClient = new Map();
+
+    payments.forEach((payment) => {
+      const clientId = getPaymentClientId(payment);
+      if (!clientId) return;
+
+      const currentPayments = paymentsByClient.get(clientId);
+      if (currentPayments) currentPayments.push(payment);
+      else paymentsByClient.set(clientId, [payment]);
+
+      paidByClient.set(clientId, (paidByClient.get(clientId) || 0) + getPaymentAmount(payment));
+      if (isPaymentMoreRecent(payment, lastPaymentByClient.get(clientId))) {
+        lastPaymentByClient.set(clientId, payment);
+      }
+    });
+
+    return { paymentsByClient, paidByClient, lastPaymentByClient };
+  }, [payments]);
+
+  const { paymentsByClient, paidByClient, lastPaymentByClient } = paymentSummaryMaps;
+
   const getClientPayments = useCallback(
-    (clientId) => payments.filter((p) => p.clientId === clientId),
-    [payments]
+    (clientId) => {
+      const clientPayments = paymentsByClient.get(clientId);
+      return clientPayments ? clientPayments.slice() : [];
+    },
+    [paymentsByClient]
   );
 
   const getClientTotalPaid = useCallback(
-    (clientId) => payments.reduce((sum, p) => (p.clientId === clientId ? sum + p.amount : sum), 0),
-    [payments]
+    (clientId) => paidByClient.get(clientId) || 0,
+    [paidByClient]
   );
 
   const getClientLastPayment = useCallback(
-    (clientId) => {
-      const cp = payments
-        .filter((p) => p.clientId === clientId)
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
-      return cp[0] || null;
-    },
-    [payments]
+    (clientId) => lastPaymentByClient.get(clientId) || null,
+    [lastPaymentByClient]
   );
 
   return {
@@ -175,6 +211,9 @@ export function usePaymentsSlice() {
     restorePaymentLocal,
     purgePaymentLocal,
     removePaymentsByClient,
+    paymentsByClient,
+    paidByClient,
+    lastPaymentByClient,
     getClientPayments,
     getClientTotalPaid,
     getClientLastPayment,

@@ -458,8 +458,8 @@ export default function ClearancePage({ store }) {
   const {
     clients,
     programs,
-    payments,
     getClientStatus,
+    getClientPayments,
     getClientTotalPaid,
     getClientLastPayment,
     agency,
@@ -584,9 +584,9 @@ export default function ClearancePage({ store }) {
     const lastPmt   = getClientLastPayment(c.id);
     const displayRef = formatFileReference(c);
     const displayName = getClientDisplayName(c, "—", lang);
-    const clientPayments = payments.filter(p => p.clientId === c.id);
+    const clientPayments = getClientPayments(c.id);
     return { ...c, displayName, prog, paid, salePrice, officialPrice, remaining, discount, status, lastPmt, displayRef, clientPayments };
-  }), [selectedProgramClients, selectedProgram, programs, payments, lang, getClientStatus, getClientTotalPaid, getClientLastPayment]);
+  }), [selectedProgramClients, selectedProgram, programs, lang, getClientStatus, getClientPayments, getClientTotalPaid, getClientLastPayment]);
 
   const data = React.useMemo(() => programData.filter(c => {
     const ok1 = filter === "all" || c.status === filter;
@@ -658,7 +658,7 @@ export default function ClearancePage({ store }) {
   const handlePrintSelectedInvoice = React.useCallback(async (recipient) => {
     if (!invoiceClient) return false;
     const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
-    const clientPayments = invoiceClient.clientPayments || payments.filter(p => p.clientId === invoiceClient.id);
+    const clientPayments = invoiceClient.clientPayments || getClientPayments(invoiceClient.id);
     if (invoiceAction === "word") {
       return downloadInvoiceWordDocument({
         client: invoiceClient,
@@ -681,7 +681,7 @@ export default function ClearancePage({ store }) {
     });
     if (printed && invoiceClient.remaining <= 0) await refreshSavedInvoices();
     return printed;
-  }, [agency, invoiceAction, invoiceApi, invoiceClient, lang, payments, programs, refreshSavedInvoices]);
+  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, lang, programs, refreshSavedInvoices]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;

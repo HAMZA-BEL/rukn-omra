@@ -1174,6 +1174,7 @@ export const db = {
       limit = 20,
       offset = 0,
       types = null,
+      category = "all",
       search = "",
       from = null,
     } = {}) {
@@ -1185,12 +1186,21 @@ export const db = {
       if (types && types.length) {
         query = query.in("type", types);
       }
+      if (category && category !== "all") {
+        const categoryFilters = {
+          clients: "type.ilike.client_%,description.ilike.%معتمر%,description.ilike.%client%,description.ilike.%pilgrim%,description.ilike.%pèlerin%",
+          programs: "type.ilike.program_%,description.ilike.%برنامج%,description.ilike.%program%,description.ilike.%programme%",
+          payments: "type.ilike.payment_%,description.ilike.%دفعة%,description.ilike.%دفع%,description.ilike.%وصل%,description.ilike.%payment%,description.ilike.%paiement%,description.ilike.%receipt%,description.ilike.%reçu%",
+          imports: "type.ilike.import_%,type.ilike.%import%,type.ilike.%backup%,description.ilike.%استيراد%,description.ilike.%استورد%,description.ilike.%import%,description.ilike.%backup%,description.ilike.%sauvegarde%,description.ilike.%ملف%,description.ilike.%excel%",
+        };
+        if (categoryFilters[category]) query = query.or(categoryFilters[category]);
+      }
       if (from) {
         query = query.gte("created_at", from);
       }
       if (search && search.trim()) {
         const term = `%${search.trim()}%`;
-        query = query.or(`description.ilike.${term},client_name.ilike.${term}`);
+        query = query.or(`type.ilike.${term},description.ilike.${term},client_name.ilike.${term}`);
       }
       const start = offset;
       const end   = offset + limit - 1;

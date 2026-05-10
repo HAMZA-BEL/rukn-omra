@@ -78,7 +78,7 @@ const translateProgramAirline = (program, lang) => {
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
   const { t, lang } = useLang();
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          deletePayment, agency, clients = [], badgePhotoApi } = store;
+          getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi } = store;
   const [showPayForm, setShowPayForm] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
@@ -100,7 +100,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const status      = getClientStatus(client);
   const displayStatus = getClientDisplayStatus(client, program, status);
   const pct         = salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
-  const lastPmt     = [...payments].sort((a,b) => new Date(b.date)-new Date(a.date))[0];
+  const lastPmt     = getClientLastPayment(client.id);
+  const sortedPayments = React.useMemo(
+    () => [...payments].sort((a,b) => new Date(b.date)-new Date(a.date)),
+    [payments]
+  );
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
   const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program), [client, lang, program]);
@@ -595,7 +599,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
         </div>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-          {[...payments].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(pmt => (
+          {sortedPayments.map(pmt => (
             <PaymentRow key={pmt.id} payment={pmt}
               onPrint={() => openReceiptSelector(pmt)}
               onDelete={() => {

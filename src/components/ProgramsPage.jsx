@@ -13,7 +13,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge } from "./UI";
+import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge, preventNumberInputWheelChange } from "./UI";
 import AirlineSelector from "./AirlineSelector";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
@@ -2051,6 +2051,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     () => filtered.slice(programClientStartIndex, programClientEndIndex),
     [filtered, programClientStartIndex, programClientEndIndex]
   );
+  const filteredPaymentTotals = React.useMemo(() => (
+    filtered.reduce((acc, client) => {
+      const paid = getClientTotalPaid(client.id);
+      const salePrice = client.salePrice || client.price || 0;
+      acc.paid += paid;
+      acc.remaining += Math.max(0, salePrice - paid);
+      return acc;
+    }, { paid: 0, remaining: 0 })
+  ), [filtered, getClientTotalPaid]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
   const programClientPageSizeOptions = React.useMemo(() => (
@@ -3358,10 +3367,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           <span />
           <span />
           <span style={{ color:tc.greenLight, textAlign:"center" }}>
-            {formatCurrencyForLang(filtered.reduce((s,c)=>s+getClientTotalPaid(c.id),0))}
+            {formatCurrencyForLang(filteredPaymentTotals.paid)}
           </span>
           <span style={{ color:tc.warning, textAlign:"center" }}>
-            {formatCurrencyForLang(filtered.reduce((s,c)=>s+Math.max(0,(c.salePrice||c.price||0)-getClientTotalPaid(c.id)),0))}
+            {formatCurrencyForLang(filteredPaymentTotals.remaining)}
           </span>
           <span />
         </div>
@@ -5439,6 +5448,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                       min="0"
                       value={pendingDropSalePrice}
                       onChange={(event) => setPendingDropSalePrice(event.target.value)}
+                      onWheel={preventNumberInputWheelChange}
                       style={{
                         width: "100%",
                         border: "1px solid rgba(148,163,184,.35)",

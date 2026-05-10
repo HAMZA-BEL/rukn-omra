@@ -6,7 +6,6 @@ import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { translateActivityDescription } from "../utils/i18nValues";
 
-const PAGE_FETCH_SIZE = 1000;
 const PAGE_SIZE = 20;
 
 const PERIOD_OPTIONS = [
@@ -88,13 +87,26 @@ const isWithinPeriod = (row, periodKey) => {
   return time.getTime() >= now.getTime() - days * 86400000;
 };
 
+const getPeriodStartIso = (periodKey) => {
+  if (periodKey === "all") return null;
+  const now = new Date();
+  if (periodKey === "today") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return start.toISOString();
+  }
+  const days = Number(periodKey);
+  if (!Number.isFinite(days)) return null;
+  return new Date(now.getTime() - days * 86400000).toISOString();
+};
+
 export default function ActivityLogPage({ store }) {
   const { t, lang } = useLang();
   const [category, setCategory] = React.useState("all");
   const [period, setPeriod] = React.useState("30");
   const [searchDraft, setSearchDraft] = React.useState("");
   const [search, setSearch] = React.useState("");
-  const [rawRows, setRawRows] = React.useState([]);
+  const [rows, setRows] = React.useState([]);
+  const [totalCount, setTotalCount] = React.useState(0);
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -104,56 +116,74 @@ export default function ActivityLogPage({ store }) {
   const filtersRef = React.useRef(null);
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
+  const loadSeqRef = React.useRef(0);
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
   const archiveOldActivityLog = store.archiveOldActivityLog;
   const cachedActivity = store.activityLog || [];
+  const canFetchRemoteActivity = Boolean(store.isSupabaseEnabled && fetchActivityLogPage);
 
-  const applyFallback = React.useCallback(() => {
-    setRawRows(Array.isArray(cachedActivity) ? cachedActivity : []);
+  const applyLocalPage = React.useCallback(() => {
+    const q = normalizeText(search);
+    const filtered = (Array.isArray(cachedActivity) ? cachedActivity : [])
+      .filter((row) => category === "all" || getActivityCategory(row) === category)
+      .filter((row) => isWithinPeriod(row, period))
+      .filter((row) => !q || buildSearchHaystack(row).includes(q))
+      .sort((a, b) => {
+        const aTime = getActivityTime(a)?.getTime() || 0;
+        const bTime = getActivityTime(b)?.getTime() || 0;
+        return bTime - aTime;
+      });
+    const start = (page - 1) * PAGE_SIZE;
+    setRows(filtered.slice(start, start + PAGE_SIZE));
+    setTotalCount(filtered.length);
     setError(null);
-  }, [cachedActivity]);
+  }, [cachedActivity, category, page, period, search]);
 
   const loadActivities = React.useCallback(async () => {
-    if (!fetchActivityLogPage) {
-      applyFallback();
+    if (!canFetchRemoteActivity) {
+      applyLocalPage();
       return;
     }
+    const loadSeq = loadSeqRef.current + 1;
+    loadSeqRef.current = loadSeq;
     setLoading(true);
     setError(null);
+    setRows([]);
     try {
       const { data, error, count } = await fetchActivityLogPage({
-        offset: 0,
-        limit: PAGE_FETCH_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+        limit: PAGE_SIZE,
+        category,
+        search,
+        from: getPeriodStartIso(period),
       });
+      if (loadSeqRef.current !== loadSeq) return;
       if (error) {
-        applyFallback();
+        setRows([]);
+        setTotalCount(0);
+        setError(t.activityError || "تعذّر تحميل السجل");
         return;
       }
-      const allData = Array.isArray(data) ? [...data] : [];
-      const total = Number(count) || allData.length;
-      let offset = allData.length;
-      while (offset < total) {
-        const next = await fetchActivityLogPage({ offset, limit: PAGE_FETCH_SIZE });
-        if (next.error) break;
-        const rows = Array.isArray(next.data) ? next.data : [];
-        if (!rows.length) break;
-        allData.push(...rows);
-        offset = allData.length;
-      }
-      setRawRows(allData);
+      const nextRows = Array.isArray(data) ? data : [];
+      setRows(nextRows);
+      setTotalCount(Number.isFinite(Number(count)) ? Number(count) : nextRows.length);
     } catch (err) {
       console.error("[ActivityLogPage]", err);
-      applyFallback();
+      if (loadSeqRef.current !== loadSeq) return;
+      setRows([]);
+      setTotalCount(0);
+      setError(t.activityError || "تعذّر تحميل السجل");
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === loadSeq) setLoading(false);
     }
-  }, [applyFallback, fetchActivityLogPage]);
+  }, [applyLocalPage, canFetchRemoteActivity, category, fetchActivityLogPage, page, period, search, t.activityError]);
 
   React.useEffect(() => {
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
     searchDebounce.current = setTimeout(() => {
+      setPage(1);
       setSearch(searchDraft.trim());
     }, 400);
     return () => {
@@ -161,13 +191,19 @@ export default function ActivityLogPage({ store }) {
     };
   }, [searchDraft]);
 
+  const handleCategoryChange = React.useCallback((nextCategory) => {
+    setPage(1);
+    setCategory(nextCategory);
+  }, []);
+
+  const handlePeriodChange = React.useCallback((nextPeriod) => {
+    setPage(1);
+    setPeriod(nextPeriod);
+  }, []);
+
   React.useEffect(() => {
     loadActivities();
   }, [loadActivities]);
-
-  React.useEffect(() => {
-    setPage(1);
-  }, [category, period, search]);
 
   React.useEffect(() => {
     if (!filtersOpen) return undefined;
@@ -210,24 +246,10 @@ export default function ActivityLogPage({ store }) {
     };
   }, [filtersOpen]);
 
-  const filteredRows = React.useMemo(() => {
-    const q = normalizeText(search);
-    return rawRows
-      .filter((row) => category === "all" || getActivityCategory(row) === category)
-      .filter((row) => isWithinPeriod(row, period))
-      .filter((row) => !q || buildSearchHaystack(row).includes(q))
-      .sort((a, b) => {
-        const aTime = getActivityTime(a)?.getTime() || 0;
-        const bTime = getActivityTime(b)?.getTime() || 0;
-        return bTime - aTime;
-      });
-  }, [category, period, rawRows, search]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const pageStartIndex = (safePage - 1) * PAGE_SIZE;
-  const pageEndIndex = Math.min(pageStartIndex + PAGE_SIZE, filteredRows.length);
-  const rows = filteredRows.slice(pageStartIndex, pageEndIndex);
+  const pageEndIndex = Math.min(pageStartIndex + rows.length, totalCount);
   const canGoPrevious = safePage > 1;
   const canGoNext = safePage < totalPages;
 
@@ -236,7 +258,7 @@ export default function ActivityLogPage({ store }) {
   }, [page, totalPages]);
 
   const rangeLabel = React.useMemo(() => {
-    if (!filteredRows.length) return "";
+    if (!totalCount) return "";
     const first = pageStartIndex + 1;
     const last = pageEndIndex;
     const template = t.activityRange || (
@@ -247,8 +269,8 @@ export default function ActivityLogPage({ store }) {
     return String(template)
       .replaceAll("{start}", first)
       .replaceAll("{end}", last)
-      .replaceAll("{total}", filteredRows.length);
-  }, [filteredRows.length, lang, pageEndIndex, pageStartIndex, t.activityRange]);
+      .replaceAll("{total}", totalCount);
+  }, [lang, pageEndIndex, pageStartIndex, t.activityRange, totalCount]);
   const categoryOptions = React.useMemo(
     () => CATEGORY_KEYS.map((key) => ({ key, label:t[`activityFilter_${key}`] || key })),
     [t]
@@ -277,8 +299,8 @@ export default function ActivityLogPage({ store }) {
         display: "grid",
         gap: 10,
       }} ref={filterMenuRef}>
-        <CompactChipGroup value={category} options={categoryOptions} onChange={setCategory} />
-        <CompactChipGroup value={period} options={periodOptions} onChange={setPeriod} />
+        <CompactChipGroup value={category} options={categoryOptions} onChange={handleCategoryChange} />
+        <CompactChipGroup value={period} options={periodOptions} onChange={handlePeriodChange} />
       </div>,
       document.body
     )
@@ -289,7 +311,8 @@ export default function ActivityLogPage({ store }) {
     setArchiveBusy(true);
     try {
       await archiveOldActivityLog(180);
-      await loadActivities();
+      if (page !== 1) setPage(1);
+      else await loadActivities();
     } finally {
       setArchiveBusy(false);
     }
@@ -366,7 +389,7 @@ export default function ActivityLogPage({ store }) {
         ))}
       </GlassCard>
 
-      {filteredRows.length > 0 && (
+      {totalCount > 0 && (
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:18, flexWrap:"wrap", gap:10 }}>
           <span style={{ fontSize:12, color:theme.colors.grey }}>
             {rangeLabel}
