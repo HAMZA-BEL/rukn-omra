@@ -24,6 +24,8 @@ import DuplicateProgramModal from "./programs/DuplicateProgramModal";
 import PackageDetailCard from "./programs/PackageDetailCard";
 import ProgramEditorModal from "./programs/ProgramEditorModal";
 import ProgramDetailHeader from "./programs/ProgramDetailHeader";
+import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
+import BulkClientActionsBar from "./programs/BulkClientActionsBar";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -2658,351 +2660,85 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       </GlassCard>
 
       {/* filters + search */}
-      <div style={{
-        display:"flex",
-        flexWrap:"wrap",
-        gap:10,
-        alignItems:"center",
-        justifyContent:"space-between",
-        marginBottom: selectMode ? 8 : 16,
-      }}>
-        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <div ref={statusFilterRef} style={{ position:"relative" }}>
-            <button type="button" onClick={() => setStatusFilterOpen(open => !open)} style={{
-              minWidth:138,
-              display:"inline-flex",
-              alignItems:"center",
-              justifyContent:"space-between",
-              gap:10,
-              padding:"7px 11px",
-              borderRadius:12,
-              background:"rgba(255,255,255,.04)",
-              border:"1px solid rgba(255,255,255,.1)",
-              color:tc.grey,
-              fontSize:12,
-              fontWeight:800,
-              cursor:"pointer",
-              fontFamily:"'Cairo',sans-serif",
-            }}>
-              <span style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
-                <AppIcon name="clearance" size={14} color={filter === "all" ? tc.grey : tc.gold} />
-                <span>{activeStatusFilter.label}</span>
-              </span>
-              <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
-                <span style={{
-                  minWidth:20,
-                  textAlign:"center",
-                  borderRadius:999,
-                  padding:"0 6px",
-                  background:"rgba(255,255,255,.06)",
-                  color:filter === "all" ? tc.grey : tc.gold,
-                  fontSize:10,
-                }}>{activeStatusFilter.count}</span>
-                <AppIcon name="chevronBack" size={13} color={tc.grey} style={{ transform:"rotate(-90deg)" }} />
-              </span>
-            </button>
-            {statusFilterOpen && (
-              <div style={{
-                ...filterMenuBaseStyle,
-                insetInlineStart:0,
-                width:180,
-              }}>
-                {filters.map(f=>(
-                  <button key={f.key} type="button" onClick={() => {
-                    setFilter(f.key);
-                    setStatusFilterOpen(false);
-                  }} style={filterMenuItemStyle(filter === f.key)}>
-                    <span>{f.label}</span>
-                    <span style={filterMenuCountStyle(filter === f.key)}>{f.count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div
-            onMouseEnter={() => setSearchOpen(true)}
-            onMouseLeave={() => {
-              if (!search.trim() && document.activeElement !== searchInputRef.current) setSearchOpen(false);
-            }}
-            style={{
-              width:searchExpanded ? 280 : 38,
-              height:38,
-              maxWidth:"100%",
-              display:"flex",
-              alignItems:"center",
-              gap:6,
-              borderRadius:12,
-              background:"rgba(255,255,255,.04)",
-              border:`1px solid ${searchExpanded ? "rgba(212,175,55,.22)" : "rgba(255,255,255,.1)"}`,
-              padding:searchExpanded ? "0 9px" : 0,
-              overflow:"hidden",
-              transition:"width .22s ease, border-color .22s ease, padding .22s ease",
-            }}
-          >
-            <button type="button" onClick={() => {
-              setSearchOpen(true);
-              requestAnimationFrame(() => searchInputRef.current?.focus());
-            }} style={{
-              width:38,
-              height:36,
-              flex:"0 0 38px",
-              border:0,
-              background:"transparent",
-              color:tc.gold,
-              display:"inline-flex",
-              alignItems:"center",
-              justifyContent:"center",
-              cursor:"pointer",
-            }} aria-label={t.searchClients || t.searchPrograms}>
-              <AppIcon name="search" size={17} color={tc.gold} />
-            </button>
-            {searchExpanded && (
-              <>
-                <input
-                  ref={searchInputRef}
-                  value={search}
-                  onChange={e=>setSearch(e.target.value)}
-                  onFocus={() => setSearchOpen(true)}
-                  onBlur={() => {
-                    if (!search.trim()) setSearchOpen(false);
-                  }}
-                  placeholder={t.searchClients || t.searchPrograms}
-                  style={{
-                    flex:1,
-                    minWidth:0,
-                    border:0,
-                    outline:0,
-                    background:"transparent",
-                    color:tc.white,
-                    fontSize:13,
-                    fontFamily:"'Cairo',sans-serif",
-                  }}
-                />
-                {search.trim() && (
-                  <button type="button" onClick={() => {
-                    setSearch("");
-                    requestAnimationFrame(() => searchInputRef.current?.focus());
-                  }} style={{
-                    width:24,
-                    height:24,
-                    border:0,
-                    borderRadius:8,
-                    background:"rgba(255,255,255,.06)",
-                    display:"inline-flex",
-                    alignItems:"center",
-                    justifyContent:"center",
-                    cursor:"pointer",
-                  }} aria-label={t.clear || "Clear"}>
-                    <AppIcon name="x" size={13} color={tc.grey} />
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-        {filtered.length > 0 && (
-          <Button
-            variant={selectMode ? "warning" : "ghost"}
-            size="sm"
-            icon="checked"
-            onClick={() => {
-              if (selectMode) {
-                exitSelectMode();
-              } else {
-                clearSelection();
-                setSelectMode(true);
-              }
-            }}
-          >
-            {selectMode ? (t.finishSelection || t.cancel) : t.selectMultiple}
-          </Button>
-        )}
-      </div>
-
-      {filtered.length > 0 && (
-        <div style={{
-          display:"flex",
-          alignItems:"center",
-          justifyContent:"space-between",
-          gap:10,
-          flexWrap:"wrap",
-          marginBottom: selectMode ? 8 : 14,
-          padding:"8px 10px",
-          border:"1px solid rgba(255,255,255,.08)",
-          borderRadius:10,
-          background:"rgba(255,255,255,.025)",
-        }}>
-          <span style={{ color:tc.grey, fontSize:11.5, fontWeight:700 }}>
-            {lang === "fr"
-              ? `Affichage ${programClientRangeStart} - ${programClientRangeEnd} sur ${filtered.length}`
-              : lang === "en"
-                ? `Showing ${programClientRangeStart} - ${programClientRangeEnd} of ${filtered.length}`
-                : `عرض ${programClientRangeStart} - ${programClientRangeEnd} من ${filtered.length}`}
-          </span>
-          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-            <select
-              value={programClientPageSize}
-              onChange={handleProgramClientPageSizeChange}
-              style={{
-                height:32,
-                borderRadius:9,
-                border:"1px solid rgba(255,255,255,.12)",
-                background:"rgba(255,255,255,.04)",
-                color:tc.white,
-                padding:"0 9px",
-                fontSize:11.5,
-                fontWeight:800,
-                fontFamily:"'Cairo',sans-serif",
-                direction:dir,
-                outline:"none",
-                cursor:"pointer",
-              }}
-            >
-              {programClientPageSizeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <div style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
-              <button
-                type="button"
-                onClick={() => goToProgramClientPage(safeProgramClientPage - 1)}
-                disabled={safeProgramClientPage <= 1}
-                style={{
-                  width:30,
-                  height:30,
-                  borderRadius:8,
-                  border:"1px solid rgba(255,255,255,.1)",
-                  background:"rgba(255,255,255,.04)",
-                  color:safeProgramClientPage <= 1 ? "rgba(148,163,184,.45)" : tc.gold,
-                  cursor:safeProgramClientPage <= 1 ? "not-allowed" : "pointer",
-                  display:"inline-flex",
-                  alignItems:"center",
-                  justifyContent:"center",
-                }}
-                aria-label={t.previous || "Previous"}
-              >
-                <AppIcon name="chevronBack" size={14} color="currentColor" style={{ transform:isRTL ? "rotate(180deg)" : "none" }} />
-              </button>
-              <span style={{ color:tc.gold, fontSize:11.5, fontWeight:900, minWidth:72, textAlign:"center" }}>
-                {lang === "fr" || lang === "en"
-                  ? `Page ${safeProgramClientPage} / ${totalProgramClientPages}`
-                  : `صفحة ${safeProgramClientPage} / ${totalProgramClientPages}`}
-              </span>
-              <button
-                type="button"
-                onClick={() => goToProgramClientPage(safeProgramClientPage + 1)}
-                disabled={safeProgramClientPage >= totalProgramClientPages}
-                style={{
-                  width:30,
-                  height:30,
-                  borderRadius:8,
-                  border:"1px solid rgba(255,255,255,.1)",
-                  background:"rgba(255,255,255,.04)",
-                  color:safeProgramClientPage >= totalProgramClientPages ? "rgba(148,163,184,.45)" : tc.gold,
-                  cursor:safeProgramClientPage >= totalProgramClientPages ? "not-allowed" : "pointer",
-                  display:"inline-flex",
-                  alignItems:"center",
-                  justifyContent:"center",
-                }}
-                aria-label={t.next || "Next"}
-              >
-                <AppIcon name="chevronBack" size={14} color="currentColor" style={{ transform:isRTL ? "none" : "rotate(180deg)" }} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ProgramClientsToolbar
+        selectMode={selectMode}
+        statusFilterRef={statusFilterRef}
+        statusFilterOpen={statusFilterOpen}
+        onToggleStatusFilter={() => setStatusFilterOpen(open => !open)}
+        activeStatusFilter={activeStatusFilter}
+        filter={filter}
+        filters={filters}
+        filterMenuBaseStyle={filterMenuBaseStyle}
+        filterMenuItemStyle={filterMenuItemStyle}
+        filterMenuCountStyle={filterMenuCountStyle}
+        onSelectStatusFilter={(key) => {
+          setFilter(key);
+          setStatusFilterOpen(false);
+        }}
+        searchExpanded={searchExpanded}
+        search={search}
+        searchInputRef={searchInputRef}
+        onSearchMouseEnter={() => setSearchOpen(true)}
+        onSearchMouseLeave={() => {
+          if (!search.trim() && document.activeElement !== searchInputRef.current) setSearchOpen(false);
+        }}
+        onSearchButtonClick={() => {
+          setSearchOpen(true);
+          requestAnimationFrame(() => searchInputRef.current?.focus());
+        }}
+        onSearchChange={e=>setSearch(e.target.value)}
+        onSearchFocus={() => setSearchOpen(true)}
+        onSearchBlur={() => {
+          if (!search.trim()) setSearchOpen(false);
+        }}
+        onClearSearch={() => {
+          setSearch("");
+          requestAnimationFrame(() => searchInputRef.current?.focus());
+        }}
+        filteredCount={filtered.length}
+        onToggleSelectMode={() => {
+          if (selectMode) {
+            exitSelectMode();
+          } else {
+            clearSelection();
+            setSelectMode(true);
+          }
+        }}
+        t={t}
+        lang={lang}
+        dir={dir}
+        isRTL={isRTL}
+        programClientRangeStart={programClientRangeStart}
+        programClientRangeEnd={programClientRangeEnd}
+        programClientPageSize={programClientPageSize}
+        onProgramClientPageSizeChange={handleProgramClientPageSizeChange}
+        programClientPageSizeOptions={programClientPageSizeOptions}
+        safeProgramClientPage={safeProgramClientPage}
+        totalProgramClientPages={totalProgramClientPages}
+        onGoToProgramClientPage={goToProgramClientPage}
+      />
 
       {selectMode && (
-        <GlassCard style={{ padding:"10px 14px", marginBottom:14 }}>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:13, color:tc.gold, fontWeight:700 }}>
-              {tr("selectedCount", { count: checkedIds.size })}
-            </span>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
-              <div style={{ position:"relative" }}>
-                <button
-                  ref={bulkActionsBtnRef}
-                  type="button"
-                  onClick={() => setBulkActionsOpen((open) => !open)}
-                  disabled={checkedIds.size === 0}
-                  title={t.bulkActions || "Actions"}
-                  style={{
-                    width:34,
-                    height:32,
-                    borderRadius:9,
-                    border:`1px solid ${bulkActionsOpen ? "var(--rukn-border-hover)" : "var(--rukn-border-soft)"}`,
-                    background:bulkActionsOpen ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
-                    color:bulkActionsOpen ? tc.gold : tc.grey,
-                    cursor:checkedIds.size === 0 ? "not-allowed" : "pointer",
-                    opacity:checkedIds.size === 0 ? .55 : 1,
-                    display:"inline-flex",
-                    alignItems:"center",
-                    justifyContent:"center",
-                    fontSize:18,
-                    fontWeight:900,
-                    letterSpacing:1,
-                    transition:"all .15s",
-                  }}
-                  aria-label={t.bulkActions || "Actions"}
-                >
-                  ···
-                </button>
-                {bulkActionsOpen && createPortal(
-                  <div
-                    ref={bulkActionsMenuRef}
-                    style={{
-                      position:"fixed",
-                      top:bulkActionsMenuPos.top,
-                      left:bulkActionsMenuPos.left,
-                      visibility:bulkActionsMenuPos.visibility,
-                      zIndex:9999,
-                      background:"var(--rukn-menu-bg, rgba(20,30,50,0.96))",
-                      border:"1px solid var(--rukn-menu-border, rgba(212,175,55,.3))",
-                      borderRadius:12,
-                      boxShadow:"var(--rukn-menu-shadow, 0 10px 25px rgba(0,0,0,0.35))",
-                      minWidth:220,
-                      overflow:"hidden",
-                    }}
-                  >
-                    <InnerMenuBtn
-                      icon="refresh"
-                      label={t.transferSelected}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleTransferSelected();
-                      }}
-                      color="var(--rukn-text-strong)"
-                      hoverBg="var(--rukn-gold-dim)"
-                      isRTL={isRTL}
-                      border
-                    />
-                    <InnerMenuBtn
-                      icon="trash"
-                      label={t.deleteSelected}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        handleDeleteSelectedClick();
-                      }}
-                      color="var(--rukn-danger)"
-                      hoverBg="var(--rukn-danger-dim)"
-                      isRTL={isRTL}
-                    />
-                  </div>,
-                  document.body
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={exitSelectMode}
-              >
-                {t.cancel}
-              </Button>
-            </div>
-          </div>
-        </GlassCard>
+        <BulkClientActionsBar
+          selectedCount={checkedIds.size}
+          selectedCountLabel={tr("selectedCount", { count: checkedIds.size })}
+          bulkActionsOpen={bulkActionsOpen}
+          bulkActionsBtnRef={bulkActionsBtnRef}
+          bulkActionsMenuRef={bulkActionsMenuRef}
+          bulkActionsMenuPos={bulkActionsMenuPos}
+          onToggleBulkActions={() => setBulkActionsOpen((open) => !open)}
+          onTransferSelected={(event) => {
+            event.stopPropagation();
+            handleTransferSelected();
+          }}
+          onDeleteSelected={(event) => {
+            event.stopPropagation();
+            handleDeleteSelectedClick();
+          }}
+          onExitSelectMode={exitSelectMode}
+          t={t}
+          isRTL={isRTL}
+        />
       )}
 
       {filtered.length > 0 && (
@@ -6088,7 +5824,11 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.onDropClient === next.data.onDropClient
 ));
 
-const roomingNodeTypes = { room: RoomingFlowNode };
+const ROOMING_NODE_TYPES = Object.freeze({ room: RoomingFlowNode });
+const ROOMING_EDGE_TYPES = Object.freeze({});
+const ROOMING_EDGES = Object.freeze([]);
+const ROOMING_FIT_VIEW_OPTIONS = Object.freeze({ padding: 0.18 });
+const ROOMING_PRO_OPTIONS = Object.freeze({ hideAttribution: true });
 
 function RoomingMenu({ open, children, align = "start", width = 220 }) {
   if (!open) return null;
@@ -6165,10 +5905,11 @@ function RoomingFlowSurface({
     <ReactFlow
       className="rooming-flow-canvas"
       nodes={nodes}
-      edges={[]}
-      nodeTypes={roomingNodeTypes}
+      edges={ROOMING_EDGES}
+      nodeTypes={ROOMING_NODE_TYPES}
+      edgeTypes={ROOMING_EDGE_TYPES}
       fitView
-      fitViewOptions={{ padding: 0.18 }}
+      fitViewOptions={ROOMING_FIT_VIEW_OPTIONS}
       minZoom={0.35}
       maxZoom={1.6}
       panOnDrag
@@ -6186,7 +5927,7 @@ function RoomingFlowSurface({
       onNodeDragStop={onNodeDragStop}
       onPaneContextMenu={onPaneContextMenu}
       onPaneClick={onPaneClick}
-      proOptions={{ hideAttribution: true }}
+      proOptions={ROOMING_PRO_OPTIONS}
       style={{ width: "100%", height: "100%", background: "var(--rooming-canvas-bg)" }}
     >
       <Background variant="dots" color="var(--rooming-canvas-dot)" gap={22} size={1.55} />
