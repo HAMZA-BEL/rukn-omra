@@ -686,9 +686,9 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
 };
 
 const getRoomingCategoryAccent = (category) => {
-  if (category === "female_only") return { border: "#db2777", bg: "#fdf2f8", text: "#9d174d" };
-  if (category === "family") return { border: "#16a34a", bg: "#f0fdf4", text: "#166534" };
-  return { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8" };
+  if (category === "female_only") return { border: "#db2777", bg: "#fdf2f8", text: "#9d174d", darkBg: "rgba(219,39,119,.20)", darkText: "#f9a8d4", darkBorder: "rgba(244,114,182,.44)" };
+  if (category === "family") return { border: "#16a34a", bg: "#f0fdf4", text: "#166534", darkBg: "rgba(22,163,74,.18)", darkText: "#86efac", darkBorder: "rgba(74,222,128,.38)" };
+  return { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8", darkBg: "rgba(37,99,235,.22)", darkText: "#93c5fd", darkBorder: "rgba(96,165,250,.42)" };
 };
 
 const getRoomingLayoutTypeKey = (room = {}) => {
@@ -5202,8 +5202,76 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   }, []);
 
   return (
-    <div style={fullscreen ? { position: "fixed", inset: 0, zIndex: 90, background: "#f3f5f8" } : undefined}>
+    <div className="rooming-designer-root" style={fullscreen ? { position: "fixed", inset: 0, zIndex: 90, background: "var(--rooming-page-bg)" } : undefined}>
       <style>{`
+        .rooming-designer-root,
+        .rooming-modal-surface {
+          --rooming-page-bg: #f3f5f8;
+          --rooming-panel-bg: #ffffff;
+          --rooming-panel-border: rgba(148,163,184,.22);
+          --rooming-panel-shadow: 0 12px 28px rgba(15,23,42,.08);
+          --rooming-text: #0f172a;
+          --rooming-text-soft: #334155;
+          --rooming-muted: #64748b;
+          --rooming-input-bg: #ffffff;
+          --rooming-input-border: rgba(148,163,184,.24);
+          --rooming-toolbar-bg: #ffffff;
+          --rooming-toolbar-border: rgba(148,163,184,.2);
+          --rooming-button-bg: #ffffff;
+          --rooming-button-active-bg: rgba(37,99,235,.08);
+          --rooming-button-text: #334155;
+          --rooming-button-active-text: #2563eb;
+          --rooming-popover-bg: #ffffff;
+          --rooming-popover-border: rgba(148,163,184,.22);
+          --rooming-popover-shadow: 0 18px 42px rgba(15,23,42,.16);
+          --rooming-list-bg: #f8fafc;
+          --rooming-list-hover-bg: #ffffff;
+          --rooming-list-selected-bg: rgba(37,99,235,.07);
+          --rooming-chip-bg: rgba(248,250,252,.78);
+          --rooming-chip-border: rgba(148,163,184,.18);
+          --rooming-chip-text: #111827;
+          --rooming-source-bg: rgba(241,245,249,.7);
+          --rooming-source-text: #64748b;
+          --rooming-modal-section-bg: #f8fafc;
+          --rooming-modal-section-border: rgba(148,163,184,.18);
+          --rooming-danger-soft-bg: rgba(254,226,226,.75);
+          --rooming-danger-text: #b91c1c;
+          --rooming-minimap-mask: rgba(248,250,252,.72);
+        }
+        html[data-theme="dark"] .rooming-designer-root,
+        html[data-theme="dark"] .rooming-modal-surface {
+          --rooming-page-bg: #07111f;
+          --rooming-panel-bg: rgba(15,23,42,.96);
+          --rooming-panel-border: rgba(148,163,184,.24);
+          --rooming-panel-shadow: 0 18px 44px rgba(0,0,0,.38);
+          --rooming-text: #f8fafc;
+          --rooming-text-soft: #e2e8f0;
+          --rooming-muted: #a8b5c8;
+          --rooming-input-bg: rgba(15,23,42,.72);
+          --rooming-input-border: rgba(148,163,184,.30);
+          --rooming-toolbar-bg: rgba(15,23,42,.94);
+          --rooming-toolbar-border: rgba(148,163,184,.24);
+          --rooming-button-bg: rgba(30,41,59,.88);
+          --rooming-button-active-bg: rgba(37,99,235,.22);
+          --rooming-button-text: #dbeafe;
+          --rooming-button-active-text: #93c5fd;
+          --rooming-popover-bg: rgba(15,23,42,.98);
+          --rooming-popover-border: rgba(148,163,184,.28);
+          --rooming-popover-shadow: 0 22px 52px rgba(0,0,0,.48);
+          --rooming-list-bg: rgba(30,41,59,.78);
+          --rooming-list-hover-bg: rgba(51,65,85,.92);
+          --rooming-list-selected-bg: rgba(37,99,235,.22);
+          --rooming-chip-bg: rgba(30,41,59,.82);
+          --rooming-chip-border: rgba(148,163,184,.24);
+          --rooming-chip-text: #f8fafc;
+          --rooming-source-bg: rgba(15,23,42,.78);
+          --rooming-source-text: #cbd5e1;
+          --rooming-modal-section-bg: rgba(30,41,59,.72);
+          --rooming-modal-section-border: rgba(148,163,184,.24);
+          --rooming-danger-soft-bg: rgba(127,29,29,.28);
+          --rooming-danger-text: #fca5a5;
+          --rooming-minimap-mask: rgba(2,6,23,.58);
+        }
         .rooming-flow-node {
           transition: box-shadow .12s ease, border-color .12s ease, background .12s ease;
           cursor: grab;
@@ -5230,14 +5298,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }
         html[data-theme="dark"] .rooming-canvas-shell,
         html[data-theme="dark"] .rooming-flow-canvas {
-          --rooming-canvas-bg: #181713;
-          --rooming-canvas-dot: rgba(226,232,240,.20);
-          --rooming-canvas-border: rgba(226,232,240,.12);
-          --rooming-canvas-shadow: 0 16px 38px rgba(0,0,0,.28);
-          --rooming-card-bg: #24221d;
-          --rooming-card-border: rgba(226,232,240,.16);
-          --rooming-card-shadow: 0 10px 24px rgba(0,0,0,.30);
-          --rooming-card-hover-shadow: 0 14px 30px rgba(0,0,0,.34);
+          --rooming-canvas-bg: #08111f;
+          --rooming-canvas-dot: rgba(148,163,184,.26);
+          --rooming-canvas-border: rgba(148,163,184,.22);
+          --rooming-canvas-shadow: 0 18px 46px rgba(0,0,0,.42);
+          --rooming-card-bg: #111c2d;
+          --rooming-card-border: rgba(203,213,225,.20);
+          --rooming-card-shadow: 0 18px 38px rgba(0,0,0,.42);
+          --rooming-card-hover-shadow: 0 22px 46px rgba(0,0,0,.48), 0 0 0 1px rgba(96,165,250,.20);
         }
         .rooming-flow-canvas.react-flow,
         .rooming-flow-canvas .react-flow__renderer,
@@ -5270,17 +5338,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           overflow: hidden;
           border: 1px solid rgba(148,163,184,.28);
           border-radius: 12px;
-          background: #fff;
+          background: var(--rooming-panel-bg);
         }
         .rooming-flow-canvas .react-flow__controls-button {
           width: 34px;
           height: 34px;
           border-bottom: 1px solid rgba(148,163,184,.16);
-          background: #fff;
-          color: #0f172a;
+          background: var(--rooming-panel-bg);
+          color: var(--rooming-text);
         }
         .rooming-flow-canvas .react-flow__controls-button:hover {
-          background: #f8fafc;
+          background: var(--rooming-list-hover-bg);
         }
         .rooming-unassigned-card {
           transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
@@ -5288,15 +5356,52 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }
         .rooming-unassigned-card:hover {
           border-color: rgba(37,99,235,.32) !important;
-          background: #fff !important;
+          background: var(--rooming-list-hover-bg) !important;
           box-shadow: 0 10px 24px rgba(15,23,42,.10);
           transform: translateY(-1px);
+        }
+        html[data-theme="dark"] .rooming-unassigned-card:hover {
+          border-color: rgba(96,165,250,.44) !important;
+          box-shadow: 0 12px 28px rgba(0,0,0,.34);
         }
         .rooming-unassigned-card:active {
           cursor: grabbing;
         }
         .rooming-menu-item:hover {
           background: rgba(37,99,235,.08) !important;
+        }
+        html[data-theme="dark"] .rooming-menu-item:hover {
+          background: rgba(96,165,250,.16) !important;
+        }
+        html[data-theme="dark"] .rooming-menu-item svg {
+          color: currentColor;
+          stroke: currentColor;
+        }
+        html[data-theme="dark"] .rooming-category-badge {
+          background: var(--category-dark-bg) !important;
+          color: var(--category-dark-text) !important;
+          border-color: var(--category-dark-border) !important;
+        }
+        .rooming-designer-root input:not([type="checkbox"]),
+        .rooming-designer-root select,
+        .rooming-designer-root textarea,
+        .rooming-modal-surface input:not([type="checkbox"]),
+        .rooming-modal-surface select,
+        .rooming-modal-surface textarea {
+          background: var(--rooming-input-bg) !important;
+          border-color: var(--rooming-input-border) !important;
+          color: var(--rooming-text) !important;
+        }
+        .rooming-designer-root input::placeholder,
+        .rooming-modal-surface input::placeholder {
+          color: var(--rooming-muted) !important;
+        }
+        html[data-theme="dark"] .rooming-modal-surface p,
+        html[data-theme="dark"] .rooming-modal-surface span,
+        html[data-theme="dark"] .rooming-modal-surface strong,
+        html[data-theme="dark"] .rooming-modal-surface small,
+        html[data-theme="dark"] .rooming-modal-surface label {
+          color: var(--rooming-text-soft);
         }
       `}</style>
       <GlassCard gold style={{
@@ -5306,14 +5411,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         width: fullscreen ? "100vw" : "100%",
         display: "flex",
         flexDirection: "column",
-        background: "#f3f5f8",
-        border: "1px solid rgba(203,213,225,.85)",
+        background: "var(--rooming-page-bg)",
+        border: "1px solid var(--rooming-panel-border)",
         overflow: "hidden",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
           <div>
-            <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
-            <p style={{ color: "#64748b", fontSize: 12, marginTop: 3 }}>
+            <p style={{ color: "var(--rooming-text)", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
+            <p style={{ color: "var(--rooming-muted)", fontSize: 12, marginTop: 3 }}>
               {program.name || "—"} • {roomingCityLabels[city]} • {clients.length} {t.pilgrimUnit || "معتمر"}
               {roomingStatusText ? ` • ${roomingStatusText}` : ""}
             </p>
@@ -5324,24 +5429,24 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               return (
                 <div key={key} style={{
                   minWidth: 132,
-                  border: "1px solid rgba(148,163,184,.20)",
-                  background: "#fff",
+                  border: "1px solid var(--rooming-panel-border)",
+                  background: "var(--rooming-panel-bg)",
                   borderRadius: 999,
                   padding: "5px 8px",
                   boxShadow: "0 6px 16px rgba(15,23,42,.045)",
                 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#334155", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "var(--rooming-text-soft)", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>
                     <span>{label}</span>
                     <span>{progress.assigned}/{progress.total} · {progress.percent}%</span>
                   </div>
-                  <div style={{ height: 3, borderRadius: 999, background: "#e2e8f0", overflow: "hidden", marginTop: 4 }}>
+                  <div style={{ height: 3, borderRadius: 999, background: "var(--rooming-input-border)", overflow: "hidden", marginTop: 4 }}>
                     <div style={{ width: `${Math.min(100, progress.percent)}%`, height: "100%", borderRadius: 999, background: "linear-gradient(90deg,#2563eb,#16a34a)" }} />
                   </div>
                 </div>
               );
             })}
           </div>
-          <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "#fff", border: "1px solid rgba(148,163,184,.22)" }}>
+          <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10, background: "var(--rooming-toolbar-bg)", border: "1px solid var(--rooming-toolbar-border)" }}>
             {Object.entries(roomingCityLabels).map(([key, label]) => (
               <button
                 key={key}
@@ -5349,8 +5454,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 onClick={() => switchCity(key)}
                 style={{
                   border: 0,
-                  background: city === key ? "#e8eefc" : "transparent",
-                  color: city === key ? "#1d4ed8" : "#475569",
+                  background: city === key ? "var(--rooming-button-active-bg)" : "transparent",
+                  color: city === key ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
                   borderRadius: 8,
                   padding: "7px 10px",
                   fontSize: 12,
@@ -5366,7 +5471,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         </div>
 
         {!toolbarCollapsed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "#fff", border: "1px solid rgba(148,163,184,.2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "var(--rooming-toolbar-bg)", border: "1px solid var(--rooming-toolbar-border)" }}>
             <RoomingToolbarButton
               title={t.hideToolbar || "إخفاء الأدوات"}
               onClick={() => setToolbarCollapsed(true)}
@@ -5415,9 +5520,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               disabled={!selectedRoomIds.size}
               icon={<Trash2 size={15} />}
               style={{
-                border: "1px solid rgba(185,28,28,.22)",
-                background: "rgba(254,226,226,.75)",
-                color: "#b91c1c",
+                border: "1px solid rgba(239,68,68,.32)",
+                background: "var(--rooming-danger-soft-bg)",
+                color: "var(--rooming-danger-text)",
               }}
             >
               <span>{t.roomingDeleteSelectedRooms || "حذف الغرف المحددة"}</span>
@@ -5476,7 +5581,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                     width: 8,
                     height: 8,
                     borderRadius: 999,
-                    background: roomOccupancyFilter === option.value ? "#2563eb" : "#cbd5e1",
+                    background: roomOccupancyFilter === option.value ? "var(--rooming-button-active-text)" : "var(--rooming-input-border)",
                     flexShrink: 0,
                   }} />}
                   onClick={() => {
@@ -5501,15 +5606,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             </RoomingToolbarButton>
             <RoomingMenu open={roomNeedsOpen} align="start" width={260}>
               <div style={{ padding: "6px 8px 8px" }}>
-                <p style={{ color: "#0f172a", fontSize: 12, fontWeight: 900, marginBottom: 8 }}>{t.roomNeeds || "احتياج الغرف"}</p>
+                <p style={{ color: "var(--rooming-text)", fontSize: 12, fontWeight: 900, marginBottom: 8 }}>{t.roomNeeds || "احتياج الغرف"}</p>
                 {!roomNeeds.details.length ? (
-                  <p style={{ color: "#64748b", fontSize: 11 }}>{t.noDetails || "بدون تفاصيل"}</p>
+                  <p style={{ color: "var(--rooming-muted)", fontSize: 11 }}>{t.noDetails || "بدون تفاصيل"}</p>
                 ) : (
                   <div style={{ display: "grid", gap: 7 }}>
                     {roomNeeds.details.map((item) => (
-                      <div key={item.type} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", color: "#334155", fontSize: 11, fontWeight: 800 }}>
+                      <div key={item.type} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", color: "var(--rooming-text-soft)", fontSize: 11, fontWeight: 800 }}>
                         <span>{item.label}</span>
-                        <span style={{ color: "#0f172a" }}>
+                        <span style={{ color: "var(--rooming-text)" }}>
                           {tr("roomNeedsLine", { rooms: item.rooms, pilgrims: item.pilgrims }) || `${item.rooms} غرف / ${item.pilgrims} معتمرين`}
                         </span>
                       </div>
@@ -5523,7 +5628,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             value={zoom}
             onChange={(event) => applyFlowZoom(Number(event.target.value))}
             title={t.roomingZoom || "التكبير"}
-            style={{ height: 34, borderRadius: 8, border: "1px solid rgba(148,163,184,.24)", background: "#fff", color: "#334155", padding: "0 10px", fontSize: 12, fontWeight: 700, fontFamily: "'Cairo',sans-serif" }}
+            style={{ height: 34, borderRadius: 8, border: "1px solid var(--rooming-input-border)", background: "var(--rooming-input-bg)", color: "var(--rooming-text-soft)", padding: "0 10px", fontSize: 12, fontWeight: 700, fontFamily: "'Cairo',sans-serif" }}
           >
             {[75, 100, 125].map((value) => <option key={value} value={value}>{value}%</option>)}
           </select>
@@ -5556,8 +5661,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   active
                   icon={<ChevronDown size={15} />}
                   style={{
-                    background: "rgba(255,255,255,.96)",
-                    border: "1px solid rgba(148,163,184,.22)",
+                    background: "var(--rooming-button-bg)",
+                    border: "1px solid var(--rooming-toolbar-border)",
                     boxShadow: "0 10px 24px rgba(15,23,42,.12)",
                   }}
                 />
@@ -5582,8 +5687,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 style={{ display: "grid", placeItems: "center", minHeight: "100%", padding: 30 }}
               >
                 <div style={{ textAlign: "center", maxWidth: 420 }}>
-                  <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>{t.roomingStartTitle || "ابدأ بتوليد الغرف"}</p>
-                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t.roomingStartDesc || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا."}</p>
+                  <p style={{ color: "var(--rooming-text)", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>{t.roomingStartTitle || "ابدأ بتوليد الغرف"}</p>
+                  <p style={{ color: "var(--rooming-muted)", fontSize: 13, marginBottom: 16 }}>{t.roomingStartDesc || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا."}</p>
                   <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
                 </div>
               </div>
@@ -5621,12 +5726,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                     zIndex: 5,
                   }}>
                     <div style={{
-                      background: "rgba(255,255,255,.92)",
-                      border: "1px solid rgba(148,163,184,.22)",
+                      background: "var(--rooming-panel-bg)",
+                      border: "1px solid var(--rooming-panel-border)",
                       boxShadow: "0 18px 42px rgba(15,23,42,.12)",
                       borderRadius: 14,
                       padding: "16px 20px",
-                      color: "#334155",
+                      color: "var(--rooming-text-soft)",
                       fontWeight: 800,
                       fontSize: 13,
                     }}>
@@ -5644,10 +5749,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   top: canvasMenu.y,
                   left: canvasMenu.x,
                   width: 170,
-                  background: "#fff",
-                  border: "1px solid rgba(148,163,184,.22)",
+                  background: "var(--rooming-popover-bg)",
+                  border: "1px solid var(--rooming-popover-border)",
                   borderRadius: 12,
-                  boxShadow: "0 18px 42px rgba(15,23,42,.16)",
+                  boxShadow: "var(--rooming-popover-shadow)",
                   padding: 6,
                   zIndex: 120,
                 }}
@@ -5681,9 +5786,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           </div>
 
           {panelOpen && (
-            <aside style={{ background: "#fff", border: "1px solid rgba(148,163,184,.22)", borderRadius: 14, padding: 12, overflow: "auto", boxShadow: "0 12px 28px rgba(15,23,42,.08)" }}>
+            <aside style={{ background: "var(--rooming-panel-bg)", border: "1px solid var(--rooming-panel-border)", borderRadius: 14, padding: 12, overflow: "auto", boxShadow: "var(--rooming-panel-shadow)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <p style={{ color: "#0f172a", fontWeight: 900, fontSize: 13 }}>{t.unassignedReview || "غير مسكنين / يحتاجون مراجعة"}</p>
+                <p style={{ color: "var(--rooming-text)", fontWeight: 900, fontSize: 13 }}>{t.unassignedReview || "غير مسكنين / يحتاجون مراجعة"}</p>
                 <RoomingToolbarButton title={t.roomingHideUnassigned || "إخفاء"} onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
               </div>
               <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
@@ -5692,7 +5797,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: t.allRooms || "كل الغرف" }, ...roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))]} />
               </div>
               {!filteredUnassigned.length ? (
-                <p style={{ color: "#64748b", fontSize: 12 }}>{t.noUnassignedForFilters || "لا توجد حالات غير مسكنة ضمن الفلاتر الحالية."}</p>
+                <p style={{ color: "var(--rooming-muted)", fontSize: 12 }}>{t.noUnassignedForFilters || "لا توجد حالات غير مسكنة ضمن الفلاتر الحالية."}</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {filteredUnassigned.map((item) => {
@@ -5715,18 +5820,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                           event.dataTransfer.setData("text/plain", context.name || item.clientId);
                         }}
                         onDragEnd={() => setDraggingClientId(null)}
-                        style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(148,163,184,.18)", background: draggingClientId === item.clientId ? "#eff6ff" : "#f8fafc", borderRadius: 10, padding: 9 }}
+                        style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-panel-border)", background: draggingClientId === item.clientId ? "var(--rooming-list-selected-bg)" : "var(--rooming-list-bg)", borderRadius: 10, padding: 9 }}
                       >
-                        <strong style={{ display: "block", color: "#0f172a", fontSize: 12 }}>{context.name}</strong>
-                        <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", color: "#64748b", fontSize: 11, marginTop: 3 }}>
+                        <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 12 }}>{context.name}</strong>
+                        <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", color: "var(--rooming-muted)", fontSize: 11, marginTop: 3 }}>
                           <span>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}</span>
                           {genderMissing && (
                             <span style={{
                               display: "inline-flex",
                               alignItems: "center",
                               border: "1px solid rgba(148,163,184,.24)",
-                              background: "#fff",
-                              color: "#64748b",
+                              background: "var(--rooming-source-bg)",
+                              color: "var(--rooming-source-text)",
                               borderRadius: 999,
                               padding: "1px 6px",
                               fontSize: 9,
@@ -5738,7 +5843,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                             </span>
                           )}
                         </span>
-                        {displayReason && <span style={{ display: "block", color: "#b45309", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
+                        {displayReason && <span style={{ display: "block", color: "var(--rukn-warning)", fontSize: 11, marginTop: 3 }}>{displayReason}</span>}
                         {selectedRoom && (
                           <button
                             type="button"
@@ -5751,8 +5856,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                               marginTop: 8,
                               width: "100%",
                               border: "1px solid rgba(37,99,235,.18)",
-                              background: canAddToSelected ? "#eff6ff" : "#eef2f7",
-                              color: canAddToSelected ? "#1d4ed8" : "#94a3b8",
+                              background: canAddToSelected ? "var(--rooming-button-active-bg)" : "var(--rooming-list-bg)",
+                              color: canAddToSelected ? "var(--rooming-button-active-text)" : "var(--rooming-muted)",
                               borderRadius: 8,
                               padding: "6px 8px",
                               fontSize: 11,
@@ -5779,17 +5884,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           title={roomingPrintLabels.title}
           width={460}
         >
-          <div style={{ display: "grid", gap: 16 }}>
+          <div className="rooming-modal-surface" style={{ display: "grid", gap: 16 }}>
             <label style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               gap: 12,
               padding: "10px 12px",
-              border: "1px solid rgba(148,163,184,.18)",
+              border: "1px solid var(--rooming-modal-section-border)",
               borderRadius: 12,
-              background: "#f8fafc",
-              color: "#0f172a",
+              background: "var(--rooming-modal-section-bg)",
+              color: "var(--rooming-text)",
               fontSize: 13,
               fontWeight: 900,
             }}>
@@ -5806,15 +5911,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             </label>
 
             <div style={{ display: "grid", gap: 8 }}>
-              <p style={{ color: "#334155", fontSize: 12, fontWeight: 900 }}>{roomingPrintLabels.density}</p>
+              <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>{roomingPrintLabels.density}</p>
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                 gap: 6,
                 padding: 4,
                 borderRadius: 12,
-                background: "#f1f5f9",
-                border: "1px solid rgba(148,163,184,.18)",
+                background: "var(--rooming-list-bg)",
+                border: "1px solid var(--rooming-modal-section-border)",
               }}>
                 {roomingDensityOptions.map((option) => {
                   const active = roomingPrintSettings.density === option.value;
@@ -5825,8 +5930,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                       onClick={() => setRoomingPrintSettings((prev) => ({ ...prev, density: option.value }))}
                       style={{
                         border: active ? "1px solid rgba(37,99,235,.34)" : "1px solid transparent",
-                        background: active ? "#fff" : "transparent",
-                        color: active ? "#1d4ed8" : "#475569",
+                        background: active ? "var(--rooming-button-bg)" : "transparent",
+                        color: active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
                         boxShadow: active ? "0 8px 18px rgba(15,23,42,.08)" : "none",
                         borderRadius: 9,
                         padding: "8px 10px",
@@ -5853,29 +5958,29 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
         <Modal open={Boolean(pendingDrop)} onClose={cancelPendingDrop} title={pendingDropCopy?.title || ""} width={520}>
           {pendingDrop && pendingDropCopy && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
+            <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <p style={{ color: "var(--rooming-text-soft)", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
                 {pendingDropCopy.intro}
               </p>
               {pendingDropCopy.details?.length ? (
-                <div style={{ display: "grid", gap: 9, padding: 12, border: "1px solid rgba(148,163,184,.18)", background: "#f8fafc", borderRadius: 12 }}>
+                <div style={{ display: "grid", gap: 9, padding: 12, border: "1px solid var(--rooming-modal-section-border)", background: "var(--rooming-modal-section-bg)", borderRadius: 12 }}>
                   {pendingDropCopy.details.map((detail, index) => detail.note ? (
-                    <p key={`note-${index}`} style={{ color: "#475569", fontSize: 12, fontWeight: 800, lineHeight: 1.7, margin: 0 }}>{detail.note}</p>
+                    <p key={`note-${index}`} style={{ color: "var(--rooming-muted)", fontSize: 12, fontWeight: 800, lineHeight: 1.7, margin: 0 }}>{detail.note}</p>
                   ) : (
                     <div key={`${detail.currentLabel}-${index}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div>
-                        <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{detail.currentLabel}</p>
-                        <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900 }}>{detail.currentValue}</p>
+                        <p style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 800 }}>{detail.currentLabel}</p>
+                        <p style={{ color: "var(--rooming-text)", fontSize: 13, fontWeight: 900 }}>{detail.currentValue}</p>
                       </div>
                       <div>
-                        <p style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>{detail.targetLabel}</p>
-                        <p style={{ color: "#1d4ed8", fontSize: 13, fontWeight: 900 }}>{detail.targetValue}</p>
+                        <p style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 800 }}>{detail.targetLabel}</p>
+                        <p style={{ color: "var(--rooming-button-active-text)", fontSize: 13, fontWeight: 900 }}>{detail.targetValue}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : pendingDropCopy.target ? (
-                <p style={{ color: "#334155", fontSize: 13, lineHeight: 1.8, margin: 0 }}>{pendingDropCopy.target}</p>
+                <p style={{ color: "var(--rooming-text-soft)", fontSize: 13, lineHeight: 1.8, margin: 0 }}>{pendingDropCopy.target}</p>
               ) : null}
               {pendingDropCopy.priceSection && (
                 <div style={{
@@ -5883,19 +5988,19 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   gap: 10,
                   padding: 12,
                   border: "1px solid rgba(212,175,55,.24)",
-                  background: "rgba(212,175,55,.07)",
+                  background: "var(--rukn-gold-dim)",
                   borderRadius: 12,
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ color: "#64748b", fontSize: 11, fontWeight: 900 }}>
+                    <span style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 900 }}>
                       {pendingDropCopy.priceSection.newOfficialLabel}
                     </span>
-                    <strong style={{ color: "#0f172a", fontSize: 14 }}>
+                    <strong style={{ color: "var(--rooming-text)", fontSize: 14 }}>
                       {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.newOfficialPrice)}
                     </strong>
                   </div>
                   <label style={{ display: "grid", gap: 5 }}>
-                    <span style={{ color: "#64748b", fontSize: 11, fontWeight: 900 }}>
+                    <span style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 900 }}>
                       {pendingDropCopy.priceSection.newSaleLabel}
                     </span>
                     <input
@@ -5906,11 +6011,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                       onWheel={preventNumberInputWheelChange}
                       style={{
                         width: "100%",
-                        border: "1px solid rgba(148,163,184,.35)",
+                        border: "1px solid var(--rooming-input-border)",
                         borderRadius: 9,
                         padding: "8px 10px",
-                        background: "#ffffff",
-                        color: "#0f172a",
+                        background: "var(--rooming-input-bg)",
+                        color: "var(--rooming-text)",
                         fontSize: 13,
                         fontWeight: 800,
                         fontFamily: "'Cairo',sans-serif",
@@ -5925,25 +6030,25 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                     paddingTop: 2,
                   }}>
                     <div>
-                      <p style={{ color: "#94a3b8", fontSize: 10.5, fontWeight: 800 }}>
+                      <p style={{ color: "var(--rooming-muted)", fontSize: 10.5, fontWeight: 800 }}>
                         {pendingDropCopy.priceSection.oldOfficialLabel}
                       </p>
-                      <p style={{ color: "#475569", fontSize: 12, fontWeight: 900 }}>
+                      <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>
                         {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.oldOfficialPrice)}
                       </p>
                     </div>
                     <div>
-                      <p style={{ color: "#94a3b8", fontSize: 10.5, fontWeight: 800 }}>
+                      <p style={{ color: "var(--rooming-muted)", fontSize: 10.5, fontWeight: 800 }}>
                         {pendingDropCopy.priceSection.oldSaleLabel}
                       </p>
-                      <p style={{ color: "#475569", fontSize: 12, fontWeight: 900 }}>
+                      <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>
                         {pendingDropCopy.priceSection.formatPrice(pendingDropCopy.priceSection.oldSalePrice)}
                       </p>
                     </div>
                   </div>
                 </div>
               )}
-              <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 800, lineHeight: 1.8, margin: 0 }}>
+              <p style={{ color: "var(--rooming-text)", fontSize: 13, fontWeight: 800, lineHeight: 1.8, margin: 0 }}>
                 {pendingDropCopy.question}
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
@@ -5960,7 +6065,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         </Modal>
 
         <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} />
             <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} />
             <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} />
@@ -5992,7 +6097,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         </Modal>
 
         <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); setPickerSearch(""); }} title={t.addPilgrim || "إضافة معتمر"} width={560}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Input
               label=""
               value={pickerSearch}
@@ -6000,20 +6105,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               placeholder={t.roomingPilgrimSearchPlaceholder || "ابحث بالاسم أو الهاتف أو رقم الجواز..."}
             />
             {!compatibleUnassigned.length ? (
-              <p style={{ color: "#64748b", fontSize: 12 }}>{t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة"}</p>
+              <p style={{ color: "var(--rooming-muted)", fontSize: 12 }}>{t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة"}</p>
             ) : !filteredCompatibleUnassigned.length ? (
-              <p style={{ color: "#64748b", fontSize: 12 }}>{t.roomingNoMatchingPilgrims || "لا توجد نتائج مطابقة"}</p>
+              <p style={{ color: "var(--rooming-muted)", fontSize: 12 }}>{t.roomingNoMatchingPilgrims || "لا توجد نتائج مطابقة"}</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 330, overflow: "auto" }}>
                 {filteredCompatibleUnassigned.map(({ client }) => {
                   const context = getClientContext(client);
                   const checked = selectedPilgrimIds.includes(client.id);
                   return (
-                    <label key={client.id} style={{ display: "flex", gap: 10, padding: 10, borderRadius: 10, border: "1px solid rgba(148,163,184,.18)", background: checked ? "rgba(37,99,235,.07)" : "#f8fafc", cursor: "pointer" }}>
+                    <label key={client.id} style={{ display: "flex", gap: 10, padding: 10, borderRadius: 10, border: "1px solid var(--rooming-modal-section-border)", background: checked ? "var(--rooming-list-selected-bg)" : "var(--rooming-list-bg)", cursor: "pointer" }}>
                       <input type="checkbox" checked={checked} onChange={(event) => setSelectedPilgrimIds((prev) => event.target.checked ? [...prev, client.id] : prev.filter((id) => id !== client.id))} />
                       <span>
-                        <strong style={{ display: "block", color: "#0f172a", fontSize: 13 }}>{context.name}</strong>
-                        <small style={{ color: "#64748b" }}>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ")}</small>
+                        <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 13 }}>{context.name}</strong>
+                        <small style={{ color: "var(--rooming-muted)" }}>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ")}</small>
                       </span>
                     </label>
                   );
@@ -6052,9 +6157,9 @@ function RoomingToolbarButton({
         height: 34,
         padding: children ? "0 10px" : 0,
         borderRadius: 8,
-        border: `1px solid ${active ? "rgba(37,99,235,.32)" : "rgba(148,163,184,.28)"}`,
-        background: active ? "rgba(37,99,235,.08)" : "#fff",
-        color: active ? "#2563eb" : "#334155",
+        border: `1px solid ${active ? "rgba(37,99,235,.32)" : "var(--rooming-toolbar-border)"}`,
+        background: active ? "var(--rooming-button-active-bg)" : "var(--rooming-button-bg)",
+        color: active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -6118,7 +6223,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       style={{
         width: 250,
         position: "relative",
-        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : selectionChecked ? "#fffbeb" : "var(--rooming-card-bg)",
+        background: isInvalidPosition ? "var(--rooming-danger-soft-bg)" : canDrop ? "rgba(22,163,74,.14)" : isDropTarget ? "var(--rooming-danger-soft-bg)" : selectionChecked ? "rgba(212,175,55,.16)" : "var(--rooming-card-bg)",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
@@ -6146,7 +6251,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           height: 20,
           borderRadius: 999,
           border: `1px solid ${selectionChecked ? "rgba(212,175,55,.95)" : "rgba(148,163,184,.32)"}`,
-          background: selectionChecked ? "#d4af37" : "rgba(255,255,255,.84)",
+          background: selectionChecked ? "#d4af37" : "var(--rooming-button-bg)",
           color: selectionChecked ? "#fff" : "transparent",
           display: "inline-flex",
           alignItems: "center",
@@ -6161,19 +6266,30 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         </span>
       )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 }}>
-        <span style={{ color: accent.text, background: accent.bg, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>
+        <span className="rooming-category-badge" style={{
+          "--category-dark-bg": accent.darkBg,
+          "--category-dark-text": accent.darkText,
+          "--category-dark-border": accent.darkBorder,
+          color: accent.text,
+          background: accent.bg,
+          border: `1px solid ${accent.border}`,
+          borderRadius: 999,
+          padding: "4px 8px",
+          fontSize: 11,
+          fontWeight: 900,
+        }}>
           {translateRoomCategory(room.category, lang) || getRoomingCategoryLabel(room.category)}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: "#0f172a", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{capacity}</span>
+          <span style={{ color: "var(--rooming-text)", fontSize: 12, fontWeight: 900 }}>{occupantIds.length}/{capacity}</span>
           {isFull && (
             <span style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 4,
-              border: "1px solid rgba(22,163,74,.22)",
-              background: "rgba(22,163,74,.08)",
-              color: "#15803d",
+              border: "1px solid rgba(34,197,94,.32)",
+              background: "rgba(22,163,74,.14)",
+              color: "var(--rukn-text)",
               borderRadius: 999,
               padding: "2px 6px",
               fontSize: 9,
@@ -6183,7 +6299,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
               {t.roomingFullBadge || "مكتملة"}
             </span>
           )}
-          {room.locked && <Lock size={13} color="#64748b" title={t.roomLocked || "الغرفة مقفلة"} />}
+          {room.locked && <Lock size={13} color="var(--rooming-muted)" title={t.roomLocked || "الغرفة مقفلة"} />}
           <div
             className="nodrag"
             onPointerDown={(event) => event.stopPropagation()}
@@ -6201,9 +6317,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                 width: 28,
                 height: 28,
                 borderRadius: 8,
-                border: "1px solid rgba(148,163,184,.24)",
-                background: "#fff",
-                color: "#475569",
+                border: "1px solid var(--rooming-toolbar-border)",
+                background: "var(--rooming-button-bg)",
+                color: "var(--rooming-button-text)",
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -6261,10 +6377,10 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           </div>
         </div>
       </div>
-      <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
+      <p style={{ color: "var(--rooming-text)", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
         {translateRoomType(room.roomType, lang) || getRoomingRoomLabel(room.roomType)}
       </p>
-      <p style={{ color: "#64748b", fontSize: 11, marginBottom: 10 }}>{room.hotel || t.roomingMissingHotel || "فندق غير محدد"}</p>
+      <p style={{ color: "var(--rooming-muted)", fontSize: 11, marginBottom: 10 }}>{room.hotel || t.roomingMissingHotel || "فندق غير محدد"}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
         {occupantIds.map((clientId) => {
           const client = data.clientsById[clientId];
@@ -6275,13 +6391,13 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
               alignItems: "center",
               justifyContent: "space-between",
               gap: 8,
-              color: "#111827",
+              color: "var(--rooming-chip-text)",
               fontSize: 12,
               fontWeight: 800,
               padding: "5px 7px",
               borderRadius: 8,
-              border: "1px solid rgba(148,163,184,.18)",
-              background: "rgba(248,250,252,.78)",
+              border: "1px solid var(--rooming-chip-border)",
+              background: "var(--rooming-chip-bg)",
             }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden" }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -6294,9 +6410,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
-                    border: "1px solid rgba(148,163,184,.24)",
-                    background: "rgba(241,245,249,.7)",
-                    color: "#64748b",
+                    border: "1px solid var(--rooming-chip-border)",
+                    background: "var(--rooming-source-bg)",
+                    color: "var(--rooming-source-text)",
                     borderRadius: 999,
                     padding: "1px 6px",
                     fontSize: 9,
@@ -6317,9 +6433,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
                 style={{
                   width: 20,
                   height: 20,
-                  border: "1px solid rgba(148,163,184,.18)",
-                  background: "rgba(255,255,255,.55)",
-                  color: "#94a3b8",
+                  border: "1px solid var(--rooming-chip-border)",
+                  background: "var(--rooming-button-bg)",
+                  color: "var(--rooming-muted)",
                   cursor: "pointer",
                   fontSize: 14,
                   lineHeight: 1,
@@ -6337,7 +6453,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           );
         })}
         {occupantIds.length < capacity && (
-          <span style={{ color: "#94a3b8", fontSize: 12 }}>{t.emptySlot || "مكان شاغر"}</span>
+          <span style={{ color: "var(--rooming-muted)", fontSize: 12 }}>{t.emptySlot || "مكان شاغر"}</span>
         )}
       </div>
     </article>
@@ -6370,10 +6486,10 @@ function RoomingMenu({ open, children, align = "start", width = 220 }) {
         top: "calc(100% + 8px)",
         [align === "end" ? "insetInlineEnd" : "insetInlineStart"]: 0,
         width,
-        background: "#fff",
-        border: "1px solid rgba(148,163,184,.22)",
+        background: "var(--rooming-popover-bg)",
+        border: "1px solid var(--rooming-popover-border)",
         borderRadius: 12,
-        boxShadow: "0 18px 42px rgba(15,23,42,.16)",
+        boxShadow: "var(--rooming-popover-shadow)",
         padding: 6,
         zIndex: 30,
       }}
@@ -6396,8 +6512,8 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false, active = f
         gap: 8,
         border: 0,
         borderRadius: 8,
-        background: active ? "rgba(37,99,235,.08)" : "transparent",
-        color: destructive ? "#b91c1c" : active ? "#1d4ed8" : "#334155",
+        background: active ? "var(--rooming-button-active-bg)" : "transparent",
+        color: destructive ? "var(--rooming-danger-text)" : active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
         padding: "8px 9px",
         cursor: "pointer",
         textAlign: "start",
@@ -6462,7 +6578,7 @@ function RoomingFlowSurface({
     >
       <Background variant="dots" color="var(--rooming-canvas-dot)" gap={22} size={1.55} />
       <Controls position="bottom-left" showInteractive={false} />
-      <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />
+      <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="var(--rooming-button-active-text)" maskColor="var(--rooming-minimap-mask)" />
     </ReactFlow>
   );
 }

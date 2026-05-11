@@ -215,6 +215,22 @@ const roomingRecordContainsClient = (assignment = {}, clientId = "") => {
   return JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId);
 };
 
+const runWithConcurrencyLimit = async (items = [], limit = 3, worker) => {
+  const safeItems = Array.isArray(items) ? items : [];
+  const safeLimit = Math.max(1, Number(limit) || 1);
+  const results = new Array(safeItems.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(safeLimit, safeItems.length) }, async () => {
+    while (nextIndex < safeItems.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(safeItems[currentIndex], currentIndex);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
+
 const normalizeRemoteClientDeleteCheck = (clientId, payload = {}) => {
   const linkedRecords = payload.linkedRecords || {};
   const cleanupPreview = payload.cleanupPreview || payload.cleanup || {};
@@ -2168,7 +2184,7 @@ export function useStore(agencyId, onToast) {
     });
   }, [agencyId, deletedPrograms, deletedClients, logActivity, restoreClients, restoreProgram, sync]);
 
-  const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [], clientPreflightBlocks = null } = {}) => {
+  const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [], clientPreflightBlocks = null, onProgress = null } = {}) => {
     if (!programIds.length && !clientIds.length) return { purged: false };
     const programsToPurge = deletedPrograms.filter(p => programIds.includes(p.id));
     const batchIds = new Set(
@@ -2270,8 +2286,33 @@ export function useStore(agencyId, onToast) {
       );
       if (preflightEligibleClientIds.length) {
         if (isSupabaseEnabled && agencyId) {
-          for (const clientId of preflightEligibleClientIds) {
-            const response = await permanentlyDeleteClientRemote(clientId);
+          let completedClientDeletes = 0;
+          onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
+          const clientDeleteResults = await runWithConcurrencyLimit(preflightEligibleClientIds, 3, async (clientId) => {
+            try {
+              const response = await permanentlyDeleteClientRemote(clientId);
+              return { clientId, response };
+            } catch (error) {
+              return {
+                clientId,
+                response: {
+                  error: {
+                    code: "DELETE_FAILED",
+                    message: error?.message || "Permanent delete failed",
+                    details: error,
+                  },
+                },
+              };
+            } finally {
+              completedClientDeletes += 1;
+              onProgress?.({
+                done: completedClientDeletes,
+                total: preflightEligibleClientIds.length,
+                clientId,
+              });
+            }
+          });
+          for (const { clientId, response } of clientDeleteResults) {
             if (response?.error) {
               const code = String(response.error.code || "");
               if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {

@@ -107,8 +107,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
         ? "Suppression définitive irréversible"
         : "Suppression définitive groupée irréversible",
       body: singleClient
-        ? "Ce pèlerin sera supprimé définitivement avec tous les enregistrements liés, y compris les paiements et les factures s’ils existent.\nVous assumez la responsabilité de cette action.\nVoulez-vous continuer ?"
-        : "Les éléments sélectionnés seront supprimés définitivement avec tous leurs enregistrements liés, y compris les paiements et les factures s’ils existent.\nVous assumez la responsabilité de cette action.\nVoulez-vous continuer ?",
+        ? "Ce pèlerin sera supprimé définitivement avec tous les enregistrements liés, y compris les paiements et les factures s’ils existent.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?"
+        : "Les éléments sélectionnés seront supprimés définitivement avec tous leurs enregistrements liés, y compris les paiements et les factures s’ils existent.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?",
     };
   }
   if (lang === "en") {
@@ -117,8 +117,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
         ? "Irreversible Permanent Delete"
         : "Irreversible Bulk Permanent Delete",
       body: singleClient
-        ? "This pilgrim will be permanently deleted with all linked records, including payments and invoices if present.\nYou accept responsibility for this action.\nDo you want to continue?"
-        : "The selected items will be permanently deleted with all linked records, including payments and invoices if present.\nYou accept responsibility for this action.\nDo you want to continue?",
+        ? "This pilgrim will be permanently deleted with all linked records, including payments and invoices if present.\nThis action cannot be undone.\nDo you want to continue?"
+        : "The selected items will be permanently deleted with all linked records, including payments and invoices if present.\nThis action cannot be undone.\nDo you want to continue?",
     };
   }
   return {
@@ -126,8 +126,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
       ? "حذف نهائي لا يمكن التراجع عنه"
       : "حذف نهائي جماعي لا يمكن التراجع عنه",
     body: singleClient
-      ? "سيتم حذف هذا الحاج/المعتمر نهائيًا مع جميع السجلات المرتبطة به، بما في ذلك الدفعات والفواتير إن وجدت.\nأنت تتحمل مسؤولية هذا الإجراء.\nهل تريد المتابعة؟"
-      : "سيتم حذف العناصر المحددة نهائيًا مع جميع السجلات المرتبطة بها، بما في ذلك الدفعات والفواتير إن وجدت.\nأنت تتحمل مسؤولية هذا الإجراء.\nهل تريد المتابعة؟",
+      ? "سيتم حذف هذا الحاج/المعتمر نهائيًا مع جميع السجلات المرتبطة به، بما في ذلك الدفعات والفواتير إن وجدت.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟"
+      : "سيتم حذف العناصر المحددة نهائيًا مع جميع السجلات المرتبطة بها، بما في ذلك الدفعات والفواتير إن وجدت.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟",
   };
 };
 
@@ -166,6 +166,7 @@ export default function TrashPage({ store, onToast }) {
   const [selection, setSelection] = React.useState({});
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleteInProgress, setDeleteInProgress] = React.useState(false);
+  const [deleteProgress, setDeleteProgress] = React.useState({ done: 0, total: 0 });
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [trashedInvoices, setTrashedInvoices] = React.useState(() => (
     invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
@@ -174,6 +175,7 @@ export default function TrashPage({ store, onToast }) {
   const filterRef = React.useRef(null);
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
+  const clientPreflightCacheRef = React.useRef(new Map());
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
@@ -209,6 +211,11 @@ export default function TrashPage({ store, onToast }) {
     failure: t.trashPermanentDeleteFailed || (lang === "fr" ? "La suppression définitive a échoué. Réessayez ou vérifiez les enregistrements liés." : lang === "en" ? "Permanent deletion failed. Try again or check linked records." : "تعذر الحذف النهائي. حاول مرة أخرى أو تحقق من السجلات المرتبطة."),
     linkedFailure: t.trashPermanentDeleteLinkedRecordsFailed || (lang === "fr" ? "La suppression définitive a échoué car des enregistrements sont liés à ce pèlerin. Vérifiez les paiements ou les enregistrements liés puis réessayez." : lang === "en" ? "Permanent deletion failed because linked records still exist for this pilgrim. Check payments or linked records, then try again." : "تعذر الحذف النهائي لأن هناك سجلات مرتبطة بهذا المعتمر. تحقق من الدفعات أو السجلات المرتبطة ثم حاول مرة أخرى."),
     deleting: t.trashDeleting || (lang === "fr" ? "Suppression..." : lang === "en" ? "Deleting..." : "جاري الحذف..."),
+    deletingProgress: (done, total) => {
+      if (lang === "fr") return `Suppression de ${done} sur ${total}`;
+      if (lang === "en") return `Deleting ${done} of ${total}`;
+      return `جاري حذف ${done} من ${total}`;
+    },
   }), [lang, t]);
   const [clientDeleteBlocksByClient, setClientDeleteBlocksByClient] = React.useState({});
   const [clientDeleteBlocksLoading, setClientDeleteBlocksLoading] = React.useState(false);
@@ -451,25 +458,44 @@ export default function TrashPage({ store, onToast }) {
     let cancelled = false;
     const clientIds = clientDeleteGuardKey ? clientDeleteGuardKey.split("|").filter(Boolean) : [];
     if (!clientIds.length || typeof getClientPermanentDeleteBlockMap !== "function") {
-      setClientDeleteBlocksByClient({});
+      if (!clientIds.length) setClientDeleteBlocksByClient({});
+      setClientDeleteBlocksLoading(false);
+      return undefined;
+    }
+    const cachedEntries = clientIds
+      .filter((id) => clientPreflightCacheRef.current.has(id))
+      .map((id) => [id, clientPreflightCacheRef.current.get(id)]);
+    if (cachedEntries.length) {
+      setClientDeleteBlocksByClient((prev) => ({ ...prev, ...Object.fromEntries(cachedEntries) }));
+    }
+    const missingClientIds = clientIds.filter((id) => !clientPreflightCacheRef.current.has(id));
+    if (!missingClientIds.length) {
       setClientDeleteBlocksLoading(false);
       return undefined;
     }
     setClientDeleteBlocksLoading(true);
-    getClientPermanentDeleteBlockMap(clientIds)
+    getClientPermanentDeleteBlockMap(missingClientIds)
       .then((blocks) => {
         if (cancelled) return;
-        setClientDeleteBlocksByClient(Object.fromEntries(blocks || []));
+        const entries = Object.fromEntries(blocks || []);
+        Object.entries(entries).forEach(([id, block]) => {
+          clientPreflightCacheRef.current.set(id, block);
+        });
+        setClientDeleteBlocksByClient((prev) => ({ ...prev, ...entries }));
       })
       .catch((error) => {
         console.error("[Trash] Failed to check linked records:", error);
         if (!cancelled) {
-          setClientDeleteBlocksByClient(Object.fromEntries(clientIds.map((id) => [id, {
+          const entries = Object.fromEntries(missingClientIds.map((id) => [id, {
             clientId: id,
             blocked: false,
             code: "CHECK_UNAVAILABLE",
             precheckUnavailable: true,
-          }])));
+          }]));
+          Object.entries(entries).forEach(([id, block]) => {
+            clientPreflightCacheRef.current.set(id, block);
+          });
+          setClientDeleteBlocksByClient((prev) => ({ ...prev, ...entries }));
         }
       })
       .finally(() => {
@@ -506,7 +532,7 @@ export default function TrashPage({ store, onToast }) {
     paymentIds: selectedItems.filter((item) => item.type === "payment").map((item) => item.id),
   }), [selectedItems]);
   const selectedClientPreflightPending = React.useMemo(() => (
-    selectionPayload.clientIds.some((id) => !clientDeleteBlocksByClient[id]) && clientDeleteBlocksLoading
+    selectionPayload.clientIds.some((id) => !clientDeleteBlocksByClient[id] && !clientPreflightCacheRef.current.has(id)) && clientDeleteBlocksLoading
   ), [clientDeleteBlocksByClient, clientDeleteBlocksLoading, selectionPayload.clientIds]);
 
   const closeConfirm = React.useCallback(() => {
@@ -547,13 +573,14 @@ export default function TrashPage({ store, onToast }) {
   const confirmDelete = React.useCallback(async () => {
     if (!selectedCount || deleteInProgress) return;
     setDeleteInProgress(true);
+    setDeleteProgress({ done: 0, total: selectionPayload.clientIds.length });
     try {
       let deletePayload = selectionPayload;
       let blockedClientIds = [];
       let failedClientIds = [];
       let selectedClientBlockMap = new Map(
         selectionPayload.clientIds
-          .map((id) => [id, clientDeleteBlocksByClient[id]])
+          .map((id) => [id, clientDeleteBlocksByClient[id] || clientPreflightCacheRef.current.get(id)])
           .filter(([, block]) => Boolean(block))
       );
 
@@ -562,6 +589,9 @@ export default function TrashPage({ store, onToast }) {
         try {
           const blockMap = await getClientPermanentDeleteBlockMap(missingClientIds);
           const blockEntries = Object.fromEntries(blockMap || []);
+          Object.entries(blockEntries).forEach(([id, block]) => {
+            clientPreflightCacheRef.current.set(id, block);
+          });
           selectedClientBlockMap = new Map([...selectedClientBlockMap, ...(blockMap || new Map())]);
           setClientDeleteBlocksByClient((prev) => ({ ...prev, ...blockEntries }));
         } catch (error) {
@@ -582,7 +612,12 @@ export default function TrashPage({ store, onToast }) {
       if ((deletePayload.programIds.length || deletePayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
         let result = null;
         try {
-          result = await store.purgeTrashItems(deletePayload);
+          result = await store.purgeTrashItems({
+            ...deletePayload,
+            onProgress: ({ done = 0, total = 0 } = {}) => {
+              setDeleteProgress({ done, total });
+            },
+          });
         } catch (error) {
           console.error("[Trash] Permanent delete payment check failed:", error);
           if (onToast) onToast(error.message || "Delete failed", "error");
@@ -621,6 +656,9 @@ export default function TrashPage({ store, onToast }) {
         }
         purgeResult = result;
         if (result?.clientBlocks) {
+          Object.entries(result.clientBlocks).forEach(([id, block]) => {
+            clientPreflightCacheRef.current.set(id, block);
+          });
           setClientDeleteBlocksByClient((prev) => ({ ...prev, ...result.clientBlocks }));
         }
         blockedClientIds = Array.from(new Set([...blockedClientIds, ...(result?.blockedClientIds || [])]));
@@ -646,6 +684,9 @@ export default function TrashPage({ store, onToast }) {
         await Promise.all(deletePayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
       }
       const blockedOrFailedClientIds = Array.from(new Set([...blockedClientIds, ...failedClientIds]));
+      (purgeResult?.deletedClientIds || []).forEach((id) => {
+        clientPreflightCacheRef.current.delete(id);
+      });
       setSelection(Object.fromEntries(blockedOrFailedClientIds.map((id) => [`client-${id}`, true])));
       setConfirmOpen(false);
       if (onToast) {
@@ -677,6 +718,7 @@ export default function TrashPage({ store, onToast }) {
       }
     } finally {
       setDeleteInProgress(false);
+      setDeleteProgress({ done: 0, total: 0 });
     }
   }, [clientDeleteBlocksByClient, deleteInProgress, getClientPermanentDeleteBlockMap, invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, paymentGuardText, permanentDeleteText, t.deleteSuccess]);
 
@@ -733,16 +775,20 @@ export default function TrashPage({ store, onToast }) {
   const rangeLabel = totalItems ? paginationText.range(pageStart, pageEnd, totalItems) : "";
 
   const selectedLabel = (t.trashSelectedCount || "{count}").replace("{count}", selectedCount);
+  const deleteProgressLabel = deleteInProgress && deleteProgress.total > 1
+    ? permanentDeleteText.deletingProgress(Math.min(deleteProgress.done, deleteProgress.total), deleteProgress.total)
+    : permanentDeleteText.deleting;
   const confirmCopy = React.useMemo(() => {
     const singleClient = selectedCount === 1 && selectionPayload.clientIds.length === 1;
     const fallback = trashPermanentConfirmMessages(lang, singleClient);
+    const body = singleClient
+      ? (t.trashPermanentDeleteSingleConfirmBody || fallback.body)
+      : (t.trashPermanentDeleteBulkConfirmBody || fallback.body);
     return {
       title: singleClient
         ? (t.trashPermanentDeleteSingleConfirmTitle || fallback.title)
         : (t.trashPermanentDeleteBulkConfirmTitle || fallback.title),
-      body: singleClient
-        ? (t.trashPermanentDeleteSingleConfirmBody || fallback.body)
-        : (t.trashPermanentDeleteBulkConfirmBody || fallback.body),
+      body,
     };
   }, [lang, selectedCount, selectionPayload.clientIds.length, t]);
   const getFilterText = React.useCallback((item) => (
@@ -1115,13 +1161,24 @@ export default function TrashPage({ store, onToast }) {
               {line}
             </p>
           ))}
+          {deleteInProgress && deleteProgress.total > 1 && (
+            <p style={{
+              fontSize: 13,
+              color: "var(--rukn-gold)",
+              fontWeight: 800,
+              lineHeight: 1.65,
+              margin: 0,
+            }}>
+              {deleteProgressLabel}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 28 }}>
           <Button variant="ghost" onClick={closeConfirm} disabled={deleteInProgress}>
             {t.trashCancel || t.cancel}
           </Button>
           <Button variant="danger" icon="trash" onClick={confirmDelete} disabled={deleteInProgress}>
-            {deleteInProgress ? permanentDeleteText.deleting : t.trashDeleteSelected}
+            {deleteInProgress ? deleteProgressLabel : t.trashDeleteSelected}
           </Button>
         </div>
       </Modal>

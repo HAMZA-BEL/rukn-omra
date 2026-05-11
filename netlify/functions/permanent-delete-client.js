@@ -246,6 +246,50 @@ function cleanupRoomingValueForClient(value, clientId) {
   return next;
 }
 
+function roomingValueContainsClient(value, clientId) {
+  if (!clientId) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => roomingValueContainsClient(item, clientId));
+  }
+  if (!value || typeof value !== "object") {
+    return String(value || "") === clientId;
+  }
+
+  const directClientId = String(value.clientId || value.client_id || value.id || "").trim();
+  if (directClientId === clientId) return true;
+  if (Object.prototype.hasOwnProperty.call(value, clientId)) return true;
+  if (Array.isArray(value.occupantIds) && value.occupantIds.some((id) => String(id) === clientId)) {
+    return true;
+  }
+  if (value.genderOverrides && typeof value.genderOverrides === "object" && Object.prototype.hasOwnProperty.call(value.genderOverrides, clientId)) {
+    return true;
+  }
+  if (value.priceOverrides && typeof value.priceOverrides === "object" && Object.prototype.hasOwnProperty.call(value.priceOverrides, clientId)) {
+    return true;
+  }
+  return Object.values(value).some((nested) => roomingValueContainsClient(nested, clientId));
+}
+
+function roomingAssignmentContainsClient(assignment = {}, clientId = "") {
+  return roomingValueContainsClient(assignment.rooms || [], clientId)
+    || roomingValueContainsClient(assignment.unassigned || [], clientId);
+}
+
+async function getAffectedRoomingAssignmentsForClient(supabase, { agencyId, clientId }) {
+  const roomingResult = await optionalSelect(
+    "rooming inspection",
+    supabase
+      .from("rooming_assignments")
+      .select("id, rooms, unassigned")
+      .eq("agency_id", agencyId)
+  );
+  if (roomingResult.error) return { data: [], error: roomingResult.error };
+  return {
+    data: roomingResult.data.filter((assignment) => roomingAssignmentContainsClient(assignment, clientId)),
+    error: null,
+  };
+}
+
 function jsonChanged(a, b) {
   return JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
 }
@@ -257,39 +301,38 @@ function getSafeBadgePhotoPath(client = {}, { agencyId, clientId } = {}) {
   return path && path.startsWith(safePrefix) ? path : "";
 }
 
-async function inspectSafeLinkedRecords(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [] }) {
-  const representationResult = await optionalSelect(
-    "representation inspection",
-    supabase
-      .from("clients")
-      .select("id")
-      .eq("agency_id", agencyId)
-      .eq("represented_by_client_id", clientId)
-  );
+async function inspectSafeLinkedRecords(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [], roomingAssignments = null }) {
+  const [representationResult, notificationResult] = await Promise.all([
+    optionalSelect(
+      "representation inspection",
+      supabase
+        .from("clients")
+        .select("id")
+        .eq("agency_id", agencyId)
+        .eq("represented_by_client_id", clientId)
+    ),
+    optionalSelect(
+      "notification inspection",
+      supabase
+        .from("notifications")
+        .select("id")
+        .eq("agency_id", agencyId)
+        .eq("target_type", "client")
+        .eq("target_id", clientId)
+    ),
+  ]);
   if (representationResult.error) return { error: representationResult.error };
-
-  const notificationResult = await optionalSelect(
-    "notification inspection",
-    supabase
-      .from("notifications")
-      .select("id")
-      .eq("agency_id", agencyId)
-      .eq("target_type", "client")
-      .eq("target_id", clientId)
-  );
   if (notificationResult.error) return { error: notificationResult.error };
 
-  const roomingResult = await optionalSelect(
-    "rooming inspection",
-    supabase
-      .from("rooming_assignments")
-      .select("id, rooms, unassigned")
-      .eq("agency_id", agencyId)
-  );
-  if (roomingResult.error) return { error: roomingResult.error };
-
-  const roomingAssignments = roomingResult.data
-    .filter((assignment) => JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId));
+  const affectedRoomingAssignments = Array.isArray(roomingAssignments)
+    ? roomingAssignments
+    : (await getAffectedRoomingAssignmentsForClient(supabase, { agencyId, clientId }));
+  if (!Array.isArray(roomingAssignments) && affectedRoomingAssignments.error) {
+    return { error: affectedRoomingAssignments.error };
+  }
+  const safeRoomingAssignments = Array.isArray(roomingAssignments)
+    ? roomingAssignments
+    : affectedRoomingAssignments.data;
 
   return {
     ...buildCleanupPreview({
@@ -297,14 +340,14 @@ async function inspectSafeLinkedRecords(supabase, { agencyId, clientId, client =
       linkedInvoices,
       representationLinks: representationResult.data,
       notifications: notificationResult.data,
-      roomingAssignments,
+      roomingAssignments: safeRoomingAssignments,
       badgePhotoPath: getSafeBadgePhotoPath(client, { agencyId, clientId }),
     }),
     error: null,
   };
 }
 
-async function deleteLinkedRecordsForClient(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [] }) {
+async function deleteLinkedRecordsForClient(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [], roomingAssignments = null }) {
   const cleanup = {
     deletedPaymentsCount: 0,
     deletedPaymentIds: [],
@@ -370,17 +413,12 @@ async function deleteLinkedRecordsForClient(supabase, { agencyId, clientId, clie
   if (notificationDelete.error) return { error: notificationDelete.error };
   cleanup.deletedNotificationsCount = notificationDelete.skipped ? 0 : notificationDelete.data.length;
 
-  const roomingFetch = await optionalSelect(
-    "rooming cleanup fetch",
-    supabase
-      .from("rooming_assignments")
-      .select("id, rooms, unassigned")
-      .eq("agency_id", agencyId)
-  );
-  if (roomingFetch.error) return { error: roomingFetch.error };
+  const affectedRoomingAssignments = Array.isArray(roomingAssignments)
+    ? { data: roomingAssignments, error: null }
+    : await getAffectedRoomingAssignmentsForClient(supabase, { agencyId, clientId });
+  if (affectedRoomingAssignments.error) return { error: affectedRoomingAssignments.error };
 
-  for (const assignment of roomingFetch.data) {
-    if (!JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId)) continue;
+  for (const assignment of affectedRoomingAssignments.data) {
     const nextRooms = cleanupRoomingValueForClient(Array.isArray(assignment.rooms) ? assignment.rooms : [], clientId);
     const nextUnassigned = cleanupRoomingValueForClient(Array.isArray(assignment.unassigned) ? assignment.unassigned : [], clientId);
     if (!jsonChanged(assignment.rooms, nextRooms) && !jsonChanged(assignment.unassigned, nextUnassigned)) continue;
@@ -504,10 +542,20 @@ exports.handler = async (event) => {
       });
     }
 
-    const { data: allPayments, error: paymentsError } = await supabase
-      .from("payments")
-      .select("*")
-      .eq("client_id", clientId);
+    const [paymentResult, invoiceResult] = await Promise.all([
+      supabase
+        .from("payments")
+        .select("*")
+        .eq("client_id", clientId),
+      optionalSelect(
+        "invoice inspection",
+        supabase
+          .from("invoices")
+          .select("*")
+          .eq("client_id", clientId)
+      ),
+    ]);
+    const { data: allPayments, error: paymentsError } = paymentResult;
     if (paymentsError) {
       return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: paymentsError.message });
     }
@@ -516,13 +564,6 @@ exports.handler = async (event) => {
     const linkedPayments = payments.filter((payment) => String(payment.agency_id || "") === agencyId);
     const hiddenPayments = payments.filter((payment) => String(payment.agency_id || "") !== agencyId);
 
-    const invoiceResult = await optionalSelect(
-      "invoice inspection",
-      supabase
-        .from("invoices")
-        .select("*")
-        .eq("client_id", clientId)
-    );
     if (invoiceResult.error) {
       return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: invoiceResult.error.message });
     }
@@ -546,12 +587,25 @@ exports.handler = async (event) => {
       });
     }
 
+    const roomingAssignmentsResult = await getAffectedRoomingAssignmentsForClient(supabase, { agencyId, clientId });
+    if (roomingAssignmentsResult.error) {
+      console.error("permanent-delete-client rooming inspection error", roomingAssignmentsResult.error);
+      return json(500, {
+        code: "SAFE_CLEANUP_CHECK_FAILED",
+        success: false,
+        deleted: false,
+        error: LINKED_RECORDS_MESSAGE,
+      });
+    }
+    const affectedRoomingAssignments = roomingAssignmentsResult.data;
+
     const cleanupPreview = await inspectSafeLinkedRecords(supabase, {
       agencyId,
       clientId,
       client,
       linkedPayments,
       linkedInvoices,
+      roomingAssignments: affectedRoomingAssignments,
     });
     if (cleanupPreview.error) {
       console.error("permanent-delete-client safe cleanup inspection error", cleanupPreview.error);
@@ -601,6 +655,7 @@ exports.handler = async (event) => {
       client,
       linkedPayments,
       linkedInvoices,
+      roomingAssignments: affectedRoomingAssignments,
     });
     if (cleanupResult.error) {
       console.error("permanent-delete-client safe cleanup error", cleanupResult.error);
