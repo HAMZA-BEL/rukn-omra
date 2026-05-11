@@ -6,7 +6,7 @@ import { escapeHtml } from "./escapeHtml";
  * and opens it in a new window for window.print().
  * No external libraries — pure HTML/CSS.
  */
-export function printProgramPDF({ program, clients, getClientStatus, getClientTotalPaid, lang, t, agency }) {
+export function printProgramPDF({ program, clients, getClientStatus, getClientTotalPaid, getClientPayments, lang, t, agency }) {
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
   const terms = getParticipantTerminology(program, lang);
@@ -27,6 +27,11 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     birthDate:    t.birthDate    || (lang === "fr" ? "Date naissance"   : "تاريخ الميلاد"),
     gender:       t.gender       || (lang === "fr" ? "Sexe"             : "الجنس"),
     roomType:     t.roomType     || (lang === "fr" ? "Chambre"          : "نوع الغرفة"),
+    officialPrice: lang === "fr" ? "Prix officiel" : lang === "en" ? "Official price" : "السعر الرسمي",
+    salePrice:    lang === "fr" ? "Prix de vente" : lang === "en" ? "Sale price" : "سعر البيع",
+    firstPayment: lang === "fr" ? "1er paiement" : lang === "en" ? "First payment" : "الدفعة الأولى",
+    secondPayment: lang === "fr" ? "2e paiement" : lang === "en" ? "Second payment" : "الدفعة الثانية",
+    thirdPayment: lang === "fr" ? "3e paiement" : lang === "en" ? "Third payment" : "الدفعة الثالثة",
     status:       lang === "fr" ? "Statut"    : lang === "en" ? "Status"     : "الحالة",
     remaining:    t.remaining    || (lang === "fr" ? "Reste"            : "المتبقي"),
     cleared:      t.status_cleared || (lang === "fr" ? "Soldé"          : "مصفّى"),
@@ -47,12 +52,38 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
   const totalRem      = Math.max(0, totalRevenue - totalPaid);
   const fmt           = (n) => Number(n).toLocaleString("fr-MA") + " " + L.currency;
   const today         = new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : "ar-MA");
+  const getSalePrice  = (client = {}) => Number(client.salePrice || client.price || 0) || 0;
+  const getOfficialPrice = (client = {}) => Number(client.officialPrice || getSalePrice(client)) || 0;
+  const getPaymentSortTime = (payment = {}) => {
+    for (const raw of [payment.date, payment.createdAt, payment.created_at]) {
+      if (!raw) continue;
+      const time = new Date(raw).getTime();
+      if (Number.isFinite(time)) return time;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+  const getFirstPayments = (clientId) => (
+    (typeof getClientPayments === "function" ? getClientPayments(clientId) : [])
+      .map((payment, index) => ({ payment, index }))
+      .sort((a, b) => {
+        const byDate = getPaymentSortTime(a.payment) - getPaymentSortTime(b.payment);
+        return byDate || a.index - b.index;
+      })
+      .slice(0, 3)
+      .map(({ payment }) => Number(payment.amount) || 0)
+  );
+  const paymentCell = (payments, index) => (
+    payments[index] > 0 ? escapeHtml(fmt(payments[index])) : "—"
+  );
 
   // ── Table rows ───────────────────────────────────────────────────────────
   const rows = clients.map((c, i) => {
     const status  = getClientStatus(c);
     const paid    = getClientTotalPaid(c.id);
-    const rem     = Math.max(0, (c.salePrice || c.price || 0) - paid);
+    const salePrice = getSalePrice(c);
+    const officialPrice = getOfficialPrice(c);
+    const firstPayments = getFirstPayments(c.id);
+    const rem     = Math.max(0, salePrice - paid);
     const sLabel  = status === "cleared" ? L.cleared : status === "partial" ? L.partial : L.unpaid;
     const sClass  = status === "cleared" ? "cleared" : status === "partial" ? "partial" : "unpaid";
     const gLabel  = c.passport?.gender === "F" ? L.female : c.passport?.gender === "M" ? L.male : "—";
@@ -66,14 +97,21 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
         <td style="text-align:center">${escapeHtml(c.passport?.birthDate || "—")}</td>
         <td style="text-align:center">${escapeHtml(gLabel)}</td>
         <td>${escapeHtml(c.roomType || "—")}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600">${escapeHtml(fmt(officialPrice))}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:#0d4a1a">${escapeHtml(fmt(salePrice))}</td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 0)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 1)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 2)}</td>
         <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "OK"}</td>
       </tr>`;
   }).join("");
 
   // ── Column headers ───────────────────────────────────────────────────────
-  const headers = [L.num, L.fullName, L.passportNo, L.birthDate, L.gender, L.roomType, L.status, L.remaining]
+  const headers = [L.num, L.fullName, L.passportNo, L.birthDate, L.gender, L.roomType, L.officialPrice, L.salePrice, L.firstPayment, L.secondPayment, L.thirdPayment, L.status, L.remaining]
     .map(h => `<th>${escapeHtml(h)}</th>`).join("");
+  const columnWidths = [3, 17, 9, 8, 4, 7, 8, 8, 7, 7, 7, 6, 9];
+  const colgroup = columnWidths.map((width) => `<col style="width:${width}%">`).join("");
 
   // ── Full HTML ─────────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html>
@@ -152,32 +190,37 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
       width: 100%;
       border-collapse: collapse;
       margin-bottom: 14px;
-      font-size: 10px;
+      table-layout: fixed;
+      font-size: 8.2px;
     }
     thead tr {
       background: #0d4a1a;
     }
     th {
       color: #d4af37;
-      padding: 7px 6px;
+      padding: 6px 3px;
       font-weight: 700;
-      font-size: 10px;
+      font-size: 8.2px;
       border: 1px solid #0a3a15;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.25;
     }
     td {
-      padding: 5px 6px;
+      padding: 4px 3px;
       border: 1px solid #ddd;
       vertical-align: middle;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      line-height: 1.3;
     }
     tbody tr:nth-child(even) td { background: #f4fbf5; }
     tbody tr:hover td { background: #e8f5ea; }
     /* ── Status badges ── */
     .status {
       display: inline-block;
-      padding: 2px 8px;
+      padding: 2px 5px;
       border-radius: 20px;
-      font-size: 9px;
+      font-size: 7.8px;
       font-weight: 700;
       white-space: nowrap;
     }
@@ -258,6 +301,7 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
 
   <!-- Table -->
   <table>
+    <colgroup>${colgroup}</colgroup>
     <thead><tr>${headers}</tr></thead>
     <tbody>${rows}</tbody>
   </table>

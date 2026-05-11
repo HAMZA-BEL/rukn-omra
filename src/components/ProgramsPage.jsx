@@ -856,6 +856,40 @@ const getClientRegistrationSource = (client = {}) => pickFirstText(client, [
   "source",
 ]);
 
+const normalizeRoomingSearchText = (value) => String(value || "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[ـًٌٍَُِّْ]/g, "")
+  .trim()
+  .toLowerCase();
+
+const getRoomingClientSearchText = (client = {}) => normalizeRoomingSearchText([
+  getClientDisplayName(client),
+  getClientArabicName(client),
+  getClientLatinName(client),
+  client.name,
+  client.firstName,
+  client.lastName,
+  client.nom,
+  client.prenom,
+  client.phone,
+  client.passport?.number,
+  client.passportNumber,
+  client.passport_no,
+  client.cin,
+  client.nationalId,
+  client.national_id,
+  client.passport?.cin,
+  client.passport?.nationalId,
+  client.passport?.national_id,
+].filter(Boolean).join(" "));
+
+const normalizeRoomCreateCount = (value) => {
+  const count = Math.floor(Number(value));
+  if (!Number.isFinite(count)) return 1;
+  return Math.min(100, Math.max(1, count));
+};
+
 const slugifyFilePart = (value) => String(value || "program")
   .replace(/\s+/g, "-")
   .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]/g, "")
@@ -2022,6 +2056,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const {
     clients,
     getClientTotalPaid,
+    getClientPayments,
     getClientStatus,
     agency,
     programs: allPrograms,
@@ -2499,11 +2534,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       clients: exportClients,
       getClientStatus,
       getClientTotalPaid,
+      getClientPayments,
       lang,
       t,
       agency,
     });
-  }, [agency, closeHeaderActions, getClientStatus, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
+  }, [agency, closeHeaderActions, getClientPayments, getClientStatus, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
   const handleAmadeusExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -3588,11 +3624,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [savedAt, setSavedAt] = React.useState(null);
   const [selectedRoomId, setSelectedRoomId] = React.useState(null);
   const [roomModal, setRoomModal] = React.useState({ open: false, mode: "edit", roomId: null });
-  const [roomDraft, setRoomDraft] = React.useState({ roomType: "double", category: "male_only", hotel: "" });
+  const [roomDraft, setRoomDraft] = React.useState({ roomType: "double", category: "male_only", hotel: "", roomCount: "1" });
   const [roomCreatePosition, setRoomCreatePosition] = React.useState({ x: 0, y: 0 });
   const [canvasMenu, setCanvasMenu] = React.useState({ open: false, x: 0, y: 0, position: { x: 0, y: 0 } });
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [pickerSearch, setPickerSearch] = React.useState("");
   const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
+  const [roomSelectionMode, setRoomSelectionMode] = React.useState(false);
+  const [selectedRoomIds, setSelectedRoomIds] = React.useState(() => new Set());
   const [pendingDrop, setPendingDrop] = React.useState(null);
   const [pendingDropSalePrice, setPendingDropSalePrice] = React.useState("");
   const [panelSearch, setPanelSearch] = React.useState("");
@@ -3755,6 +3794,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       roomingRevisionRef.current += 1;
       setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
       setSelectedRoomId(null);
+      setSelectedRoomIds(new Set());
+      setRoomSelectionMode(false);
       setRoomingSaveStatus("idle");
     };
 
@@ -4027,6 +4068,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       .filter(({ client }) => client && !getCompatibilityReason(client, room));
   }, [rooms, selectedRoomId, normalizedUnassigned, clientsById, getCompatibilityReason]);
 
+  const filteredCompatibleUnassigned = React.useMemo(() => {
+    const query = normalizeRoomingSearchText(pickerSearch);
+    if (!query) return compatibleUnassigned;
+    return compatibleUnassigned.filter(({ client }) => getRoomingClientSearchText(client).includes(query));
+  }, [compatibleUnassigned, pickerSearch]);
+
   const filteredUnassigned = React.useMemo(() => {
     const query = panelSearch.trim().toLowerCase();
     return normalizedUnassigned.filter((item) => {
@@ -4217,6 +4264,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       roomType: "double",
       category: "male_only",
       hotel: hotelOptions[0] || (city === "makkah" ? program.hotelMecca || "" : program.hotelMadina || ""),
+      roomCount: "1",
     });
     setRoomCreatePosition(position);
     setRoomModal({ open: true, mode: "create", roomId: null });
@@ -4228,6 +4276,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       roomType: room.roomType || "double",
       category: room.category || "male_only",
       hotel: room.hotel || hotelOptions[0] || "",
+      roomCount: "1",
     });
     setRoomModal({ open: true, mode: "edit", roomId: room.id });
   }, [hotelOptions]);
@@ -4235,25 +4284,42 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const saveRoomEdit = React.useCallback(() => {
     const capacity = getRoomingCapacity(roomDraft.roomType);
     if (roomModal.mode === "create") {
-      const draftRoom = {
-        id: createRoomId(),
-        order: rooms.length,
-        roomNumber: getNextRoomNumber(),
-        roomType: roomDraft.roomType,
-        category: roomDraft.category,
-        hotel: roomDraft.hotel || hotelOptions[0] || "",
-        capacity,
-        occupantIds: [],
-        locked: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const position = findFreePositionForRoom(draftRoom, roomCreatePosition);
-      setRooms((prev) => [...prev, { ...draftRoom, x: position.x, y: position.y }]);
-      setSelectedRoomId(draftRoom.id);
+      const roomCount = normalizeRoomCreateCount(roomDraft.roomCount);
+      const now = new Date().toISOString();
+      const roomNumbers = rooms
+        .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const firstRoomNumber = (roomNumbers.length ? Math.max(...roomNumbers) : 0) + 1;
+      const createdRooms = [];
+      const baseCollisionNodes = rooms.map((room) => roomToCollisionNode(room));
+      for (let index = 0; index < roomCount; index += 1) {
+        const draftRoom = {
+          id: createRoomId(),
+          order: rooms.length + index,
+          roomNumber: String(firstRoomNumber + index).padStart(2, "0"),
+          roomType: roomDraft.roomType,
+          category: roomDraft.category,
+          hotel: roomDraft.hotel || hotelOptions[0] || "",
+          capacity,
+          occupantIds: [],
+          locked: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const preferredPosition = {
+          x: Number(roomCreatePosition.x || 0) + ((index % 3) * (ROOMING_NODE_WIDTH + ROOMING_NODE_MIN_GAP)),
+          y: Number(roomCreatePosition.y || 0) + (Math.floor(index / 3) * (ROOMING_NODE_MIN_HEIGHT + ROOMING_NODE_MIN_GAP)),
+        };
+        const node = { ...roomToCollisionNode(draftRoom), position: preferredPosition };
+        const collisionNodes = [...baseCollisionNodes, ...createdRooms.map((room) => roomToCollisionNode(room))];
+        const position = findNearestFreeRoomingPosition(node, collisionNodes, preferredPosition);
+        createdRooms.push({ ...draftRoom, x: position.x, y: position.y });
+      }
+      setRooms((prev) => [...prev, ...createdRooms]);
+      setSelectedRoomId(createdRooms[createdRooms.length - 1]?.id || null);
       setRoomModal({ open: false, mode: "edit", roomId: null });
       markDirty();
-      onToast?.(t.roomingRoomAdded || "تمت إضافة الغرفة", "success");
+      onToast?.(roomCount > 1 ? (t.roomingRoomsAdded || t.roomingRoomAdded || "تمت إضافة الغرف") : (t.roomingRoomAdded || "تمت إضافة الغرفة"), "success");
       return;
     }
 
@@ -4285,7 +4351,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     }
     setRoomModal({ open: false, mode: "edit", roomId: null });
     markDirty();
-  }, [rooms, roomModal.mode, roomModal.roomId, roomDraft, hotelOptions, getNextRoomNumber, findFreePositionForRoom, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast]);
+  }, [rooms, roomModal.mode, roomModal.roomId, roomDraft, hotelOptions, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast, roomToCollisionNode, t]);
 
   const deleteRoom = React.useCallback((roomId) => {
     const room = rooms.find((item) => item.id === roomId);
@@ -4298,6 +4364,62 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setSelectedRoomId((current) => current === roomId ? null : current);
     markDirty();
   }, [rooms, markDirty]);
+
+  const toggleRoomSelectionMode = React.useCallback(() => {
+    setRoomSelectionMode((active) => {
+      if (active) setSelectedRoomIds(new Set());
+      return !active;
+    });
+  }, []);
+
+  const toggleRoomSelection = React.useCallback((roomId) => {
+    setSelectedRoomIds((current) => {
+      const next = new Set(current);
+      if (next.has(roomId)) next.delete(roomId);
+      else next.add(roomId);
+      return next;
+    });
+  }, []);
+
+  const selectAllRooms = React.useCallback(() => {
+    setRoomSelectionMode(true);
+    setSelectedRoomIds(new Set(visibleRooms.map((room) => room.id)));
+  }, [visibleRooms]);
+
+  const clearRoomSelection = React.useCallback(() => {
+    setSelectedRoomIds(new Set());
+  }, []);
+
+  const deleteSelectedRooms = React.useCallback(() => {
+    if (!selectedRoomIds.size) return;
+    const selectedRooms = rooms.filter((room) => selectedRoomIds.has(room.id));
+    if (!selectedRooms.length) return;
+    const confirmed = window.confirm(
+      t.roomingDeleteSelectedConfirm || "هل تريد حذف الغرف المحددة؟ لا يمكن التراجع عن هذا الإجراء بعد الحفظ."
+    );
+    if (!confirmed) return;
+    const selectedOccupantIds = Array.from(new Set(selectedRooms.flatMap((room) => room.occupantIds || [])))
+      .filter((clientId) => clientsById[clientId]);
+    const remainingAssignedIds = new Set();
+    rooms.forEach((room) => {
+      if (selectedRoomIds.has(room.id)) return;
+      (room.occupantIds || []).forEach((clientId) => remainingAssignedIds.add(clientId));
+    });
+    setRooms((prev) => prev.filter((room) => !selectedRoomIds.has(room.id)));
+    if (selectedOccupantIds.length) {
+      setUnassigned((prev) => {
+        const byClientId = new Map(prev.map((item) => [item.clientId, item]));
+        selectedOccupantIds.forEach((clientId) => {
+          if (!remainingAssignedIds.has(clientId)) byClientId.set(clientId, { clientId, reason: "" });
+        });
+        return Array.from(byClientId.values());
+      });
+    }
+    setSelectedRoomId((current) => selectedRoomIds.has(current) ? null : current);
+    setSelectedRoomIds(new Set());
+    setRoomSelectionMode(false);
+    markDirty();
+  }, [clientsById, markDirty, rooms, selectedRoomIds, t]);
 
   const copyRoom = React.useCallback((roomId) => {
     const room = rooms.find((item) => item.id === roomId);
@@ -4417,6 +4539,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setSelectedRoomId(room.id);
     markDirty();
     setSelectedPilgrimIds([]);
+    setPickerSearch("");
     setPickerOpen(false);
   }, [rooms, selectedRoomId, selectedPilgrimIds, clientsById, getCompatibilityReason, getRoomingDropConflicts, markDirty, onToast, t.noCompatiblePilgrims]);
 
@@ -4430,6 +4553,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const openPickerForRoom = React.useCallback((roomId) => {
     setSelectedRoomId(roomId);
     setSelectedPilgrimIds([]);
+    setPickerSearch("");
     setPickerOpen(true);
   }, []);
 
@@ -4457,10 +4581,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       onToggleLock: toggleRoomLock,
       onDelete: deleteRoom,
       onRemoveClient: removeClientFromRoom,
+      selectionMode: roomSelectionMode,
+      selectionChecked: selectedRoomIds.has(room.id),
     },
-    draggable: !room.locked,
+    draggable: !room.locked && !roomSelectionMode,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, selectedRoomId]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
 
@@ -4479,6 +4605,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       setSelectedRoomId(null);
     }
   }, [selectedRoomId, visibleRooms]);
+
+  React.useEffect(() => {
+    setSelectedRoomIds((current) => {
+      if (!current.size) return current;
+      const roomIds = new Set(rooms.map((room) => room.id));
+      const next = new Set(Array.from(current).filter((roomId) => roomIds.has(roomId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [rooms]);
 
   const setFlowNodeDragInvalid = React.useCallback((nodeId, invalid) => {
     if (dragInvalidRef.current.get(nodeId) === invalid) return;
@@ -5040,7 +5175,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         .rooming-canvas-shell,
         .rooming-flow-canvas {
           --rooming-canvas-bg: #f6f2e8;
-          --rooming-canvas-dot: rgba(120,113,108,.24);
+          --rooming-canvas-dot: rgba(120,113,108,.34);
           --rooming-canvas-border: rgba(15,23,42,.14);
           --rooming-canvas-shadow: 0 12px 30px rgba(15,23,42,.08);
           --rooming-card-bg: #fffdf8;
@@ -5051,7 +5186,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         html[data-theme="dark"] .rooming-canvas-shell,
         html[data-theme="dark"] .rooming-flow-canvas {
           --rooming-canvas-bg: #181713;
-          --rooming-canvas-dot: rgba(226,232,240,.14);
+          --rooming-canvas-dot: rgba(226,232,240,.20);
           --rooming-canvas-border: rgba(226,232,240,.12);
           --rooming-canvas-shadow: 0 16px 38px rgba(0,0,0,.28);
           --rooming-card-bg: #24221d;
@@ -5061,9 +5196,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }
         .rooming-flow-canvas.react-flow,
         .rooming-flow-canvas .react-flow__renderer,
-        .rooming-flow-canvas .react-flow__pane,
-        .rooming-flow-canvas .react-flow__background {
+        .rooming-flow-canvas .react-flow__pane {
           background: var(--rooming-canvas-bg) !important;
+          background-image: radial-gradient(circle, var(--rooming-canvas-dot) 1.25px, transparent 1.35px) !important;
+          background-size: 22px 22px !important;
+          background-position: 0 0 !important;
+        }
+        .rooming-flow-canvas .react-flow__background {
+          background: transparent !important;
         }
         .rooming-flow-canvas .react-flow__viewport {
           background: transparent !important;
@@ -5188,7 +5328,56 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               icon={<ChevronUp size={15} />}
             />
           <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
+          <RoomingToolbarButton
+            title={t.addRooms || t.addRoom || "إضافة غرف"}
+            onClick={() => openCreateRoom({ x: ROOMING_LAYOUT_START_X, y: ROOMING_LAYOUT_START_Y })}
+            icon={<AppIcon name="plus" size={15} />}
+          >
+            <span>{t.addRooms || t.addRoom || "إضافة غرف"}</span>
+          </RoomingToolbarButton>
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
+          <RoomingToolbarButton
+            title={t.roomingSelectRooms || "تحديد الغرف"}
+            onClick={toggleRoomSelectionMode}
+            active={roomSelectionMode}
+            icon={<Square size={15} />}
+          >
+            {roomSelectionMode && selectedRoomIds.size ? `${t.roomingSelectRooms || "تحديد الغرف"} · ${selectedRoomIds.size}` : null}
+          </RoomingToolbarButton>
+          {roomSelectionMode && (
+            <RoomingToolbarButton
+              title={t.roomingSelectAllRooms || "تحديد كل الغرف"}
+              onClick={selectAllRooms}
+              icon={<LayoutGrid size={15} />}
+            >
+              <span>{t.roomingSelectAllRooms || "تحديد كل الغرف"}</span>
+            </RoomingToolbarButton>
+          )}
+          {roomSelectionMode && (
+            <RoomingToolbarButton
+              title={t.roomingClearSelection || "إلغاء التحديد"}
+              onClick={clearRoomSelection}
+              disabled={!selectedRoomIds.size}
+              icon={<SquareSlash size={15} />}
+            >
+              <span>{t.roomingClearSelection || "إلغاء التحديد"}</span>
+            </RoomingToolbarButton>
+          )}
+          {roomSelectionMode && (
+            <RoomingToolbarButton
+              title={t.roomingDeleteSelectedRooms || "حذف الغرف المحددة"}
+              onClick={deleteSelectedRooms}
+              disabled={!selectedRoomIds.size}
+              icon={<Trash2 size={15} />}
+              style={{
+                border: "1px solid rgba(185,28,28,.22)",
+                background: "rgba(254,226,226,.75)",
+                color: "#b91c1c",
+              }}
+            >
+              <span>{t.roomingDeleteSelectedRooms || "حذف الغرف المحددة"}</span>
+            </RoomingToolbarButton>
+          )}
           <RoomingToolbarButton
             title={t.roomingSave || "حفظ"}
             onClick={() => saveCanvas(true)}
@@ -5353,8 +5542,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                     onNodesChange={onFlowNodesChange}
                     selectedRoomId={selectedRoomId}
                     panelOpen={panelOpen}
+                    nodesDraggable={!roomSelectionMode}
                     onInit={(flow) => { flowRef.current = flow; }}
-                    onNodeClick={(_event, node) => setSelectedRoomId(node.id)}
+                    onNodeClick={(_event, node) => {
+                      if (roomSelectionMode) {
+                        toggleRoomSelection(node.id);
+                        return;
+                      }
+                      setSelectedRoomId(node.id);
+                    }}
                     onNodeDragStart={onNodeDragStart}
                     onNodeDrag={onNodeDrag}
                     onNodeDragStop={onNodeDragStop}
@@ -5404,7 +5600,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 }}
               >
                 <RoomingMenuItem
-                  label={t.addRoom || "إضافة غرفة"}
+                  label={t.addRooms || t.addRoom || "إضافة غرف"}
                   icon={<AppIcon name="plus" size={14} />}
                   onClick={() => {
                     closeCanvasContextMenu();
@@ -5632,25 +5828,53 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           )}
         </Modal>
 
-        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRoom || "إضافة غرفة") : (t.editRoom || "تعديل الغرفة")} width={420}>
+        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} />
             <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} />
             <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} />
+            {roomModal.mode === "create" && (
+              <Input
+                label={t.roomingRoomCountInput || "عدد الغرف"}
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={roomDraft.roomCount ?? "1"}
+                onWheel={preventNumberInputWheelChange}
+                onChange={(event) => {
+                  const digits = String(event.target.value || "").replace(/[^\d]/g, "");
+                  setRoomDraft((prev) => ({
+                    ...prev,
+                    roomCount: digits ? String(normalizeRoomCreateCount(digits)) : "",
+                  }));
+                }}
+              />
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "edit", roomId: null })}>{t.cancel}</Button>
-              <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? (t.add || "إضافة") : t.save}</Button>
+              <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? (t.addRooms || t.add || "إضافة غرف") : t.save}</Button>
             </div>
           </div>
         </Modal>
 
-        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); }} title={t.addPilgrim || "إضافة معتمر"} width={560}>
+        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); setPickerSearch(""); }} title={t.addPilgrim || "إضافة معتمر"} width={560}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Input
+              label=""
+              value={pickerSearch}
+              onChange={(event) => setPickerSearch(event.target.value)}
+              placeholder={t.roomingPilgrimSearchPlaceholder || "ابحث بالاسم أو الهاتف أو رقم الجواز..."}
+            />
             {!compatibleUnassigned.length ? (
               <p style={{ color: "#64748b", fontSize: 12 }}>{t.noCompatiblePilgrims || "لا يوجد معتمرون مناسبون لهذه الغرفة"}</p>
+            ) : !filteredCompatibleUnassigned.length ? (
+              <p style={{ color: "#64748b", fontSize: 12 }}>{t.roomingNoMatchingPilgrims || "لا توجد نتائج مطابقة"}</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 330, overflow: "auto" }}>
-                {compatibleUnassigned.map(({ client }) => {
+                {filteredCompatibleUnassigned.map(({ client }) => {
                   const context = getClientContext(client);
                   const checked = selectedPilgrimIds.includes(client.id);
                   return (
@@ -5731,7 +5955,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const isDropTarget = Boolean(data.draggingClient);
   const canDrop = isDropTarget && !dropReason;
   const isInvalidPosition = Boolean(data.dragInvalid);
-  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "var(--rooming-card-border)";
+  const selectionMode = Boolean(data.selectionMode);
+  const selectionChecked = Boolean(data.selectionChecked);
+  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selectionChecked ? "#d4af37" : selected ? accent.border : "var(--rooming-card-border)";
   const [menuOpen, setMenuOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -5760,24 +5986,49 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       }}
       style={{
         width: 250,
-        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "var(--rooming-card-bg)",
+        position: "relative",
+        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : selectionChecked ? "#fffbeb" : "var(--rooming-card-bg)",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
-        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : "none",
+        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : selectionChecked ? "2px solid rgba(212,175,55,.34)" : "none",
         boxShadow: isInvalidPosition
           ? "0 18px 40px rgba(239,68,68,.20)"
           : canDrop
           ? "0 16px 36px rgba(22,163,74,.18)"
           : isDropTarget
             ? "0 16px 36px rgba(239,68,68,.16)"
+            : selectionChecked ? "0 16px 34px rgba(212,175,55,.18)"
             : selected ? "0 14px 30px rgba(37,99,235,.18)" : "var(--rooming-card-shadow)",
         padding: 12,
         direction: "rtl",
         fontFamily: "'Cairo',sans-serif",
-        cursor: room.locked ? "default" : "grab",
+        cursor: selectionMode ? "pointer" : room.locked ? "default" : "grab",
       }}
     >
+      {selectionMode && (
+        <span style={{
+          position: "absolute",
+          top: 8,
+          insetInlineStart: 8,
+          width: 20,
+          height: 20,
+          borderRadius: 999,
+          border: `1px solid ${selectionChecked ? "rgba(212,175,55,.95)" : "rgba(148,163,184,.32)"}`,
+          background: selectionChecked ? "#d4af37" : "rgba(255,255,255,.84)",
+          color: selectionChecked ? "#fff" : "transparent",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 13,
+          fontWeight: 900,
+          boxShadow: "0 8px 18px rgba(15,23,42,.14)",
+          pointerEvents: "none",
+          zIndex: 2,
+        }}>
+          ✓
+        </span>
+      )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 }}>
         <span style={{ color: accent.text, background: accent.bg, borderRadius: 999, padding: "4px 8px", fontSize: 11, fontWeight: 900 }}>
           {translateRoomCategory(room.category, lang) || getRoomingCategoryLabel(room.category)}
@@ -5880,7 +6131,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         </div>
       </div>
       <p style={{ color: "#0f172a", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
-        {translateRoomType(room.roomType, lang) || getRoomingRoomLabel(room.roomType)} • {t.room || "غرفة"} {room.roomNumber}
+        {translateRoomType(room.roomType, lang) || getRoomingRoomLabel(room.roomType)}
       </p>
       <p style={{ color: "#64748b", fontSize: 11, marginBottom: 10 }}>{room.hotel || t.roomingMissingHotel || "فندق غير محدد"}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
@@ -5966,6 +6217,8 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.clientsById === next.data.clientsById
   && prev.data.draggingClientId === next.data.draggingClientId
   && prev.data.dragInvalid === next.data.dragInvalid
+  && prev.data.selectionMode === next.data.selectionMode
+  && prev.data.selectionChecked === next.data.selectionChecked
   && prev.data.onAdd === next.data.onAdd
   && prev.data.onEdit === next.data.onEdit
   && prev.data.onCopy === next.data.onCopy
@@ -6040,6 +6293,7 @@ function RoomingFlowSurface({
   onPaneClick,
   onInit,
   panelOpen,
+  nodesDraggable = true,
 }) {
   const flow = useReactFlow();
 
@@ -6060,7 +6314,7 @@ function RoomingFlowSurface({
       panOnDrag
       zoomOnScroll
       zoomOnPinch
-      nodesDraggable
+      nodesDraggable={nodesDraggable}
       onlyRenderVisibleElements
       nodeDragThreshold={2}
       nodesConnectable={false}
@@ -6075,7 +6329,7 @@ function RoomingFlowSurface({
       proOptions={{ hideAttribution: true }}
       style={{ width: "100%", height: "100%", background: "var(--rooming-canvas-bg)" }}
     >
-      <Background variant="dots" color="var(--rooming-canvas-dot)" gap={24} size={1.15} />
+      <Background variant="dots" color="var(--rooming-canvas-dot)" gap={22} size={1.55} />
       <Controls position="bottom-left" showInteractive={false} />
       <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />
     </ReactFlow>
