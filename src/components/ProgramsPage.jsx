@@ -20,6 +20,9 @@ import ClientForm from "./ClientForm";
 import ImportClientsModal from "./ImportClientsModal";
 import MRZReader from "./MRZReader";
 import { theme } from "./styles";
+import ProgramCard from "./programs/ProgramCard";
+import DuplicateProgramModal from "./programs/DuplicateProgramModal";
+import PackageDetailCard from "./programs/PackageDetailCard";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -42,11 +45,18 @@ import {
   getPackageRoomPrice,
   getPackageStartingPrice,
   getLegacyFieldsFromPackages,
-  getProgramPackageCount,
   getProgramStartingPrice,
   getRoomTypeLabel,
   normalizeProgramPackages,
 } from "../utils/programPackages";
+import {
+  buildDuplicateProgramName,
+  createDuplicateProgramPayload,
+  getProgramDepartureYear,
+  isDuplicateProgramNameAvailable,
+  normalizeDuplicateProgramName,
+  normalizeProgramType,
+} from "../utils/programDuplicate";
 import {
   getClientArabicName,
   getClientDisplayName as resolveClientDisplayName,
@@ -177,93 +187,6 @@ const PROGRAM_TYPE_OPTIONS = [
   { value: "عمرة", label: "عمرة" },
   { value: "حج", label: "حج" },
 ];
-
-const getProgramDepartureYear = (program) => {
-  const departure = String(program?.departure || "").trim();
-  if (!departure) return null;
-  const match = departure.match(/(\d{4})/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  return Number.isFinite(year) ? year : null;
-};
-
-const normalizeProgramType = (value) => {
-  const text = String(value || "").trim().toLowerCase();
-  if (!text) return "عمرة";
-  if (text.includes("حج") || text.includes("hajj") || text.includes("hadj")) return "حج";
-  if (text.includes("عمرة") || text.includes("umrah") || text.includes("omra") || text.includes("omrah")) return "عمرة";
-  return "عمرة";
-};
-
-const deepCloneProgramConfigValue = (value) => {
-  if (value === undefined || value === null) return value;
-  if (typeof structuredClone === "function") {
-    try { return structuredClone(value); } catch (error) { void error; }
-  }
-  try { return JSON.parse(JSON.stringify(value)); } catch (error) {
-    if (Array.isArray(value)) return value.map((item) => deepCloneProgramConfigValue(item));
-    if (typeof value === "object") return { ...value };
-    return value;
-  }
-};
-
-const normalizeDuplicateProgramName = (value) => String(value || "").trim();
-
-const buildDuplicateProgramName = (program = {}, programs = [], lang = "ar") => {
-  const originalName = normalizeDuplicateProgramName(program.name) || (
-    lang === "fr" ? "Programme" : lang === "en" ? "Program" : "برنامج"
-  );
-  const suffix = lang === "ar" ? "نسخة" : "Copy";
-  const names = new Set((programs || []).map((item) => normalizeDuplicateProgramName(item?.name)).filter(Boolean));
-  const first = `${originalName} - ${suffix}`;
-  if (!names.has(first)) return first;
-  for (let index = 2; index < 1000; index += 1) {
-    const candidate = `${originalName} - ${suffix} ${index}`;
-    if (!names.has(candidate)) return candidate;
-  }
-  return `${originalName} - ${suffix} ${Date.now()}`;
-};
-
-const isDuplicateProgramNameAvailable = (name, programs = []) => {
-  const cleanName = normalizeDuplicateProgramName(name);
-  return Boolean(cleanName) && !(programs || []).some((program) => normalizeDuplicateProgramName(program?.name) === cleanName);
-};
-
-const createDuplicateProgramPayload = (program = {}, newName = "") => {
-  const source = program || {};
-  const payload = {
-    name: normalizeDuplicateProgramName(newName),
-    type: normalizeProgramType(source.type),
-    duration: source.duration || "",
-    departure: source.departure || "",
-    returnDate: source.returnDate || "",
-    visitOrder: normalizeVisitOrder(source.visitOrder || source.visit_order),
-    price: Number(source.price || 0),
-    seats: Number(source.seats || 0),
-    transport: source.transport || "",
-    airlineCode: source.airlineCode || "",
-    airlineName: source.airlineName || "",
-    mealPlan: source.mealPlan || "",
-    hotelMecca: source.hotelMecca || "",
-    hotelMadina: source.hotelMadina || "",
-    guidePhone: source.guidePhone || "",
-    saudiPhone1: source.saudiPhone1 || "",
-    saudiPhone2: source.saudiPhone2 || "",
-    badgeNote: source.badgeNote || "",
-    badgeTemplateId: source.badgeTemplateId || "",
-    notes: source.notes || "",
-    priceTable: deepCloneProgramConfigValue(Array.isArray(source.priceTable) ? source.priceTable : []),
-    deleted: false,
-    deletedAt: null,
-    deletedBatchId: null,
-    status: "active",
-  };
-  if (source.nameFr) payload.nameFr = normalizeDuplicateProgramName(newName);
-  if (source.currency) payload.currency = source.currency;
-  if (source.city) payload.city = source.city;
-  if (source.departureCity) payload.departureCity = source.departureCity;
-  return payload;
-};
 
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
@@ -1814,224 +1737,6 @@ export default function ProgramsPage({ store, onToast }) {
           </div>
         )}
       </Modal>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════
-// PROGRAM CARD
-// ═══════════════════════════════════════
-function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
-  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onDelete, lang, formatCurrencyForLang }) {
-  const [hov, setHov] = React.useState(false);
-  const { t } = useLang();
-  const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
-  const packages = normalizeProgramPackages(program);
-  const packageCount = getProgramPackageCount(program);
-  const startingPriceValue = getProgramStartingPrice(program);
-  const startingPrice = startingPriceValue ? formatCurrencyForLang(startingPriceValue) : "—";
-  const packageLabel = `${packageCount} ${packageCount === 1 ? (t.level || "مستوى") : (t.levels || "مستويات")}`;
-  const hotelSummary = packageCount > 1 ? (t.multipleHotelsByLevel || "عدة فنادق حسب المستوى") : "";
-  const remainingLabel = formatCurrencyForLang(totalRemaining);
-  const infoRows = [
-    ["hotel", t.hotelMecca, hotelSummary || packages[0]?.hotelMecca || program.hotelMecca],
-    ["building", t.hotelMadina, hotelSummary || packages[0]?.hotelMadina || program.hotelMadina],
-    ["plane", t.departure, program.departure],
-    ["planeLanding", t.returnDate, program.returnDate],
-  ];
-  const miniStats = [
-    { label: t.registered, value: registered, color: tc.gold },
-    { label: t.cleared, value: cleared, color: tc.greenLight },
-    { label: t.unpaid, value: unpaid, color: tc.danger },
-  ];
-
-  return (
-    <div className="animate-fadeInUp" style={{ animationDelay:`${delay}s`, cursor:"pointer" }}
-      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} onClick={onClick}>
-      <GlassCard gold style={{
-        padding:22,
-        transform: hov ? "translateY(-5px)" : "none",
-        transition:"all .3s ease",
-        boxShadow: hov ? "var(--rukn-shadow-card-hover)" : "var(--rukn-shadow-card)",
-        border:`1px solid ${hov?"rgba(212,175,55,.45)":"rgba(212,175,55,.2)"}`,
-      }}>
-        {/* header */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
-          <div style={{ flex:1 }}>
-            <p style={{ fontSize:16, fontWeight:800, color:tc.white, marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{translateProgramType(program.type, lang)}</span>
-              <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
-              <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
-            </div>
-          </div>
-          <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
-            <SmallBtn icon="edit" onClick={onEdit} color={tc.gold} title={t.edit} />
-            {canDuplicate && (
-              <SmallBtn
-                icon="copy"
-                onClick={onDuplicate}
-                color={tc.gold}
-                title={t.programDuplicateAction || (lang === "fr" ? "Dupliquer le programme" : lang === "en" ? "Duplicate program" : "نسخ البرنامج")}
-              />
-            )}
-            <SmallBtn icon="trash" onClick={onDelete} color={tc.danger} title={t.delete} />
-          </div>
-        </div>
-
-        {/* hotel + dates */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
-          {infoRows.map(([ic,lb,vl])=>(
-            <div key={lb}>
-              <p style={{ fontSize:10, color:tc.grey, display:"inline-flex", alignItems:"center", gap:5 }}>
-                <AppIcon name={ic} size={13} color={tc.gold} /> {lb}
-              </p>
-              <p style={{ fontSize:12, fontWeight:600, color:tc.white }}>{vl||"—"}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* mini stats */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6, marginBottom:14,
-          background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-section-border)", borderRadius:10, padding:"10px" }}>
-          {miniStats.map(({ label, value, color })=>(
-            <div key={label} style={{ textAlign:"center" }}>
-              <p style={{ fontSize:16, fontWeight:800, color, fontFamily:"'Amiri',serif" }}>{value}</p>
-              <p style={{ fontSize:10, color:tc.grey }}>{label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* seats progress */}
-          <div style={{ marginBottom:14 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:12 }}>
-            <span style={{ color:tc.grey }}>{t.seatFill}</span>
-            <span style={{ color:pct>80?tc.danger:tc.gold, fontWeight:700 }}>{registered}/{program.seats}</span>
-          </div>
-          <div style={{ height:5, background:"var(--rukn-border-soft)", borderRadius:3, overflow:"hidden" }}>
-            <div style={{ height:"100%", width:`${pct}%`, borderRadius:3, transition:"width 1.2s",
-              background:pct>=100?"linear-gradient(90deg,#ef4444,#dc2626)":pct>70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#22c55e,#d4af37)" }} />
-          </div>
-        </div>
-
-        {/* footer */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
-          paddingTop:12, borderTop:"1px solid rgba(212,175,55,.12)" }}>
-          <div>
-            <p style={{ fontSize:11, color:tc.grey, marginBottom:2 }}>{t.priceFrom}</p>
-            <p style={{ fontSize:18, fontWeight:900, color:tc.gold, fontFamily:"'Amiri',serif" }}>
-              {startingPrice}
-            </p>
-          </div>
-          <div style={{ textAlign:"center" }}>
-            <p style={{ fontSize:11, color:tc.grey, marginBottom:2 }}>{t.remainingToCollect}</p>
-            <p style={{ fontSize:14, fontWeight:700, color:totalRemaining>0?tc.warning:tc.greenLight }}>
-              {remainingLabel}
-            </p>
-          </div>
-          <div style={{ background:"rgba(212,175,55,.1)", border:"1px solid rgba(212,175,55,.25)",
-            borderRadius:8, padding:"7px 14px", fontSize:12, color:tc.gold, fontWeight:700 }}>
-            {t.viewList}
-          </div>
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function DuplicateProgramModal({ prompt, onNameChange, onCreate, onClose, lang, t }) {
-  const duplicateTitle = t.programDuplicateAction || (lang === "fr" ? "Dupliquer le programme" : lang === "en" ? "Duplicate program" : "نسخ البرنامج");
-  const createLabel = t.programDuplicateCreate || (lang === "fr" ? "Créer la copie" : lang === "en" ? "Create duplicate" : "إنشاء النسخة");
-  const nameLabel = t.programDuplicateNameLabel || (lang === "fr" ? "Nouveau nom du programme" : lang === "en" ? "New program name" : "اسم البرنامج الجديد");
-  const hint = t.programDuplicateHint || (
-    lang === "fr"
-      ? "La copie reprend uniquement la configuration du programme. Les pèlerins et les données financières ne sont pas copiés."
-      : lang === "en"
-        ? "The duplicate copies program configuration only. Pilgrims and financial data are not copied."
-        : "سيتم نسخ إعدادات البرنامج فقط، بدون الحجاج/المعتمرين أو البيانات المالية."
-  );
-
-  return (
-    <Modal open={!!prompt} onClose={onClose} title={duplicateTitle} width={480}>
-      {prompt && (
-        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-          <p style={{ margin:0, color:tc.grey, fontSize:13, lineHeight:1.7 }}>
-            {hint}
-          </p>
-          <Input
-            label={nameLabel}
-            value={prompt.name}
-            onChange={onNameChange}
-            required
-            error={prompt.error}
-            autoFocus
-          />
-          {prompt.error && (
-            <p style={{ margin:0, color:tc.danger, fontSize:12, fontWeight:700 }}>
-              {prompt.error}
-            </p>
-          )}
-          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
-            <Button variant="ghost" onClick={onClose}>
-              {t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء")}
-            </Button>
-            <Button variant="primary" icon="copy" onClick={onCreate}>
-              {createLabel}
-            </Button>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
-  const start = getPackageStartingPrice(pkg);
-  return (
-    <div style={{
-      border:"1px solid rgba(212,175,55,.18)",
-      background:"rgba(0,0,0,.16)",
-      borderRadius:12,
-      padding:12,
-    }}>
-      <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap", marginBottom:10 }}>
-        <div>
-          <strong style={{ color:tc.white, fontSize:14 }}>{translateHotelLevel(pkg.level) || pkg.level}</strong>
-          <p style={{ color:tc.grey, fontSize:11, marginTop:3 }}>
-            {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
-          </p>
-        </div>
-        <span style={{
-          color:tc.gold,
-          background:"rgba(212,175,55,.08)",
-          border:"1px solid rgba(212,175,55,.16)",
-          borderRadius:999,
-          padding:"4px 10px",
-          fontSize:12,
-          fontWeight:800,
-        }}>
-          {start ? ((t.fromPrice || "ابتداءً من {price}").replace("{price}", formatCurrencyForLang(start))) : (t.noPrice || "بدون سعر")}
-        </span>
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8, marginBottom:10 }}>
-        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMecca}: <span style={{ color:tc.white }}>{pkg.hotelMecca || "—"}</span></p>
-        <p style={{ fontSize:11, color:tc.grey }}>{t.hotelMadina}: <span style={{ color:tc.white }}>{pkg.hotelMadina || "—"}</span></p>
-      </div>
-      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-        {PROGRAM_ROOM_PRICE_KEYS.map(key => (
-          <span key={key} style={{
-            border:"1px solid rgba(212,175,55,.14)",
-            background:"rgba(212,175,55,.06)",
-            borderRadius:999,
-            padding:"4px 9px",
-            color:pkg.prices?.[key] ? tc.gold : tc.grey,
-            fontSize:11,
-            fontWeight:700,
-          }}>
-            {translateRoomType(key)}: {pkg.prices?.[key] ? formatCurrencyForLang(pkg.prices[key]) : "—"}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -8697,25 +8402,6 @@ function InnerMenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
       }}>
       <AppIcon name={icon} size={15} color={color} />
       <span>{label}</span>
-    </button>
-  );
-}
-
-function SmallBtn({ icon, onClick, color, title }) {
-  const [hov, setHov] = React.useState(false);
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      onClick={e=>{e.stopPropagation();onClick(e);}}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{ width:30, height:30, background:hov?`${color}22`:"rgba(255,255,255,.05)",
-        border:`1px solid ${hov?color:"rgba(255,255,255,.08)"}`,
-        borderRadius:8, cursor:"pointer",
-        display:"flex", alignItems:"center", justifyContent:"center",
-        fontSize:13, transition:"all .2s" }}>
-      <AppIcon name={icon} size={15} color={color} />
     </button>
   );
 }
