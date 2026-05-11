@@ -165,6 +165,7 @@ export default function TrashPage({ store, onToast }) {
   const [pageSize, setPageSize] = React.useState(DEFAULT_PAGE_SIZE);
   const [selection, setSelection] = React.useState({});
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [deleteInProgress, setDeleteInProgress] = React.useState(false);
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [trashedInvoices, setTrashedInvoices] = React.useState(() => (
     invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
@@ -207,6 +208,7 @@ export default function TrashPage({ store, onToast }) {
     clientSuccess: t.trashClientPermanentDeleteSuccess || (lang === "fr" ? "Pèlerin supprimé définitivement" : lang === "en" ? "Pilgrim permanently deleted" : "تم حذف المعتمر نهائيًا"),
     failure: t.trashPermanentDeleteFailed || (lang === "fr" ? "La suppression définitive a échoué. Réessayez ou vérifiez les enregistrements liés." : lang === "en" ? "Permanent deletion failed. Try again or check linked records." : "تعذر الحذف النهائي. حاول مرة أخرى أو تحقق من السجلات المرتبطة."),
     linkedFailure: t.trashPermanentDeleteLinkedRecordsFailed || (lang === "fr" ? "La suppression définitive a échoué car des enregistrements sont liés à ce pèlerin. Vérifiez les paiements ou les enregistrements liés puis réessayez." : lang === "en" ? "Permanent deletion failed because linked records still exist for this pilgrim. Check payments or linked records, then try again." : "تعذر الحذف النهائي لأن هناك سجلات مرتبطة بهذا المعتمر. تحقق من الدفعات أو السجلات المرتبطة ثم حاول مرة أخرى."),
+    deleting: t.trashDeleting || (lang === "fr" ? "Suppression..." : lang === "en" ? "Deleting..." : "جاري الحذف..."),
   }), [lang, t]);
   const [clientDeleteBlocksByClient, setClientDeleteBlocksByClient] = React.useState({});
   const [clientDeleteBlocksLoading, setClientDeleteBlocksLoading] = React.useState(false);
@@ -503,6 +505,14 @@ export default function TrashPage({ store, onToast }) {
     invoiceIds: selectedItems.filter((item) => item.type === "invoice").map((item) => item.id),
     paymentIds: selectedItems.filter((item) => item.type === "payment").map((item) => item.id),
   }), [selectedItems]);
+  const selectedClientPreflightPending = React.useMemo(() => (
+    selectionPayload.clientIds.some((id) => !clientDeleteBlocksByClient[id]) && clientDeleteBlocksLoading
+  ), [clientDeleteBlocksByClient, clientDeleteBlocksLoading, selectionPayload.clientIds]);
+
+  const closeConfirm = React.useCallback(() => {
+    if (deleteInProgress) return;
+    setConfirmOpen(false);
+  }, [deleteInProgress]);
 
   const handleRestore = React.useCallback(async () => {
     if (!selectedCount) return;
@@ -530,132 +540,145 @@ export default function TrashPage({ store, onToast }) {
   }, [invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
 
   const handleDelete = React.useCallback(() => {
-    if (!selectedCount) return;
+    if (!selectedCount || deleteInProgress || selectedClientPreflightPending) return;
     setConfirmOpen(true);
-  }, [selectedCount]);
+  }, [deleteInProgress, selectedClientPreflightPending, selectedCount]);
 
   const confirmDelete = React.useCallback(async () => {
-    if (!selectedCount) return;
-    let deletePayload = selectionPayload;
-    let blockedClientIds = [];
-    let failedClientIds = [];
+    if (!selectedCount || deleteInProgress) return;
+    setDeleteInProgress(true);
+    try {
+      let deletePayload = selectionPayload;
+      let blockedClientIds = [];
+      let failedClientIds = [];
+      let selectedClientBlockMap = new Map(
+        selectionPayload.clientIds
+          .map((id) => [id, clientDeleteBlocksByClient[id]])
+          .filter(([, block]) => Boolean(block))
+      );
 
-    if (selectionPayload.clientIds.length && typeof getClientPermanentDeleteBlockMap === "function") {
-      try {
-        const blockMap = await getClientPermanentDeleteBlockMap(selectionPayload.clientIds);
-        const blockEntries = Object.fromEntries(blockMap || []);
-        setClientDeleteBlocksByClient((prev) => ({ ...prev, ...blockEntries }));
-        blockedClientIds = selectionPayload.clientIds.filter((id) => blockMap.get(id)?.blocked);
-        deletePayload = {
-          ...selectionPayload,
-          clientIds: selectionPayload.clientIds.filter((id) => !blockMap.get(id)?.blocked),
-        };
-      } catch (error) {
-        console.error("[Trash] Permanent delete linked-record check failed:", error);
-        if (onToast) onToast(error.message || permanentDeleteText.failure, "error");
-        setConfirmOpen(false);
-        return;
-      }
-    }
-
-    let purgeResult = null;
-    if ((deletePayload.programIds.length || deletePayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
-      let result = null;
-      try {
-        result = await store.purgeTrashItems(deletePayload);
-      } catch (error) {
-        console.error("[Trash] Permanent delete payment check failed:", error);
-        if (onToast) onToast(error.message || "Delete failed", "error");
-        setConfirmOpen(false);
-        return;
-      }
-      if (result?.error) {
-        const technicalMessage = String(result.error.message || result.error.details || "");
-        const isPaymentBlockError = result.error.code === "ACTIVE_LINKED_PAYMENTS" || result.error.code === "ACTIVE_PAYMENTS";
-        const isHiddenPaymentBlockError = result.error.code === "LINKED_EXTERNAL_PAYMENTS" || result.error.code === "LINKED_PAYMENT_RECORDS";
-        const isInvoiceBlockError = result.error.code === "ACTIVE_LINKED_INVOICES";
-        const isHiddenInvoiceBlockError = result.error.code === "LINKED_EXTERNAL_INVOICES";
-        const isLinkedRecordError = result.error.code === "LINKED_RECORDS"
-          || result.error.code === "UNKNOWN_LINKED_RECORDS"
-          || result.error.code === "LINKED_INVOICES"
-          || result.error.code === "LINKED_FINANCIAL_RECORDS"
-          || result.error.code === "ACTIVE_LINKED_FINANCIAL_RECORDS"
-          || result.error.code === "23503"
-          || /foreign key|violates foreign key|constraint/i.test(technicalMessage);
-        if (onToast) {
-          onToast(
-            isPaymentBlockError
-              ? paymentGuardText.activePayments
-              : isHiddenPaymentBlockError
-                ? paymentGuardText.hiddenPayments
-              : isInvoiceBlockError
-                ? paymentGuardText.activeInvoices
-                : isHiddenInvoiceBlockError
-                  ? paymentGuardText.hiddenInvoices
-                  : (isLinkedRecordError ? permanentDeleteText.linkedFailure : permanentDeleteText.failure),
-            "error"
-          );
+      const missingClientIds = selectionPayload.clientIds.filter((id) => !selectedClientBlockMap.has(id));
+      if (missingClientIds.length && typeof getClientPermanentDeleteBlockMap === "function") {
+        try {
+          const blockMap = await getClientPermanentDeleteBlockMap(missingClientIds);
+          const blockEntries = Object.fromEntries(blockMap || []);
+          selectedClientBlockMap = new Map([...selectedClientBlockMap, ...(blockMap || new Map())]);
+          setClientDeleteBlocksByClient((prev) => ({ ...prev, ...blockEntries }));
+        } catch (error) {
+          console.error("[Trash] Permanent delete linked-record check failed:", error);
+          if (onToast) onToast(error.message || permanentDeleteText.failure, "error");
+          setConfirmOpen(false);
+          return;
         }
-        setConfirmOpen(false);
-        return;
       }
-      purgeResult = result;
-      if (result?.clientBlocks) {
-        setClientDeleteBlocksByClient((prev) => ({ ...prev, ...result.clientBlocks }));
+      blockedClientIds = selectionPayload.clientIds.filter((id) => selectedClientBlockMap.get(id)?.blocked);
+      deletePayload = {
+        ...selectionPayload,
+        clientIds: selectionPayload.clientIds.filter((id) => !selectedClientBlockMap.get(id)?.blocked),
+        clientPreflightBlocks: Object.fromEntries(selectedClientBlockMap),
+      };
+
+      let purgeResult = null;
+      if ((deletePayload.programIds.length || deletePayload.clientIds.length) && typeof store.purgeTrashItems === "function") {
+        let result = null;
+        try {
+          result = await store.purgeTrashItems(deletePayload);
+        } catch (error) {
+          console.error("[Trash] Permanent delete payment check failed:", error);
+          if (onToast) onToast(error.message || "Delete failed", "error");
+          setConfirmOpen(false);
+          return;
+        }
+        if (result?.error) {
+          const technicalMessage = String(result.error.message || result.error.details || "");
+          const isPaymentBlockError = result.error.code === "ACTIVE_LINKED_PAYMENTS" || result.error.code === "ACTIVE_PAYMENTS";
+          const isHiddenPaymentBlockError = result.error.code === "LINKED_EXTERNAL_PAYMENTS" || result.error.code === "LINKED_PAYMENT_RECORDS";
+          const isInvoiceBlockError = result.error.code === "ACTIVE_LINKED_INVOICES";
+          const isHiddenInvoiceBlockError = result.error.code === "LINKED_EXTERNAL_INVOICES";
+          const isLinkedRecordError = result.error.code === "LINKED_RECORDS"
+            || result.error.code === "UNKNOWN_LINKED_RECORDS"
+            || result.error.code === "LINKED_INVOICES"
+            || result.error.code === "LINKED_FINANCIAL_RECORDS"
+            || result.error.code === "ACTIVE_LINKED_FINANCIAL_RECORDS"
+            || result.error.code === "23503"
+            || /foreign key|violates foreign key|constraint/i.test(technicalMessage);
+          if (onToast) {
+            onToast(
+              isPaymentBlockError
+                ? paymentGuardText.activePayments
+                : isHiddenPaymentBlockError
+                  ? paymentGuardText.hiddenPayments
+                : isInvoiceBlockError
+                  ? paymentGuardText.activeInvoices
+                  : isHiddenInvoiceBlockError
+                    ? paymentGuardText.hiddenInvoices
+                    : (isLinkedRecordError ? permanentDeleteText.linkedFailure : permanentDeleteText.failure),
+              "error"
+            );
+          }
+          setConfirmOpen(false);
+          return;
+        }
+        purgeResult = result;
+        if (result?.clientBlocks) {
+          setClientDeleteBlocksByClient((prev) => ({ ...prev, ...result.clientBlocks }));
+        }
+        blockedClientIds = Array.from(new Set([...blockedClientIds, ...(result?.blockedClientIds || [])]));
+        failedClientIds = Array.from(new Set([...(result?.failedClientIds || [])]));
+        if (invoicesAreRemote && Number(result?.cleanup?.cleanedInvoicesCount || 0) > 0) {
+          await refreshTrashedInvoices({ force: true });
+        }
       }
-      blockedClientIds = Array.from(new Set([...blockedClientIds, ...(result?.blockedClientIds || [])]));
-      failedClientIds = Array.from(new Set([...(result?.failedClientIds || [])]));
-      if (invoicesAreRemote && Number(result?.cleanup?.cleanedInvoicesCount || 0) > 0) {
+      if (invoicesAreRemote && deletePayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
+        const responses = await Promise.all(deletePayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
+        const error = responses.find((response) => response?.error)?.error;
+        if (error) {
+          if (onToast) onToast(error.message || "Delete failed", "error");
+          return;
+        }
         await refreshTrashedInvoices({ force: true });
       }
-    }
-    if (invoicesAreRemote && deletePayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
-      const responses = await Promise.all(deletePayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
-      const error = responses.find((response) => response?.error)?.error;
-      if (error) {
-        if (onToast) onToast(error.message || "Delete failed", "error");
-        return;
+      if (!invoicesAreRemote && deletePayload.invoiceIds.length) {
+        deletePayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
+        setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
       }
-      await refreshTrashedInvoices({ force: true });
-    }
-    if (!invoicesAreRemote && deletePayload.invoiceIds.length) {
-      deletePayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
-      setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
-    }
-    if (deletePayload.paymentIds.length && typeof store.deletePaymentFromTrash === "function") {
-      await Promise.all(deletePayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
-    }
-    const blockedOrFailedClientIds = Array.from(new Set([...blockedClientIds, ...failedClientIds]));
-    setSelection(Object.fromEntries(blockedOrFailedClientIds.map((id) => [`client-${id}`, true])));
-    setConfirmOpen(false);
-    if (onToast) {
-      const deletedCount = (purgeResult?.deletedClientIds?.length || 0)
-        + deletePayload.programIds.length
-        + deletePayload.invoiceIds.length
-        + deletePayload.paymentIds.length;
-      const blockedCount = blockedOrFailedClientIds.length;
-      const cleanupCount = Number(purgeResult?.cleanup?.cleanedPaymentsCount || 0)
-        + Number(purgeResult?.cleanup?.cleanedInvoicesCount || 0)
-        + Number(purgeResult?.cleanup?.cleanedRoomingAssignmentsCount || 0)
-        + Number(purgeResult?.cleanup?.cleanedNotificationsCount || 0)
-        + Number(purgeResult?.cleanup?.cleanedRepresentationLinksCount || 0)
-        + Number(purgeResult?.cleanup?.cleanedBadgePhotosCount || 0);
-      if (deletedCount && blockedCount) {
-        onToast(formatTrashCountMessage(paymentGuardText.partial, { deleted: deletedCount, failed: blockedCount, blocked: blockedCount }), "warning");
-      } else if (blockedCount) {
-        onToast(formatTrashCountMessage(paymentGuardText.blockedOnly, { failed: blockedCount, blocked: blockedCount }), "error");
-      } else if (deletedCount && cleanupCount) {
-        onToast(formatTrashCountMessage(paymentGuardText.successWithCleanup, { deleted: deletedCount }), "success");
-      } else {
-        const onlyClients = selectedCount > 0
-          && deletePayload.clientIds.length === selectedCount
-          && !deletePayload.programIds.length
-          && !deletePayload.invoiceIds.length
-          && !deletePayload.paymentIds.length;
-        onToast(onlyClients ? permanentDeleteText.clientSuccess : (t.deleteSuccess || "Deleted"), "success");
+      if (deletePayload.paymentIds.length && typeof store.deletePaymentFromTrash === "function") {
+        await Promise.all(deletePayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
       }
+      const blockedOrFailedClientIds = Array.from(new Set([...blockedClientIds, ...failedClientIds]));
+      setSelection(Object.fromEntries(blockedOrFailedClientIds.map((id) => [`client-${id}`, true])));
+      setConfirmOpen(false);
+      if (onToast) {
+        const deletedCount = (purgeResult?.deletedClientIds?.length || 0)
+          + deletePayload.programIds.length
+          + deletePayload.invoiceIds.length
+          + deletePayload.paymentIds.length;
+        const blockedCount = blockedOrFailedClientIds.length;
+        const cleanupCount = Number(purgeResult?.cleanup?.cleanedPaymentsCount || 0)
+          + Number(purgeResult?.cleanup?.cleanedInvoicesCount || 0)
+          + Number(purgeResult?.cleanup?.cleanedRoomingAssignmentsCount || 0)
+          + Number(purgeResult?.cleanup?.cleanedNotificationsCount || 0)
+          + Number(purgeResult?.cleanup?.cleanedRepresentationLinksCount || 0)
+          + Number(purgeResult?.cleanup?.cleanedBadgePhotosCount || 0);
+        if (deletedCount && blockedCount) {
+          onToast(formatTrashCountMessage(paymentGuardText.partial, { deleted: deletedCount, failed: blockedCount, blocked: blockedCount }), "warning");
+        } else if (blockedCount) {
+          onToast(formatTrashCountMessage(paymentGuardText.blockedOnly, { failed: blockedCount, blocked: blockedCount }), "error");
+        } else if (deletedCount && cleanupCount) {
+          onToast(formatTrashCountMessage(paymentGuardText.successWithCleanup, { deleted: deletedCount }), "success");
+        } else {
+          const onlyClients = selectedCount > 0
+            && deletePayload.clientIds.length === selectedCount
+            && !deletePayload.programIds.length
+            && !deletePayload.invoiceIds.length
+            && !deletePayload.paymentIds.length;
+          onToast(onlyClients ? permanentDeleteText.clientSuccess : (t.deleteSuccess || "Deleted"), "success");
+        }
+      }
+    } finally {
+      setDeleteInProgress(false);
     }
-  }, [getClientPermanentDeleteBlockMap, invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, paymentGuardText, permanentDeleteText, t.deleteSuccess]);
+  }, [clientDeleteBlocksByClient, deleteInProgress, getClientPermanentDeleteBlockMap, invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, paymentGuardText, permanentDeleteText, t.deleteSuccess]);
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);
@@ -850,7 +873,7 @@ export default function TrashPage({ store, onToast }) {
               variant="success"
               size="sm"
               icon="restore"
-              disabled={!selectedCount}
+              disabled={!selectedCount || deleteInProgress}
               onClick={handleRestore}
             >
               {t.trashRestoreSelected}
@@ -859,9 +882,9 @@ export default function TrashPage({ store, onToast }) {
               variant="danger"
               size="sm"
               icon="trash"
-              disabled={!selectedCount}
+              disabled={!selectedCount || deleteInProgress || selectedClientPreflightPending}
               onClick={handleDelete}
-              title={selectedBlockedClientItems.length ? paymentGuardText.blocked : undefined}
+              title={selectedClientPreflightPending ? paymentGuardText.checking : selectedBlockedClientItems.length ? paymentGuardText.blocked : undefined}
             >
               {t.trashDeleteSelected}
             </Button>
@@ -1076,7 +1099,7 @@ export default function TrashPage({ store, onToast }) {
 
       <Modal
         open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
+        onClose={closeConfirm}
         title={confirmCopy.title}
         width={520}
       >
@@ -1094,11 +1117,11 @@ export default function TrashPage({ store, onToast }) {
           ))}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 28 }}>
-          <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+          <Button variant="ghost" onClick={closeConfirm} disabled={deleteInProgress}>
             {t.trashCancel || t.cancel}
           </Button>
-          <Button variant="danger" icon="trash" onClick={confirmDelete}>
-            {t.trashDeleteSelected}
+          <Button variant="danger" icon="trash" onClick={confirmDelete} disabled={deleteInProgress}>
+            {deleteInProgress ? permanentDeleteText.deleting : t.trashDeleteSelected}
           </Button>
         </div>
       </Modal>

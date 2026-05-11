@@ -14,6 +14,116 @@ const FLOW_LAYOUT = {
 };
 const ROOM_CARD_WRITE_AREA_HEIGHT = 8;
 const ROOM_CARD_WRITE_AREA_GAP = 4;
+const DENSITY_CONFIGS = {
+  comfortable: {
+    columns: 5,
+    gapX: 8,
+    gapY: 6,
+    groupGap: 3,
+    sectionTitleHeight: 16,
+    sectionTitleGap: 4.5,
+    writeAreaHeight: 9,
+    writeAreaGap: 4.5,
+    cardPadX: 8,
+    cardPadBottom: 7,
+    chipGap: 2.6,
+    chipMinHeight: 14.4,
+    chipHorizontalPad: 5,
+    fontLarge: 8.8,
+    fontNormal: 8.4,
+    fontSmall: 7.7,
+    fontTiny: 7.1,
+    sourceFontOffset: 1.2,
+    lineHeightExtra: 2.2,
+    minCardHeight: 70,
+    rowMaxHeight: 142,
+    maxNameLines: 8,
+    html: {
+      cardPadding: "2mm",
+      cardGap: "2mm",
+      writeHeight: "3.2mm",
+      writeMargin: "1.5mm",
+      itemPadding: ".75mm 1.6mm",
+      itemGap: ".8mm",
+      itemMinHeight: "4.5mm",
+      nameFont: "8.4px",
+      nameLine: "1.25",
+      sourceFont: "6.8px",
+    },
+  },
+  normal: {
+    columns: FLOW_LAYOUT.columns,
+    gapX: FLOW_LAYOUT.gapX,
+    gapY: FLOW_LAYOUT.gapY,
+    groupGap: FLOW_LAYOUT.groupGap,
+    sectionTitleHeight: FLOW_LAYOUT.sectionTitleHeight,
+    sectionTitleGap: FLOW_LAYOUT.sectionTitleGap,
+    writeAreaHeight: ROOM_CARD_WRITE_AREA_HEIGHT,
+    writeAreaGap: ROOM_CARD_WRITE_AREA_GAP,
+    cardPadX: 8,
+    cardPadBottom: 7,
+    chipGap: 2.2,
+    chipMinHeight: 12.8,
+    chipHorizontalPad: 5,
+    fontLarge: 8.4,
+    fontNormal: 8,
+    fontSmall: 7.4,
+    fontTiny: 6.8,
+    sourceFontOffset: 1.4,
+    lineHeightExtra: 2,
+    minCardHeight: 66,
+    rowMaxHeight: 132,
+    maxNameLines: 8,
+    html: {
+      cardPadding: "1.7mm",
+      cardGap: "1.7mm",
+      writeHeight: "2.8mm",
+      writeMargin: "1.3mm",
+      itemPadding: ".55mm 1.4mm",
+      itemGap: ".6mm",
+      itemMinHeight: "3.9mm",
+      nameFont: "8px",
+      nameLine: "1.22",
+      sourceFont: "6.6px",
+    },
+  },
+  compact: {
+    columns: 7,
+    gapX: 5,
+    gapY: 3.5,
+    groupGap: 1.5,
+    sectionTitleHeight: 13,
+    sectionTitleGap: 3,
+    writeAreaHeight: 6,
+    writeAreaGap: 2.6,
+    cardPadX: 6,
+    cardPadBottom: 5,
+    chipGap: 1.5,
+    chipMinHeight: 10.8,
+    chipHorizontalPad: 4,
+    fontLarge: 7.5,
+    fontNormal: 7.2,
+    fontSmall: 6.8,
+    fontTiny: 6.3,
+    sourceFontOffset: 1.1,
+    lineHeightExtra: 1.5,
+    minCardHeight: 56,
+    rowMaxHeight: 124,
+    maxNameLines: 8,
+    html: {
+      cardPadding: "1.25mm",
+      cardGap: "1.2mm",
+      writeHeight: "2.2mm",
+      writeMargin: ".9mm",
+      itemPadding: ".45mm 1mm",
+      itemGap: ".45mm",
+      itemMinHeight: "3.3mm",
+      nameFont: "7.3px",
+      nameLine: "1.18",
+      sourceFont: "6.1px",
+    },
+  },
+};
 const TYPE_COLORS = {
   double: { text: "#1d4f75", chipBg: "#f4f8fb", chipBorder: "#dfe9f1" },
   triple: { text: "#277052", chipBg: "#f3f8f5", chipBorder: "#dcebe2" },
@@ -58,6 +168,31 @@ const text = (value, fallback = "—") => {
   return clean || fallback;
 };
 
+const normalizePrintSettings = (settings = {}) => {
+  const density = ["comfortable", "normal", "compact"].includes(settings.density)
+    ? settings.density
+    : "normal";
+  return {
+    density,
+    showRegistrationSource: settings.showRegistrationSource !== false,
+  };
+};
+
+const getDensityConfig = (settings = {}) => DENSITY_CONFIGS[normalizePrintSettings(settings).density] || DENSITY_CONFIGS.normal;
+
+const getFlowLayout = (settings = {}) => {
+  const density = getDensityConfig(settings);
+  return {
+    ...FLOW_LAYOUT,
+    columns: density.columns,
+    gapX: density.gapX,
+    gapY: density.gapY,
+    groupGap: density.groupGap,
+    sectionTitleHeight: density.sectionTitleHeight,
+    sectionTitleGap: density.sectionTitleGap,
+  };
+};
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -65,11 +200,12 @@ const escapeHtml = (value) => String(value ?? "")
   .replace(/"/g, "&quot;")
   .replace(/'/g, "&#39;");
 
-const getRoomPilgrims = (room = {}) => {
+const getRoomPilgrims = (room = {}, settings = {}) => {
+  const printSettings = normalizePrintSettings(settings);
   if (Array.isArray(room.pilgrims)) {
     return room.pilgrims.map((pilgrim) => ({
       name: text(pilgrim?.name, "—"),
-      source: text(pilgrim?.source, ""),
+      source: printSettings.showRegistrationSource ? text(pilgrim?.source, "") : "",
     }));
   }
   const names = Array.isArray(room.names) ? room.names : [];
@@ -146,12 +282,37 @@ const truncateToWidth = (ctx, value, maxWidth) => {
   return `${raw.slice(0, Math.max(1, lo))}${ellipsis}`;
 };
 
-const wrapText = (ctx, value, maxWidth, maxLines = 2) => {
+const splitLongToken = (ctx, token, maxWidth) => {
+  const parts = [];
+  let current = "";
+  Array.from(String(token || "")).forEach((char) => {
+    const next = `${current}${char}`;
+    if (!current || ctx.measureText(next).width <= maxWidth) {
+      current = next;
+      return;
+    }
+    parts.push(current);
+    current = char;
+  });
+  if (current) parts.push(current);
+  return parts.length ? parts : [token];
+};
+
+const wrapText = (ctx, value, maxWidth, maxLines = 2, { ellipsis = false } = {}) => {
   const raw = text(value, "—");
+  if (!Number.isFinite(maxWidth) || maxWidth <= 0) return [raw];
   const parts = raw.split(/\s+/).filter(Boolean);
   const lines = [];
   let current = "";
   parts.forEach((part) => {
+    if (ctx.measureText(part).width > maxWidth) {
+      if (current) {
+        lines.push(current);
+        current = "";
+      }
+      splitLongToken(ctx, part, maxWidth).forEach((piece) => lines.push(piece));
+      return;
+    }
     const next = current ? `${current} ${part}` : part;
     if (ctx.measureText(next).width <= maxWidth) {
       current = next;
@@ -163,26 +324,30 @@ const wrapText = (ctx, value, maxWidth, maxLines = 2) => {
   if (current) lines.push(current);
   const safeLines = lines.length ? lines : [raw];
   if (safeLines.length <= maxLines) {
-    return safeLines.map((line) => truncateToWidth(ctx, line, maxWidth));
+    return safeLines;
   }
   const clipped = safeLines.slice(0, maxLines);
-  clipped[maxLines - 1] = truncateToWidth(ctx, `${clipped[maxLines - 1]}…`, maxWidth);
+  if (ellipsis) clipped[maxLines - 1] = truncateToWidth(ctx, `${clipped[maxLines - 1]}…`, maxWidth);
   return clipped;
 };
 
-const measureRoomCard = (ctx, room, cardWidth) => {
-  const contentWidth = cardWidth - 22;
-  ctx.font = "700 8.2pt Arial, Tahoma, sans-serif";
-  const pilgrims = getRoomPilgrims(room);
+const measureRoomCard = (ctx, room, cardWidth, settings = {}) => {
+  const density = getDensityConfig(settings);
+  const contentWidth = cardWidth - density.cardPadX * 2 - density.chipHorizontalPad * 2;
+  ctx.font = `700 ${density.fontNormal}pt Arial, Tahoma, sans-serif`;
+  const pilgrims = getRoomPilgrims(room, settings);
   const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
   const rowCount = Math.max(capacity, pilgrims.length);
   const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
   const chipsHeight = rows.reduce((sum, pilgrim) => {
     const sourceWidth = pilgrim.source ? Math.min(38, Math.max(22, ctx.measureText(pilgrim.source).width + 12)) : 0;
-    const lineCount = wrapText(ctx, pilgrim.name, contentWidth - sourceWidth - (sourceWidth ? 5 : 0), 2).length;
-    return sum + Math.max(12.8, lineCount * 9.4 + 4);
+    const lineCount = wrapText(ctx, pilgrim.name, contentWidth - sourceWidth - (sourceWidth ? 5 : 0), density.maxNameLines).length;
+    return sum + Math.max(density.chipMinHeight, lineCount * (density.fontNormal + density.lineHeightExtra) + 4);
   }, 0);
-  return Math.max(66, 13 + ROOM_CARD_WRITE_AREA_HEIGHT + ROOM_CARD_WRITE_AREA_GAP + chipsHeight + Math.max(0, rows.length - 1) * 2.2 + 7);
+  return Math.max(
+    density.minCardHeight,
+    13 + density.writeAreaHeight + density.writeAreaGap + chipsHeight + Math.max(0, rows.length - 1) * density.chipGap + density.cardPadBottom
+  );
 };
 
 const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang }) => {
@@ -283,9 +448,10 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
   ctx.stroke();
 };
 
-const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
+const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {}) => {
+  const density = getDensityConfig(settings);
   const direction = getDirection(lang);
-  const pilgrims = getRoomPilgrims(room);
+  const pilgrims = getRoomPilgrims(room, settings);
   const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
   const rowCount = Math.max(capacity, pilgrims.length);
   const count = pilgrims.filter((pilgrim) => pilgrim.name && pilgrim.name !== "—").length;
@@ -304,15 +470,15 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
   ctx.lineWidth = status === "full" ? 0.75 : 0.95;
   ctx.stroke();
 
-  const right = x + width - 8;
-  const left = x + 8;
+  const right = x + width - density.cardPadX;
+  const left = x + density.cardPadX;
 
   const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
-  const chipGap = 2.2;
+  const chipGap = density.chipGap;
   const chipX = left;
-  const chipWidth = width - 16;
+  const chipWidth = width - density.cardPadX * 2;
   const writeY = y + 6;
-  drawRoundRect(ctx, left, writeY, chipWidth, ROOM_CARD_WRITE_AREA_HEIGHT, 4);
+  drawRoundRect(ctx, left, writeY, chipWidth, density.writeAreaHeight, 4);
   ctx.fillStyle = "#ffffff";
   ctx.fill();
   ctx.strokeStyle = "#d7dbe2";
@@ -321,21 +487,21 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  const contentTop = writeY + ROOM_CARD_WRITE_AREA_HEIGHT + ROOM_CARD_WRITE_AREA_GAP;
-  const contentBottom = y + height - 7;
+  const contentTop = writeY + density.writeAreaHeight + density.writeAreaGap;
+  const contentBottom = y + height - density.cardPadBottom;
   const availableHeight = Math.max(1, contentBottom - contentTop);
   const chipHeight = Math.max(1, (availableHeight - chipGap * Math.max(0, rows.length - 1)) / rows.length);
-  const fontSize = chipHeight >= 15.5 ? 8.4 : chipHeight >= 13 ? 8 : chipHeight >= 11 ? 7.4 : 6.8;
-  const lineHeight = fontSize + 2;
-  const maxLines = chipHeight >= lineHeight * 2 + 3 ? 2 : 1;
+  const fontSize = chipHeight >= 15.5 ? density.fontLarge : chipHeight >= 13 ? density.fontNormal : chipHeight >= 11 ? density.fontSmall : density.fontTiny;
+  const lineHeight = fontSize + density.lineHeightExtra;
+  const maxLines = Math.max(1, Math.min(density.maxNameLines, Math.floor((chipHeight - 3) / lineHeight)));
   ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
-  const contentWidth = chipWidth - 10;
+  const contentWidth = chipWidth - density.chipHorizontalPad * 2;
   let cursor = contentTop;
   rows.forEach((pilgrim) => {
     const empty = pilgrim.name === "—";
     const sourceText = !empty ? text(pilgrim.source, "") : "";
     const sourceMaxWidth = sourceText ? Math.min(40, Math.max(24, chipWidth * 0.34)) : 0;
-    ctx.font = `800 ${Math.max(5.9, fontSize - 1.4)}pt Arial, Tahoma, sans-serif`;
+    ctx.font = `800 ${Math.max(5.7, fontSize - density.sourceFontOffset)}pt Arial, Tahoma, sans-serif`;
     const sourceLabel = sourceText ? truncateToWidth(ctx, sourceText, sourceMaxWidth - 9) : "";
     const sourceWidth = sourceLabel ? Math.min(sourceMaxWidth, Math.max(20, ctx.measureText(sourceLabel).width + 9)) : 0;
     ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
@@ -352,7 +518,7 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
     const firstLine = lines[0] || "";
     const measuredNameWidth = Math.min(ctx.measureText(firstLine).width, nameWidthLimit);
     lines.forEach((line, lineIndex) => {
-      const lineX = direction === "rtl" ? right - 5 : left + 5;
+      const lineX = direction === "rtl" ? right - density.chipHorizontalPad : left + density.chipHorizontalPad;
       drawText(ctx, line, lineX, lineY, {
         size: fontSize,
         weight: empty ? 600 : 700,
@@ -373,7 +539,7 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang) => {
         ctx.lineWidth = 0.45;
         ctx.stroke();
         drawText(ctx, sourceLabel, direction === "rtl" ? badgeX + sourceWidth / 2 : badgeX + sourceWidth / 2, badgeY + 1.4, {
-          size: Math.max(5.9, fontSize - 1.4),
+          size: Math.max(5.7, fontSize - density.sourceFontOffset),
           weight: 800,
           color: "#64748b",
           align: "center",
@@ -424,14 +590,15 @@ const getRoomTypeSectionLabel = (key, fallback, lang) => {
           : fallback || "غرف أخرى";
 };
 
-const drawTypeSectionTitle = (ctx, page, label, y, lang) => {
+const drawTypeSectionTitle = (ctx, page, label, y, lang, settings = {}) => {
+  const layout = getFlowLayout(settings);
   const direction = getDirection(lang);
   const right = page.width - page.margin;
   const left = page.margin;
   ctx.font = "900 8.6pt Arial, Tahoma, sans-serif";
   const textWidth = Math.min(130, Math.max(72, ctx.measureText(label).width + 28));
   const x = right - textWidth;
-  drawRoundRect(ctx, x, y, textWidth, FLOW_LAYOUT.sectionTitleHeight, 8.5);
+  drawRoundRect(ctx, x, y, textWidth, layout.sectionTitleHeight, 8.5);
   ctx.fillStyle = "#fbfaf7";
   ctx.fill();
   ctx.strokeStyle = "#e6dcc2";
@@ -452,24 +619,29 @@ const drawTypeSectionTitle = (ctx, page, label, y, lang) => {
   ctx.stroke();
 };
 
-const getCardWidth = (page) => (
-  (page.width - page.margin * 2 - FLOW_LAYOUT.gapX * (FLOW_LAYOUT.columns - 1)) / FLOW_LAYOUT.columns
-);
-
-const getRoomMinimumHeight = (room) => {
-  const pilgrims = getRoomPilgrims(room);
-  const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
-  const rowCount = Math.max(capacity, pilgrims.length);
-  if (rowCount <= 2) return 66;
-  if (rowCount === 3) return 74;
-  if (rowCount === 4) return 82;
-  if (rowCount === 5) return 90;
-  return 102;
+const getCardWidth = (page, settings = {}) => {
+  const layout = getFlowLayout(settings);
+  return (
+    (page.width - page.margin * 2 - layout.gapX * (layout.columns - 1)) / layout.columns
+  );
 };
 
-const getFlowRowHeight = (ctx, rooms, cardWidth) => {
-  const measured = rooms.map((room) => Math.max(getRoomMinimumHeight(room), measureRoomCard(ctx, room, cardWidth)));
-  return Math.min(116, Math.max(...measured, 60));
+const getRoomMinimumHeight = (room, settings = {}) => {
+  const density = getDensityConfig(settings);
+  const pilgrims = getRoomPilgrims(room, settings);
+  const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
+  const rowCount = Math.max(capacity, pilgrims.length);
+  if (rowCount <= 2) return density.minCardHeight;
+  if (rowCount === 3) return density.minCardHeight + 8;
+  if (rowCount === 4) return density.minCardHeight + 16;
+  if (rowCount === 5) return density.minCardHeight + 24;
+  return density.minCardHeight + 36;
+};
+
+const getFlowRowHeight = (ctx, rooms, cardWidth, settings = {}) => {
+  const density = getDensityConfig(settings);
+  const measured = rooms.map((room) => Math.max(getRoomMinimumHeight(room, settings), measureRoomCard(ctx, room, cardWidth, settings)));
+  return Math.max(...measured, density.minCardHeight - 6);
 };
 
 const groupRooms = (rooms = [], labels = {}, sectionOverride = null) => {
@@ -516,7 +688,8 @@ const groupRooms = (rooms = [], labels = {}, sectionOverride = null) => {
   return sections;
 };
 
-const getOrderedTypeGroups = (section, labels, lang) => {
+const getOrderedTypeGroups = (section, labels, lang, settings = {}) => {
+  const layout = getFlowLayout(settings);
   const byType = new Map();
   section.rooms.forEach((room) => {
     const key = room.roomTypeKey || "other";
@@ -532,8 +705,8 @@ const getOrderedTypeGroups = (section, labels, lang) => {
     .map(([typeKey, typeRooms]) => ({
       typeKey,
       title: getRoomTypeSectionLabel(typeKey, typeRooms[0]?.roomTypeLabel || labels.otherRoomType, lang),
-      rows: Array.from({ length: Math.ceil(typeRooms.length / FLOW_LAYOUT.columns) }, (_, index) => (
-        typeRooms.slice(index * FLOW_LAYOUT.columns, (index + 1) * FLOW_LAYOUT.columns)
+      rows: Array.from({ length: Math.ceil(typeRooms.length / layout.columns) }, (_, index) => (
+        typeRooms.slice(index * layout.columns, (index + 1) * layout.columns)
       )),
     }));
 };
@@ -555,20 +728,24 @@ const getFlowItems = (typeGroups) => {
   return items;
 };
 
-const getSinglePageRowHeights = (ctx, items, page) => {
+const getSinglePageRowHeights = (ctx, items, page, settings = {}) => {
+  const layout = getFlowLayout(settings);
   const rows = items.filter((item) => item.kind === "row");
   if (!rows.length) return null;
-  const cardWidth = getCardWidth(page);
+  const cardWidth = getCardWidth(page, settings);
   const titleCount = items.filter((item) => item.kind === "title").length;
   const rowGapCount = Math.max(0, rows.length - 1);
   const groupGapCount = Math.max(0, rows.filter((item) => item.isGroupLastRow).length - 1);
-  const titleBlock = FLOW_LAYOUT.sectionTitleHeight + FLOW_LAYOUT.sectionTitleGap;
+  const titleBlock = layout.sectionTitleHeight + layout.sectionTitleGap;
   const fixedHeight = titleCount * titleBlock
-    + rowGapCount * FLOW_LAYOUT.gapY
-    + groupGapCount * FLOW_LAYOUT.groupGap;
-  const availableForRows = FLOW_LAYOUT.contentBottom - FLOW_LAYOUT.contentTop - fixedHeight;
-  const desired = rows.map((item) => getFlowRowHeight(ctx, item.rooms, cardWidth));
-  const minimum = rows.map((item) => Math.max(...item.rooms.map(getRoomMinimumHeight), 54));
+    + rowGapCount * layout.gapY
+    + groupGapCount * layout.groupGap;
+  const availableForRows = layout.contentBottom - layout.contentTop - fixedHeight;
+  const desired = rows.map((item) => getFlowRowHeight(ctx, item.rooms, cardWidth, settings));
+  const minimum = rows.map((item) => Math.max(
+    ...item.rooms.map((room) => measureRoomCard(ctx, room, cardWidth, settings) * 0.92),
+    getDensityConfig(settings).minCardHeight - 4
+  ));
   const desiredTotal = desired.reduce((sum, value) => sum + value, 0);
   const minimumTotal = minimum.reduce((sum, value) => sum + value, 0);
   if (desiredTotal <= availableForRows) return desired;
@@ -579,19 +756,21 @@ const getSinglePageRowHeights = (ctx, items, page) => {
   return desired.map((height, index) => minimum[index] + Math.max(0, height - minimum[index]) * scale);
 };
 
-const drawRoomRow = (ctx, page, rooms, y, rowHeight, labels, lang) => {
-  const cardWidth = getCardWidth(page);
+const drawRoomRow = (ctx, page, rooms, y, rowHeight, labels, lang, settings = {}) => {
+  const layout = getFlowLayout(settings);
+  const cardWidth = getCardWidth(page, settings);
   rooms.forEach((room, index) => {
-    const x = page.width - page.margin - cardWidth - index * (cardWidth + FLOW_LAYOUT.gapX);
-    drawRoomCard(ctx, room, x, y, cardWidth, rowHeight, labels, lang);
+    const x = page.width - page.margin - cardWidth - index * (cardWidth + layout.gapX);
+    drawRoomCard(ctx, room, x, y, cardWidth, rowHeight, labels, lang, settings);
   });
 };
 
-const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride }) => {
+const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings }) => {
+  const layout = getFlowLayout(printSettings);
   const pages = [];
   const logoImage = await loadImage(agencyLogoUrl);
   let current = null;
-  let cursorY = FLOW_LAYOUT.contentTop;
+  let cursorY = layout.contentTop;
 
   const pushPage = async () => {
     if (!current) return;
@@ -600,7 +779,7 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
 
   const startPage = (section) => {
     current = makeCanvasPage({ labels, lang, agencyName, logoImage, section });
-    cursorY = FLOW_LAYOUT.contentTop;
+    cursorY = layout.contentTop;
   };
 
   const sections = groupRooms(rooms, labels, sectionOverride);
@@ -625,50 +804,50 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
 
   for (const section of sections) {
     startPage(section);
-    const typeGroups = getOrderedTypeGroups(section, labels, lang);
+    const typeGroups = getOrderedTypeGroups(section, labels, lang, printSettings);
     const flowItems = getFlowItems(typeGroups);
     const singlePageHeights = section.rooms.length <= 30
-      ? getSinglePageRowHeights(current.ctx, flowItems, current.page)
+      ? getSinglePageRowHeights(current.ctx, flowItems, current.page, printSettings)
       : null;
 
     if (singlePageHeights) {
       let rowIndex = 0;
       flowItems.forEach((item) => {
         if (item.kind === "title") {
-          drawTypeSectionTitle(current.ctx, current.page, item.title, cursorY, lang);
-          cursorY += FLOW_LAYOUT.sectionTitleHeight + FLOW_LAYOUT.sectionTitleGap;
+          drawTypeSectionTitle(current.ctx, current.page, item.title, cursorY, lang, printSettings);
+          cursorY += layout.sectionTitleHeight + layout.sectionTitleGap;
           return;
         }
-        const rowHeight = singlePageHeights[rowIndex] || getFlowRowHeight(current.ctx, item.rooms, getCardWidth(current.page));
+        const rowHeight = singlePageHeights[rowIndex] || getFlowRowHeight(current.ctx, item.rooms, getCardWidth(current.page, printSettings), printSettings);
         rowIndex += 1;
-        drawRoomRow(current.ctx, current.page, item.rooms, cursorY, rowHeight, labels, lang);
-        cursorY += rowHeight + FLOW_LAYOUT.gapY + (item.isGroupLastRow ? FLOW_LAYOUT.groupGap : 0);
+        drawRoomRow(current.ctx, current.page, item.rooms, cursorY, rowHeight, labels, lang, printSettings);
+        cursorY += rowHeight + layout.gapY + (item.isGroupLastRow ? layout.groupGap : 0);
       });
     } else {
       let activeTitle = "";
       for (const item of flowItems) {
         if (item.kind === "title") {
           activeTitle = item.title;
-          const titleBlock = FLOW_LAYOUT.sectionTitleHeight + FLOW_LAYOUT.sectionTitleGap;
-          if (cursorY + titleBlock + 54 > FLOW_LAYOUT.contentBottom) {
+          const titleBlock = layout.sectionTitleHeight + layout.sectionTitleGap;
+          if (cursorY + titleBlock + 54 > layout.contentBottom) {
             await pushPage();
             startPage(section);
           }
-          drawTypeSectionTitle(current.ctx, current.page, item.title, cursorY, lang);
+          drawTypeSectionTitle(current.ctx, current.page, item.title, cursorY, lang, printSettings);
           cursorY += titleBlock;
           continue;
         }
-        const rowHeight = getFlowRowHeight(current.ctx, item.rooms, getCardWidth(current.page));
-        if (cursorY + rowHeight > FLOW_LAYOUT.contentBottom) {
+        const rowHeight = getFlowRowHeight(current.ctx, item.rooms, getCardWidth(current.page, printSettings), printSettings);
+        if (cursorY + rowHeight > layout.contentBottom) {
           await pushPage();
           startPage(section);
           if (activeTitle) {
-            drawTypeSectionTitle(current.ctx, current.page, activeTitle, cursorY, lang);
-            cursorY += FLOW_LAYOUT.sectionTitleHeight + FLOW_LAYOUT.sectionTitleGap;
+            drawTypeSectionTitle(current.ctx, current.page, activeTitle, cursorY, lang, printSettings);
+            cursorY += layout.sectionTitleHeight + layout.sectionTitleGap;
           }
         }
-        drawRoomRow(current.ctx, current.page, item.rooms, cursorY, rowHeight, labels, lang);
-        cursorY += rowHeight + FLOW_LAYOUT.gapY + (item.isGroupLastRow ? FLOW_LAYOUT.groupGap : 0);
+        drawRoomRow(current.ctx, current.page, item.rooms, cursorY, rowHeight, labels, lang, printSettings);
+        cursorY += rowHeight + layout.gapY + (item.isGroupLastRow ? layout.groupGap : 0);
       }
     }
     await pushPage();
@@ -766,8 +945,9 @@ export async function downloadRoomingPdf({
   agencyLogoUrl = "",
   filename = "",
   sectionOverride = null,
+  printSettings = {},
 } = {}) {
-  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride });
+  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings });
   const pdf = await makePdf(pages);
   downloadBlob(pdf, filename || `rooming-${sanitizeFile(programName)}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -780,7 +960,11 @@ export const createRoomingPrintHtml = ({
   agencyName = "",
   agencyLogoUrl = "",
   sectionOverride = null,
+  printSettings = {},
 } = {}) => {
+  const normalizedPrintSettings = normalizePrintSettings(printSettings);
+  const density = getDensityConfig(normalizedPrintSettings);
+  const layout = getFlowLayout(normalizedPrintSettings);
   const direction = getDirection(lang);
   const sections = groupRooms(rooms, labels, sectionOverride);
   const logoHtml = agencyLogoUrl
@@ -788,7 +972,7 @@ export const createRoomingPrintHtml = ({
     : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
   const roomCardHtml = (room) => {
     const typeStyle = TYPE_COLORS[room.roomTypeKey] || TYPE_COLORS.other;
-    const pilgrims = getRoomPilgrims(room);
+    const pilgrims = getRoomPilgrims(room, normalizedPrintSettings);
     const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
     const rowCount = Math.max(capacity, pilgrims.length);
     const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "—", source: "" });
@@ -801,7 +985,7 @@ export const createRoomingPrintHtml = ({
             return `
               <li class="${empty ? "empty" : ""}">
                 <span class="pilgrim-name">${escapeHtml(empty ? "—" : pilgrim.name)}</span>
-                ${!empty && pilgrim.source ? `<span class="source-badge">${escapeHtml(pilgrim.source)}</span>` : ""}
+                ${!empty && normalizedPrintSettings.showRegistrationSource && pilgrim.source ? `<span class="source-badge">${escapeHtml(pilgrim.source)}</span>` : ""}
               </li>
             `;
           }).join("")}
@@ -810,7 +994,7 @@ export const createRoomingPrintHtml = ({
     `;
   };
   const sectionsHtml = sections.length ? sections.map((section) => {
-    const typeGroups = getOrderedTypeGroups(section, labels, lang);
+    const typeGroups = getOrderedTypeGroups(section, labels, lang, normalizedPrintSettings);
     return `
       <section class="rooming-section">
         <header class="print-header">
@@ -862,6 +1046,19 @@ export const createRoomingPrintHtml = ({
   <title>${escapeHtml(programName || labels.rooming || "Rooming")}</title>
   <style>
     @page{size:A4 landscape;margin:7mm}
+    :root{
+      --rooms-columns:${layout.columns};
+      --room-card-padding:${density.html.cardPadding};
+      --room-card-gap:${density.html.cardGap};
+      --write-height:${density.html.writeHeight};
+      --write-margin:${density.html.writeMargin};
+      --item-padding:${density.html.itemPadding};
+      --item-gap:${density.html.itemGap};
+      --item-min-height:${density.html.itemMinHeight};
+      --name-font:${density.html.nameFont};
+      --name-line:${density.html.nameLine};
+      --source-font:${density.html.sourceFont};
+    }
     *{box-sizing:border-box}
     html,body{margin:0;background:#fff;color:#0f172a}
     body{font-family:Arial,Tahoma,sans-serif;font-size:9px;line-height:1.25}
@@ -885,20 +1082,20 @@ export const createRoomingPrintHtml = ({
     .type-title{display:flex;align-items:center;gap:2mm;margin:0 0 1.5mm;color:#7c641f;font-weight:900}
     .type-title::before,.type-title::after{content:"";height:1px;background:#eee7d6;flex:1}
     .type-title span{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6dcc2;background:#fbfaf7;border-radius:999px;padding:1.2mm 5mm;font-size:8.5px;line-height:1}
-    .rooms-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1.7mm;align-items:start}
-    .room-card{border:1px solid #d8dee7;border-radius:2mm;background:#fff;padding:1.7mm;break-inside:avoid;page-break-inside:avoid;min-height:17mm}
-    .write-space{height:2.8mm;border:1px dashed #d7dbe2;border-radius:1.2mm;margin-bottom:1.3mm;background:#fff}
-    ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.6mm}
-    li{display:flex;align-items:center;justify-content:flex-start;gap:1.2mm;min-height:3.9mm;border:1px solid var(--chip-border);border-radius:999px;background:var(--chip-bg);padding:.55mm 1.4mm;min-width:0}
-    .pilgrim-name{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--type-text);font-size:8px;font-weight:800}
-    .source-badge{flex:0 1 auto;max-width:32mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--chip-border);border-radius:999px;background:#fff;color:#64748b;font-size:6.6px;font-weight:800;line-height:1;padding:.25mm 1.3mm}
+    .rooms-grid{display:grid;grid-template-columns:repeat(var(--rooms-columns),minmax(0,1fr));gap:var(--room-card-gap);align-items:start}
+    .room-card{border:1px solid #d8dee7;border-radius:2mm;background:#fff;padding:var(--room-card-padding);break-inside:avoid;page-break-inside:avoid;min-height:17mm}
+    .write-space{height:var(--write-height);border:1px dashed #d7dbe2;border-radius:1.2mm;margin-bottom:var(--write-margin);background:#fff}
+    ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--item-gap)}
+    li{display:flex;align-items:flex-start;justify-content:flex-start;gap:1mm;min-height:var(--item-min-height);border:1px solid var(--chip-border);border-radius:2mm;background:var(--chip-bg);padding:var(--item-padding);min-width:0;overflow:visible;flex-wrap:wrap}
+    .pilgrim-name{min-width:0;max-width:100%;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:normal;color:var(--type-text);font-size:var(--name-font);line-height:var(--name-line);font-weight:800}
+    .source-badge{flex:0 1 auto;max-width:100%;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;border:1px solid var(--chip-border);border-radius:999px;background:#fff;color:#64748b;font-size:var(--source-font);font-weight:800;line-height:1.15;padding:.25mm 1.3mm}
     li.empty{background:#fafafa;border-color:#ededed}
     li.empty .pilgrim-name{color:#94a3b8}
     .empty-state{margin:18mm 0 0;text-align:center;color:#64748b;font-size:12px;font-weight:800}
     @media print{
       html,body{background:#fff !important}
       .room-card,.type-title,.print-header{break-inside:avoid;page-break-inside:avoid}
-      .rooms-grid{grid-template-columns:repeat(6,minmax(0,1fr))}
+      .rooms-grid{grid-template-columns:repeat(var(--rooms-columns),minmax(0,1fr))}
     }
   </style>
 </head>

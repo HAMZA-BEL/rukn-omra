@@ -2168,7 +2168,7 @@ export function useStore(agencyId, onToast) {
     });
   }, [agencyId, deletedPrograms, deletedClients, logActivity, restoreClients, restoreProgram, sync]);
 
-  const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [] }) => {
+  const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [], clientPreflightBlocks = null } = {}) => {
     if (!programIds.length && !clientIds.length) return { purged: false };
     const programsToPurge = deletedPrograms.filter(p => programIds.includes(p.id));
     const batchIds = new Set(
@@ -2193,9 +2193,21 @@ export function useStore(agencyId, onToast) {
     });
     const preservedProgramClientIds = new Set(linkedClientsById.keys());
     const finalClientIds = Array.from(new Set(clientIds)).filter((id) => !preservedProgramClientIds.has(id));
-    const clientBlockMap = finalClientIds.length
-      ? await getClientPermanentDeleteBlockMap(finalClientIds)
-      : new Map();
+    const providedClientBlockMap = clientPreflightBlocks instanceof Map
+      ? new Map(clientPreflightBlocks)
+      : new Map(Object.entries(clientPreflightBlocks || {}));
+    const clientBlockMap = new Map(
+      finalClientIds
+        .filter((id) => providedClientBlockMap.has(id))
+        .map((id) => [id, providedClientBlockMap.get(id)])
+    );
+    const missingPreflightClientIds = finalClientIds.filter((id) => !clientBlockMap.has(id));
+    if (missingPreflightClientIds.length) {
+      const fallbackBlockMap = await getClientPermanentDeleteBlockMap(missingPreflightClientIds);
+      fallbackBlockMap.forEach((block, clientId) => {
+        clientBlockMap.set(clientId, block);
+      });
+    }
     const preflightBlockedClientIds = finalClientIds.filter((id) => clientBlockMap.get(id)?.blocked);
     const preflightEligibleClientIds = finalClientIds.filter((id) => !clientBlockMap.get(id)?.blocked);
     const snapshotDeletedAt = new Date().toISOString();

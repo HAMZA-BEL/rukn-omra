@@ -3640,6 +3640,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomOccupancyFilter, setRoomOccupancyFilter] = React.useState("all");
   const [roomFilterOpen, setRoomFilterOpen] = React.useState(false);
   const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
+  const [roomingPrintSettingsOpen, setRoomingPrintSettingsOpen] = React.useState(false);
+  const [roomingPrintSettings, setRoomingPrintSettings] = React.useState({
+    showRegistrationSource: true,
+    density: "normal",
+  });
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
   const [roomingLoadStatus, setRoomingLoadStatus] = React.useState("idle");
@@ -3704,6 +3709,44 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (lang === "en") return "Gender not set";
     return "الجنس غير محدد";
   }, [lang]);
+  const roomingPrintLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        title: "Paramètres d’impression",
+        showSource: "Afficher la source d’inscription",
+        density: "Densité d’impression",
+        comfortable: "Confortable",
+        normal: "Normal",
+        compact: "Compact",
+        done: "Terminé",
+      };
+    }
+    if (lang === "en") {
+      return {
+        title: "Print settings",
+        showSource: "Show registration source",
+        density: "Print density",
+        comfortable: "Comfortable",
+        normal: "Normal",
+        compact: "Compact",
+        done: "Done",
+      };
+    }
+    return {
+      title: "إعدادات الطباعة",
+      showSource: "إظهار جهة التسجيل",
+      density: "حجم الغرف",
+      comfortable: "كبير",
+      normal: "عادي",
+      compact: "صغير",
+      done: "تطبيق",
+    };
+  }, [lang]);
+  const roomingDensityOptions = React.useMemo(() => ([
+    { value: "comfortable", label: roomingPrintLabels.comfortable },
+    { value: "normal", label: roomingPrintLabels.normal },
+    { value: "compact", label: roomingPrintLabels.compact },
+  ]), [roomingPrintLabels]);
 
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
@@ -4754,6 +4797,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       programName: program.name || "",
       agencyName,
       agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
+      printSettings: roomingPrintSettings,
       labels: {
         rooming: t.roomingPrintTitle || "ورقة التسكين",
         checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
@@ -4765,7 +4809,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       },
     }));
     win.document.close();
-  }, [rooms, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel]);
+  }, [rooms, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings]);
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
@@ -4876,6 +4920,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
         labels: sharedLabels,
+        printSettings: roomingPrintSettings,
         sectionOverride: combined ? createCombinedRoomingSection({
           rooms: pdfRooms,
           makkahHotel,
@@ -4892,7 +4937,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     } finally {
       setRoomingPdfBusy("");
     }
-  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, t]);
+  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, roomingPrintSettings, t]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
@@ -5387,6 +5432,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
           <RoomingToolbarButton
+            title={roomingPrintLabels.title}
+            onClick={() => setRoomingPrintSettingsOpen(true)}
+            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || !roomingPrintSettings.showRegistrationSource}
+            icon={<Settings size={15} />}
+          >
+            <span>{roomingPrintLabels.title}</span>
+          </RoomingToolbarButton>
+          <RoomingToolbarButton
             title={t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF")}
             onClick={() => handleDownloadRoomingPdf("single")}
             disabled={Boolean(roomingPdfBusy)}
@@ -5719,6 +5772,84 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             </aside>
           )}
         </div>
+
+        <Modal
+          open={roomingPrintSettingsOpen}
+          onClose={() => setRoomingPrintSettingsOpen(false)}
+          title={roomingPrintLabels.title}
+          width={460}
+        >
+          <div style={{ display: "grid", gap: 16 }}>
+            <label style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "10px 12px",
+              border: "1px solid rgba(148,163,184,.18)",
+              borderRadius: 12,
+              background: "#f8fafc",
+              color: "#0f172a",
+              fontSize: 13,
+              fontWeight: 900,
+            }}>
+              <span>{roomingPrintLabels.showSource}</span>
+              <input
+                type="checkbox"
+                checked={roomingPrintSettings.showRegistrationSource}
+                onChange={(event) => setRoomingPrintSettings((prev) => ({
+                  ...prev,
+                  showRegistrationSource: event.target.checked,
+                }))}
+                style={{ width: 18, height: 18, accentColor: "#2563eb" }}
+              />
+            </label>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              <p style={{ color: "#334155", fontSize: 12, fontWeight: 900 }}>{roomingPrintLabels.density}</p>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 6,
+                padding: 4,
+                borderRadius: 12,
+                background: "#f1f5f9",
+                border: "1px solid rgba(148,163,184,.18)",
+              }}>
+                {roomingDensityOptions.map((option) => {
+                  const active = roomingPrintSettings.density === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setRoomingPrintSettings((prev) => ({ ...prev, density: option.value }))}
+                      style={{
+                        border: active ? "1px solid rgba(37,99,235,.34)" : "1px solid transparent",
+                        background: active ? "#fff" : "transparent",
+                        color: active ? "#1d4ed8" : "#475569",
+                        boxShadow: active ? "0 8px 18px rgba(15,23,42,.08)" : "none",
+                        borderRadius: 9,
+                        padding: "8px 10px",
+                        fontSize: 12,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontFamily: "'Cairo',sans-serif",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button variant="primary" onClick={() => setRoomingPrintSettingsOpen(false)}>
+                {roomingPrintLabels.done}
+              </Button>
+            </div>
+          </div>
+        </Modal>
 
         <Modal open={Boolean(pendingDrop)} onClose={cancelPendingDrop} title={pendingDropCopy?.title || ""} width={520}>
           {pendingDrop && pendingDropCopy && (
