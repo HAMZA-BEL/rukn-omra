@@ -164,6 +164,15 @@ const ROOMING_NODE_WIDTH = 250;
 const ROOMING_NODE_MIN_HEIGHT = 170;
 const ROOMING_NODE_MIN_GAP = 28;
 const ROOMING_NODE_COLLISION_GAP = 0;
+const ROOMING_LAYOUT_START_X = 40;
+const ROOMING_LAYOUT_START_Y = 48;
+const ROOMING_LAYOUT_CARD_WIDTH = ROOMING_NODE_WIDTH;
+const ROOMING_LAYOUT_CARD_HEIGHT = 292;
+const ROOMING_LAYOUT_HORIZONTAL_GAP = 40;
+const ROOMING_LAYOUT_VERTICAL_GAP = 36;
+const ROOMING_LAYOUT_GROUP_VERTICAL_GAP = 96;
+const ROOMING_LAYOUT_MAX_COLUMNS = 6;
+const ROOMING_LAYOUT_TYPE_ORDER = ["double", "triple", "quad", "quint"];
 const PROGRAM_TYPE_OPTIONS = [
   { value: "عمرة", label: "عمرة" },
   { value: "حج", label: "حج" },
@@ -682,33 +691,62 @@ const getRoomingCategoryAccent = (category) => {
   return { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8" };
 };
 
+const getRoomingLayoutTypeKey = (room = {}) => {
+  const capacity = Number(room.capacity);
+  if (Number.isFinite(capacity) && capacity > 0) {
+    if (capacity === 2) return "double";
+    if (capacity === 3) return "triple";
+    if (capacity === 4) return "quad";
+    if (capacity === 5) return "quint";
+    if (capacity === 1) return "single";
+    return `capacity:${capacity}`;
+  }
+  return normalizeRoomingRoomType(room.roomType) || String(room.roomType || "other").trim() || "other";
+};
+
+const getRoomingLayoutTypeRank = (room = {}) => {
+  const key = getRoomingLayoutTypeKey(room);
+  const index = ROOMING_LAYOUT_TYPE_ORDER.indexOf(key);
+  return index === -1 ? ROOMING_LAYOUT_TYPE_ORDER.length : index;
+};
+
 const autoLayoutRoomNodes = (rooms = []) => {
   const sorted = rooms.slice().sort((a, b) => {
+    const typeRank = getRoomingLayoutTypeRank(a) - getRoomingLayoutTypeRank(b);
+    if (typeRank) return typeRank;
+    const type = String(getRoomingLayoutTypeKey(a)).localeCompare(String(getRoomingLayoutTypeKey(b)), "ar");
+    if (type) return type;
     const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
     if (hotel) return hotel;
-    const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
-    if (type) return type;
     const category = String(a.category || "").localeCompare(String(b.category || ""), "ar");
     if (category) return category;
     return (a.order || 0) - (b.order || 0);
   });
-  const sectionOffsets = new Map();
-  let currentHotel = "";
-  let sectionIndex = -1;
+
+  const groupOffsets = new Map();
+  let currentTypeKey = "";
+  let groupStartY = ROOMING_LAYOUT_START_Y;
+  let groupRowCount = 0;
+
   return sorted.map((room, index) => {
-    const hotel = room.hotel || "فندق غير محدد";
-    if (hotel !== currentHotel) {
-      currentHotel = hotel;
-      sectionIndex += 1;
-      sectionOffsets.set(hotel, 0);
+    const typeKey = getRoomingLayoutTypeKey(room);
+    if (typeKey !== currentTypeKey) {
+      if (currentTypeKey) {
+        groupStartY += (groupRowCount * (ROOMING_LAYOUT_CARD_HEIGHT + ROOMING_LAYOUT_VERTICAL_GAP)) + ROOMING_LAYOUT_GROUP_VERTICAL_GAP;
+      }
+      currentTypeKey = typeKey;
+      groupRowCount = 0;
     }
-    const localIndex = sectionOffsets.get(hotel) || 0;
-    sectionOffsets.set(hotel, localIndex + 1);
+    const localIndex = groupOffsets.get(typeKey) || 0;
+    groupOffsets.set(typeKey, localIndex + 1);
+    const columnIndex = localIndex % ROOMING_LAYOUT_MAX_COLUMNS;
+    const rowIndex = Math.floor(localIndex / ROOMING_LAYOUT_MAX_COLUMNS);
+    groupRowCount = Math.max(groupRowCount, rowIndex + 1);
     return {
       ...room,
       order: room.order ?? index,
-      x: sectionIndex * 360,
-      y: 90 + localIndex * 210,
+      x: ROOMING_LAYOUT_START_X + (columnIndex * (ROOMING_LAYOUT_CARD_WIDTH + ROOMING_LAYOUT_HORIZONTAL_GAP)),
+      y: groupStartY + (rowIndex * (ROOMING_LAYOUT_CARD_HEIGHT + ROOMING_LAYOUT_VERTICAL_GAP)),
     };
   });
 };
@@ -4990,12 +5028,46 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           will-change: box-shadow, border-color, background;
         }
         .rooming-flow-node:hover {
-          box-shadow: 0 16px 34px rgba(15,23,42,.16) !important;
+          box-shadow: var(--rooming-card-hover-shadow) !important;
         }
         .react-flow__node.dragging .rooming-flow-node {
           transition: none;
           cursor: grabbing;
           box-shadow: 0 20px 46px rgba(15,23,42,.20) !important;
+        }
+        .rooming-canvas-shell,
+        .rooming-flow-canvas {
+          --rooming-canvas-bg: #f6f2e8;
+          --rooming-canvas-dot: rgba(120,113,108,.24);
+          --rooming-canvas-border: rgba(15,23,42,.14);
+          --rooming-canvas-shadow: 0 12px 30px rgba(15,23,42,.08);
+          --rooming-card-bg: #fffdf8;
+          --rooming-card-border: rgba(15,23,42,.16);
+          --rooming-card-shadow: 0 8px 20px rgba(15,23,42,.09);
+          --rooming-card-hover-shadow: 0 12px 28px rgba(15,23,42,.13);
+        }
+        html[data-theme="dark"] .rooming-canvas-shell,
+        html[data-theme="dark"] .rooming-flow-canvas {
+          --rooming-canvas-bg: #181713;
+          --rooming-canvas-dot: rgba(226,232,240,.14);
+          --rooming-canvas-border: rgba(226,232,240,.12);
+          --rooming-canvas-shadow: 0 16px 38px rgba(0,0,0,.28);
+          --rooming-card-bg: #24221d;
+          --rooming-card-border: rgba(226,232,240,.16);
+          --rooming-card-shadow: 0 10px 24px rgba(0,0,0,.30);
+          --rooming-card-hover-shadow: 0 14px 30px rgba(0,0,0,.34);
+        }
+        .rooming-flow-canvas.react-flow,
+        .rooming-flow-canvas .react-flow__renderer,
+        .rooming-flow-canvas .react-flow__pane,
+        .rooming-flow-canvas .react-flow__background {
+          background: var(--rooming-canvas-bg) !important;
+        }
+        .rooming-flow-canvas .react-flow__viewport {
+          background: transparent !important;
+        }
+        .rooming-flow-canvas .react-flow__node-room {
+          filter: drop-shadow(0 8px 16px rgba(15,23,42,.08));
         }
         .rooming-flow-canvas .react-flow__controls,
         .rooming-flow-canvas .react-flow__minimap {
@@ -5218,15 +5290,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         )}
 
         <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
-          <div style={{
+          <div className="rooming-canvas-shell" style={{
             position: "relative",
             overflow: "hidden",
             borderRadius: 14,
-            border: "1px solid rgba(148,163,184,.25)",
-            backgroundColor: "#fff",
-            backgroundImage: "radial-gradient(circle at 1px 1px, rgba(148,163,184,.22) 1px, transparent 0)",
-            backgroundSize: "22px 22px",
-            boxShadow: "0 12px 28px rgba(15,23,42,.08)",
+            border: "1px solid var(--rooming-canvas-border)",
+            backgroundColor: "var(--rooming-canvas-bg)",
+            boxShadow: "var(--rooming-canvas-shadow)",
             minHeight: 0,
           }}>
             {toolbarCollapsed && (
@@ -5659,7 +5729,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const isDropTarget = Boolean(data.draggingClient);
   const canDrop = isDropTarget && !dropReason;
   const isInvalidPosition = Boolean(data.dragInvalid);
-  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "rgba(148,163,184,.32)";
+  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selected ? accent.border : "var(--rooming-card-border)";
   const [menuOpen, setMenuOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -5688,7 +5758,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       }}
       style={{
         width: 250,
-        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "#fff",
+        background: isInvalidPosition ? "#fff7f7" : canDrop ? "#f0fdf4" : isDropTarget ? "#fff7f7" : "var(--rooming-card-bg)",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
@@ -5699,7 +5769,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
           ? "0 16px 36px rgba(22,163,74,.18)"
           : isDropTarget
             ? "0 16px 36px rgba(239,68,68,.16)"
-            : selected ? "0 14px 30px rgba(37,99,235,.18)" : "0 8px 22px rgba(15,23,42,.10)",
+            : selected ? "0 14px 30px rgba(37,99,235,.18)" : "var(--rooming-card-shadow)",
         padding: 12,
         direction: "rtl",
         fontFamily: "'Cairo',sans-serif",
@@ -6001,9 +6071,9 @@ function RoomingFlowSurface({
       onPaneContextMenu={onPaneContextMenu}
       onPaneClick={onPaneClick}
       proOptions={{ hideAttribution: true }}
-      style={{ width: "100%", height: "100%", background: "#fff" }}
+      style={{ width: "100%", height: "100%", background: "var(--rooming-canvas-bg)" }}
     >
-      <Background color="#d8dee8" gap={22} size={1.2} />
+      <Background variant="dots" color="var(--rooming-canvas-dot)" gap={24} size={1.15} />
       <Controls position="bottom-left" showInteractive={false} />
       <MiniMap position="bottom-right" pannable zoomable nodeStrokeWidth={2} nodeColor="#dbeafe" maskColor="rgba(248,250,252,.72)" />
     </ReactFlow>

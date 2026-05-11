@@ -5,6 +5,16 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const ACTIVE_PAYMENT_BLOCK_MESSAGE =
   "لا يمكن حذف هذا المعتمر نهائيًا لأنه يحتوي على دفعات محفوظة. احذف الدفعات أولًا إذا كنت متأكدًا.";
+const ACTIVE_INVOICE_BLOCK_MESSAGE =
+  "لا يمكن الحذف النهائي لوجود فواتير نشطة مرتبطة بهذا المعتمر.";
+const ACTIVE_FINANCIAL_RECORDS_MESSAGE =
+  "لا يمكن الحذف النهائي لوجود سجلات مالية نشطة مرتبطة بهذا المعتمر.";
+const HIDDEN_PAYMENTS_BLOCK_MESSAGE =
+  "لا يمكن الحذف النهائي لوجود دفعات مرتبطة غير ظاهرة ضمن بيانات الوكالة الحالية.";
+const HIDDEN_INVOICES_BLOCK_MESSAGE =
+  "لا يمكن الحذف النهائي لوجود فواتير مرتبطة غير ظاهرة ضمن بيانات الوكالة الحالية.";
+const CONFIRMATION_REQUIRED_MESSAGE =
+  "يجب تأكيد الحذف النهائي مع السجلات المرتبطة قبل المتابعة.";
 const LINKED_RECORDS_MESSAGE =
   "تعذر الحذف النهائي لأن هناك سجلات مرتبطة بهذا المعتمر. تحقق من الدفعات أو السجلات المرتبطة ثم حاول مرة أخرى.";
 
@@ -47,9 +57,362 @@ function isInactivePayment(payment = {}) {
   return false;
 }
 
+function isActiveInvoice(invoice = {}) {
+  const status = String(invoice.status || "").trim().toLowerCase();
+  return !["trashed", "deleted", "void", "cancelled", "canceled"].includes(status);
+}
+
 function isForeignKeyError(error = {}) {
   const message = String(error.message || error.details || "");
   return error.code === "23503" || /foreign key|violates foreign key|constraint/i.test(message);
+}
+
+function isOptionalSchemaError(error = {}) {
+  const message = String(error.message || error.details || error.hint || "");
+  return ["42P01", "42703", "PGRST204", "PGRST205"].includes(String(error.code || ""))
+    || /schema cache|could not find|does not exist|column .* not found|relation .* not found/i.test(message);
+}
+
+function optionalQueryResult(label, error) {
+  if (!error) return null;
+  if (isOptionalSchemaError(error)) {
+    console.warn(`permanent-delete-client optional ${label} skipped`, {
+      code: error.code,
+      message: error.message,
+    });
+    return { data: [], skipped: true, error: null };
+  }
+  return { data: [], skipped: false, error };
+}
+
+async function optionalSelect(label, query) {
+  const { data, error } = await query;
+  const optional = optionalQueryResult(label, error);
+  if (optional) return optional;
+  return { data: Array.isArray(data) ? data : [], skipped: false, error: null };
+}
+
+async function optionalMutation(label, query) {
+  const { data, error } = await query;
+  const optional = optionalQueryResult(label, error);
+  if (optional) return optional;
+  return { data: Array.isArray(data) ? data : [], skipped: false, error: null };
+}
+
+function extractForeignKeyInfo(error = {}) {
+  const text = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  const constraint = String(error.constraint || text.match(/constraint "([^"]+)"/i)?.[1] || "").trim();
+  const table = String(error.table || text.match(/table "([^"]+)"/i)?.[1] || "").trim();
+  return { constraint, table };
+}
+
+function mapForeignKeyError(error = {}) {
+  const info = extractForeignKeyInfo(error);
+  const target = `${info.constraint} ${info.table}`.toLowerCase();
+  if (target.includes("payments_client") || target.includes("table \"payments\"") || info.table === "payments") {
+    return {
+      code: "LINKED_PAYMENT_RECORDS",
+      success: false,
+      deleted: false,
+      error: HIDDEN_PAYMENTS_BLOCK_MESSAGE,
+      details: info,
+    };
+  }
+  if (target.includes("clients_represented_by") || info.constraint === "clients_represented_by_same_agency_fkey") {
+    return {
+      code: "LINKED_REPRESENTATION_CLIENTS",
+      success: false,
+      deleted: false,
+      error: LINKED_RECORDS_MESSAGE,
+      details: info,
+    };
+  }
+  if (target.includes("rooming")) {
+    return { code: "LINKED_ROOMING_ASSIGNMENTS", success: false, deleted: false, error: LINKED_RECORDS_MESSAGE, details: info };
+  }
+  if (target.includes("activity")) {
+    return { code: "LINKED_ACTIVITY_LOGS", success: false, deleted: false, error: LINKED_RECORDS_MESSAGE, details: info };
+  }
+  if (target.includes("notification")) {
+    return { code: "LINKED_NOTIFICATIONS", success: false, deleted: false, error: LINKED_RECORDS_MESSAGE, details: info };
+  }
+  if (target.includes("document") || target.includes("file")) {
+    return { code: "LINKED_DOCUMENTS", success: false, deleted: false, error: LINKED_RECORDS_MESSAGE, details: info };
+  }
+  if (target.includes("badge")) {
+    return { code: "LINKED_BADGE_DATA", success: false, deleted: false, error: LINKED_RECORDS_MESSAGE, details: info };
+  }
+  return {
+    code: "UNKNOWN_LINKED_RECORDS",
+    success: false,
+    deleted: false,
+    error: LINKED_RECORDS_MESSAGE,
+    details: info,
+  };
+}
+
+function buildCleanupPreview({ linkedPayments = [], linkedInvoices = [], representationLinks = [], notifications = [], roomingAssignments = [], badgePhotoPath = "" } = {}) {
+  const cleanupReasons = [];
+
+  if (linkedPayments.length) cleanupReasons.push({ code: "DELETE_LINKED_PAYMENTS", count: linkedPayments.length });
+  if (linkedInvoices.length) cleanupReasons.push({ code: "DELETE_LINKED_INVOICES", count: linkedInvoices.length });
+  if (representationLinks.length) cleanupReasons.push({ code: "CLEANUP_REPRESENTATION_LINKS", count: representationLinks.length });
+  if (roomingAssignments.length) cleanupReasons.push({ code: "CLEANUP_ROOMING_ASSIGNMENTS", count: roomingAssignments.length });
+  if (notifications.length) cleanupReasons.push({ code: "CLEANUP_NOTIFICATIONS", count: notifications.length });
+  if (badgePhotoPath) cleanupReasons.push({ code: "DELETE_BADGE_PHOTO", count: 1 });
+
+  return {
+    hasSafeCleanup: cleanupReasons.length > 0,
+    cleanupReasons,
+    cleanupPreview: {
+      deletedPaymentsCount: linkedPayments.length,
+      deletedPaymentIds: linkedPayments.map((payment) => payment.id).filter(Boolean),
+      deletedInvoicesCount: linkedInvoices.length,
+      clearedRepresentationLinksCount: representationLinks.length,
+      cleanedRoomingAssignmentsCount: roomingAssignments.length,
+      deletedNotificationsCount: notifications.length,
+      deletedBadgePhotosCount: badgePhotoPath ? 1 : 0,
+    },
+  };
+}
+
+function buildLinkedRecordBlock({ hiddenPayments = [], hiddenInvoices = [] } = {}) {
+  const activeHiddenInvoices = hiddenInvoices.filter(isActiveInvoice);
+  const reasons = [];
+
+  if (hiddenPayments.length) {
+    reasons.push({ code: "LINKED_EXTERNAL_PAYMENTS", count: hiddenPayments.length });
+  }
+  if (activeHiddenInvoices.length) {
+    reasons.push({ code: "LINKED_EXTERNAL_INVOICES", count: activeHiddenInvoices.length });
+  }
+  if (!reasons.length) return null;
+
+  const hasHiddenPayments = hiddenPayments.length > 0;
+  const hasHiddenInvoices = activeHiddenInvoices.length > 0;
+  const reasonCode = hasHiddenPayments && !hasHiddenInvoices
+    ? "LINKED_EXTERNAL_PAYMENTS"
+    : hasHiddenInvoices && !hasHiddenPayments
+      ? "LINKED_EXTERNAL_INVOICES"
+      : "UNKNOWN_LINKED_RECORDS";
+  return {
+    code: reasonCode,
+    error: reasonCode === "LINKED_EXTERNAL_PAYMENTS"
+      ? HIDDEN_PAYMENTS_BLOCK_MESSAGE
+      : reasonCode === "LINKED_EXTERNAL_INVOICES"
+        ? HIDDEN_INVOICES_BLOCK_MESSAGE
+        : LINKED_RECORDS_MESSAGE,
+    reasons,
+    linkedRecords: {
+      hiddenPayments: {
+        total: hiddenPayments.length,
+      },
+      hiddenInvoices: {
+        total: hiddenInvoices.length,
+        active: activeHiddenInvoices.length,
+      },
+    },
+  };
+}
+
+function cleanupRoomingValueForClient(value, clientId) {
+  if (Array.isArray(value)) {
+    const next = value
+      .filter((item) => {
+        if (typeof item === "string") return item !== clientId;
+        if (item && typeof item === "object") {
+          const itemClientId = String(item.clientId || item.client_id || item.id || "").trim();
+          return itemClientId !== clientId;
+        }
+        return true;
+      })
+      .map((item) => cleanupRoomingValueForClient(item, clientId));
+    return next;
+  }
+  if (!value || typeof value !== "object") return value;
+
+  const next = { ...value };
+  if (Array.isArray(next.occupantIds)) {
+    next.occupantIds = next.occupantIds.filter((id) => String(id) !== clientId);
+  }
+  if (next.genderOverrides && typeof next.genderOverrides === "object") {
+    const { [clientId]: _removed, ...rest } = next.genderOverrides;
+    next.genderOverrides = rest;
+  }
+  if (next.priceOverrides && typeof next.priceOverrides === "object") {
+    const { [clientId]: _removed, ...rest } = next.priceOverrides;
+    next.priceOverrides = rest;
+  }
+  return next;
+}
+
+function jsonChanged(a, b) {
+  return JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
+}
+
+function getSafeBadgePhotoPath(client = {}, { agencyId, clientId } = {}) {
+  const docs = client.docs && typeof client.docs === "object" ? client.docs : {};
+  const path = String(client.badge_photo_path || client.badgePhotoPath || docs.badgePhotoPath || "").trim();
+  const safePrefix = `agencies/${agencyId}/pilgrims/${clientId}/`;
+  return path && path.startsWith(safePrefix) ? path : "";
+}
+
+async function inspectSafeLinkedRecords(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [] }) {
+  const representationResult = await optionalSelect(
+    "representation inspection",
+    supabase
+      .from("clients")
+      .select("id")
+      .eq("agency_id", agencyId)
+      .eq("represented_by_client_id", clientId)
+  );
+  if (representationResult.error) return { error: representationResult.error };
+
+  const notificationResult = await optionalSelect(
+    "notification inspection",
+    supabase
+      .from("notifications")
+      .select("id")
+      .eq("agency_id", agencyId)
+      .eq("target_type", "client")
+      .eq("target_id", clientId)
+  );
+  if (notificationResult.error) return { error: notificationResult.error };
+
+  const roomingResult = await optionalSelect(
+    "rooming inspection",
+    supabase
+      .from("rooming_assignments")
+      .select("id, rooms, unassigned")
+      .eq("agency_id", agencyId)
+  );
+  if (roomingResult.error) return { error: roomingResult.error };
+
+  const roomingAssignments = roomingResult.data
+    .filter((assignment) => JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId));
+
+  return {
+    ...buildCleanupPreview({
+      linkedPayments,
+      linkedInvoices,
+      representationLinks: representationResult.data,
+      notifications: notificationResult.data,
+      roomingAssignments,
+      badgePhotoPath: getSafeBadgePhotoPath(client, { agencyId, clientId }),
+    }),
+    error: null,
+  };
+}
+
+async function deleteLinkedRecordsForClient(supabase, { agencyId, clientId, client = {}, linkedPayments = [], linkedInvoices = [] }) {
+  const cleanup = {
+    deletedPaymentsCount: 0,
+    deletedPaymentIds: [],
+    deletedInvoicesCount: 0,
+    clearedRepresentationLinksCount: 0,
+    cleanedRoomingAssignmentsCount: 0,
+    deletedNotificationsCount: 0,
+    deletedBadgePhotosCount: 0,
+  };
+
+  const linkedPaymentIds = linkedPayments.map((payment) => payment.id).filter(Boolean);
+  if (linkedPaymentIds.length) {
+    const { data, error } = await supabase
+      .from("payments")
+      .delete()
+      .eq("agency_id", agencyId)
+      .eq("client_id", clientId)
+      .in("id", linkedPaymentIds)
+      .select("id");
+    if (error) return { error };
+    cleanup.deletedPaymentsCount = Array.isArray(data) ? data.length : linkedPaymentIds.length;
+    cleanup.deletedPaymentIds = Array.isArray(data) ? data.map((payment) => payment.id).filter(Boolean) : linkedPaymentIds;
+  }
+
+  const linkedInvoiceIds = linkedInvoices.map((invoice) => invoice.id).filter(Boolean);
+  if (linkedInvoiceIds.length) {
+    const invoiceDelete = await optionalMutation(
+      "invoice cleanup",
+      supabase
+        .from("invoices")
+        .delete()
+        .eq("agency_id", agencyId)
+        .eq("client_id", clientId)
+        .in("id", linkedInvoiceIds)
+        .select("id")
+    );
+    if (invoiceDelete.error) return { error: invoiceDelete.error };
+    cleanup.deletedInvoicesCount = invoiceDelete.skipped ? 0 : invoiceDelete.data.length || linkedInvoiceIds.length;
+  }
+
+  const representationUpdate = await optionalMutation(
+    "representation cleanup",
+    supabase
+      .from("clients")
+      .update({ represented_by_client_id: null, represented_by_relationship: null })
+      .eq("agency_id", agencyId)
+      .eq("represented_by_client_id", clientId)
+      .select("id")
+  );
+  if (representationUpdate.error) return { error: representationUpdate.error };
+  cleanup.clearedRepresentationLinksCount = representationUpdate.skipped ? 0 : representationUpdate.data.length;
+
+  const notificationDelete = await optionalMutation(
+    "notification cleanup",
+    supabase
+      .from("notifications")
+      .delete()
+      .eq("agency_id", agencyId)
+      .eq("target_type", "client")
+      .eq("target_id", clientId)
+      .select("id")
+  );
+  if (notificationDelete.error) return { error: notificationDelete.error };
+  cleanup.deletedNotificationsCount = notificationDelete.skipped ? 0 : notificationDelete.data.length;
+
+  const roomingFetch = await optionalSelect(
+    "rooming cleanup fetch",
+    supabase
+      .from("rooming_assignments")
+      .select("id, rooms, unassigned")
+      .eq("agency_id", agencyId)
+  );
+  if (roomingFetch.error) return { error: roomingFetch.error };
+
+  for (const assignment of roomingFetch.data) {
+    if (!JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId)) continue;
+    const nextRooms = cleanupRoomingValueForClient(Array.isArray(assignment.rooms) ? assignment.rooms : [], clientId);
+    const nextUnassigned = cleanupRoomingValueForClient(Array.isArray(assignment.unassigned) ? assignment.unassigned : [], clientId);
+    if (!jsonChanged(assignment.rooms, nextRooms) && !jsonChanged(assignment.unassigned, nextUnassigned)) continue;
+    const roomingUpdate = await optionalMutation(
+      "rooming cleanup update",
+      supabase
+        .from("rooming_assignments")
+        .update({ rooms: nextRooms, unassigned: nextUnassigned })
+        .eq("agency_id", agencyId)
+        .eq("id", assignment.id)
+        .select("id")
+    );
+    if (roomingUpdate.error) return { error: roomingUpdate.error };
+    if (!roomingUpdate.skipped) cleanup.cleanedRoomingAssignmentsCount += 1;
+  }
+
+  const badgePhotoPath = getSafeBadgePhotoPath(client, { agencyId, clientId });
+  if (badgePhotoPath) {
+    const { data, error } = await supabase.storage
+      .from("pilgrim-photos")
+      .remove([badgePhotoPath]);
+    if (error) {
+      console.warn("permanent-delete-client badge photo cleanup skipped", {
+        code: error.code,
+        message: error.message,
+      });
+    } else {
+      cleanup.deletedBadgePhotosCount = Array.isArray(data) ? data.length : 0;
+    }
+  }
+
+  return { cleanup, error: null };
 }
 
 exports.handler = async (event) => {
@@ -63,11 +426,11 @@ exports.handler = async (event) => {
 
     const authHeader = event.headers.authorization || event.headers.Authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return json(401, { error: "Unauthorized" });
+      return json(401, { code: "UNAUTHORIZED", success: false, deleted: false, error: "Unauthorized" });
     }
     const accessToken = authHeader.slice(7).trim();
     if (!accessToken) {
-      return json(401, { error: "Unauthorized" });
+      return json(401, { code: "UNAUTHORIZED", success: false, deleted: false, error: "Unauthorized" });
     }
 
     let payload;
@@ -80,17 +443,21 @@ exports.handler = async (event) => {
     const clientId = String(payload.clientId || "").trim();
     const agencyId = String(payload.agencyId || "").trim();
     const type = String(payload.type || "client").trim();
+    const dryRun = payload.dryRun === true || payload.checkOnly === true || payload.action === "check";
+    const confirmed = payload.confirmPermanentDelete === true
+      || payload.confirmLinkedRecords === true
+      || payload.confirmed === true;
     if (!clientId || !agencyId) {
-      return json(400, { error: "clientId and agencyId are required" });
+      return json(400, { code: "INVALID_REQUEST", success: false, deleted: false, error: "clientId and agencyId are required" });
     }
     if (type !== "client") {
-      return json(400, { error: "Unsupported permanent delete type" });
+      return json(400, { code: "UNSUPPORTED_TYPE", success: false, deleted: false, error: "Unsupported permanent delete type" });
     }
 
     const supabase = buildClient();
     const { data: requesterData, error: requesterError } = await supabase.auth.getUser(accessToken);
     if (requesterError || !requesterData?.user) {
-      return json(401, { error: requesterError?.message || "Unauthorized" });
+      return json(401, { code: "UNAUTHORIZED", success: false, deleted: false, error: requesterError?.message || "Unauthorized" });
     }
 
     const { data: requesterProfile, error: profileError } = await supabase
@@ -99,13 +466,13 @@ exports.handler = async (event) => {
       .eq("id", requesterData.user.id)
       .single();
     if (profileError || !requesterProfile?.agency_id) {
-      return json(403, { error: "Forbidden" });
+      return json(403, { code: "UNAUTHORIZED", success: false, deleted: false, error: "Forbidden" });
     }
     if (String(requesterProfile.status || "").toLowerCase() !== "active") {
-      return json(403, { error: "Inactive account" });
+      return json(403, { code: "UNAUTHORIZED", success: false, deleted: false, error: "Inactive account" });
     }
     if (requesterProfile.agency_id !== agencyId) {
-      return json(403, { error: "Forbidden" });
+      return json(403, { code: "UNAUTHORIZED", success: false, deleted: false, error: "Forbidden" });
     }
 
     const { data: client, error: clientError } = await supabase
@@ -115,52 +482,134 @@ exports.handler = async (event) => {
       .eq("agency_id", agencyId)
       .maybeSingle();
     if (clientError) {
-      return json(500, { error: clientError.message });
+      return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: clientError.message });
     }
     if (!client) {
-      return json(404, { error: "Client not found" });
+      return json(404, { code: "NOT_FOUND", success: false, deleted: false, error: "Client not found" });
     }
     if (!isDeletedClient(client)) {
       return json(409, {
         code: "CLIENT_NOT_TRASHED",
+        success: false,
+        deleted: false,
         error: "Client must be in Trash before permanent deletion",
       });
     }
-
-    const { data: payments, error: paymentsError } = await supabase
-      .from("payments")
-      .select("*")
-      .eq("agency_id", agencyId)
-      .eq("client_id", clientId);
-    if (paymentsError) {
-      return json(500, { error: paymentsError.message });
-    }
-
-    const linkedPayments = Array.isArray(payments) ? payments : [];
-    const activePayments = linkedPayments.filter((payment) => !isInactivePayment(payment));
-    if (activePayments.length) {
+    if (!dryRun && !confirmed) {
       return json(409, {
-        code: "ACTIVE_PAYMENTS",
-        error: ACTIVE_PAYMENT_BLOCK_MESSAGE,
-        activePaymentsCount: activePayments.length,
+        code: "CONFIRMATION_REQUIRED",
+        success: false,
+        deleted: false,
+        error: CONFIRMATION_REQUIRED_MESSAGE,
       });
     }
 
-    const inactivePaymentIds = linkedPayments
-      .filter(isInactivePayment)
-      .map((payment) => payment.id)
-      .filter(Boolean);
+    const { data: allPayments, error: paymentsError } = await supabase
+      .from("payments")
+      .select("*")
+      .eq("client_id", clientId);
+    if (paymentsError) {
+      return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: paymentsError.message });
+    }
 
-    if (inactivePaymentIds.length) {
-      const { error: deletePaymentsError } = await supabase
-        .from("payments")
-        .delete()
-        .eq("agency_id", agencyId)
-        .in("id", inactivePaymentIds);
-      if (deletePaymentsError) {
-        console.error("permanent-delete-client payment cleanup error", deletePaymentsError);
-        return json(500, { error: LINKED_RECORDS_MESSAGE });
-      }
+    const payments = Array.isArray(allPayments) ? allPayments : [];
+    const linkedPayments = payments.filter((payment) => String(payment.agency_id || "") === agencyId);
+    const hiddenPayments = payments.filter((payment) => String(payment.agency_id || "") !== agencyId);
+
+    const invoiceResult = await optionalSelect(
+      "invoice inspection",
+      supabase
+        .from("invoices")
+        .select("*")
+        .eq("client_id", clientId)
+    );
+    if (invoiceResult.error) {
+      return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: invoiceResult.error.message });
+    }
+    const invoices = invoiceResult.data;
+    const linkedInvoices = invoices.filter((invoice) => String(invoice.agency_id || "") === agencyId);
+    const hiddenInvoices = invoices.filter((invoice) => String(invoice.agency_id || "") !== agencyId);
+
+    const linkedRecordBlock = buildLinkedRecordBlock({
+      hiddenPayments,
+      hiddenInvoices,
+    });
+    if (linkedRecordBlock) {
+      return json(dryRun ? 200 : 409, {
+        ok: dryRun,
+        success: false,
+        deleted: false,
+        dryRun,
+        blocked: true,
+        canDelete: false,
+        ...linkedRecordBlock,
+      });
+    }
+
+    const cleanupPreview = await inspectSafeLinkedRecords(supabase, {
+      agencyId,
+      clientId,
+      client,
+      linkedPayments,
+      linkedInvoices,
+    });
+    if (cleanupPreview.error) {
+      console.error("permanent-delete-client safe cleanup inspection error", cleanupPreview.error);
+      return json(500, {
+        code: "SAFE_CLEANUP_CHECK_FAILED",
+        success: false,
+        deleted: false,
+        error: LINKED_RECORDS_MESSAGE,
+      });
+    }
+
+    if (dryRun) {
+      return json(200, {
+        ok: true,
+        success: true,
+        deleted: false,
+        dryRun: true,
+        blocked: false,
+        canDelete: true,
+        code: cleanupPreview.hasSafeCleanup ? "DELETE_LINKED_RECORDS_AFTER_CONFIRMATION" : "",
+        hasSafeCleanup: cleanupPreview.hasSafeCleanup,
+        cleanupReasons: cleanupPreview.cleanupReasons,
+        cleanupPreview: cleanupPreview.cleanupPreview,
+        linkedRecords: {
+          payments: {
+            total: linkedPayments.length,
+            active: linkedPayments.filter((payment) => !isInactivePayment(payment)).length,
+            inactive: linkedPayments.filter(isInactivePayment).length,
+          },
+          invoices: {
+            total: linkedInvoices.length,
+            active: linkedInvoices.filter(isActiveInvoice).length,
+            inactive: linkedInvoices.filter((invoice) => !isActiveInvoice(invoice)).length,
+          },
+          hiddenPayments: { total: hiddenPayments.length },
+          hiddenInvoices: {
+            total: hiddenInvoices.length,
+            active: hiddenInvoices.filter(isActiveInvoice).length,
+          },
+        },
+      });
+    }
+
+    const cleanupResult = await deleteLinkedRecordsForClient(supabase, {
+      agencyId,
+      clientId,
+      client,
+      linkedPayments,
+      linkedInvoices,
+    });
+    if (cleanupResult.error) {
+      console.error("permanent-delete-client safe cleanup error", cleanupResult.error);
+      return json(500, {
+        code: "SAFE_CLEANUP_FAILED",
+        success: false,
+        deleted: false,
+        error: LINKED_RECORDS_MESSAGE,
+      });
     }
 
     const { data: deletedClients, error: deleteClientError } = await supabase
@@ -168,22 +617,32 @@ exports.handler = async (event) => {
       .delete()
       .eq("agency_id", agencyId)
       .eq("id", clientId)
+      .eq("deleted", true)
       .select("id");
     if (deleteClientError) {
       console.error("permanent-delete-client client delete error", deleteClientError);
-      return json(isForeignKeyError(deleteClientError) ? 409 : 500, {
-        code: isForeignKeyError(deleteClientError) ? "LINKED_RECORDS" : "DELETE_FAILED",
-        error: isForeignKeyError(deleteClientError) ? LINKED_RECORDS_MESSAGE : deleteClientError.message,
+      if (isForeignKeyError(deleteClientError)) {
+        return json(409, mapForeignKeyError(deleteClientError));
+      }
+      return json(500, {
+        code: "DELETE_FAILED",
+        success: false,
+        deleted: false,
+        error: deleteClientError.message,
       });
     }
     if (!Array.isArray(deletedClients) || !deletedClients.length) {
-      return json(404, { error: "Client not found" });
+      return json(404, { code: "NOT_FOUND", success: false, deleted: false, error: "Client not found" });
     }
 
     return json(200, {
       ok: true,
+      success: true,
+      deleted: true,
       deletedClientId: clientId,
-      deletedInactivePaymentsCount: inactivePaymentIds.length,
+      deletedLinkedRecords: cleanupResult.cleanup,
+      cleanup: cleanupResult.cleanup,
+      messageKey: "CLIENT_PERMANENT_DELETE_WITH_LINKED_RECORDS_SUCCESS",
     });
   } catch (err) {
     console.error("permanent-delete-client error", err);

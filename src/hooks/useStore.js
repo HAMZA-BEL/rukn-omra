@@ -176,6 +176,25 @@ const localizedPaymentRestoreMessage = () => {
 
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
 
+const CLIENT_PERMANENT_DELETE_BLOCK_CODES = new Set([
+  "LINKED_EXTERNAL_PAYMENTS",
+  "LINKED_EXTERNAL_INVOICES",
+  "LINKED_PAYMENT_RECORDS",
+  "LINKED_REPRESENTATION_CLIENTS",
+  "LINKED_ROOMING_ASSIGNMENTS",
+  "LINKED_ACTIVITY_LOGS",
+  "LINKED_NOTIFICATIONS",
+  "LINKED_DOCUMENTS",
+  "LINKED_BADGE_DATA",
+  "LINKED_PAYMENTS",
+  "LINKED_INVOICES",
+  "LINKED_DELETED_INVOICES",
+  "LINKED_FINANCIAL_RECORDS",
+  "LINKED_RECORDS",
+  "UNKNOWN_LINKED_RECORDS",
+  "23503",
+]);
+
 const isInactiveLinkedPayment = (payment = {}) => {
   const status = trimString(payment.status).toLowerCase();
   if (["trashed", "deleted", "inactive", "archived", "void", "cancelled", "canceled"].includes(status)) return true;
@@ -185,6 +204,48 @@ const isInactiveLinkedPayment = (payment = {}) => {
 };
 
 const isActiveLinkedPayment = (payment = {}) => !isInactiveLinkedPayment(payment);
+
+const isActiveLinkedInvoice = (invoice = {}) => {
+  const status = trimString(invoice.status).toLowerCase();
+  return !["trashed", "deleted", "void", "cancelled", "canceled"].includes(status);
+};
+
+const roomingRecordContainsClient = (assignment = {}, clientId = "") => {
+  if (!clientId) return false;
+  return JSON.stringify([assignment.rooms || [], assignment.unassigned || []]).includes(clientId);
+};
+
+const normalizeRemoteClientDeleteCheck = (clientId, payload = {}) => {
+  const linkedRecords = payload.linkedRecords || {};
+  const cleanupPreview = payload.cleanupPreview || payload.cleanup || {};
+  const cleanupReasons = Array.isArray(payload.cleanupReasons) ? payload.cleanupReasons : [];
+  const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
+  const blocked = Boolean(payload.blocked || payload.canDelete === false);
+  const hasSafeCleanup = Boolean(payload.hasSafeCleanup || cleanupReasons.length > 0);
+  return {
+    clientId,
+    blocked,
+    code: String(payload.code || (hasSafeCleanup ? "DELETE_LINKED_RECORDS_AFTER_CONFIRMATION" : "")),
+    activePaymentCount: Number(linkedRecords.payments?.active || 0),
+    inactivePaymentCount: Number(linkedRecords.payments?.inactive || cleanupPreview.deletedPaymentsCount || 0),
+    paymentCount: Number(linkedRecords.payments?.total || 0),
+    activeInvoiceCount: Number(linkedRecords.invoices?.active || 0),
+    inactiveInvoiceCount: Number(linkedRecords.invoices?.inactive || cleanupPreview.deletedInvoicesCount || 0),
+    invoiceCount: Number(linkedRecords.invoices?.total || 0),
+    hiddenPaymentCount: Number(linkedRecords.hiddenPayments?.total || 0),
+    hiddenInvoiceCount: Number(linkedRecords.hiddenInvoices?.active || linkedRecords.hiddenInvoices?.total || 0),
+    representationLinkCount: Number(cleanupPreview.clearedRepresentationLinksCount || 0),
+    notificationCount: Number(cleanupPreview.deletedNotificationsCount || 0),
+    roomingAssignmentCount: Number(cleanupPreview.cleanedRoomingAssignmentsCount || 0),
+    badgePhotoCount: Number(cleanupPreview.deletedBadgePhotosCount || 0),
+    hasSafeCleanup,
+    reasons,
+    cleanupReasons,
+    inactivePaymentIds: Array.isArray(cleanupPreview.deletedPaymentIds) ? cleanupPreview.deletedPaymentIds : [],
+    message: payload.error || payload.message || "",
+    details: payload.details || null,
+  };
+};
 
 const filterPaymentsForClients = (paymentData = [], clientData = []) => {
   const safePayments = Array.isArray(paymentData) ? paymentData : [];
@@ -1177,6 +1238,75 @@ export function useStore(agencyId, onToast) {
     return data || [];
   }, [agencyId, deletedPayments, isSupabaseEnabled, payments]);
 
+  const getLinkedInvoicesForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!ids.length || !isSupabaseEnabled || !agencyId) return [];
+
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("id, client_id, status")
+      .eq("agency_id", agencyId)
+      .in("client_id", ids);
+    if (error) {
+      console.error("[Store] Failed to inspect linked invoices before permanent delete:", error);
+      throw error;
+    }
+    return data || [];
+  }, [agencyId, isSupabaseEnabled]);
+
+  const getRepresentationLinksForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!ids.length || !isSupabaseEnabled || !agencyId) return [];
+
+    const { data, error } = await supabase
+      .from("clients")
+      .select("id, represented_by_client_id")
+      .eq("agency_id", agencyId)
+      .in("represented_by_client_id", ids);
+    if (error) {
+      console.error("[Store] Failed to inspect client representation links before permanent delete:", error);
+      throw error;
+    }
+    return data || [];
+  }, [agencyId, isSupabaseEnabled]);
+
+  const getClientTargetNotificationsForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!ids.length || !isSupabaseEnabled || !agencyId) return [];
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("id, target_id")
+      .eq("agency_id", agencyId)
+      .eq("target_type", "client")
+      .in("target_id", ids);
+    if (error) {
+      console.error("[Store] Failed to inspect client notifications before permanent delete:", error);
+      throw error;
+    }
+    return data || [];
+  }, [agencyId, isSupabaseEnabled]);
+
+  const getRoomingAssignmentsForClientIds = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!ids.length || !isSupabaseEnabled || !agencyId) return [];
+
+    const { data, error } = await supabase
+      .from("rooming_assignments")
+      .select("id, rooms, unassigned")
+      .eq("agency_id", agencyId);
+    if (error) {
+      console.error("[Store] Failed to inspect rooming assignments before permanent delete:", error);
+      throw error;
+    }
+    const rows = Array.isArray(data) ? data : [];
+    return ids.flatMap((clientId) => (
+      rows
+        .filter((assignment) => roomingRecordContainsClient(assignment, clientId))
+        .map((assignment) => ({ id: assignment.id, clientId }))
+    ));
+  }, [agencyId, isSupabaseEnabled]);
+
   const getActivePaymentCountsForClientIds = useCallback(async (clientIds = []) => {
     const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
     const counts = new Map(ids.map((id) => [id, 0]));
@@ -1192,7 +1322,7 @@ export function useStore(agencyId, onToast) {
     return counts;
   }, [getLinkedPaymentsForClientIds]);
 
-  const permanentlyDeleteClientRemote = useCallback(async (clientId) => {
+  const callPermanentDeleteClientFunction = useCallback(async (clientId, extraPayload = {}) => {
     if (!isSupabaseEnabled || !agencyId || !clientId) return { error: null };
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError) return { error: sessionError };
@@ -1205,7 +1335,7 @@ export function useStore(agencyId, onToast) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ clientId, agencyId, type: "client" }),
+      body: JSON.stringify({ clientId, agencyId, type: "client", ...extraPayload }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload?.ok === false) {
@@ -1220,6 +1350,152 @@ export function useStore(agencyId, onToast) {
     }
     return { data: payload, error: null };
   }, [agencyId, isSupabaseEnabled]);
+
+  const inspectClientPermanentDeleteRemote = useCallback((clientId) => (
+    callPermanentDeleteClientFunction(clientId, { dryRun: true })
+  ), [callPermanentDeleteClientFunction]);
+
+  const getClientPermanentDeleteBlockMap = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    const summaries = new Map(ids.map((id) => [id, {
+      clientId: id,
+      blocked: false,
+      code: "",
+      activePaymentCount: 0,
+      inactivePaymentCount: 0,
+      paymentCount: 0,
+      activeInvoiceCount: 0,
+      inactiveInvoiceCount: 0,
+      invoiceCount: 0,
+      hiddenPaymentCount: 0,
+      hiddenInvoiceCount: 0,
+      representationLinkCount: 0,
+      notificationCount: 0,
+      roomingAssignmentCount: 0,
+      hasSafeCleanup: false,
+      reasons: [],
+      cleanupReasons: [],
+      inactivePaymentIds: [],
+    }]));
+    if (!ids.length) return summaries;
+
+    if (isSupabaseEnabled && agencyId) {
+      const checks = await Promise.all(ids.map(async (clientId) => {
+        const response = await inspectClientPermanentDeleteRemote(clientId);
+        if (response?.error) {
+          const code = String(response.error.code || "");
+          if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
+            return [clientId, normalizeRemoteClientDeleteCheck(clientId, {
+              ...(response.error.details || {}),
+              blocked: true,
+              canDelete: false,
+              code,
+              error: response.error.message || "",
+            })];
+          }
+          return [clientId, {
+            ...summaries.get(clientId),
+            blocked: false,
+            code: "CHECK_UNAVAILABLE",
+            precheckUnavailable: true,
+            message: response.error.message || "",
+          }];
+        }
+        return [clientId, normalizeRemoteClientDeleteCheck(clientId, response.data || {})];
+      }));
+      return new Map(checks);
+    }
+
+    const [linkedPayments, linkedInvoices, representationLinks, notifications, roomingAssignments] = await Promise.all([
+      getLinkedPaymentsForClientIds(ids),
+      getLinkedInvoicesForClientIds(ids),
+      getRepresentationLinksForClientIds(ids),
+      getClientTargetNotificationsForClientIds(ids),
+      getRoomingAssignmentsForClientIds(ids),
+    ]);
+
+    linkedPayments.forEach((payment) => {
+      const clientId = getPaymentClientId(payment);
+      const summary = summaries.get(clientId);
+      if (!summary) return;
+      summary.paymentCount += 1;
+      if (payment.id) summary.inactivePaymentIds.push(payment.id);
+      if (isActiveLinkedPayment(payment)) summary.activePaymentCount += 1;
+      else summary.inactivePaymentCount += 1;
+    });
+
+    linkedInvoices.forEach((invoice) => {
+      const clientId = String(invoice.client_id || invoice.clientId || "").trim();
+      const summary = summaries.get(clientId);
+      if (!summary) return;
+      summary.invoiceCount += 1;
+      if (isActiveLinkedInvoice(invoice)) summary.activeInvoiceCount += 1;
+      else summary.inactiveInvoiceCount += 1;
+    });
+
+    representationLinks.forEach((link) => {
+      const clientId = String(link.represented_by_client_id || link.representedByClientId || "").trim();
+      const summary = summaries.get(clientId);
+      if (!summary) return;
+      summary.representationLinkCount += 1;
+    });
+
+    notifications.forEach((notification) => {
+      const clientId = String(notification.target_id || notification.targetId || "").trim();
+      const summary = summaries.get(clientId);
+      if (!summary) return;
+      summary.notificationCount += 1;
+    });
+
+    roomingAssignments.forEach((assignment) => {
+      const clientId = String(assignment.clientId || "").trim();
+      const summary = summaries.get(clientId);
+      if (!summary) return;
+      summary.roomingAssignmentCount += 1;
+    });
+
+    summaries.forEach((summary) => {
+      if (summary.activePaymentCount > 0) {
+        summary.cleanupReasons.push({ code: "DELETE_LINKED_PAYMENTS", count: summary.activePaymentCount });
+      }
+      if (summary.inactivePaymentCount > 0) {
+        summary.cleanupReasons.push({ code: "DELETE_LINKED_PAYMENTS", count: summary.inactivePaymentCount });
+      }
+      if (summary.activeInvoiceCount > 0) {
+        summary.cleanupReasons.push({ code: "DELETE_LINKED_INVOICES", count: summary.activeInvoiceCount });
+      }
+      if (summary.inactiveInvoiceCount > 0) {
+        summary.cleanupReasons.push({ code: "DELETE_LINKED_INVOICES", count: summary.inactiveInvoiceCount });
+      }
+      if (summary.representationLinkCount > 0) {
+        summary.cleanupReasons.push({ code: "CLEANUP_REPRESENTATION_LINKS", count: summary.representationLinkCount });
+      }
+      if (summary.roomingAssignmentCount > 0) {
+        summary.cleanupReasons.push({ code: "CLEANUP_ROOMING_ASSIGNMENTS", count: summary.roomingAssignmentCount });
+      }
+      if (summary.notificationCount > 0) {
+        summary.cleanupReasons.push({ code: "CLEANUP_NOTIFICATIONS", count: summary.notificationCount });
+      }
+      summary.blocked = summary.reasons.length > 0;
+      summary.hasSafeCleanup = summary.cleanupReasons.length > 0;
+      if (!summary.blocked) {
+        summary.code = summary.hasSafeCleanup ? "DELETE_LINKED_RECORDS_AFTER_CONFIRMATION" : "";
+        return;
+      }
+      if (summary.activePaymentCount > 0 && summary.activeInvoiceCount > 0) summary.code = "ACTIVE_LINKED_FINANCIAL_RECORDS";
+      else if (summary.activePaymentCount > 0) summary.code = "ACTIVE_LINKED_PAYMENTS";
+      else summary.code = "ACTIVE_LINKED_INVOICES";
+    });
+
+    return summaries;
+  }, [agencyId, getClientTargetNotificationsForClientIds, getLinkedInvoicesForClientIds, getLinkedPaymentsForClientIds, getRepresentationLinksForClientIds, getRoomingAssignmentsForClientIds, inspectClientPermanentDeleteRemote, isSupabaseEnabled]);
+
+  const permanentlyDeleteClientRemote = useCallback(async (clientId) => {
+    return callPermanentDeleteClientFunction(clientId, {
+      confirmPermanentDelete: true,
+      confirmLinkedRecords: true,
+    });
+  }, [callPermanentDeleteClientFunction]);
 
   // ── Stats (operational clients only) ──────────────────────────────────────
   const localStats = useMemo(() => {
@@ -1917,29 +2193,11 @@ export function useStore(agencyId, onToast) {
     });
     const preservedProgramClientIds = new Set(linkedClientsById.keys());
     const finalClientIds = Array.from(new Set(clientIds)).filter((id) => !preservedProgramClientIds.has(id));
-    let inactiveLinkedPaymentIds = [];
-    if (finalClientIds.length) {
-      const linkedPayments = await getLinkedPaymentsForClientIds(finalClientIds);
-      const activePaymentCounts = new Map(finalClientIds.map((id) => [id, 0]));
-      inactiveLinkedPaymentIds = linkedPayments
-        .filter(isInactiveLinkedPayment)
-        .map((payment) => payment.id)
-        .filter(Boolean);
-      linkedPayments.filter(isActiveLinkedPayment).forEach((payment) => {
-        const paymentClientId = getPaymentClientId(payment);
-        if (!activePaymentCounts.has(paymentClientId)) return;
-        activePaymentCounts.set(paymentClientId, (activePaymentCounts.get(paymentClientId) || 0) + 1);
-      });
-      const blockedClientIds = finalClientIds.filter((id) => (activePaymentCounts.get(id) || 0) > 0);
-      if (blockedClientIds.length) {
-        return {
-          purged: false,
-          blocked: true,
-          blockedClientIds,
-          blockedPaymentCount: blockedClientIds.reduce((sum, id) => sum + (activePaymentCounts.get(id) || 0), 0),
-        };
-      }
-    }
+    const clientBlockMap = finalClientIds.length
+      ? await getClientPermanentDeleteBlockMap(finalClientIds)
+      : new Map();
+    const preflightBlockedClientIds = finalClientIds.filter((id) => clientBlockMap.get(id)?.blocked);
+    const preflightEligibleClientIds = finalClientIds.filter((id) => !clientBlockMap.get(id)?.blocked);
     const snapshotDeletedAt = new Date().toISOString();
     const clientsToPreserve = Array.from(linkedClientsById.values()).map((client) => {
       const program = programById.get(client.programId)
@@ -1958,21 +2216,23 @@ export function useStore(agencyId, onToast) {
       };
     });
 
-    const applyLocalPurge = () => {
+    const applyLocalPurge = (clientIdsToPurge = preflightEligibleClientIds) => {
+      const purgeClientIdSet = new Set(clientIdsToPurge);
+      const cleanupPaymentIds = clientIdsToPurge.flatMap((id) => clientBlockMap.get(id)?.inactivePaymentIds || []);
       setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       if (clientsToPreserve.length) {
         const preservedIds = new Set(clientsToPreserve.map((client) => client.id));
         setClients(prev => [
-          ...prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)),
+          ...prev.filter(c => !preservedIds.has(c.id) && !purgeClientIdSet.has(c.id)),
           ...clientsToPreserve,
         ]);
-        setDeletedClients(prev => prev.filter(c => !preservedIds.has(c.id) && !finalClientIds.includes(c.id)));
+        setDeletedClients(prev => prev.filter(c => !preservedIds.has(c.id) && !purgeClientIdSet.has(c.id)));
       } else {
-        setClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
-        setDeletedClients(prev => prev.filter(c => !finalClientIds.includes(c.id)));
+        setClients(prev => prev.filter(c => !purgeClientIdSet.has(c.id)));
+        setDeletedClients(prev => prev.filter(c => !purgeClientIdSet.has(c.id)));
       }
-      inactiveLinkedPaymentIds.forEach((id) => purgePaymentLocal(id));
+      cleanupPaymentIds.forEach((id) => purgePaymentLocal(id));
     };
 
     const persistPurge = async () => {
@@ -1984,18 +2244,75 @@ export function useStore(agencyId, onToast) {
         const response = await deleteProgramsPermanent(programIds, agencyId);
         if (response?.error) return { error: response.error };
       }
-      if (finalClientIds.length) {
+      const deletedClientIds = [];
+      const blockedClientIds = [...preflightBlockedClientIds];
+      const failedClientIds = [];
+      let cleanedPaymentsCount = 0;
+      let cleanedInvoicesCount = 0;
+      let cleanedRoomingAssignmentsCount = 0;
+      let cleanedNotificationsCount = 0;
+      let cleanedRepresentationLinksCount = 0;
+      let cleanedBadgePhotosCount = 0;
+      const clientBlocks = Object.fromEntries(
+        preflightBlockedClientIds.map((id) => [id, clientBlockMap.get(id)])
+      );
+      if (preflightEligibleClientIds.length) {
         if (isSupabaseEnabled && agencyId) {
-          for (const clientId of finalClientIds) {
+          for (const clientId of preflightEligibleClientIds) {
             const response = await permanentlyDeleteClientRemote(clientId);
-            if (response?.error) return { error: response.error };
+            if (response?.error) {
+              const code = String(response.error.code || "");
+              if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
+                blockedClientIds.push(clientId);
+                clientBlocks[clientId] = {
+                  clientId,
+                  blocked: true,
+                  code: response.error.code || "LINKED_RECORDS",
+                  message: response.error.message || "",
+                  details: response.error.details || null,
+                };
+                continue;
+              }
+              failedClientIds.push(clientId);
+              clientBlocks[clientId] = {
+                clientId,
+                blocked: true,
+                code: response.error.code || "DELETE_FAILED",
+                message: response.error.message || "",
+                details: response.error.details || null,
+              };
+              continue;
+            }
+            const cleanup = response.data?.cleanup || {};
+            cleanedPaymentsCount += Number(cleanup.deletedPaymentsCount || 0);
+            cleanedInvoicesCount += Number(cleanup.deletedInvoicesCount || 0);
+            cleanedRoomingAssignmentsCount += Number(cleanup.cleanedRoomingAssignmentsCount || 0);
+            cleanedNotificationsCount += Number(cleanup.deletedNotificationsCount || 0);
+            cleanedRepresentationLinksCount += Number(cleanup.clearedRepresentationLinksCount || 0);
+            cleanedBadgePhotosCount += Number(cleanup.deletedBadgePhotosCount || 0);
+            deletedClientIds.push(clientId);
           }
         } else {
-          const response = await deleteClientsPermanent(finalClientIds, agencyId);
+          const response = await deleteClientsPermanent(preflightEligibleClientIds, agencyId);
           if (response?.error) return { error: response.error };
+          deletedClientIds.push(...preflightEligibleClientIds);
         }
       }
-      return { error: null };
+      return {
+        error: null,
+        deletedClientIds,
+        blockedClientIds: Array.from(new Set(blockedClientIds)),
+        failedClientIds,
+        clientBlocks,
+        cleanup: {
+          cleanedPaymentsCount,
+          cleanedInvoicesCount,
+          cleanedRoomingAssignmentsCount,
+          cleanedNotificationsCount,
+          cleanedRepresentationLinksCount,
+          cleanedBadgePhotosCount,
+        },
+      };
     };
 
     if (isSupabaseEnabled && agencyId) {
@@ -2004,14 +2321,28 @@ export function useStore(agencyId, onToast) {
         console.error("[Store] Permanent delete failed:", result.error);
         return { purged: false, error: result.error };
       }
-      applyLocalPurge();
-      return { purged: true };
+      applyLocalPurge(result.deletedClientIds || []);
+      return {
+        purged: Boolean(programIds.length || clientsToPreserve.length || result.deletedClientIds?.length),
+        deletedClientIds: result.deletedClientIds || [],
+        blockedClientIds: result.blockedClientIds || [],
+        failedClientIds: result.failedClientIds || [],
+        clientBlocks: result.clientBlocks || {},
+        cleanup: result.cleanup || {},
+      };
     }
 
-    applyLocalPurge();
+    applyLocalPurge(preflightEligibleClientIds);
     sync(persistPurge);
-    return { purged: true };
-  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getLinkedPaymentsForClientIds, isSupabaseEnabled, permanentlyDeleteClientRemote, purgePaymentLocal, saveClient, sync]);
+    return {
+      purged: Boolean(programIds.length || clientsToPreserve.length || preflightEligibleClientIds.length),
+      deletedClientIds: preflightEligibleClientIds,
+      blockedClientIds: preflightBlockedClientIds,
+      failedClientIds: [],
+      clientBlocks: Object.fromEntries(preflightBlockedClientIds.map((id) => [id, clientBlockMap.get(id)])),
+      cleanup: {},
+    };
+  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getClientPermanentDeleteBlockMap, isSupabaseEnabled, permanentlyDeleteClientRemote, purgePaymentLocal, saveClient, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));
@@ -2097,7 +2428,7 @@ export function useStore(agencyId, onToast) {
     backgroundHydrationLoading, backgroundHydrationDone,
     trashLoading, trashLoaded, trashError, loadTrashData,
     paymentsByClient, paidByClient, lastPaymentByClient,
-    getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds,
+    getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds, getClientPermanentDeleteBlockMap,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
     addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, syncRoomingClientFields, deleteClient, deleteClientsBulk,
     transferClients,
