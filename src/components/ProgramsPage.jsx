@@ -4143,11 +4143,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   }, [allCollisionNodes, roomToCollisionNode]);
 
   const generateRooms = React.useCallback(() => {
-    if (rooms.length && !window.confirm(t.roomingRegenerateConfirm || "يوجد تسكين محفوظ لهذه المدينة، هل تريد إعادة التوليد واستبدال الحالي؟")) return;
+    if (rooms.length && !window.confirm(t.roomingRegenerateConfirm || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا. سيتم استبدال التسكين الحالي. هل تريد المتابعة؟")) return;
     const nextRooms = [];
-    const nextUnassigned = [];
+    const nextUnassignedByClientId = new Map(clients.map((client) => [client.id, { clientId: client.id, reason: "" }]));
     const grouped = new Map();
-    const addUnassigned = (client, reason) => nextUnassigned.push({ clientId: client.id, reason });
+    const addUnassigned = (client, reason) => {
+      nextUnassignedByClientId.set(client.id, { clientId: client.id, reason });
+    };
 
     clients.forEach((client) => {
       const context = getClientContext(client);
@@ -4179,12 +4181,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       const context = getClientContext(first);
       const capacity = getRoomingCapacity(context.roomType);
       for (let index = 0; index < group.length; index += capacity) {
-        const occupants = group.slice(index, index + capacity);
-        const category = first.roomCategory || inferRoomCategoryFromClients(occupants);
-        const hasUnsafeFamilyMix = category === "family" && new Set(occupants.map((client) => client.gender)).size > 1
-          && !occupants.every((client) => getClientContext(client).familyKey && getClientContext(client).familyKey === getClientContext(first).familyKey);
+        const plannedClients = group.slice(index, index + capacity);
+        const category = first.roomCategory || inferRoomCategoryFromClients(plannedClients);
+        const hasUnsafeFamilyMix = category === "family" && new Set(plannedClients.map((client) => client.gender)).size > 1
+          && !plannedClients.every((client) => getClientContext(client).familyKey && getClientContext(client).familyKey === getClientContext(first).familyKey);
         if (hasUnsafeFamilyMix) {
-          occupants.forEach((client) => addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية"));
+          plannedClients.forEach((client) => addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية"));
           return;
         }
         nextRooms.push({
@@ -4195,19 +4197,19 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           category,
           hotel: context.hotel,
           capacity,
-          occupantIds: occupants.map((client) => client.id),
-          roomingGroupId: first.roomingGroupId || "",
-          roomingGroupName: first.roomingGroupName || "",
+          occupantIds: [],
+          roomingGroupId: "",
+          roomingGroupName: "",
         });
         order += 1;
       }
     });
 
     setRooms(autoLayoutRoomNodes(nextRooms));
-    setUnassigned(nextUnassigned);
+    setUnassigned(Array.from(nextUnassignedByClientId.values()));
     setSelectedRoomId(null);
     setDirty(true);
-    onToast?.(t.roomingGenerated || "تم توليد الغرف من بيانات المعتمرين", "success");
+    onToast?.(t.roomingGenerated || "تم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.", "success");
   }, [rooms.length, clients, getClientContext, onToast, t]);
 
   const openCreateRoom = React.useCallback((position = { x: 0, y: 0 }) => {
@@ -5339,7 +5341,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               >
                 <div style={{ textAlign: "center", maxWidth: 420 }}>
                   <p style={{ color: "#0f172a", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>{t.roomingStartTitle || "ابدأ بتوليد الغرف"}</p>
-                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t.roomingStartDesc || "سيتم إنشاء بطاقات غرف ذكية من بيانات المعتمرين، مع إبقاء الحالات غير الآمنة في لوحة المراجعة."}</p>
+                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{t.roomingStartDesc || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا."}</p>
                   <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
                 </div>
               </div>
