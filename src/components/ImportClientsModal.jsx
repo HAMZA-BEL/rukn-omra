@@ -15,6 +15,15 @@ const previewSectionBg = "var(--rukn-section-bg)";
 const previewTableHeadBg = "var(--rukn-table-head-bg)";
 const previewBorder = "var(--rukn-border-soft)";
 const previewInputBorder = "var(--rukn-border-input)";
+const IMPORT_BATCH_SIZE = 25;
+
+const yieldToBrowser = () => new Promise((resolve) => {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => resolve());
+    return;
+  }
+  setTimeout(resolve, 0);
+});
 
 const FIELD_DEFS = [
   {
@@ -695,6 +704,19 @@ const getProgramImportHotelOptions = (programContext = {}, lang = "ar") => {
   });
 };
 
+const getImportRowIdentity = (row = {}) => {
+  const name = cellText(row.displayName || row.fields?.fullName);
+  const passport = cellText(row.passportNo || row.fields?.passportNo);
+  const rowNumber = row.rowNumber ? `#${row.rowNumber}` : "";
+  return [rowNumber, name, passport].filter(Boolean).join(" - ") || row.id || "row";
+};
+
+const getImportErrorMessage = (error) => {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  return error.message || error.details || error.hint || error.code || String(error);
+};
+
 const makeClientPayload = (previewRow, programContext, selectedImportHotel = null) => {
   const fields = { ...previewRow.fields, fullName: previewRow.displayName };
   const arabicFromFull = splitName(fields.fullName);
@@ -751,7 +773,7 @@ const makeClientPayload = (previewRow, programContext, selectedImportHotel = nul
   };
 };
 
-export default function ImportClientsModal({ store, onClose, onToast, programContext = null }) {
+export default function ImportClientsModal({ store, onClose, onToast, programContext = null, onImportingChange }) {
   const { t, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const labels = labelsFor(lang, t);
@@ -765,9 +787,20 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   const [showColumnCorrection, setShowColumnCorrection] = React.useState(false);
   const [error, setError] = React.useState("");
   const [templateBusy, setTemplateBusy] = React.useState(false);
+  const [parseBusy, setParseBusy] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
+  const [importProgress, setImportProgress] = React.useState({ done: 0, processed: 0, total: 0, batch: 0, batches: 0 });
   const [selectedImportProgramId, setSelectedImportProgramId] = React.useState("");
   const [selectedImportHotelKey, setSelectedImportHotelKey] = React.useState("");
   const fileRef = React.useRef();
+  const controlsDisabled = importing || parseBusy;
+
+  React.useEffect(() => {
+    onImportingChange?.(controlsDisabled);
+    return () => {
+      if (controlsDisabled) onImportingChange?.(false);
+    };
+  }, [controlsDisabled, onImportingChange]);
 
   const existingClients = store?.clients || [];
   const importProgramOptions = React.useMemo(
@@ -860,6 +893,40 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
       })
       .filter(Boolean)
   ), [headers, lang, mapping]);
+  const progressPercent = importProgress.total
+    ? Math.round((importProgress.processed / importProgress.total) * 100)
+    : 0;
+  const importProgressTitle = React.useMemo(() => {
+    const kind = effectiveParticipantTerms?.kind;
+    if (lang === "fr") {
+      if (kind === "hajj") return "Importation des pèlerins Hajj...";
+      if (kind === "umrah") return "Importation des pèlerins Omra...";
+      return "Importation des pèlerins Hajj et Omra...";
+    }
+    if (lang === "en") {
+      if (kind === "hajj") return "Importing Hajj pilgrims...";
+      if (kind === "umrah") return "Importing Umrah pilgrims...";
+      return "Importing Hajj & Umrah pilgrims...";
+    }
+    if (kind === "hajj") return "جاري استيراد الحجاج...";
+    if (kind === "umrah") return "جاري استيراد المعتمرين...";
+    return "جاري استيراد الحجاج والمعتمرين...";
+  }, [effectiveParticipantTerms?.kind, lang]);
+  const importProgressLine = React.useMemo(() => {
+    if (lang === "fr") return `${importProgress.done} sur ${importProgress.total} enregistrés`;
+    if (lang === "en") return `${importProgress.done} of ${importProgress.total} saved`;
+    return `تم حفظ ${importProgress.done} من ${importProgress.total}`;
+  }, [importProgress.done, importProgress.total, lang]);
+  const parseStatusTitle = React.useMemo(() => {
+    if (lang === "fr") return "Lecture du fichier Excel...";
+    if (lang === "en") return "Reading Excel file...";
+    return "جاري قراءة ملف Excel...";
+  }, [lang]);
+  const parseStatusLine = React.useMemo(() => {
+    if (lang === "fr") return "Analyse des colonnes et préparation de l’aperçu";
+    if (lang === "en") return "Analyzing columns and preparing preview";
+    return "يتم تحليل الأعمدة وتجهيز المعاينة";
+  }, [lang]);
 
   React.useEffect(() => {
     setSelectedImportHotelKey("");
@@ -872,6 +939,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   }, [importHotelOptions, selectedImportHotelKey]);
 
   const updateEdit = (rowId, key, value) => {
+    if (importing) return;
     setError("");
     setEdits((prev) => ({
       ...prev,
@@ -923,12 +991,14 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   }, [acceptedRowsMissingDisplayName, mapping, previewRows, rawRows, stage]);
 
   const parseFile = (file) => {
+    if (parseBusy) return;
     setError("");
     const ext = file.name.split(".").pop().toLowerCase();
     if (!["xlsx", "xls", "csv"].includes(ext)) {
       setError(t.importFileTypeError || "يجب أن يكون الملف بصيغة Excel أو CSV");
       return;
     }
+    setParseBusy(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -979,41 +1049,226 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         setStage(2);
       } catch (parseError) {
         setError(t.importParseError || "تعذّر قراءة الملف — تحقق من التنسيق");
+      } finally {
+        setParseBusy(false);
       }
     };
-    reader.readAsArrayBuffer(file);
+    reader.onerror = () => {
+      setParseBusy(false);
+      setError(t.importParseError || "تعذّر قراءة الملف — تحقق من التنسيق");
+    };
+    try {
+      reader.readAsArrayBuffer(file);
+    } catch (readError) {
+      setParseBusy(false);
+      setError(t.importParseError || "تعذّر قراءة الملف — تحقق من التنسيق");
+    }
   };
 
   const handleDrop = (event) => {
     event.preventDefault();
     setDragging(false);
+    if (parseBusy) return;
     const file = event.dataTransfer.files[0];
     if (file) parseFile(file);
   };
 
-  const doImport = () => {
+  const doImport = async () => {
+    if (importing) return;
     const hasBlankAcceptedName = previewRows.some((row) => row.accepted && !cellText(row.displayName));
     if (hasBlankAcceptedName) {
       setError(t.importCannotSaveBlankNames || (lang === "fr" ? "Impossible d’enregistrer des lignes sans nom." : lang === "en" ? "Cannot save rows without a name." : "لا يمكن حفظ سطور بدون اسم."));
       return;
     }
+
+    const acceptedRows = previewRows.filter((row) => row.accepted);
+    const skipped = previewRows.length - acceptedRows.length;
+    const batches = Math.ceil(acceptedRows.length / IMPORT_BATCH_SIZE);
+    const saveClient = typeof store?.addClientFromPassportImport === "function"
+      ? async (payload) => store.addClientFromPassportImport(payload)
+      : async (payload) => {
+        const id = store?.addClient?.(payload);
+        return { data: id ? { id } : null, error: null };
+      };
+
     let imported = 0;
-    let skipped = 0;
-    previewRows.forEach((row) => {
-      if (!row.accepted) {
-        skipped += 1;
-        return;
+    const failures = [];
+    setError("");
+    setImporting(true);
+    setImportProgress({ done: 0, processed: 0, total: acceptedRows.length, batch: batches ? 1 : 0, batches });
+
+    try {
+      await yieldToBrowser();
+      for (let start = 0; start < acceptedRows.length; start += IMPORT_BATCH_SIZE) {
+        const batchRows = acceptedRows.slice(start, start + IMPORT_BATCH_SIZE);
+        const batchNumber = Math.floor(start / IMPORT_BATCH_SIZE) + 1;
+        setImportProgress((prev) => ({ ...prev, batch: batchNumber }));
+
+        const results = await Promise.all(batchRows.map(async (row) => {
+          try {
+            const result = await saveClient(makeClientPayload(row, effectiveProgramContext, selectedImportHotel));
+            if (result?.error) {
+              return { ok: false, row, error: result.error };
+            }
+            return { ok: true, row };
+          } catch (rowError) {
+            return { ok: false, row, error: rowError };
+          }
+        }));
+
+        results.forEach((result) => {
+          if (result.ok) {
+            imported += 1;
+            return;
+          }
+          failures.push({
+            rowNumber: result.row?.rowNumber,
+            identity: getImportRowIdentity(result.row),
+            message: getImportErrorMessage(result.error),
+          });
+        });
+
+        setImportProgress((prev) => ({
+          ...prev,
+          done: imported,
+          processed: Math.min(prev.total, start + batchRows.length),
+        }));
+        await yieldToBrowser();
       }
-      store.addClient(makeClientPayload(row, effectiveProgramContext, selectedImportHotel));
-      imported += 1;
-    });
-    setReport({ imported, skipped });
-    setStage(3);
-    if (imported > 0) {
-      const success = t.importClientsSuccess || (lang === "fr" ? "{n} pèlerins importés avec succès" : lang === "en" ? "{n} pilgrims imported successfully" : "تم استيراد المعتمرين بنجاح — تم حفظ {n} معتمر");
-      onToast?.(success.replace("{n}", imported), "success");
+
+      setReport({ imported, skipped, failed: failures.length, failures });
+      setStage(3);
+      if (imported > 0) {
+        const success = t.importClientsSuccess || (lang === "fr" ? "{n} pèlerins importés avec succès" : lang === "en" ? "{n} pilgrims imported successfully" : "تم استيراد المعتمرين بنجاح — تم حفظ {n} معتمر");
+        onToast?.(success.replace("{n}", imported), failures.length ? "warning" : "success");
+      } else if (failures.length) {
+        onToast?.(
+          lang === "fr"
+            ? "Aucune ligne n’a pu être enregistrée."
+            : lang === "en"
+              ? "No rows could be saved."
+              : "تعذر حفظ أي سطر.",
+          "error"
+        );
+      }
+    } finally {
+      setImporting(false);
     }
   };
+
+  const renderParsingStatus = () => (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      padding: "12px 14px",
+      borderRadius: 12,
+      background: "rgba(212,175,55,.08)",
+      border: "1px solid rgba(212,175,55,.22)",
+      marginBottom: 14,
+    }}>
+      <div style={{
+        width: 18,
+        height: 18,
+        borderRadius: "50%",
+        border: "2px solid rgba(212,175,55,.25)",
+        borderTopColor: tc.gold,
+        animation: "spin 1s linear infinite",
+        flexShrink: 0,
+      }} />
+      <div style={{ minWidth: 0 }}>
+        <p style={{ margin: 0, color: previewStrongText, fontSize: 13, fontWeight: 900 }}>
+          {parseStatusTitle}
+        </p>
+        <p style={{ margin: "3px 0 0", color: previewMutedText, fontSize: 11.5, lineHeight: 1.5 }}>
+          {parseStatusLine}
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderImportProgressPanel = () => (
+    <div style={{
+      padding: "11px 12px",
+      borderRadius: 12,
+      background: "linear-gradient(135deg,rgba(13,31,60,.10),rgba(212,175,55,.055)), var(--rukn-section-bg)",
+      border: "1px solid rgba(212,175,55,.24)",
+      boxShadow: `0 10px 24px rgba(15,23,42,.08), inset ${isRTL ? "-3px" : "3px"} 0 0 rgba(212,175,55,.82)`,
+      marginBottom: 12,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 9 }}>
+        <div style={{ minWidth: 0, flex: "1 1 280px" }}>
+          <p style={{ margin: 0, color: previewStrongText, fontSize: 13, fontWeight: 900, lineHeight: 1.35 }}>
+            {importProgressTitle}
+          </p>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 7 }}>
+            <span style={{
+              display: "inline-flex",
+              alignItems: "center",
+              maxWidth: "100%",
+              minHeight: 24,
+              padding: "3px 9px",
+              borderRadius: 999,
+              background: "rgba(13,31,60,.06)",
+              border: `1px solid ${previewBorder}`,
+              color: previewMutedText,
+              fontSize: 11.5,
+              fontWeight: 700,
+              lineHeight: 1.35,
+            }}>
+              {importProgressLine}
+            </span>
+            {importProgress.batches > 0 && (
+              <span style={{
+                display: "inline-flex",
+                alignItems: "center",
+                maxWidth: "100%",
+                minHeight: 24,
+                padding: "3px 9px",
+                borderRadius: 999,
+                background: "rgba(212,175,55,.08)",
+                border: "1px solid rgba(212,175,55,.18)",
+                color: previewMutedText,
+                fontSize: 11.5,
+                fontWeight: 700,
+                lineHeight: 1.35,
+              }}>
+              {lang === "fr"
+                ? `Lot ${importProgress.batch} sur ${importProgress.batches}`
+                : lang === "en"
+                  ? `Batch ${importProgress.batch} of ${importProgress.batches}`
+                  : `الدفعة ${importProgress.batch} من ${importProgress.batches}`}
+              </span>
+            )}
+          </div>
+        </div>
+        <strong style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minWidth: 48,
+          height: 28,
+          padding: "0 10px",
+          borderRadius: 999,
+          background: "rgba(212,175,55,.12)",
+          border: "1px solid rgba(212,175,55,.32)",
+          color: tc.gold,
+          fontSize: 13,
+          fontWeight: 900,
+          lineHeight: 1,
+        }}>{progressPercent}%</strong>
+      </div>
+      <div style={{ height: 5, borderRadius: 999, background: "rgba(148,163,184,.20)", overflow: "hidden" }}>
+        <div style={{
+          width: `${progressPercent}%`,
+          height: "100%",
+          borderRadius: 999,
+          background: "linear-gradient(90deg,#d4af37,#f0d060)",
+          transition: "width .18s ease",
+        }} />
+      </div>
+    </div>
+  );
 
   const renderImportHotelSelector = (marginBottom = 12) => {
     if (!showProgramSelector && !showImportHotelSelector) return null;
@@ -1055,6 +1310,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
             <select
               value={selectedImportProgramId}
               onChange={(event) => setSelectedImportProgramId(event.target.value)}
+              disabled={controlsDisabled}
               style={{
                 flex: "0 1 360px",
                 minWidth: 240,
@@ -1110,7 +1366,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           <select
             value={selectedImportHotelKey}
             onChange={(event) => setSelectedImportHotelKey(event.target.value)}
-            disabled={!importHotelOptions.length}
+            disabled={controlsDisabled || !importHotelOptions.length}
             style={{
               flex: "0 1 360px",
               minWidth: 240,
@@ -1197,7 +1453,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           size="sm"
           icon="download"
           onClick={handleTemplateDownload}
-          disabled={templateBusy}
+          disabled={templateBusy || parseBusy}
           style={{ flexShrink: 0 }}
         >
           {lang === "fr"
@@ -1208,20 +1464,28 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         </Button>
       </div>
 
+      {parseBusy && renderParsingStatus()}
+
       <div
-        onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!parseBusy) setDragging(true);
+        }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
-        onClick={() => fileRef.current?.click()}
+        onClick={() => {
+          if (!parseBusy) fileRef.current?.click();
+        }}
         style={{
           border: `2px dashed ${dragging ? tc.gold : "rgba(212,175,55,.3)"}`,
           borderRadius: 16,
           padding: "42px 24px",
           textAlign: "center",
           background: dragging ? "rgba(212,175,55,.06)" : "rgba(255,255,255,.02)",
-          cursor: "pointer",
+          cursor: parseBusy ? "wait" : "pointer",
           transition: "all .2s",
           marginBottom: 16,
+          opacity: parseBusy ? 0.72 : 1,
         }}>
         <IconBubble name="import" size={44} iconSize={24} style={{ margin: "0 auto 12px" }} />
         <p style={{ fontSize: 16, fontWeight: 800, color: "#f8fafc", marginBottom: 6 }}>
@@ -1230,7 +1494,15 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         <p style={{ fontSize: 12, color: tc.grey, marginBottom: 20 }}>
           {t.importDropHint || "اسحب ملف Excel أو CSV وأفلته هنا"} — .xlsx, .xls, .csv
         </p>
-        <Button variant="primary" icon="upload" onClick={(event) => { event.stopPropagation(); fileRef.current?.click(); }}>
+        <Button
+          variant="primary"
+          icon="upload"
+          disabled={parseBusy}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!parseBusy) fileRef.current?.click();
+          }}
+        >
           {t.importChooseFile || "اختيار ملف"}
         </Button>
         <input
@@ -1238,6 +1510,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           type="file"
           accept=".xlsx,.xls,.csv"
           style={{ display: "none" }}
+          disabled={parseBusy}
           onChange={(event) => { if (event.target.files[0]) parseFile(event.target.files[0]); }}
         />
       </div>
@@ -1271,7 +1544,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-        <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
+        <Button variant="ghost" disabled={parseBusy} onClick={onClose}>{t.cancel}</Button>
       </div>
     </div>
   );
@@ -1361,7 +1634,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
               </details>
             )}
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setShowColumnCorrection((value) => !value)}>
+          <Button variant="ghost" size="sm" disabled={importing} onClick={() => setShowColumnCorrection((value) => !value)}>
             {t.importCorrectColumns || (lang === "fr" ? "Corriger les colonnes" : lang === "en" ? "Correct columns" : "تصحيح الأعمدة")}
           </Button>
         </div>
@@ -1394,6 +1667,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
                 </label>
                 <select
                   value={mapping[field.key] !== undefined ? String(mapping[field.key]) : ""}
+                  disabled={importing}
                   onChange={(event) => {
                     setError("");
                     setMapping((prev) => ({ ...prev, [field.key]: event.target.value }));
@@ -1408,6 +1682,8 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
             ))}
           </div>
         )}
+
+        {importing && renderImportProgressPanel()}
 
         <p style={{ fontSize: 12, fontWeight: 800, color: tc.gold, marginBottom: 8 }}>
           {t.importPreview || "معاينة البيانات"}
@@ -1432,9 +1708,9 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
               {previewRows.map((row) => (
                 <tr key={row.id} style={{ borderBottom: `1px solid ${previewBorder}`, background: row.accepted ? "transparent" : "rgba(239,68,68,.05)" }}>
                   <td style={tdStyle(isRTL)}>{row.rowNumber}</td>
-                  <EditableCell value={row.displayName} onChange={(value) => updateEdit(row.id, "fullName", value)} isRTL={isRTL} required={row.accepted} />
-                  <EditableCell value={row.phone} onChange={(value) => updateEdit(row.id, "phone", value)} isRTL={isRTL} />
-                  <EditableCell value={row.passportNo} onChange={(value) => updateEdit(row.id, "passportNo", value)} isRTL={isRTL} />
+                  <EditableCell value={row.displayName} onChange={(value) => updateEdit(row.id, "fullName", value)} isRTL={isRTL} required={row.accepted} disabled={importing} />
+                  <EditableCell value={row.phone} onChange={(value) => updateEdit(row.id, "phone", value)} isRTL={isRTL} disabled={importing} />
+                  <EditableCell value={row.passportNo} onChange={(value) => updateEdit(row.id, "passportNo", value)} isRTL={isRTL} disabled={importing} />
                   <td style={tdStyle(isRTL)}>{row.nationality || "—"}</td>
                   <td style={tdStyle(isRTL)}>{row.birthDate || "—"}</td>
                   <td style={tdStyle(isRTL)}>{row.passportExpiry || "—"}</td>
@@ -1454,10 +1730,10 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="ghost" onClick={() => setStage(1)}>{t.back || "رجوع"}</Button>
+          <Button variant="ghost" disabled={importing} onClick={() => setStage(1)}>{t.back || "رجوع"}</Button>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
-            <Button variant="primary" icon="success" disabled={acceptedCount === 0} onClick={doImport}>
+            <Button variant="ghost" disabled={importing} onClick={onClose}>{t.cancel}</Button>
+            <Button variant="primary" icon="success" disabled={importing || acceptedCount === 0} onClick={doImport}>
               {t.importSaveAcceptedOnly || (lang === "fr" ? "Enregistrer les lignes acceptées uniquement" : lang === "en" ? "Save accepted rows only" : "حفظ المقبولين فقط")} ({acceptedCount})
             </Button>
           </div>
@@ -1476,19 +1752,75 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         {(t.importSavedAndSkipped || (lang === "fr" ? "{saved} pèlerin(s) enregistré(s), {skipped} ligne(s) ignorée(s)" : lang === "en" ? "{saved} pilgrim(s) saved, {skipped} row(s) ignored" : "تم حفظ {saved} معتمر، وتم تجاهل {skipped} سطر"))
           .replace("{saved}", report.imported)
           .replace("{skipped}", report.skipped)}
+        {report.failed > 0 && (
+          <span>
+            {" "}
+            {lang === "fr"
+              ? `- ${report.failed} échec(s) à vérifier`
+              : lang === "en"
+                ? `- ${report.failed} failed row(s) need review`
+                : `- ${report.failed} سطر تعذر حفظه ويحتاج للمراجعة`}
+          </span>
+        )}
       </p>
 
-      <div style={{ display: "flex", gap: 16, justifyContent: "center", marginBottom: 28 }}>
+      <div style={{ display: "flex", gap: 16, justifyContent: "center", marginBottom: report.failed > 0 ? 16 : 28, flexWrap: "wrap" }}>
         <StatCard value={report.imported} label={t.importImported || "تم حفظه"} color={tc.greenLight} bg="rgba(34,197,94,.1)" border="rgba(34,197,94,.25)" />
         <StatCard value={report.skipped} label={t.importSkipped || "تم تجاهله"} color={tc.warning} bg="rgba(245,158,11,.08)" border="rgba(245,158,11,.2)" />
+        {report.failed > 0 && (
+          <StatCard
+            value={report.failed}
+            label={lang === "fr" ? "Échec" : lang === "en" ? "Failed" : "فشل"}
+            color={tc.danger}
+            bg="rgba(239,68,68,.1)"
+            border="rgba(239,68,68,.25)"
+          />
+        )}
       </div>
+
+      {report.failed > 0 && (
+        <div style={{
+          maxWidth: 620,
+          margin: "0 auto 24px",
+          padding: "10px 12px",
+          borderRadius: 12,
+          background: "rgba(239,68,68,.08)",
+          border: "1px solid rgba(239,68,68,.22)",
+          textAlign: isRTL ? "right" : "left",
+        }}>
+          <p style={{ margin: "0 0 8px", color: tc.danger, fontSize: 12, fontWeight: 900 }}>
+            {lang === "fr"
+              ? "Lignes non enregistrées"
+              : lang === "en"
+                ? "Rows not saved"
+                : "سطور لم يتم حفظها"}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 120, overflowY: "auto" }}>
+            {(report.failures || []).slice(0, 6).map((failure, index) => (
+              <p key={`${failure.identity}-${index}`} style={{ margin: 0, color: previewMutedText, fontSize: 11.5, lineHeight: 1.55 }}>
+                <strong style={{ color: previewStrongText }}>{failure.identity}</strong>
+                {failure.message ? ` - ${failure.message}` : ""}
+              </p>
+            ))}
+            {(report.failures || []).length > 6 && (
+              <p style={{ margin: 0, color: previewMutedText, fontSize: 11.5 }}>
+                {lang === "fr"
+                  ? `+ ${(report.failures || []).length - 6} autre(s)`
+                  : lang === "en"
+                    ? `+ ${(report.failures || []).length - 6} more`
+                    : `+ ${(report.failures || []).length - 6} أخرى`}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <Button variant="primary" onClick={onClose}>{t.close || "إغلاق"}</Button>
     </div>
   );
 }
 
-function EditableCell({ value, onChange, isRTL, required = false }) {
+function EditableCell({ value, onChange, isRTL, required = false, disabled = false }) {
   const [focused, setFocused] = React.useState(false);
   const visibleValue = cellText(value);
   const inputValue = focused || visibleValue ? visibleValue : "—";
@@ -1496,9 +1828,15 @@ function EditableCell({ value, onChange, isRTL, required = false }) {
     <td style={tdStyle(isRTL)}>
       <input
         value={inputValue}
-        onFocus={() => setFocused(true)}
+        disabled={disabled}
+        onFocus={() => {
+          if (disabled) return;
+          setFocused(true);
+        }}
         onBlur={() => setFocused(false)}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => {
+          if (!disabled) onChange(event.target.value);
+        }}
         style={{
           width: "100%",
           minWidth: 110,
@@ -1507,6 +1845,7 @@ function EditableCell({ value, onChange, isRTL, required = false }) {
           padding: "5px 7px",
           background: previewInputBg,
           color: visibleValue ? previewStrongText : previewMutedText,
+          opacity: disabled ? 0.72 : 1,
           fontFamily: "'Cairo',sans-serif",
           fontSize: 11,
           textAlign: isRTL ? "right" : "left",

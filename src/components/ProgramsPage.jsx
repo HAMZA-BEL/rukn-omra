@@ -2011,6 +2011,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [showAddClient,  setShowAddClient]  = React.useState(false);
   const [showExcelImport, setShowExcelImport] = React.useState(false);
+  const [excelImportSaving, setExcelImportSaving] = React.useState(false);
   const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [selectMode,     setSelectMode]     = React.useState(false);
@@ -2018,6 +2019,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+  const closeExcelImportModal = React.useCallback(() => {
+    if (excelImportSaving) return;
+    setShowExcelImport(false);
+  }, [excelImportSaving]);
   const [bulkActionsOpen, setBulkActionsOpen] = React.useState(false);
   const [packageFilter, setPackageFilter] = React.useState("all");
   const [programClientPage, setProgramClientPage] = React.useState(1);
@@ -3442,12 +3447,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
           onCancel={()=>setShowAddClient(false)} />
       </Modal>
-      <Modal open={showExcelImport} onClose={() => setShowExcelImport(false)} title={participantExcelImportLabel} width={920}>
+      <Modal open={showExcelImport} onClose={closeExcelImportModal} title={participantExcelImportLabel} width={920}>
         {showExcelImport && (
           <ImportClientsModal
             store={store}
-            onClose={() => setShowExcelImport(false)}
+            onClose={closeExcelImportModal}
             onToast={onToast}
+            onImportingChange={setExcelImportSaving}
             programContext={{
               id: program.id,
               name: program.name,

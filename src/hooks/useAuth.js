@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseEnabled } from "../lib/supabase";
 import { db } from "../lib/db";
 import { clearSupabaseLogoutAppStorage } from "../utils/localStorageHardening";
@@ -25,8 +25,18 @@ export function useAuth() {
   const [profileError,     setProfileError]     = useState(null);
   const [profileLoading,   setProfileLoading]   = useState(false);
   const [profileChecked,   setProfileChecked]   = useState(!isSupabaseEnabled);
+  const userRef = useRef(null);
+  const agencyIdRef = useRef(null);
+  const profileErrorRef = useRef(null);
+  const profileCheckedRef = useRef(!isSupabaseEnabled);
+  const profileLoadRef = useRef({ userId: null, promise: null });
 
-  const loadProfile = useCallback(async (authUser) => {
+  useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => { agencyIdRef.current = agencyId; }, [agencyId]);
+  useEffect(() => { profileErrorRef.current = profileError; }, [profileError]);
+  useEffect(() => { profileCheckedRef.current = profileChecked; }, [profileChecked]);
+
+  const loadProfile = useCallback(async (authUser, { force = false, silent = false } = {}) => {
     if (!authUser) {
       setUser(null);
       setAgencyId(null);
@@ -36,11 +46,35 @@ export function useAuth() {
       return;
     }
 
-    setProfileLoading(true);
-    setProfileChecked(false);
+    const currentUser = userRef.current;
+    const sameCheckedUser = Boolean(
+      !force
+      && profileCheckedRef.current
+      && currentUser?.id
+      && currentUser.id === authUser.id
+      && (agencyIdRef.current || profileErrorRef.current)
+    );
+
+    if (sameCheckedUser) {
+      setUser((prev) => (
+        prev?.id === authUser.id
+          ? { ...authUser, profile: prev.profile }
+          : prev
+      ));
+      return;
+    }
+
+    if (profileLoadRef.current.promise && profileLoadRef.current.userId === authUser.id) {
+      return profileLoadRef.current.promise;
+    }
+
+    if (!silent) {
+      setProfileLoading(true);
+      setProfileChecked(false);
+    }
     setProfileError(null);
 
-    try {
+    const promise = (async () => {
       const { data, error } = await db.users.fetchProfile(authUser.id);
       if (error || !data?.agency_id) {
         setUser(authUser);
@@ -64,14 +98,22 @@ export function useAuth() {
         setUser({ ...authUser, profile: data });
         setAgencyId(data.agency_id);
       }
-    } catch {
-      setUser(authUser);
-      setAgencyId(null);
-      setProfileError("no_profile");
-    } finally {
-      setProfileLoading(false);
-      setProfileChecked(true);
-    }
+    })()
+      .catch(() => {
+        setUser(authUser);
+        setAgencyId(null);
+        setProfileError("no_profile");
+      })
+      .finally(() => {
+        setProfileLoading(false);
+        setProfileChecked(true);
+        if (profileLoadRef.current.userId === authUser.id) {
+          profileLoadRef.current = { userId: null, promise: null };
+        }
+      });
+
+    profileLoadRef.current = { userId: authUser.id, promise };
+    return promise;
   }, []);
 
   useEffect(() => {
@@ -122,7 +164,13 @@ export function useAuth() {
           setNeedsPasswordSet(false);
           if (session?.user) loadProfile(session.user).finally(() => setLoading(false));
           else setLoading(false);
-        } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        } else if (event === "TOKEN_REFRESHED") {
+          if (session?.user && session.user.id !== userRef.current?.id) {
+            loadProfile(session.user).finally(() => setLoading(false));
+          } else {
+            setLoading(false);
+          }
+        } else if (event === "SIGNED_IN") {
           if (session?.user) loadProfile(session.user).finally(() => setLoading(false));
           else setLoading(false);
         } else if (event === "SIGNED_OUT") {

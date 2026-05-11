@@ -86,6 +86,7 @@ export default function ClientsPage({ store, onToast }) {
   const [checkedIds,  setCheckedIds]  = React.useState(new Set());
   const [selectMode,  setSelectMode]  = React.useState(false);
   const [showImport,  setShowImport]  = React.useState(false);
+  const [importSaving, setImportSaving] = React.useState(false);
   const [showPassportImport, setShowPassportImport] = React.useState(false);
   const [transferTargets, setTransferTargets] = React.useState([]);
   const [transferSheetOpen, setTransferSheetOpen] = React.useState(false);
@@ -106,6 +107,10 @@ export default function ClientsPage({ store, onToast }) {
     (client) => getParticipantTerminology(getClientProgram(client), client, lang),
     [getClientProgram, lang]
   );
+  const closeImportModal = React.useCallback(() => {
+    if (importSaving) return;
+    setShowImport(false);
+  }, [importSaving]);
 
   // Reset tab-specific state when switching tabs
   const switchTab = (newTab) => {
@@ -1130,12 +1135,13 @@ export default function ClientsPage({ store, onToast }) {
           onSave={() => { setShowAdd(false); onToast(t.addSuccess,"success"); }}
           onCancel={() => setShowAdd(false)} />
       </Modal>
-      <Modal open={showImport} onClose={() => setShowImport(false)} title={t.importModalTitle} width={920}>
+      <Modal open={showImport} onClose={closeImportModal} title={t.importModalTitle} width={920}>
         {showImport && (
           <ImportClientsModal
             store={store}
-            onClose={() => setShowImport(false)}
+            onClose={closeImportModal}
             onToast={onToast}
+            onImportingChange={setImportSaving}
           />
         )}
       </Modal>
