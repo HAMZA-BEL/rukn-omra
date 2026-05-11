@@ -26,6 +26,7 @@ import ProgramEditorModal from "./programs/ProgramEditorModal";
 import ProgramDetailHeader from "./programs/ProgramDetailHeader";
 import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
 import BulkClientActionsBar from "./programs/BulkClientActionsBar";
+import ProgramClientsTable from "./programs/ProgramClientsTable";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -2741,44 +2742,30 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         />
       )}
 
-      {filtered.length > 0 && (
-        <div style={{
-          width:"100%",
-          display:"grid",
-          gridTemplateColumns:tableGridTemplate,
-          alignItems:"center",
-          gap:12,
-          padding:"10px 18px",
-          background:"rgba(212,175,55,.06)",
-          borderRadius:8,
-          fontSize:11,
-          fontWeight:700,
-          color:tc.grey,
-        }}>
-          {selectMode && (
-            <HeaderSelectCheckbox
-              checked={allChecked}
-              indeterminate={partiallyChecked}
-              onChange={toggleAllFiltered}
-              label={allChecked ? t.deselectAll : t.selectAll}
-            />
-          )}
-          <span>#</span>
-          <span>{t.name}</span>
-          <span style={{ textAlign:"center" }}>{t.roomType}</span>
-          <span style={{ textAlign:"center" }}>{t.ticketNo}</span>
-          <span style={{ textAlign:"center" }}>{t.paid}</span>
-          <span style={{ textAlign:"center" }}>{t.remaining}</span>
-          <span style={{ textAlign:"center" }}>{t.statusLabel || t.status || "الحالة"}</span>
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <EmptyState icon="users" title={participantTerms.emptyTitle || t.programNoPilgrimsTitle}
-          sub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)} />
-      ) : (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          {paginatedProgramClients.map((c,i)=>{
+      <ProgramClientsTable
+        filteredCount={filtered.length}
+        tableGridTemplate={tableGridTemplate}
+        selectMode={selectMode}
+        headerSelectControl={(
+          <HeaderSelectCheckbox
+            checked={allChecked}
+            indeterminate={partiallyChecked}
+            onChange={toggleAllFiltered}
+            label={allChecked ? t.deselectAll : t.selectAll}
+          />
+        )}
+        labels={{
+          name: t.name,
+          roomType: t.roomType,
+          ticketNo: t.ticketNo,
+          paid: t.paid,
+          remaining: t.remaining,
+          status: t.statusLabel || t.status || "الحالة",
+        }}
+        emptyTitle={participantTerms.emptyTitle || t.programNoPilgrimsTitle}
+        emptySub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)}
+        rows={paginatedProgramClients}
+        renderRow={(c,i)=>{
             const paid = getClientTotalPaid(c.id);
             const rem  = Math.max(0, (c.salePrice||c.price||0) - paid);
             const stat = getClientDisplayStatus(c, program, getClientStatus(c));
@@ -2802,57 +2789,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
                 gridTemplate={tableGridTemplate}
               />
             );
-          })}
-        </div>
-      )}
-
-      {/* totals row */}
-      {filtered.length > 0 && (
-        <div style={{
-          display:"grid",
-          gridTemplateColumns:tableGridTemplate,
-          gap:12,
-          padding:"12px 18px",
-          marginTop:8,
-          background:"rgba(212,175,55,.08)",
-          border:"1px solid rgba(212,175,55,.2)",
-          borderRadius:10,
-          fontSize:12,
-          fontWeight:700,
-          alignItems:"center",
-        }}>
-          <div style={{
-            gridColumn:totalsGridColumn,
-            display:"flex",
-            alignItems:"center",
-            gap:10,
-            minWidth:0,
-            flexWrap:"nowrap",
-          }}>
-            <span style={{ color:tc.gold, whiteSpace:"nowrap", flexShrink:0 }}>
-              {participantTerms.totalLabel ? participantTerms.totalLabel(filtered.length) : tr("programTotalsLabel", { count: filtered.length })}
-            </span>
-            <span style={{
-              color:tc.grey,
-              whiteSpace:"nowrap",
-              flexShrink:1,
-              overflow:"hidden",
-              textOverflow:"ellipsis",
-            }}>
-              {t.summary || participantTerms.plural || t.clients}
-            </span>
-          </div>
-          <span />
-          <span />
-          <span style={{ color:tc.greenLight, textAlign:"center" }}>
-            {formatCurrencyForLang(filteredPaymentTotals.paid)}
-          </span>
-          <span style={{ color:tc.warning, textAlign:"center" }}>
-            {formatCurrencyForLang(filteredPaymentTotals.remaining)}
-          </span>
-          <span />
-        </div>
-      )}
+          }}
+        totalsGridColumn={totalsGridColumn}
+        totalLabel={participantTerms.totalLabel ? participantTerms.totalLabel(filtered.length) : tr("programTotalsLabel", { count: filtered.length })}
+        summaryLabel={t.summary || participantTerms.plural || t.clients}
+        paidTotalLabel={formatCurrencyForLang(filteredPaymentTotals.paid)}
+        remainingTotalLabel={formatCurrencyForLang(filteredPaymentTotals.remaining)}
+      />
         </>
       )}
 
