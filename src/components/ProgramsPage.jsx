@@ -2922,6 +2922,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [pickerSearch, setPickerSearch] = React.useState("");
   const [selectedPilgrimIds, setSelectedPilgrimIds] = React.useState([]);
+  const [selectedUnassignedIds, setSelectedUnassignedIds] = React.useState(() => new Set());
   const [roomSelectionMode, setRoomSelectionMode] = React.useState(false);
   const [selectedRoomIds, setSelectedRoomIds] = React.useState(() => new Set());
   const [pendingDrop, setPendingDrop] = React.useState(null);
@@ -2936,6 +2937,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomingPrintSettings, setRoomingPrintSettings] = React.useState({
     showRegistrationSource: true,
     density: "normal",
+    layoutMode: "default",
   });
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
@@ -3001,6 +3003,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (lang === "en") return "Gender not set";
     return "الجنس غير محدد";
   }, [lang]);
+  const roomingParticipantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
   const roomingPrintLabels = React.useMemo(() => {
     if (lang === "fr") {
       return {
@@ -3010,6 +3013,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         comfortable: "Confortable",
         normal: "Normal",
         compact: "Compact",
+        layoutMode: "Mode d’organisation d’impression",
+        defaultLayout: "Organisation par défaut",
+        arrangedLayout: "Selon l’agencement du rooming",
+        layoutHelp: "L’organisation par défaut regroupe les chambres par type. L’agencement du rooming respecte la proximité des chambres que vous avez organisée, tout en les compactant proprement pour l’impression.",
         done: "Terminé",
       };
     }
@@ -3021,6 +3028,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         comfortable: "Comfortable",
         normal: "Normal",
         compact: "Compact",
+        layoutMode: "Print layout mode",
+        defaultLayout: "Default layout",
+        arrangedLayout: "Rooming arrangement",
+        layoutHelp: "Default layout groups rooms by type. Rooming arrangement keeps rooms close to how you arranged them, while packing them cleanly for print.",
         done: "Done",
       };
     }
@@ -3031,6 +3042,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       comfortable: "كبير",
       normal: "عادي",
       compact: "صغير",
+      layoutMode: "طريقة ترتيب الطباعة",
+      defaultLayout: "الترتيب الافتراضي",
+      arrangedLayout: "حسب ترتيب التسكين",
+      layoutHelp: "الترتيب الافتراضي يجمع الغرف حسب النوع، أما ترتيب التسكين فيحافظ على قرب الغرف كما رتبتها مع ضغطها للطباعة باحترافية.",
       done: "تطبيق",
     };
   }, [lang]);
@@ -3038,6 +3053,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     { value: "comfortable", label: roomingPrintLabels.comfortable },
     { value: "normal", label: roomingPrintLabels.normal },
     { value: "compact", label: roomingPrintLabels.compact },
+  ]), [roomingPrintLabels]);
+  const roomingPrintLayoutOptions = React.useMemo(() => ([
+    { value: "default", label: roomingPrintLabels.defaultLayout },
+    { value: "arranged", label: roomingPrintLabels.arrangedLayout },
   ]), [roomingPrintLabels]);
 
   const getClientContext = React.useCallback((client) => {
@@ -3129,6 +3148,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       roomingRevisionRef.current += 1;
       setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
       setSelectedRoomId(null);
+      setSelectedUnassignedIds(new Set());
       setSelectedRoomIds(new Set());
       setRoomSelectionMode(false);
       setRoomingSaveStatus("idle");
@@ -3303,6 +3323,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return Array.from(explicit.values()).filter((item) => clientsById[item.clientId] && !clientIdsInRooms.has(item.clientId));
   }, [clients, clientsById, clientIdsInRooms, unassigned]);
 
+  React.useEffect(() => {
+    const availableIds = new Set(normalizedUnassigned.map((item) => item.clientId));
+    setSelectedUnassignedIds((current) => {
+      const next = new Set(Array.from(current).filter((clientId) => availableIds.has(clientId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [normalizedUnassigned]);
+
   const groupedRooms = React.useMemo(() => {
     const sorted = rooms.slice().sort((a, b) => {
       const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
@@ -3421,6 +3449,97 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       return true;
     });
   }, [normalizedUnassigned, clientsById, getClientContext, panelSearch, panelHotel, panelRoomType]);
+
+  const unassignedSelectionLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        selected: "sélectionnés",
+        clear: "Effacer",
+        addToRoom: "Ajouter à la chambre sélectionnée",
+        capacity: "La chambre ne peut pas accueillir tous les pèlerins sélectionnés.",
+        classification: "Certains pèlerins sélectionnés ne correspondent pas à la classification de cette chambre.",
+        conflict: "Certains pèlerins sélectionnés nécessitent une vérification. Ajoutez-les un par un pour confirmer les différences.",
+        success: "Les pèlerins sélectionnés ont été ajoutés.",
+      };
+    }
+    if (lang === "en") {
+      return {
+        selected: "selected",
+        clear: "Clear",
+        addToRoom: "Add to selected room",
+        capacity: "This room does not have enough capacity for all selected pilgrims.",
+        classification: "Some selected pilgrims do not match this room classification.",
+        conflict: "Some selected pilgrims need review before they can be added. Add them one by one to confirm differences.",
+        success: "Selected pilgrims added.",
+      };
+    }
+    return {
+      selected: "محدد",
+      clear: "إلغاء",
+      addToRoom: "إضافة المحددين إلى الغرفة",
+      capacity: "الغرفة لا تتسع لكل المعتمرين المحددين",
+      classification: "بعض المحددين لا يناسبون تصنيف هذه الغرفة",
+      conflict: "بعض المحددين يحتاجون مراجعة قبل إدراجهم. أضفهم فرديًا لتأكيد الاختلافات.",
+      success: "تم إدراج المعتمرين المحددين",
+    };
+  }, [lang]);
+
+  const selectedUnassignedList = React.useMemo(() => (
+    Array.from(selectedUnassignedIds).filter((clientId) => clientsById[clientId] && !clientIdsInRooms.has(clientId))
+  ), [selectedUnassignedIds, clientsById, clientIdsInRooms]);
+
+  const clearSelectedUnassigned = React.useCallback(() => {
+    setSelectedUnassignedIds(new Set());
+  }, []);
+
+  const toggleUnassignedSelection = React.useCallback((clientId) => {
+    setSelectedUnassignedIds((current) => {
+      const next = new Set(current);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  }, []);
+
+  const setUnassignedGroupDragImage = React.useCallback((event, dragIds = [], fallbackName = "") => {
+    if (!event?.dataTransfer?.setDragImage || dragIds.length <= 1 || typeof document === "undefined") return;
+    const firstClient = clientsById[dragIds[0]];
+    const firstName = getClientDisplayName(firstClient) || fallbackName || "—";
+    const extraCount = Math.max(0, dragIds.length - 1);
+    const title = extraCount ? `${firstName} +${extraCount}` : firstName;
+    const subtitle = lang === "fr"
+      ? `${dragIds.length} ${roomingParticipantTerms.plural} sélectionnés`
+      : lang === "en"
+        ? `${dragIds.length} selected ${roomingParticipantTerms.plural}`
+        : `${dragIds.length} ${roomingParticipantTerms.plural} محددين`;
+    const preview = document.createElement("div");
+    preview.dir = lang === "ar" ? "rtl" : "ltr";
+    preview.style.cssText = [
+      "position:fixed",
+      "top:-1000px",
+      "left:-1000px",
+      "z-index:2147483647",
+      "width:230px",
+      "border:1px solid rgba(37,99,235,.35)",
+      "border-radius:12px",
+      "background:#ffffff",
+      "box-shadow:0 18px 42px rgba(15,23,42,.22)",
+      "padding:10px 12px",
+      "font-family:Cairo,Arial,Tahoma,sans-serif",
+      "pointer-events:none",
+    ].join(";");
+    const titleEl = document.createElement("strong");
+    titleEl.textContent = title;
+    titleEl.style.cssText = "display:block;color:#0f172a;font-size:13px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+    const subtitleEl = document.createElement("span");
+    subtitleEl.textContent = subtitle;
+    subtitleEl.style.cssText = "display:inline-flex;margin-top:5px;border-radius:999px;background:rgba(37,99,235,.10);border:1px solid rgba(37,99,235,.22);color:#1d4ed8;font-size:11px;font-weight:900;padding:3px 8px";
+    preview.appendChild(titleEl);
+    preview.appendChild(subtitleEl);
+    document.body.appendChild(preview);
+    event.dataTransfer.setDragImage(preview, lang === "ar" ? 206 : 24, 24);
+    window.setTimeout(() => preview.remove(), 0);
+  }, [clientsById, lang, roomingParticipantTerms.plural]);
 
   const roomOccupancyOptions = React.useMemo(() => [
     { value: "all", label: t.roomingFilterAllRooms || t.allRooms || "كل الغرف" },
@@ -3846,6 +3965,69 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return commitClientDropIntoRoom(roomId, clientId, options);
   }, [rooms, clientsById, getCompatibilityReason, getRoomingDropConflicts, commitClientDropIntoRoom, onToast]);
 
+  const insertClientsIntoRoom = React.useCallback((roomId, clientIds = [], notify = true) => {
+    const room = rooms.find((item) => item.id === roomId);
+    if (!room) return false;
+    const uniqueIds = Array.from(new Set(clientIds))
+      .filter((clientId) => clientsById[clientId] && !clientIdsInRooms.has(clientId));
+    if (!uniqueIds.length) return false;
+    if (uniqueIds.length === 1) return insertClientIntoRoom(roomId, uniqueIds[0], notify);
+
+    const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
+    const occupantIds = room.occupantIds || [];
+    const remaining = Math.max(0, capacity - occupantIds.length);
+    if (uniqueIds.length > remaining) {
+      if (notify) onToast?.(unassignedSelectionLabels.capacity, "error");
+      return false;
+    }
+
+    const classificationMismatch = uniqueIds.some((clientId) => {
+      const gender = normalizeRoomingGender(getClientContext(clientsById[clientId]).gender);
+      return (room.category === "male_only" && gender === "female")
+        || (room.category === "female_only" && gender === "male");
+    });
+    if (classificationMismatch) {
+      if (notify) onToast?.(unassignedSelectionLabels.classification, "error");
+      return false;
+    }
+
+    const firstReason = uniqueIds
+      .map((clientId) => getCompatibilityReason(clientsById[clientId], room))
+      .find(Boolean);
+    if (firstReason) {
+      if (notify) onToast?.(firstReason, "error");
+      return false;
+    }
+
+    const needsSingleReview = uniqueIds.some((clientId) => getRoomingDropConflicts(clientsById[clientId], room));
+    if (needsSingleReview) {
+      if (notify) onToast?.(unassignedSelectionLabels.conflict, "error");
+      return false;
+    }
+
+    setRooms((prev) => prev.map((item) => item.id === room.id
+      ? { ...item, occupantIds: [...(item.occupantIds || []), ...uniqueIds] }
+      : item));
+    setUnassigned((prev) => prev.filter((item) => !uniqueIds.includes(item.clientId)));
+    setSelectedRoomId(room.id);
+    clearSelectedUnassigned();
+    markDirty();
+    if (notify) onToast?.(unassignedSelectionLabels.success, "success");
+    return true;
+  }, [
+    clearSelectedUnassigned,
+    clientIdsInRooms,
+    clientsById,
+    getCompatibilityReason,
+    getClientContext,
+    getRoomingDropConflicts,
+    insertClientIntoRoom,
+    markDirty,
+    onToast,
+    rooms,
+    unassignedSelectionLabels,
+  ]);
+
   const addSelectedPilgrimsToRoom = React.useCallback(() => {
     const room = rooms.find((item) => item.id === selectedRoomId);
     if (!room || !selectedPilgrimIds.length) return;
@@ -3909,6 +4091,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       dragInvalid: false,
       getDropReason: getCompatibilityReason,
       onDropClient: insertClientIntoRoom,
+      onDropClients: insertClientsIntoRoom,
       onDragComplete: () => setDraggingClientId(null),
       onAdd: openPickerForRoom,
       onEdit: openEditRoomById,
@@ -3921,7 +4104,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     },
     draggable: !room.locked && !roomSelectionMode,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, insertClientsIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, selectedRoomId]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
 
@@ -4081,6 +4264,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         pilgrims,
         names: pilgrims.map((pilgrim) => pilgrim.name),
         order: Number(room.order ?? index),
+        x: Number(room.x) || 0,
+        y: Number(room.y) || 0,
       };
     });
     win.document.write(createRoomingPrintHtml({
@@ -4175,6 +4360,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           pilgrims,
           names,
           order: Number(room.order ?? index),
+          x: Number(room.x) || 0,
+          y: Number(room.y) || 0,
         };
       });
     });
@@ -4831,7 +5018,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           <RoomingToolbarButton
             title={roomingPrintLabels.title}
             onClick={() => setRoomingPrintSettingsOpen(true)}
-            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || !roomingPrintSettings.showRegistrationSource}
+            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource}
             icon={<Settings size={15} />}
           >
             <span>{roomingPrintLabels.title}</span>
@@ -5088,6 +5275,60 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 <Select label="" value={panelHotel} onChange={(event) => setPanelHotel(event.target.value)} options={[{ value: "all", label: t.allHotels || "كل الفنادق" }, ...hotelOptions.map((hotel) => ({ value: hotel, label: hotel }))]} />
                 <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: t.allRooms || "كل الغرف" }, ...roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))]} />
               </div>
+              {selectedUnassignedList.length > 0 && (
+                <div style={{
+                  display: "grid",
+                  gap: 7,
+                  marginBottom: 10,
+                  padding: 8,
+                  border: "1px solid rgba(37,99,235,.22)",
+                  borderRadius: 11,
+                  background: "var(--rooming-list-selected-bg)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ color: "var(--rooming-text)", fontSize: 12, fontWeight: 900 }}>
+                      {selectedUnassignedList.length} {unassignedSelectionLabels.selected}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearSelectedUnassigned}
+                      style={{
+                        border: "1px solid var(--rooming-panel-border)",
+                        background: "var(--rooming-button-bg)",
+                        color: "var(--rooming-button-text)",
+                        borderRadius: 8,
+                        padding: "4px 8px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        fontFamily: "'Cairo',sans-serif",
+                      }}
+                    >
+                      {unassignedSelectionLabels.clear}
+                    </button>
+                  </div>
+                  {selectedRoom && (
+                    <button
+                      type="button"
+                      onClick={() => insertClientsIntoRoom(selectedRoom.id, selectedUnassignedList, true)}
+                      style={{
+                        width: "100%",
+                        border: "1px solid rgba(37,99,235,.24)",
+                        background: "var(--rooming-button-active-bg)",
+                        color: "var(--rooming-button-active-text)",
+                        borderRadius: 8,
+                        padding: "6px 8px",
+                        fontSize: 11,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontFamily: "'Cairo',sans-serif",
+                      }}
+                    >
+                      {unassignedSelectionLabels.addToRoom}
+                    </button>
+                  )}
+                </div>
+              )}
               {!filteredUnassigned.length ? (
                 <p style={{ color: "var(--rooming-muted)", fontSize: 12 }}>{t.noUnassignedForFilters || "لا توجد حالات غير مسكنة ضمن الفلاتر الحالية."}</p>
               ) : (
@@ -5099,6 +5340,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                     const selectedRoomReason = client && selectedRoom ? getCompatibilityReason(client, selectedRoom) : "";
                     const canAddToSelected = Boolean(client && selectedRoom && !selectedRoomReason);
                     const displayReason = item.reason && item.reason !== "يحتاج مراجعة" ? item.reason : "";
+                    const unassignedSelected = selectedUnassignedIds.has(item.clientId);
                     return (
                       <div
                         key={item.clientId}
@@ -5106,14 +5348,56 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                         draggable={Boolean(client)}
                         onDragStart={(event) => {
                           if (!client) return;
+                          const dragIds = unassignedSelected && selectedUnassignedList.length
+                            ? selectedUnassignedList
+                            : [item.clientId];
                           setDraggingClientId(item.clientId);
                           event.dataTransfer.effectAllowed = "move";
                           event.dataTransfer.setData("application/x-rukn-client-id", item.clientId);
-                          event.dataTransfer.setData("text/plain", context.name || item.clientId);
+                          event.dataTransfer.setData("application/x-rukn-client-ids", JSON.stringify(dragIds));
+                          event.dataTransfer.setData("text/plain", dragIds.length > 1 ? `${dragIds.length} ${unassignedSelectionLabels.selected}` : (context.name || item.clientId));
+                          setUnassignedGroupDragImage(event, dragIds, context.name);
                         }}
                         onDragEnd={() => setDraggingClientId(null)}
-                        style={{ border: draggingClientId === item.clientId ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-panel-border)", background: draggingClientId === item.clientId ? "var(--rooming-list-selected-bg)" : "var(--rooming-list-bg)", borderRadius: 10, padding: 9 }}
+                        style={{
+                          position: "relative",
+                          border: draggingClientId === item.clientId || unassignedSelected ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-panel-border)",
+                          background: draggingClientId === item.clientId || unassignedSelected ? "var(--rooming-list-selected-bg)" : "var(--rooming-list-bg)",
+                          boxShadow: unassignedSelected ? "0 10px 22px rgba(37,99,235,.10)" : "none",
+                          borderRadius: 10,
+                          padding: 9,
+                          paddingInlineStart: 38,
+                        }}
                       >
+                        <button
+                          type="button"
+                          title={unassignedSelected ? unassignedSelectionLabels.clear : unassignedSelectionLabels.selected}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleUnassignedSelection(item.clientId);
+                          }}
+                          style={{
+                            position: "absolute",
+                            top: 8,
+                            insetInlineStart: 8,
+                            width: 22,
+                            height: 22,
+                            borderRadius: 999,
+                            border: unassignedSelected ? "1px solid rgba(37,99,235,.56)" : "1px solid var(--rooming-panel-border)",
+                            background: unassignedSelected ? "var(--rooming-button-active-bg)" : "var(--rooming-button-bg)",
+                            color: unassignedSelected ? "var(--rooming-button-active-text)" : "var(--rooming-muted)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            fontFamily: "'Cairo',sans-serif",
+                          }}
+                        >
+                          {unassignedSelected ? "✓" : ""}
+                        </button>
                         <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 12 }}>{context.name}</strong>
                         <span style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", color: "var(--rooming-muted)", fontSize: 11, marginTop: 3 }}>
                           <span>{[context.registrationSource, context.roomTypeLabel, context.level || context.hotel].filter(Boolean).join(" • ") || (t.noDetails || "بدون تفاصيل")}</span>
@@ -5142,7 +5426,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                             disabled={!canAddToSelected}
                             onClick={() => {
                               if (!canAddToSelected) return;
-                              insertClientIntoRoom(selectedRoom.id, item.clientId, true);
+                              const ids = unassignedSelected && selectedUnassignedList.length > 1
+                                ? selectedUnassignedList
+                                : [item.clientId];
+                              insertClientsIntoRoom(selectedRoom.id, ids, true);
                             }}
                             style={{
                               marginTop: 8,
@@ -5238,6 +5525,47 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   );
                 })}
               </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>{roomingPrintLabels.layoutMode}</p>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: 6,
+                padding: 4,
+                borderRadius: 12,
+                background: "var(--rooming-list-bg)",
+                border: "1px solid var(--rooming-modal-section-border)",
+              }}>
+                {roomingPrintLayoutOptions.map((option) => {
+                  const active = roomingPrintSettings.layoutMode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setRoomingPrintSettings((prev) => ({ ...prev, layoutMode: option.value }))}
+                      style={{
+                        border: active ? "1px solid rgba(37,99,235,.34)" : "1px solid transparent",
+                        background: active ? "var(--rooming-button-bg)" : "transparent",
+                        color: active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
+                        boxShadow: active ? "0 8px 18px rgba(15,23,42,.08)" : "none",
+                        borderRadius: 9,
+                        padding: "8px 10px",
+                        fontSize: 12,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontFamily: "'Cairo',sans-serif",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ color: "var(--rooming-muted)", fontSize: 11, lineHeight: 1.7, margin: 0 }}>
+                {roomingPrintLabels.layoutHelp}
+              </p>
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -5509,7 +5837,16 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         event.preventDefault();
         event.stopPropagation();
         const clientId = event.dataTransfer.getData("application/x-rukn-client-id");
-        if (clientId) data.onDropClient(room.id, clientId, true);
+        let clientIds = [];
+        try {
+          const rawClientIds = event.dataTransfer.getData("application/x-rukn-client-ids");
+          const parsed = rawClientIds ? JSON.parse(rawClientIds) : [];
+          if (Array.isArray(parsed)) clientIds = parsed.filter(Boolean);
+        } catch {
+          clientIds = [];
+        }
+        if (clientIds.length > 1 && data.onDropClients) data.onDropClients(room.id, clientIds, true);
+        else if (clientId) data.onDropClient(room.id, clientId, true);
         data.onDragComplete?.();
       }}
       style={{
@@ -5765,6 +6102,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.onDelete === next.data.onDelete
   && prev.data.onRemoveClient === next.data.onRemoveClient
   && prev.data.onDropClient === next.data.onDropClient
+  && prev.data.onDropClients === next.data.onDropClients
 ));
 
 const ROOMING_NODE_TYPES = Object.freeze({ room: RoomingFlowNode });
