@@ -752,17 +752,80 @@ const sortRoomsForDefaultSectionOverride = (rooms = []) => rooms.slice().sort((a
   return (Number(a.order) || 0) - (Number(b.order) || 0);
 });
 
-const sortRoomsForArrangedPrint = (rooms = [], lang = "ar") => rooms.slice().sort((a, b) => {
+const getRoomLinkEndpoints = (link = {}) => {
+  const source = String(link.sourceRoomId || link.source || "");
+  const target = String(link.targetRoomId || link.target || "");
+  return source && target && source !== target ? [source, target] : null;
+};
+
+const getLinkedRoomGroups = (rooms = [], roomLinks = []) => {
+  const roomMap = new Map(rooms.map((room) => [String(room.id || ""), room]).filter(([id]) => id));
+  const adjacency = new Map(Array.from(roomMap.keys()).map((id) => [id, new Set()]));
+  (Array.isArray(roomLinks) ? roomLinks : []).forEach((link) => {
+    const endpoints = getRoomLinkEndpoints(link);
+    if (!endpoints) return;
+    const [source, target] = endpoints;
+    if (!roomMap.has(source) || !roomMap.has(target)) return;
+    adjacency.get(source).add(target);
+    adjacency.get(target).add(source);
+  });
+  const visited = new Set();
+  const groups = [];
+  roomMap.forEach((room, roomId) => {
+    if (visited.has(roomId)) return;
+    const stack = [roomId];
+    const ids = [];
+    visited.add(roomId);
+    while (stack.length) {
+      const current = stack.pop();
+      ids.push(current);
+      (adjacency.get(current) || []).forEach((next) => {
+        if (visited.has(next)) return;
+        visited.add(next);
+        stack.push(next);
+      });
+    }
+    groups.push(ids.map((id) => roomMap.get(id)).filter(Boolean));
+  });
+  return groups;
+};
+
+const getRoomGroupAnchor = (group = [], lang = "ar") => {
+  const sorted = group.slice().sort((a, b) => compareRoomCanvasPosition(a, b, lang));
+  const first = sorted[0] || {};
+  return {
+    city: first.city,
+    x: getRoomPrintX(first),
+    y: getRoomPrintY(first),
+    order: Number(first.order) || 0,
+  };
+};
+
+const compareRoomGroupAnchor = (a, b, lang = "ar") => {
   const city = CITY_ORDER.indexOf(a.city) - CITY_ORDER.indexOf(b.city);
   if (city) return city;
-  return compareRoomCanvasPosition(a, b, lang);
-});
+  const yDelta = a.y - b.y;
+  if (Math.abs(yDelta) > 42) return yDelta;
+  const xDelta = lang === "ar" ? b.x - a.x : a.x - b.x;
+  if (xDelta) return xDelta;
+  return a.order - b.order;
+};
 
-const groupRooms = (rooms = [], labels = {}, sectionOverride = null, settings = {}, lang = "ar") => {
+const sortRoomsForArrangedPrint = (rooms = [], lang = "ar", roomLinks = []) => {
+  const groups = getLinkedRoomGroups(rooms, roomLinks)
+    .map((group) => ({
+      anchor: getRoomGroupAnchor(group, lang),
+      rooms: group.slice().sort((a, b) => compareRoomCanvasPosition(a, b, lang)),
+    }))
+    .sort((a, b) => compareRoomGroupAnchor(a.anchor, b.anchor, lang));
+  return groups.flatMap((group) => group.rooms);
+};
+
+const groupRooms = (rooms = [], labels = {}, sectionOverride = null, settings = {}, lang = "ar", roomLinks = []) => {
   const arranged = isArrangedLayout(settings);
   const sorted = sortRoomsForDefaultPrint(rooms);
   if (sectionOverride) {
-    const overrideRooms = arranged ? sortRoomsForArrangedPrint(rooms, lang) : sortRoomsForDefaultSectionOverride(rooms);
+    const overrideRooms = arranged ? sortRoomsForArrangedPrint(rooms, lang, roomLinks) : sortRoomsForDefaultSectionOverride(rooms);
     return [{
       ...sectionOverride,
       rooms: overrideRooms.map((room) => ({ ...room, hotel: text(room.hotel, labels.unknownHotel || "—") })),
@@ -770,7 +833,7 @@ const groupRooms = (rooms = [], labels = {}, sectionOverride = null, settings = 
   }
   if (arranged) {
     const sections = [];
-    sortRoomsForArrangedPrint(rooms, lang).forEach((room) => {
+    sortRoomsForArrangedPrint(rooms, lang, roomLinks).forEach((room) => {
       const hotel = text(room.hotel, labels.unknownHotel || "—");
       const last = sections[sections.length - 1];
       if (!last || last.city !== room.city) {
@@ -890,7 +953,7 @@ const drawRoomRow = (ctx, page, rooms, y, rowHeight, labels, lang, settings = {}
   });
 };
 
-const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings }) => {
+const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks = [] }) => {
   const baseLayout = getFlowLayout(printSettings);
   const pages = [];
   const logoImage = await loadImage(agencyLogoUrl);
@@ -907,7 +970,7 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
     cursorY = layout.contentTop;
   };
 
-  const sections = groupRooms(rooms, labels, sectionOverride, printSettings, lang);
+  const sections = groupRooms(rooms, labels, sectionOverride, printSettings, lang, roomLinks);
   if (!sections.length) {
     current = makeCanvasPage({ labels, lang, agencyName, logoImage, section: {
       cityLabel: labels.rooming || "Rooming",
@@ -1071,8 +1134,9 @@ export async function downloadRoomingPdf({
   filename = "",
   sectionOverride = null,
   printSettings = {},
+  roomLinks = [],
 } = {}) {
-  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings });
+  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks });
   const pdf = await makePdf(pages);
   downloadBlob(pdf, filename || `rooming-${sanitizeFile(programName)}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -1086,12 +1150,13 @@ export const createRoomingPrintHtml = ({
   agencyLogoUrl = "",
   sectionOverride = null,
   printSettings = {},
+  roomLinks = [],
 } = {}) => {
   const normalizedPrintSettings = normalizePrintSettings(printSettings);
   const density = getDensityConfig(normalizedPrintSettings);
   const direction = getDirection(lang);
   const arranged = isArrangedLayout(normalizedPrintSettings);
-  const sections = groupRooms(rooms, labels, sectionOverride, normalizedPrintSettings, lang);
+  const sections = groupRooms(rooms, labels, sectionOverride, normalizedPrintSettings, lang, roomLinks);
   const layoutRoomCount = sections.length
     ? Math.max(...sections.map((section) => section.rooms.length))
     : rooms.length;

@@ -5,8 +5,13 @@ import "jspreadsheet-ce/dist/jspreadsheet.css";
 import "jsuites/dist/jsuites.css";
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
+  Handle,
   MiniMap,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   useNodesState,
@@ -106,6 +111,7 @@ import {
   Redo2,
   Search,
   Settings,
+  Link2,
   Square,
   SquareSlash,
   TableCellsMerge,
@@ -304,28 +310,52 @@ const getRoomingStorageKey = (programId, city, agencyId = null) => (
 
 const getLegacyRoomingStorageKey = (programId, city) => `rukn_rooming_sheet_${programId}_${city}`;
 
+const createRoomLinkId = (sourceRoomId, targetRoomId) => {
+  const [source, target] = [String(sourceRoomId || ""), String(targetRoomId || "")].sort();
+  return source && target ? `room-link:${source}:${target}` : "";
+};
+
+const normalizeRoomingLinks = (links = [], rooms = []) => {
+  const roomIds = new Set((rooms || []).map((room) => room?.id).filter(Boolean));
+  const byKey = new Map();
+  (Array.isArray(links) ? links : []).forEach((link) => {
+    const sourceRoomId = String(link?.sourceRoomId || link?.source || "");
+    const targetRoomId = String(link?.targetRoomId || link?.target || "");
+    if (!sourceRoomId || !targetRoomId || sourceRoomId === targetRoomId) return;
+    if (roomIds.size && (!roomIds.has(sourceRoomId) || !roomIds.has(targetRoomId))) return;
+    const id = createRoomLinkId(sourceRoomId, targetRoomId);
+    if (!id || byKey.has(id)) return;
+    byKey.set(id, { id, sourceRoomId, targetRoomId });
+  });
+  return Array.from(byKey.values());
+};
+
 const normalizeRoomingCanvasState = (payload = {}, clients = []) => {
   const parsed = payload || {};
   if (parsed.kind === "rooming-canvas" || Array.isArray(parsed.rooms)) {
+    const rooms = Array.isArray(parsed.rooms) ? parsed.rooms : [];
     return {
-      rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
+      rooms,
       unassigned: Array.isArray(parsed.unassigned) ? parsed.unassigned : [],
+      roomLinks: normalizeRoomingLinks(Array.isArray(parsed.roomLinks) ? parsed.roomLinks : parsed.meta?.roomLinks, rooms),
       version: Number(parsed.version || parsed.canvasVersion || 4),
     };
   }
   const legacyRooms = Object.values(parsed?.meta?.rooms || {});
   const legacyInserted = new Set(Object.keys(parsed?.meta?.insertedClients || {}));
+  const rooms = legacyRooms.map((room, index) => ({
+    ...room,
+    id: room.id || createRoomId(),
+    order: index,
+    x: room.x ?? ((index % 3) * 280),
+    y: room.y ?? (Math.floor(index / 3) * 190),
+  }));
   return {
-    rooms: legacyRooms.map((room, index) => ({
-      ...room,
-      id: room.id || createRoomId(),
-      order: index,
-      x: room.x ?? ((index % 3) * 280),
-      y: room.y ?? (Math.floor(index / 3) * 190),
-    })),
+    rooms,
     unassigned: clients
       .filter((client) => !legacyInserted.has(client.id))
       .map((client) => ({ clientId: client.id, reason: "" })),
+    roomLinks: normalizeRoomingLinks(parsed?.meta?.roomLinks, rooms),
     version: 4,
   };
 };
@@ -2909,8 +2939,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
   const [unassigned, setUnassigned] = React.useState([]);
+  const [roomLinks, setRoomLinks] = React.useState([]);
   const [panelOpen, setPanelOpen] = React.useState(true);
-  const [fullscreen, setFullscreen] = React.useState(false);
+  const [roomingWorkspaceMode, setRoomingWorkspaceMode] = React.useState("normal");
   const [zoom, setZoom] = React.useState(100);
   const [dirty, setDirty] = React.useState(false);
   const [savedAt, setSavedAt] = React.useState(null);
@@ -2925,6 +2956,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [selectedUnassignedIds, setSelectedUnassignedIds] = React.useState(() => new Set());
   const [roomSelectionMode, setRoomSelectionMode] = React.useState(false);
   const [selectedRoomIds, setSelectedRoomIds] = React.useState(() => new Set());
+  const [linkMode, setLinkMode] = React.useState(false);
+  const [linkStartRoomId, setLinkStartRoomId] = React.useState(null);
+  const [selectedRoomLinkId, setSelectedRoomLinkId] = React.useState(null);
+  const [roomLinkMenu, setRoomLinkMenu] = React.useState({ open: false, x: 0, y: 0, linkId: "" });
   const [pendingDrop, setPendingDrop] = React.useState(null);
   const [pendingDropSalePrice, setPendingDropSalePrice] = React.useState("");
   const [panelSearch, setPanelSearch] = React.useState("");
@@ -2945,6 +2980,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const flowRef = React.useRef(null);
+  const roomingFullscreenRef = React.useRef(null);
   const flowNodesRef = React.useRef([]);
   const roomDragActiveRef = React.useRef(false);
   const dragStartPositionRef = React.useRef(new Map());
@@ -2953,6 +2989,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const roomingLoadSeqRef = React.useRef(0);
   const roomingRevisionRef = React.useRef(0);
 
+  const fullWorkspace = roomingWorkspaceMode !== "normal";
+  const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
   const canPersistRoomingRemote = Boolean(supabaseRoomingEnabled && agencyId && program?.id);
   const packageByLevel = React.useMemo(() => {
     const map = new Map();
@@ -3090,12 +3128,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return Array.from(values);
   }, [program, packages, city, clients, getClientContext]);
 
-  const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = []) => ({
+  const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = [], nextRoomLinks = []) => ({
     kind: "rooming-canvas",
     version: 4,
     city: targetCity,
     rooms: Array.isArray(nextRooms) ? nextRooms : [],
     unassigned: Array.isArray(nextUnassigned) ? nextUnassigned : [],
+    roomLinks: normalizeRoomingLinks(nextRoomLinks, nextRooms),
     updatedAt: new Date().toISOString(),
   }), []);
 
@@ -3132,7 +3171,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         console.warn("[rooming] local cache read failed", error);
       }
     }
-    return { rooms: [], unassigned: [], version: 4 };
+    return { rooms: [], unassigned: [], roomLinks: [], version: 4 };
   }, [agencyId, clients, program.id]);
 
   React.useEffect(() => {
@@ -3142,8 +3181,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
     const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
       if (!active || roomingLoadSeqRef.current !== loadSeq) return;
-      setRooms(Array.isArray(loaded.rooms) ? loaded.rooms : []);
+      const loadedRooms = Array.isArray(loaded.rooms) ? loaded.rooms : [];
+      setRooms(loadedRooms);
       setUnassigned(Array.isArray(loaded.unassigned) ? loaded.unassigned : []);
+      setRoomLinks(normalizeRoomingLinks(loaded.roomLinks, loadedRooms));
       setDirty(false);
       roomingRevisionRef.current += 1;
       setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
@@ -3151,6 +3192,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       setSelectedUnassignedIds(new Set());
       setSelectedRoomIds(new Set());
       setRoomSelectionMode(false);
+      setLinkMode(false);
+      setLinkStartRoomId(null);
+      setSelectedRoomLinkId(null);
+      setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
       setRoomingSaveStatus("idle");
     };
 
@@ -3175,7 +3220,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
       if (data) {
         const loaded = normalizeRoomingCanvasState(data, clients);
-        writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned));
+        writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
         applyLoadedState(loaded, data.updatedAt);
         setRoomingLoadStatus("remote");
         return;
@@ -3191,11 +3236,71 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     };
   }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, clients, onToast, program.id, readCanvasStateFromStorage, t.roomingLoadFailed, writeCanvasCache]);
 
+  const exitRoomingWorkspace = React.useCallback(async () => {
+    setRoomingWorkspaceMode("normal");
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+    if (!fullscreenElement) return;
+    const exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+    try {
+      await exitFullscreen?.call(document);
+    } catch (error) {
+      console.warn("[rooming] browser fullscreen exit failed", error);
+    }
+  }, []);
+
+  const enterRoomingExpanded = React.useCallback(async () => {
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+    if (fullscreenElement) {
+      const exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+      try {
+        await exitFullscreen?.call(document);
+      } catch (error) {
+        console.warn("[rooming] browser fullscreen exit failed", error);
+      }
+    }
+    setRoomingWorkspaceMode("expanded");
+  }, []);
+
+  const enterRoomingBrowserFullscreen = React.useCallback(async () => {
+    setRoomingWorkspaceMode("browserFullscreen");
+    const target = roomingFullscreenRef.current || document.documentElement;
+    const requestFullscreen = target?.requestFullscreen || target?.webkitRequestFullscreen || target?.msRequestFullscreen;
+    if (!requestFullscreen) {
+      setRoomingWorkspaceMode("expanded");
+      return;
+    }
+    try {
+      await requestFullscreen.call(target);
+    } catch (error) {
+      console.warn("[rooming] browser fullscreen request failed", error);
+      setRoomingWorkspaceMode("expanded");
+    }
+  }, []);
+
   React.useEffect(() => {
-    if (!fullscreen) return undefined;
+    const syncFullscreenState = () => {
+      const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+      if (!fullscreenElement && roomingWorkspaceMode === "browserFullscreen") {
+        setRoomingWorkspaceMode("normal");
+      }
+    };
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    document.addEventListener("webkitfullscreenchange", syncFullscreenState);
+    document.addEventListener("MSFullscreenChange", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreenState);
+      document.removeEventListener("MSFullscreenChange", syncFullscreenState);
+    };
+  }, [roomingWorkspaceMode]);
+
+  React.useEffect(() => {
+    if (!fullWorkspace) return undefined;
     const previousOverflow = document.body.style.overflow;
     const onKeyDown = (event) => {
-      if (event.key === "Escape") setFullscreen(false);
+      if (event.key !== "Escape") return;
+      const modalOpen = roomModal.open || pickerOpen || Boolean(pendingDrop) || roomingPrintSettingsOpen;
+      if (!modalOpen) exitRoomingWorkspace();
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKeyDown);
@@ -3203,11 +3308,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [fullscreen]);
+  }, [exitRoomingWorkspace, fullWorkspace, pendingDrop, pickerOpen, roomModal.open, roomingPrintSettingsOpen]);
 
   const saveCanvas = React.useCallback(async (notify = true) => {
     const revision = roomingRevisionRef.current;
-    const payload = buildCanvasPayload(city, rooms, unassigned);
+    const payload = buildCanvasPayload(city, rooms, unassigned, roomLinks);
     try {
       writeCanvasCache(city, payload);
 
@@ -3219,7 +3324,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           rooms: payload.rooms,
           unassigned: payload.unassigned,
           version: payload.version,
-          meta: { kind: payload.kind, city },
+          meta: { kind: payload.kind, city, roomLinks: payload.roomLinks },
         }, agencyId);
         if (error) throw error;
         const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
@@ -3259,7 +3364,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         );
       }
     }
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomingClientSyncWarning, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomLinks, roomingClientSyncWarning, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
 
   const markDirty = React.useCallback(() => {
     roomingRevisionRef.current += 1;
@@ -3271,7 +3376,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (!dirty) return undefined;
     const timer = window.setTimeout(() => saveCanvas(false), 650);
     return () => window.clearTimeout(timer);
-  }, [dirty, rooms, unassigned, saveCanvas]);
+  }, [dirty, rooms, roomLinks, unassigned, saveCanvas]);
 
   const switchCity = React.useCallback((nextCity) => {
     if (nextCity === city) return;
@@ -3292,6 +3397,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [canvasMenu.open]);
+
+  React.useEffect(() => {
+    if (!roomLinkMenu.open) return undefined;
+    const close = () => setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [roomLinkMenu.open]);
 
   React.useEffect(() => {
     if (!roomFilterOpen && !roomNeedsOpen) return undefined;
@@ -3708,6 +3827,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
     setRooms(autoLayoutRoomNodes(nextRooms));
     setUnassigned(Array.from(nextUnassignedByClientId.values()));
+    setRoomLinks([]);
+    setLinkMode(false);
+    setLinkStartRoomId(null);
+    setSelectedRoomLinkId(null);
     setSelectedRoomId(null);
     setDirty(true);
     onToast?.(t.roomingGenerated || "تم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.", "success");
@@ -3811,15 +3934,23 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     const room = rooms.find((item) => item.id === roomId);
     if (!room) return;
     setRooms((prev) => prev.filter((item) => item.id !== roomId));
+    setRoomLinks((prev) => prev.filter((link) => link.sourceRoomId !== roomId && link.targetRoomId !== roomId));
     setUnassigned((prev) => [
       ...prev,
       ...(room.occupantIds || []).map((clientId) => ({ clientId, reason: "" })),
     ]);
     setSelectedRoomId((current) => current === roomId ? null : current);
+    setSelectedRoomLinkId((current) => {
+      const selectedLink = roomLinks.find((link) => link.id === current);
+      return selectedLink && (selectedLink.sourceRoomId === roomId || selectedLink.targetRoomId === roomId) ? null : current;
+    });
     markDirty();
-  }, [rooms, markDirty]);
+  }, [rooms, roomLinks, markDirty]);
 
   const toggleRoomSelectionMode = React.useCallback(() => {
+    setLinkMode(false);
+    setLinkStartRoomId(null);
+    setSelectedRoomLinkId(null);
     setRoomSelectionMode((active) => {
       if (active) setSelectedRoomIds(new Set());
       return !active;
@@ -3843,6 +3974,76 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const clearRoomSelection = React.useCallback(() => {
     setSelectedRoomIds(new Set());
   }, []);
+
+  const deleteRoomLink = React.useCallback((linkId) => {
+    if (!linkId) return;
+    setRoomLinks((prev) => prev.filter((link) => link.id !== linkId));
+    setSelectedRoomLinkId((current) => current === linkId ? null : current);
+    setRoomLinkMenu((current) => current.linkId === linkId ? { open: false, x: 0, y: 0, linkId: "" } : current);
+    markDirty();
+  }, [markDirty]);
+
+  const createRoomLink = React.useCallback((sourceRoomId, targetRoomId) => {
+    if (!sourceRoomId || !targetRoomId || sourceRoomId === targetRoomId) return false;
+    const sourceExists = rooms.some((room) => room.id === sourceRoomId);
+    const targetExists = rooms.some((room) => room.id === targetRoomId);
+    if (!sourceExists || !targetExists) return false;
+    const id = createRoomLinkId(sourceRoomId, targetRoomId);
+    const normalized = normalizeRoomingLinks(roomLinks, rooms);
+    if (normalized.some((link) => link.id === id)) {
+      setSelectedRoomLinkId(id);
+      return false;
+    }
+    setRoomLinks(normalizeRoomingLinks([...normalized, { id, sourceRoomId, targetRoomId }], rooms));
+    setSelectedRoomLinkId(id);
+    markDirty();
+    return true;
+  }, [markDirty, roomLinks, rooms]);
+
+  const toggleRoomLinkMode = React.useCallback(() => {
+    setRoomSelectionMode(false);
+    setSelectedRoomIds(new Set());
+    setSelectedRoomLinkId(null);
+    setLinkMode((active) => {
+      if (active) setLinkStartRoomId(null);
+      return !active;
+    });
+  }, []);
+
+  const handleRoomLinkConnect = React.useCallback((connection) => {
+    if (!linkMode) return;
+    createRoomLink(connection?.source, connection?.target);
+    setLinkStartRoomId(null);
+  }, [createRoomLink, linkMode]);
+
+  const handleRoomLinkConnectStart = React.useCallback((_event, params) => {
+    if (!linkMode) return;
+    setLinkStartRoomId(params?.nodeId || null);
+  }, [linkMode]);
+
+  const handleRoomLinkConnectEnd = React.useCallback(() => {
+    setLinkStartRoomId(null);
+  }, []);
+
+  const isValidRoomLinkConnection = React.useCallback((connection) => {
+    if (!linkMode || !connection?.source || !connection?.target) return false;
+    if (connection.source === connection.target) return false;
+    const id = createRoomLinkId(connection.source, connection.target);
+    return !normalizeRoomingLinks(roomLinks, rooms).some((link) => link.id === id);
+  }, [linkMode, roomLinks, rooms]);
+
+  React.useEffect(() => {
+    if (!selectedRoomLinkId) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      const target = event.target;
+      if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      deleteRoomLink(selectedRoomLinkId);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [deleteRoomLink, selectedRoomLinkId]);
 
   const deleteSelectedRooms = React.useCallback(() => {
     if (!selectedRoomIds.size) return;
@@ -3869,7 +4070,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         return Array.from(byClientId.values());
       });
     }
+    setRoomLinks((prev) => prev.filter((link) => !selectedRoomIds.has(link.sourceRoomId) && !selectedRoomIds.has(link.targetRoomId)));
     setSelectedRoomId((current) => selectedRoomIds.has(current) ? null : current);
+    setSelectedRoomLinkId(null);
     setSelectedRoomIds(new Set());
     setRoomSelectionMode(false);
     markDirty();
@@ -4101,10 +4304,41 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       onRemoveClient: removeClientFromRoom,
       selectionMode: roomSelectionMode,
       selectionChecked: selectedRoomIds.has(room.id),
+      linkMode,
+      linkActive: linkStartRoomId === room.id,
     },
     draggable: !room.locked && !roomSelectionMode,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, insertClientsIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, insertClientsIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, linkMode, linkStartRoomId, selectedRoomId]);
+
+  const roomLinkDeleteLabel = t.roomingDeleteLink || (lang === "fr" ? "Supprimer le lien" : lang === "en" ? "Delete link" : "حذف الرابط");
+  const roomFlowEdges = React.useMemo(() => {
+    const visibleIds = new Set(visibleRooms.map((room) => room.id));
+    return normalizeRoomingLinks(roomLinks, visibleRooms)
+      .filter((link) => visibleIds.has(link.sourceRoomId) && visibleIds.has(link.targetRoomId))
+      .map((link) => {
+        const selected = selectedRoomLinkId === link.id;
+        return {
+          id: link.id,
+          source: link.sourceRoomId,
+          target: link.targetRoomId,
+          type: "roomProximity",
+          selectable: true,
+          focusable: true,
+          interactionWidth: 18,
+          data: {
+            linkId: link.id,
+            selected,
+            deleteLabel: roomLinkDeleteLabel,
+            onDelete: deleteRoomLink,
+          },
+          style: {
+            stroke: selected ? "var(--rooming-link-selected)" : "var(--rooming-link-line)",
+            strokeWidth: selected ? 2.6 : 1.6,
+          },
+        };
+      });
+  }, [deleteRoomLink, roomLinkDeleteLabel, roomLinks, selectedRoomLinkId, visibleRooms]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState([]);
 
@@ -4207,6 +4441,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setCanvasMenu((current) => ({ ...current, open: false }));
   }, []);
 
+  const handleRoomLinkClick = React.useCallback((event, edge) => {
+    event.stopPropagation();
+    setSelectedRoomLinkId(edge?.data?.linkId || edge?.id || "");
+    setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
+  }, []);
+
+  const handleRoomLinkContextMenu = React.useCallback((event, edge) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const linkId = edge?.data?.linkId || edge?.id || "";
+    if (!linkId) return;
+    const menuPoint = clampRoomingContextMenuPoint(event.clientX, event.clientY);
+    setSelectedRoomLinkId(linkId);
+    setRoomLinkMenu({ open: true, x: menuPoint.x, y: menuPoint.y, linkId });
+  }, []);
+
   const fitView = React.useCallback(() => {
     flowRef.current?.fitView?.({ padding: 0.18, duration: 450 });
   }, []);
@@ -4253,6 +4503,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }));
       const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
       return {
+        id: room.id,
         city,
         cityLabel,
         hotel: room.hotel || (t.roomingMissingHotel || "فندق غير محدد"),
@@ -4270,6 +4521,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     });
     win.document.write(createRoomingPrintHtml({
       rooms: printRooms,
+      roomLinks,
       lang,
       programName: program.name || "",
       agencyName,
@@ -4286,12 +4538,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       },
     }));
     win.document.close();
-  }, [rooms, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings]);
+  }, [rooms, roomLinks, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings]);
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
     return readCanvasStateFromStorage(targetCity).rooms;
   }, [city, rooms, readCanvasStateFromStorage]);
+
+  const getStoredCanvasLinks = React.useCallback((targetCity) => {
+    const cityRooms = targetCity === city ? rooms : readCanvasStateFromStorage(targetCity).rooms;
+    const cityLinks = targetCity === city ? roomLinks : readCanvasStateFromStorage(targetCity).roomLinks;
+    return normalizeRoomingLinks(cityLinks, cityRooms);
+  }, [city, rooms, roomLinks, readCanvasStateFromStorage]);
 
   const getRoomingStayDates = React.useCallback((targetCity, room) => {
     const firstClient = (room.occupantIds || []).map((id) => clientsById[id]).find(Boolean);
@@ -4349,6 +4607,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(roomTypeKey), names.length || 1);
         const stayDates = getRoomingStayDates(targetCity, room);
         return {
+          id: room.id,
           city: targetCity,
           cityLabel: cityLabels[targetCity],
           hotel: room.hotel || fallbackHotel || (t.roomingMissingHotel || "فندق غير محدد"),
@@ -4374,6 +4633,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       const combined = mode === "combined";
       const targetCities = combined ? ["makkah", "madinah"] : [city];
       const pdfRooms = buildRoomingPdfRows(targetCities);
+      const pdfRoomLinks = targetCities.flatMap((targetCity) => getStoredCanvasLinks(targetCity));
       const makkahRooms = combined ? getStoredCanvasRooms("makkah") : [];
       const madinahRooms = combined ? getStoredCanvasRooms("madinah") : [];
       const makkahHotel = getRoomingHotelForCity("makkah", makkahRooms);
@@ -4400,6 +4660,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
         labels: sharedLabels,
         printSettings: roomingPrintSettings,
+        roomLinks: pdfRoomLinks,
         sectionOverride: combined ? createCombinedRoomingSection({
           rooms: pdfRooms,
           makkahHotel,
@@ -4416,10 +4677,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     } finally {
       setRoomingPdfBusy("");
     }
-  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, roomingPrintSettings, t]);
+  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasLinks, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, roomingPrintSettings, t]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
-  const canvasHeight = fullscreen ? "calc(100vh - 88px)" : "min(72vh, 720px)";
+  const canvasHeight = fullWorkspace ? "100%" : "min(72vh, 720px)";
+  const expandRoomingLabel = t.roomingExpandWorkspace || (lang === "fr" ? "Agrandir le rooming dans l’application" : lang === "en" ? "Expand rooming in app" : "توسيع التسكين داخل النظام");
+  const browserFullscreenLabel = t.roomingBrowserFullscreen || (lang === "fr" ? "Plein écran" : lang === "en" ? "Full screen" : "فتح بملء الشاشة");
+  const exitFullWorkspaceLabel = t.roomingExitFullWorkspace || (lang === "fr" ? "Quitter le mode rooming plein écran" : lang === "en" ? "Exit full rooming mode" : "الخروج من وضع التسكين الكامل");
+  const hideUnassignedLabel = t.roomingHideUnassigned || (lang === "fr" ? "Masquer les non affectés" : lang === "en" ? "Hide unassigned" : "إخفاء غير المسكنين");
+  const showUnassignedLabel = t.roomingShowUnassigned || (lang === "fr" ? "Afficher les non affectés" : lang === "en" ? "Show unassigned" : "إظهار غير المسكنين");
   React.useEffect(() => {
     if (!pendingDrop?.priceSync?.requiresConfirmation) {
       setPendingDropSalePrice("");
@@ -4681,7 +4947,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   }, []);
 
   return (
-    <div className="rooming-designer-root" style={fullscreen ? { position: "fixed", inset: 0, zIndex: 90, background: "var(--rooming-page-bg)" } : undefined}>
+    <div ref={roomingFullscreenRef} className="rooming-designer-root" style={fullWorkspace ? { position: "fixed", inset: 0, zIndex: 90, background: "var(--rooming-page-bg)" } : undefined}>
       <style>{`
         .rooming-designer-root,
         .rooming-modal-surface {
@@ -4764,12 +5030,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           cursor: grabbing;
           box-shadow: 0 20px 46px rgba(15,23,42,.20) !important;
         }
+        .room-link-handle {
+          transition: filter .14s ease, box-shadow .14s ease, border-color .14s ease;
+        }
+        .room-link-handle:hover {
+          filter: brightness(1.08) saturate(1.08);
+        }
         .rooming-canvas-shell,
         .rooming-flow-canvas {
           --rooming-canvas-bg: #f6f2e8;
           --rooming-canvas-dot: rgba(120,113,108,.34);
           --rooming-canvas-border: rgba(15,23,42,.14);
           --rooming-canvas-shadow: 0 12px 30px rgba(15,23,42,.08);
+          --rooming-link-line: rgba(37,99,235,.42);
+          --rooming-link-selected: rgba(154,116,24,.86);
           --rooming-card-bg: #fffdf8;
           --rooming-card-border: rgba(15,23,42,.16);
           --rooming-card-shadow: 0 8px 20px rgba(15,23,42,.09);
@@ -4781,6 +5055,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           --rooming-canvas-dot: rgba(148,163,184,.26);
           --rooming-canvas-border: rgba(148,163,184,.22);
           --rooming-canvas-shadow: 0 18px 46px rgba(0,0,0,.42);
+          --rooming-link-line: rgba(147,197,253,.46);
+          --rooming-link-selected: rgba(250,204,21,.88);
           --rooming-card-bg: #111c2d;
           --rooming-card-border: rgba(203,213,225,.20);
           --rooming-card-shadow: 0 18px 38px rgba(0,0,0,.42);
@@ -4884,17 +5160,42 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         }
       `}</style>
       <GlassCard gold style={{
-        padding: 12,
-        marginBottom: fullscreen ? 0 : 24,
-        height: fullscreen ? "100vh" : "auto",
-        width: fullscreen ? "100vw" : "100%",
+        padding: fullWorkspace ? 10 : 12,
+        marginBottom: fullWorkspace ? 0 : 24,
+        height: fullWorkspace ? "100vh" : "auto",
+        width: fullWorkspace ? "100vw" : "100%",
         display: "flex",
         flexDirection: "column",
+        position: "relative",
         background: "var(--rooming-page-bg)",
         border: "1px solid var(--rooming-panel-border)",
         overflow: "hidden",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        {fullWorkspace && (
+          <div style={{ position: "absolute", top: 10, insetInlineEnd: 10, zIndex: 48 }}>
+            <RoomingToolbarButton
+              title={exitFullWorkspaceLabel}
+              onClick={exitRoomingWorkspace}
+              icon={<Minimize2 size={15} />}
+              active
+              style={{
+                background: "var(--rooming-popover-bg)",
+                border: "1px solid var(--rooming-popover-border)",
+                boxShadow: "var(--rooming-popover-shadow)",
+              }}
+            />
+          </div>
+        )}
+        {!fullWorkspace && (
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 8,
+          paddingInlineEnd: 0,
+        }}>
           <div>
             <p style={{ color: "var(--rooming-text)", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
             <p style={{ color: "var(--rooming-muted)", fontSize: 12, marginTop: 3 }}>
@@ -4948,9 +5249,70 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             ))}
           </div>
         </div>
+        )}
+
+        {fullWorkspace && (
+          <div style={{
+            position: "absolute",
+            top: 10,
+            insetInlineStart: 10,
+            zIndex: 48,
+            display: "inline-flex",
+            gap: 4,
+            padding: 4,
+            borderRadius: 12,
+            background: "var(--rooming-popover-bg)",
+            border: "1px solid var(--rooming-popover-border)",
+            boxShadow: "var(--rooming-popover-shadow)",
+            backdropFilter: "blur(14px)",
+          }}>
+            {Object.entries(roomingCityLabels).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => switchCity(key)}
+                style={{
+                  border: 0,
+                  background: city === key ? "var(--rooming-button-active-bg)" : "transparent",
+                  color: city === key ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
+                  borderRadius: 9,
+                  padding: "8px 11px",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  fontFamily: "'Cairo',sans-serif",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {!toolbarCollapsed && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: 8, marginBottom: 10, borderRadius: 12, background: "var(--rooming-toolbar-bg)", border: "1px solid var(--rooming-toolbar-border)" }}>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            padding: 8,
+            marginBottom: fullWorkspace ? 8 : 10,
+            borderRadius: 12,
+            background: "var(--rooming-toolbar-bg)",
+            border: "1px solid var(--rooming-toolbar-border)",
+            ...(fullWorkspace ? {
+              position: "absolute",
+              top: 58,
+              insetInlineStart: 10,
+              insetInlineEnd: 10,
+              zIndex: 38,
+              boxShadow: "0 16px 40px rgba(15,23,42,.16)",
+              maxHeight: "22vh",
+              overflow: "auto",
+              backdropFilter: "blur(14px)",
+            } : {}),
+          }}>
             <RoomingToolbarButton
               title={t.hideToolbar || "إخفاء الأدوات"}
               onClick={() => setToolbarCollapsed(true)}
@@ -4965,6 +5327,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             <span>{t.addRooms || t.addRoom || "إضافة غرف"}</span>
           </RoomingToolbarButton>
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
+          <RoomingToolbarButton
+            title={t.roomingLinkRooms || (lang === "fr" ? "Lier les chambres" : lang === "en" ? "Link rooms" : "ربط الغرف")}
+            onClick={toggleRoomLinkMode}
+            active={linkMode}
+            icon={<Link2 size={15} />}
+          >
+            {linkMode && linkStartRoomId ? <span>{t.roomingDragLinkToRoom || (lang === "fr" ? "Glisser vers une chambre" : lang === "en" ? "Drag to a room" : "اسحب إلى غرفة")}</span> : null}
+          </RoomingToolbarButton>
           <RoomingToolbarButton
             title={t.roomingSelectRooms || "تحديد الغرف"}
             onClick={toggleRoomSelectionMode}
@@ -5112,27 +5482,63 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             {[75, 100, 125].map((value) => <option key={value} value={value}>{value}%</option>)}
           </select>
           <RoomingToolbarButton title={t.roomingFit || "Fit"} onClick={fitView} icon={<Scan size={15} />} />
-          <RoomingToolbarButton title={panelOpen ? (t.roomingHideUnassigned || "إخفاء غير المسكنين") : (t.roomingShowUnassigned || "إظهار غير المسكنين")} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
-          <RoomingToolbarButton title={fullscreen ? (t.roomingExitFullscreen || "الخروج من ملء الشاشة") : (t.roomingFullscreen || "ملء الشاشة")} onClick={() => setFullscreen((open) => !open)} icon={fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} active={fullscreen} />
+          <RoomingToolbarButton title={panelOpen ? hideUnassignedLabel : showUnassignedLabel} onClick={() => setPanelOpen((open) => !open)} icon={panelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />} active={panelOpen} />
+          <RoomingToolbarButton
+            title={expandRoomingLabel}
+            onClick={enterRoomingExpanded}
+            icon={<PanelTop size={15} />}
+            active={roomingWorkspaceMode === "expanded"}
+            style={{
+              background: roomingWorkspaceMode === "expanded" ? "var(--rooming-button-active-bg)" : "var(--rooming-list-bg)",
+              border: "1px solid var(--rooming-input-border)",
+              color: roomingWorkspaceMode === "expanded" ? "var(--rooming-button-active-text)" : "var(--rooming-text-soft)",
+            }}
+          />
+          <RoomingToolbarButton
+            title={browserFullscreenLabel}
+            onClick={enterRoomingBrowserFullscreen}
+            icon={<Maximize2 size={15} />}
+            active={browserFullscreenMode}
+            style={{
+              border: browserFullscreenMode ? "1px solid rgba(37,99,235,.42)" : "1px solid rgba(212,175,55,.48)",
+              background: browserFullscreenMode ? "var(--rooming-button-active-bg)" : "linear-gradient(135deg, rgba(212,175,55,.18), var(--rooming-button-bg))",
+              color: browserFullscreenMode ? "var(--rooming-button-active-text)" : "var(--rooming-text)",
+              boxShadow: "0 8px 18px rgba(15,23,42,.10)",
+            }}
+          />
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr", gap: 10, minHeight: 0, height: canvasHeight }}>
+        <div style={fullWorkspace ? {
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+          height: canvasHeight,
+          display: "block",
+        } : {
+          display: "grid",
+          gridTemplateColumns: panelOpen ? "minmax(0,1fr) 290px" : "1fr",
+          gap: 10,
+          minHeight: 0,
+          height: canvasHeight,
+        }}>
           <div className="rooming-canvas-shell" style={{
-            position: "relative",
+            position: fullWorkspace ? "absolute" : "relative",
+            inset: fullWorkspace ? 0 : undefined,
             overflow: "hidden",
-            borderRadius: 14,
+            borderRadius: fullWorkspace ? 16 : 14,
             border: "1px solid var(--rooming-canvas-border)",
             backgroundColor: "var(--rooming-canvas-bg)",
             boxShadow: "var(--rooming-canvas-shadow)",
+            height: fullWorkspace ? "100%" : undefined,
             minHeight: 0,
           }}>
             {toolbarCollapsed && (
               <div style={{
                 position: "absolute",
-                top: 12,
+                top: fullWorkspace ? 58 : 12,
                 insetInlineStart: 12,
-                zIndex: 24,
+                zIndex: fullWorkspace ? 38 : 24,
               }}>
                 <RoomingToolbarButton
                   title={t.showToolbar || "إظهار الأدوات"}
@@ -5176,6 +5582,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 <ReactFlowProvider>
                   <RoomingFlowSurface
                     nodes={flowNodes}
+                    edges={roomFlowEdges}
                     onNodesChange={onFlowNodesChange}
                     selectedRoomId={selectedRoomId}
                     panelOpen={panelOpen}
@@ -5188,11 +5595,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                       }
                       setSelectedRoomId(node.id);
                     }}
+                    linkMode={linkMode}
+                    onConnect={handleRoomLinkConnect}
+                    onConnectStart={handleRoomLinkConnectStart}
+                    onConnectEnd={handleRoomLinkConnectEnd}
+                    isValidConnection={isValidRoomLinkConnection}
+                    onEdgeClick={handleRoomLinkClick}
+                    onEdgeContextMenu={handleRoomLinkContextMenu}
                     onNodeDragStart={onNodeDragStart}
                     onNodeDrag={onNodeDrag}
                     onNodeDragStop={onNodeDragStop}
                     onPaneContextMenu={openCanvasContextMenu}
-                    onPaneClick={closeCanvasContextMenu}
+                    onPaneClick={() => {
+                      closeCanvasContextMenu();
+                      setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
+                      setSelectedRoomLinkId(null);
+                    }}
                   />
                 </ReactFlowProvider>
                 {!visibleRooms.length && (
@@ -5262,13 +5680,82 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 />
               </div>
             )}
+            {roomLinkMenu.open && (
+              <div
+                onPointerDown={(event) => event.stopPropagation()}
+                style={{
+                  position: "fixed",
+                  top: roomLinkMenu.y,
+                  left: roomLinkMenu.x,
+                  zIndex: 70,
+                  width: 176,
+                }}
+              >
+                <RoomingMenu open width={176}>
+                  <RoomingMenuItem
+                    destructive
+                    icon={<Trash2 size={14} />}
+                    label={t.roomingDeleteLink || (lang === "fr" ? "Supprimer le lien" : lang === "en" ? "Delete link" : "حذف الرابط")}
+                    onClick={() => deleteRoomLink(roomLinkMenu.linkId)}
+                  />
+                </RoomingMenu>
+              </div>
+            )}
           </div>
 
+          {fullWorkspace && !panelOpen && (
+            <button
+              type="button"
+              title={showUnassignedLabel}
+              onClick={() => setPanelOpen(true)}
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: 14,
+                transform: "translateY(-50%)",
+                zIndex: 32,
+                border: "1px solid var(--rooming-popover-border)",
+                background: "var(--rooming-popover-bg)",
+                color: "var(--rooming-button-text)",
+                borderRadius: 999,
+                padding: "8px 12px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                cursor: "pointer",
+                boxShadow: "var(--rooming-popover-shadow)",
+                fontFamily: "'Cairo',sans-serif",
+                fontSize: 12,
+                fontWeight: 900,
+              }}
+            >
+              <PanelRightOpen size={15} />
+              <span>{showUnassignedLabel}</span>
+            </button>
+          )}
+
           {panelOpen && (
-            <aside style={{ background: "var(--rooming-panel-bg)", border: "1px solid var(--rooming-panel-border)", borderRadius: 14, padding: 12, overflow: "auto", boxShadow: "var(--rooming-panel-shadow)" }}>
+            <aside style={{
+              background: "var(--rooming-panel-bg)",
+              border: "1px solid var(--rooming-panel-border)",
+              borderRadius: 14,
+              padding: 12,
+              overflow: "auto",
+              boxShadow: fullWorkspace ? "var(--rooming-popover-shadow)" : "var(--rooming-panel-shadow)",
+              ...(fullWorkspace ? {
+                position: "absolute",
+                top: 18,
+                bottom: 18,
+                left: 18,
+                zIndex: 31,
+                width: "min(340px, calc(100vw - 36px))",
+                maxWidth: "calc(100vw - 36px)",
+                backdropFilter: "blur(14px)",
+              } : {}),
+            }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <p style={{ color: "var(--rooming-text)", fontWeight: 900, fontSize: 13 }}>{t.unassignedReview || "غير مسكنين / يحتاجون مراجعة"}</p>
-                <RoomingToolbarButton title={t.roomingHideUnassigned || "إخفاء"} onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
+                <RoomingToolbarButton title={fullWorkspace ? hideUnassignedLabel : (t.roomingHideUnassigned || "إخفاء")} onClick={() => setPanelOpen(false)} icon={<PanelRightClose size={14} />} style={{ minWidth: 28, height: 28 }} />
               </div>
               <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
                 <Input label="" value={panelSearch} onChange={(event) => setPanelSearch(event.target.value)} placeholder={t.searchGeneral || "بحث"} />
@@ -5813,7 +6300,9 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const isInvalidPosition = Boolean(data.dragInvalid);
   const selectionMode = Boolean(data.selectionMode);
   const selectionChecked = Boolean(data.selectionChecked);
-  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : selectionChecked ? "#d4af37" : selected ? accent.border : "var(--rooming-card-border)";
+  const linkMode = Boolean(data.linkMode);
+  const linkActive = Boolean(data.linkActive);
+  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : linkActive ? "#2563eb" : selectionChecked ? "#d4af37" : selected ? accent.border : "var(--rooming-card-border)";
   const [menuOpen, setMenuOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -5852,11 +6341,11 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       style={{
         width: 250,
         position: "relative",
-        background: isInvalidPosition ? "var(--rooming-danger-soft-bg)" : canDrop ? "rgba(22,163,74,.14)" : isDropTarget ? "var(--rooming-danger-soft-bg)" : selectionChecked ? "rgba(212,175,55,.16)" : "var(--rooming-card-bg)",
+        background: isInvalidPosition ? "var(--rooming-danger-soft-bg)" : canDrop ? "rgba(22,163,74,.14)" : isDropTarget ? "var(--rooming-danger-soft-bg)" : linkActive ? "rgba(37,99,235,.12)" : selectionChecked ? "rgba(212,175,55,.16)" : "var(--rooming-card-bg)",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
-        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : selectionChecked ? "2px solid rgba(212,175,55,.34)" : "none",
+        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : linkActive ? "2px solid rgba(37,99,235,.30)" : selectionChecked ? "2px solid rgba(212,175,55,.34)" : "none",
         boxShadow: isInvalidPosition
           ? "0 18px 40px rgba(239,68,68,.20)"
           : canDrop
@@ -5871,6 +6360,91 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
         cursor: selectionMode ? "pointer" : room.locked ? "default" : "grab",
       }}
     >
+      <Handle
+        className="room-link-handle room-link-source-handle"
+        type="source"
+        position={Position.Right}
+        isConnectable={linkMode}
+        style={{
+          top: 18,
+          right: 9,
+          width: 24,
+          height: 24,
+          borderRadius: 999,
+          border: `2px solid ${linkActive ? "rgba(37,99,235,.95)" : "rgba(37,99,235,.72)"}`,
+          background: linkMode ? (linkActive ? "var(--rooming-button-active-bg)" : "var(--rooming-button-bg)") : "transparent",
+          boxShadow: linkMode ? "0 0 0 5px rgba(37,99,235,.14), 0 10px 22px rgba(15,23,42,.18)" : "none",
+          opacity: linkMode ? 1 : 0,
+          pointerEvents: linkMode ? "auto" : "none",
+          cursor: linkMode ? "crosshair" : "default",
+          zIndex: 7,
+        }}
+      />
+      <Handle
+        className="room-link-handle room-link-target-handle"
+        type="target"
+        position={Position.Left}
+        isConnectable={linkMode}
+        style={{
+          top: 18,
+          left: 9,
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          border: "2px solid rgba(154,116,24,.72)",
+          background: linkMode ? "var(--rooming-button-bg)" : "transparent",
+          boxShadow: linkMode ? "0 0 0 5px rgba(212,175,55,.13), 0 10px 22px rgba(15,23,42,.16)" : "none",
+          opacity: linkMode ? 1 : 0,
+          pointerEvents: linkMode ? "auto" : "none",
+          cursor: linkMode ? "crosshair" : "default",
+          zIndex: 7,
+        }}
+      />
+      {linkMode && (
+        <>
+        <span style={{
+          position: "absolute",
+          top: 8,
+          insetInlineEnd: 8,
+          width: 24,
+          height: 24,
+          borderRadius: 999,
+          border: `1px solid ${linkActive ? "rgba(37,99,235,.86)" : "rgba(37,99,235,.48)"}`,
+          background: linkActive ? "var(--rooming-button-active-bg)" : "var(--rooming-button-bg)",
+          color: linkActive ? "var(--rooming-button-active-text)" : "var(--rooming-muted)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 8px 18px rgba(15,23,42,.12)",
+          pointerEvents: "none",
+          zIndex: 6,
+        }}>
+          <Link2 size={12} />
+        </span>
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: 9,
+            insetInlineStart: 9,
+            width: 22,
+            height: 22,
+            borderRadius: 999,
+            border: "1px solid rgba(154,116,24,.58)",
+            background: "var(--rooming-button-bg)",
+            color: "rgba(154,116,24,.92)",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 8px 18px rgba(15,23,42,.12)",
+            pointerEvents: "none",
+            zIndex: 6,
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: 999, background: "currentColor", boxShadow: "0 0 0 3px rgba(212,175,55,.16)" }} />
+        </span>
+        </>
+      )}
       {selectionMode && (
         <span style={{
           position: "absolute",
@@ -6095,6 +6669,8 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.dragInvalid === next.data.dragInvalid
   && prev.data.selectionMode === next.data.selectionMode
   && prev.data.selectionChecked === next.data.selectionChecked
+  && prev.data.linkMode === next.data.linkMode
+  && prev.data.linkActive === next.data.linkActive
   && prev.data.onAdd === next.data.onAdd
   && prev.data.onEdit === next.data.onEdit
   && prev.data.onCopy === next.data.onCopy
@@ -6105,8 +6681,71 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.onDropClients === next.data.onDropClients
 ));
 
+function RoomingProximityEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  data,
+  selected,
+}) {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const isSelected = Boolean(selected || data?.selected);
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      {isSelected && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            title={data?.deleteLabel || "Delete link"}
+            aria-label={data?.deleteLabel || "Delete link"}
+            className="nodrag nopan"
+            onClick={(event) => {
+              event.stopPropagation();
+              data?.onDelete?.(data?.linkId || id);
+            }}
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              width: 24,
+              height: 24,
+              borderRadius: 999,
+              border: "1px solid var(--rooming-popover-border)",
+              background: "var(--rooming-popover-bg)",
+              color: "var(--rooming-danger-text)",
+              boxShadow: "0 10px 24px rgba(15,23,42,.18)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              cursor: "pointer",
+              pointerEvents: "all",
+              zIndex: 20,
+            }}
+          >
+            <Trash2 size={13} />
+          </button>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
 const ROOMING_NODE_TYPES = Object.freeze({ room: RoomingFlowNode });
-const ROOMING_EDGE_TYPES = Object.freeze({});
+const ROOMING_EDGE_TYPES = Object.freeze({ roomProximity: RoomingProximityEdge });
 const ROOMING_EDGES = Object.freeze([]);
 const ROOMING_FIT_VIEW_OPTIONS = Object.freeze({ padding: 0.18 });
 const ROOMING_PRO_OPTIONS = Object.freeze({ hideAttribution: true });
@@ -6164,9 +6803,16 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false, active = f
 
 function RoomingFlowSurface({
   nodes,
+  edges = ROOMING_EDGES,
   onNodesChange,
   selectedRoomId,
   onNodeClick,
+  onConnect,
+  onConnectStart,
+  onConnectEnd,
+  isValidConnection,
+  onEdgeClick,
+  onEdgeContextMenu,
   onNodeDragStart,
   onNodeDrag,
   onNodeDragStop,
@@ -6174,6 +6820,7 @@ function RoomingFlowSurface({
   onPaneClick,
   onInit,
   panelOpen,
+  linkMode = false,
   nodesDraggable = true,
 }) {
   const flow = useReactFlow();
@@ -6186,7 +6833,7 @@ function RoomingFlowSurface({
     <ReactFlow
       className="rooming-flow-canvas"
       nodes={nodes}
-      edges={ROOMING_EDGES}
+      edges={edges}
       nodeTypes={ROOMING_NODE_TYPES}
       edgeTypes={ROOMING_EDGE_TYPES}
       fitView
@@ -6199,9 +6846,20 @@ function RoomingFlowSurface({
       nodesDraggable={nodesDraggable}
       onlyRenderVisibleElements
       nodeDragThreshold={2}
-      nodesConnectable={false}
+      nodesConnectable={linkMode}
+      connectOnClick={false}
+      connectionLineStyle={{
+        stroke: "var(--rooming-link-selected)",
+        strokeWidth: 1.8,
+      }}
+      onConnect={onConnect}
+      onConnectStart={onConnectStart}
+      onConnectEnd={onConnectEnd}
+      isValidConnection={isValidConnection}
       elementsSelectable
       onNodeClick={onNodeClick}
+      onEdgeClick={onEdgeClick}
+      onEdgeContextMenu={onEdgeContextMenu}
       onNodesChange={onNodesChange}
       onNodeDragStart={onNodeDragStart}
       onNodeDrag={onNodeDrag}
