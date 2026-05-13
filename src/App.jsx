@@ -56,6 +56,20 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [previewNotification, setPreviewNotification] = React.useState(null);
   const [themeMode, setThemeMode] = React.useState(getInitialThemeMode);
+  const backupExportSuccessText = (
+    lang === "fr"
+      ? "La sauvegarde a été téléchargée sous forme de fichier ZIP organisé."
+      : lang === "en"
+      ? "Backup downloaded as an organized ZIP file."
+      : "تم تحميل النسخة الاحتياطية كملف مضغوط منظم."
+  );
+  const backupExportErrorText = (
+    lang === "fr"
+      ? "Impossible de télécharger la sauvegarde"
+      : lang === "en"
+      ? "Unable to download the backup"
+      : "تعذر تحميل النسخة الاحتياطية"
+  );
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -171,7 +185,15 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
           agency={store.agency}
           themeMode={themeMode}
           onToggleTheme={toggleThemeMode}
-          onExport={() => { store.exportData(); showToast(t.exportSuccess, "success"); }}
+          onExport={async () => {
+            try {
+              await store.exportData();
+              showToast(backupExportSuccessText, "success");
+            } catch (error) {
+              console.error("[backup export]", error);
+              showToast(backupExportErrorText, "error");
+            }
+          }}
           onImport={async(f)=>{ try{ await store.importData(f); showToast(t.importSuccess, "success"); }catch{ showToast(t.importError, "error"); } }}
           onLogout={onLogout} />
 

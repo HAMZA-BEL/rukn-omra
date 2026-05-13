@@ -1,11 +1,20 @@
-const BACKUP_VERSION = 4;
+const BACKUP_VERSION = 5;
 
-export function buildExportPayload({ programs = [], clients = [], payments = [], agency = {} }) {
+export function buildExportPayload({
+  programs = [],
+  clients = [],
+  payments = [],
+  agency = {},
+  invoices = [],
+  rooming = [],
+} = {}) {
   return {
     programs,
     clients,
     payments,
     agency,
+    invoices,
+    rooming,
     exportedAt: new Date().toISOString(),
     version: BACKUP_VERSION,
   };

@@ -307,6 +307,20 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       : lang === "en" ? "Download backup"
       : "تحميل النسخة الاحتياطية"
   );
+  const backupExportSuccessText = (
+    lang === "fr"
+      ? "La sauvegarde a été téléchargée sous forme de fichier ZIP organisé."
+      : lang === "en"
+      ? "Backup downloaded as an organized ZIP file."
+      : "تم تحميل النسخة الاحتياطية كملف مضغوط منظم."
+  );
+  const backupExportErrorText = (
+    lang === "fr"
+      ? "Impossible de télécharger la sauvegarde"
+      : lang === "en"
+      ? "Unable to download the backup"
+      : "تعذر تحميل النسخة الاحتياطية"
+  );
   const cancelLabel = lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء";
   const badgeTemplatesTitle = t.badgeTemplatesTitle || (
     lang === "fr" ? "Modèles de badges" : lang === "en" ? "Badge Templates" : "قوالب الشارات"
@@ -355,9 +369,15 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const confirmBackupAction = async () => {
     if (!canManageBackups) return;
     if (backupConfirmMode === "export") {
-      store.exportData();
-      onToast(t.exportSuccess, "success");
-      closeBackupConfirm();
+      try {
+        await store.exportData();
+        onToast(backupExportSuccessText, "success");
+      } catch (error) {
+        console.error("[backup export]", error);
+        onToast(backupExportErrorText, "error");
+      } finally {
+        closeBackupConfirm();
+      }
       return;
     }
     const file = pendingImportFile;
@@ -728,7 +748,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
             <input
               ref={backupInputRef}
               type="file"
-              accept="application/json,.json"
+              accept=".zip,application/zip,application/x-zip-compressed,application/json,.json"
               onChange={handleBackupImportFile}
               style={{ display: "none" }}
             />

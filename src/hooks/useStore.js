@@ -35,10 +35,18 @@ import { usePaymentsSlice } from "./usePaymentsSlice";
 import { useClientsSlice } from "./useClientsSlice";
 import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
+import {
+  buildAgencyBackupArchive,
+  buildBackupArchiveFilename,
+  collectLocalRoomingBackupSnapshots,
+  mergeRoomingBackupSnapshots,
+  readBackupPayloadFromFile,
+} from "../services/agencyBackupArchiveService";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
+import { readSavedInvoices } from "../utils/invoices";
 import { buildSystemNotificationCandidates, getDaysUntil, getProgramDepartureDate } from "../utils/notificationRules";
 import {
   canUseBadgePhotoStorage,
@@ -2411,36 +2419,96 @@ export function useStore(agencyId, onToast) {
   }, [programs, clients, payments, agency, agencyId, ns]);
 
   // ── Backup ────────────────────────────────────────────────────────────────
-  const exportData = () => {
-    const payload = buildExportPayload({ programs, clients, payments, agency });
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
+  const getBackupInvoices = useCallback(async () => {
+    if (isSupabaseEnabled && agencyId && invoiceApi?.fetchFinalInvoices) {
+      const { data, error } = await invoiceApi.fetchFinalInvoices();
+      if (error) throw error;
+      return Array.isArray(data) ? data : [];
+    }
+
+    const clientIds = new Set(clients.map((client) => String(client.id || "")));
+    const programIds = new Set(programs.map((program) => String(program.id || "")));
+    return readSavedInvoices().filter((invoice) => {
+      const clientId = String(invoice.clientId || "").trim();
+      const programId = String(invoice.programId || "").trim();
+      return (clientId && clientIds.has(clientId)) || (programId && programIds.has(programId));
+    });
+  }, [agencyId, clients, invoiceApi, programs]);
+
+  const getBackupRoomingSnapshots = useCallback(async () => {
+    const localSnapshots = collectLocalRoomingBackupSnapshots({ programs, agencyId });
+    if (!isSupabaseEnabled || !agencyId) return localSnapshots;
+
+    const remoteResults = await Promise.allSettled(
+      programs.flatMap((program) => ["makkah", "madinah"].map(async (location) => {
+        const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, location);
+        if (error) {
+          console.warn("[Store] Skipped rooming assignment in backup export:", error);
+          return null;
+        }
+        if (!data) return null;
+        return {
+          source: "remote",
+          programId: program.id,
+          programName: program.name || "",
+          location,
+          rooms: Array.isArray(data.rooms) ? data.rooms : [],
+          unassigned: Array.isArray(data.unassigned) ? data.unassigned : [],
+          roomLinks: Array.isArray(data.meta?.roomLinks) ? data.meta.roomLinks : [],
+          updatedAt: data.updatedAt || "",
+        };
+      }))
+    );
+
+    const remoteSnapshots = remoteResults
+      .filter((result) => result.status === "fulfilled" && result.value)
+      .map((result) => result.value);
+    return mergeRoomingBackupSnapshots(remoteSnapshots, localSnapshots);
+  }, [agencyId, programs]);
+
+  const downloadBackupBlob = useCallback((blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `umrah-backup-${new Date().toLocaleDateString("fr-MA").replace(/\//g, "-")}.json`;
+    a.download = filename;
     a.style.display = "none";
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a); URL.revokeObjectURL(url);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const exportData = async () => {
+    const [invoices, rooming] = await Promise.all([
+      getBackupInvoices(),
+      getBackupRoomingSnapshots(),
+    ]);
+    const payload = buildExportPayload({ programs, clients, payments, agency, invoices, rooming });
+    const blob = await buildAgencyBackupArchive({
+      payload,
+      agency,
+      programs,
+      clients,
+      payments,
+      invoices,
+      roomingSnapshots: rooming,
+      lang: getUiLang(),
+    });
+    downloadBackupBlob(blob, buildBackupArchiveFilename(agency));
     logActivity("backup_export", translateActivityDescription("تم تصدير نسخة احتياطية كاملة"), "");
   };
 
-  const importData = (file) => new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const parsed = parseImportPayload(JSON.parse(e.target.result));
-        setPrograms(parsed.programs);
-        setClients(parsed.clients);
-        setDeletedPrograms([]);
-        setDeletedClients([]);
-        replacePayments(parsed.payments);
-        if (parsed.agency) setAgency(parsed.agency);
-        logActivity("backup_import", translateActivityDescription("تم استيراد نسخة احتياطية"), "");
-        res();
-      } catch(err) { rej(err); }
-    };
-    reader.readAsText(file);
-  });
+  const importData = async (file) => {
+    const rawPayload = await readBackupPayloadFromFile(file);
+    const parsed = parseImportPayload(rawPayload);
+    setPrograms(parsed.programs);
+    setClients(parsed.clients);
+    setDeletedPrograms([]);
+    setDeletedClients([]);
+    replacePayments(parsed.payments);
+    if (parsed.agency) setAgency(parsed.agency);
+    logActivity("backup_import", translateActivityDescription("تم استيراد نسخة احتياطية"), "");
+  };
 
   const dbSyncing = syncStatus === "syncing";
   const effectiveUnreadNotificationsCount = isSupabaseEnabled && !notificationsLoaded && dashboardStats
