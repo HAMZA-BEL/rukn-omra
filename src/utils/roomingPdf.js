@@ -13,6 +13,7 @@ const FLOW_LAYOUT = {
   sectionTitleGap: 4,
 };
 const MANUAL_ROOM_NUMBER_LABEL = "غرفة رقم :";
+const ROOMING_PRINT_FONT_FAMILY = "\"IBM Plex Sans Arabic\", \"Cairo\", \"Tajawal\", Arial, sans-serif";
 const DENSITY_CONFIGS = {
   comfortable: {
     columns: 5,
@@ -28,12 +29,17 @@ const DENSITY_CONFIGS = {
     chipGap: 0,
     chipMinHeight: 24,
     chipHorizontalPad: 6,
-    fontLarge: 10.4,
-    fontNormal: 9.6,
+    fontLarge: 10.8,
+    fontNormal: 10.1,
     fontSmall: 8.5,
-    fontTiny: 7.4,
-    sourceFontOffset: 1.2,
-    lineHeightExtra: 2.2,
+    fontTiny: 7.8,
+    nameFontMin: 8.4,
+    nameFontMax: 11.4,
+    nameLineRatio: 1.08,
+    nameVerticalPad: 3,
+    sourceFontOffset: 2.2,
+    sourceFontMin: 5.6,
+    sourceFontMax: 6.4,
     minCardHeight: 104,
     rowMaxHeight: 190,
     maxCardWidth: 154,
@@ -43,11 +49,13 @@ const DENSITY_CONFIGS = {
       cardGap: "2.2mm",
       writeHeight: "6mm",
       writeMargin: "0",
-      itemPadding: "1.15mm 1.6mm",
+      itemPadding: ".7mm 1.6mm",
       itemGap: "0",
       itemMinHeight: "8.2mm",
-      nameFont: "9.7px",
-      nameLine: "1.2",
+      nameFont: "13.2px",
+      nameLine: "1.08",
+      nameFontMin: "11px",
+      nameFontMax: "15px",
       sourceFont: "6.8px",
     },
   },
@@ -65,12 +73,17 @@ const DENSITY_CONFIGS = {
     chipGap: 0,
     chipMinHeight: 19,
     chipHorizontalPad: 5,
-    fontLarge: 8.4,
-    fontNormal: 8,
+    fontLarge: 9.2,
+    fontNormal: 8.8,
     fontSmall: 7.4,
-    fontTiny: 6.8,
-    sourceFontOffset: 1.4,
-    lineHeightExtra: 2,
+    fontTiny: 7.2,
+    nameFontMin: 7.35,
+    nameFontMax: 9.6,
+    nameLineRatio: 1.07,
+    nameVerticalPad: 3,
+    sourceFontOffset: 2.2,
+    sourceFontMin: 5.3,
+    sourceFontMax: 6.1,
     minCardHeight: 86,
     rowMaxHeight: 170,
     maxCardWidth: 132,
@@ -80,12 +93,14 @@ const DENSITY_CONFIGS = {
       cardGap: "1.7mm",
       writeHeight: "5mm",
       writeMargin: "0",
-      itemPadding: ".85mm 1.3mm",
+      itemPadding: ".5mm 1.3mm",
       itemGap: "0",
       itemMinHeight: "6.4mm",
-      nameFont: "8px",
-      nameLine: "1.22",
-      sourceFont: "6.6px",
+      nameFont: "11.6px",
+      nameLine: "1.08",
+      nameFontMin: "9.8px",
+      nameFontMax: "13px",
+      sourceFont: "6.4px",
     },
   },
   compact: {
@@ -102,12 +117,17 @@ const DENSITY_CONFIGS = {
     chipGap: 0,
     chipMinHeight: 15,
     chipHorizontalPad: 4,
-    fontLarge: 7.5,
-    fontNormal: 7.2,
+    fontLarge: 8.1,
+    fontNormal: 7.8,
     fontSmall: 6.8,
-    fontTiny: 6.3,
-    sourceFontOffset: 1.1,
-    lineHeightExtra: 1.5,
+    fontTiny: 6.8,
+    nameFontMin: 6.9,
+    nameFontMax: 8.5,
+    nameLineRatio: 1.05,
+    nameVerticalPad: 2.6,
+    sourceFontOffset: 2.1,
+    sourceFontMin: 5.1,
+    sourceFontMax: 5.8,
     minCardHeight: 70,
     rowMaxHeight: 135,
     maxCardWidth: 112,
@@ -117,12 +137,14 @@ const DENSITY_CONFIGS = {
       cardGap: "1.2mm",
       writeHeight: "4.1mm",
       writeMargin: "0",
-      itemPadding: ".6mm 1mm",
+      itemPadding: ".25mm 1mm",
       itemGap: "0",
       itemMinHeight: "5mm",
-      nameFont: "7.3px",
-      nameLine: "1.18",
-      sourceFont: "6.1px",
+      nameFont: "10.2px",
+      nameLine: "1.06",
+      nameFontMin: "9px",
+      nameFontMax: "11.3px",
+      sourceFont: "6px",
     },
   },
 };
@@ -233,66 +255,148 @@ const getRoomPilgrims = (room = {}, settings = {}) => {
 
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
 
-const getLongestNameLength = (pilgrims = []) => pilgrims.reduce(
-  (longest, pilgrim) => Math.max(longest, String(pilgrim?.name || "").trim().length),
-  0
+const getOccupiedNameCount = (pilgrims = []) => pilgrims.filter((pilgrim) => {
+  const name = String(pilgrim?.name || "").trim();
+  return name && name !== "—";
+}).length;
+
+const parseCssLengthToPx = (value) => {
+  const match = String(value || "").trim().match(/^(-?\d*\.?\d+)(px|pt|mm)?$/i);
+  if (!match) return 0;
+  const number = Number(match[1]);
+  const unit = (match[2] || "px").toLowerCase();
+  if (!Number.isFinite(number)) return 0;
+  if (unit === "mm") return number * (96 / 25.4);
+  if (unit === "pt") return number * (96 / 72);
+  return number;
+};
+
+const getHorizontalPaddingPx = (padding) => {
+  const parts = String(padding || "0").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 0;
+  const values = parts.map(parseCssLengthToPx);
+  if (values.length === 1) return values[0] * 2;
+  if (values.length === 2) return values[1] * 2;
+  if (values.length === 3) return values[1] * 2;
+  return values[1] + values[3];
+};
+
+const estimateNameWidth = (value, fontSize) => {
+  const raw = String(value || "");
+  const arabic = /[\u0600-\u06FF]/.test(raw);
+  return Array.from(raw).reduce((width, char) => {
+    if (/\s/.test(char)) return width + fontSize * 0.32;
+    if (/[.,;:،؛]/.test(char)) return width + fontSize * 0.28;
+    if (/\d/.test(char)) return width + fontSize * 0.52;
+    return width + fontSize * (arabic ? 0.58 : 0.55);
+  }, 0);
+};
+
+const getNameLineHeight = (fontSize, density) => fontSize * (Number(density?.nameLineRatio) || 1.08);
+const getSourceLineHeight = (fontSize) => fontSize * 1.14;
+
+const getSourceFontSize = (fontSize, density) => clampNumber(
+  fontSize - (Number(density?.sourceFontOffset) || 2),
+  Number(density?.sourceFontMin) || 5.1,
+  Number(density?.sourceFontMax) || 6.2
 );
 
-const getSmartNameFontSize = ({
+const getMaxNameLines = ({ fontSize, chipHeight, density, hasSource }) => {
+  const sourceHeight = hasSource ? getSourceLineHeight(getSourceFontSize(fontSize, density)) : 0;
+  const availableHeight = chipHeight - (Number(density?.nameVerticalPad) || 3) - sourceHeight;
+  return Math.max(1, Math.min(
+    Number(density?.maxNameLines) || 8,
+    Math.floor(availableHeight / getNameLineHeight(fontSize, density)) || 1
+  ));
+};
+
+const getAdaptiveNameFontMetrics = ({
   ctx,
-  pilgrims = [],
-  rows = [],
+  name = "",
   rowCount = 1,
+  occupiedCount = 0,
   chipHeight = 12,
   contentWidth = 80,
   density,
+  hasSource = false,
+  unit = "pt",
 }) => {
-  const base = Number(density?.fontNormal) || 8;
-  const min = Math.max(6.4, Math.min(base - 2.2, Number(density?.fontTiny) || 6.4));
-  const max = Math.min(13.8, base + (rowCount <= 2 ? 3.2 : rowCount === 3 ? 2.2 : rowCount === 4 ? 1.3 : 0.7));
-  const longest = getLongestNameLength(pilgrims);
-  let size = base;
-  if (rowCount <= 2 && chipHeight >= 18) size += 2.5;
-  else if (rowCount <= 3 && chipHeight >= 15) size += 1.65;
-  else if (rowCount === 4 && chipHeight >= 13) size += 0.7;
-  else if (rowCount >= 5) size += 0.15;
-  if (longest > 56) size -= 1.25;
-  else if (longest > 44) size -= 0.85;
-  else if (longest > 34) size -= 0.35;
-  else if (longest <= 18 && rowCount <= 3) size += 0.8;
-  if (ctx && contentWidth > 0 && rows.length) {
-    const longestName = rows.reduce((winner, row) => (
-      String(row?.name || "").length > String(winner?.name || "").length ? row : winner
-    ), rows[0])?.name || "";
-    ctx.save();
-    ctx.font = `700 ${size}pt Arial, Tahoma, sans-serif`;
-    const measured = ctx.measureText(longestName).width;
-    const lineBudget = rowCount <= 2 ? 2 : rowCount <= 4 ? 1.65 : 1.35;
-    const allowed = contentWidth * lineBudget;
-    if (measured > allowed && allowed > 0) {
-      size *= clampNumber(allowed / measured, 0.72, 1);
+  const html = unit === "px";
+  const htmlConfig = density?.html || {};
+  const base = html
+    ? Number.parseFloat(String(htmlConfig.nameFont || "10px")) || 10
+    : Number(density?.fontNormal) || 8;
+  const min = html
+    ? Number.parseFloat(String(htmlConfig.nameFontMin || "")) || Math.max(8.8, base - 1.8)
+    : Number(density?.nameFontMin) || Math.max(6.8, base - 1.4);
+  const densityMax = html
+    ? Number.parseFloat(String(htmlConfig.nameFontMax || "")) || base + 1.6
+    : Number(density?.nameFontMax) || base + 1.1;
+  const max = Math.max(min, Math.min(densityMax, chipHeight * (hasSource ? 0.68 : 0.74)));
+  const length = String(name || "").trim().length;
+  let fontSize = base;
+
+  if (rowCount <= 2) fontSize += html ? 0.9 : 0.7;
+  else if (rowCount === 3) fontSize += html ? 0.45 : 0.35;
+  else if (rowCount === 4) fontSize += html ? 0.15 : 0.1;
+  else fontSize -= html ? 0.1 : 0.05;
+
+  if (occupiedCount <= 2 && rowCount <= 3) fontSize += html ? 0.25 : 0.2;
+  if (occupiedCount >= rowCount && rowCount >= 4) fontSize -= html ? 0.18 : 0.12;
+
+  if (length > 64) fontSize -= html ? 1.3 : 1.05;
+  else if (length > 52) fontSize -= html ? 0.95 : 0.75;
+  else if (length > 40) fontSize -= html ? 0.6 : 0.45;
+  else if (length > 32) fontSize -= html ? 0.3 : 0.25;
+  else if (length <= 18 && rowCount <= 3) fontSize += html ? 0.35 : 0.25;
+
+  fontSize = clampNumber(fontSize, min, max);
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    const measured = ctx
+      ? (() => {
+        ctx.save();
+        ctx.font = `800 ${fontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+        const width = ctx.measureText(name).width;
+        ctx.restore();
+        return width;
+      })()
+      : estimateNameWidth(name, fontSize);
+    const currentLines = getMaxNameLines({ fontSize, chipHeight, density, hasSource });
+    const possibleLines = Math.max(currentLines, getMaxNameLines({ fontSize: min, chipHeight, density, hasSource }));
+    const neededLines = Math.max(1, Math.min(possibleLines, Math.ceil(measured / Math.max(1, contentWidth * 0.96))));
+    if (neededLines > currentLines) {
+      const sourceHeight = hasSource ? getSourceLineHeight(getSourceFontSize(fontSize, density)) : 0;
+      const availableHeight = chipHeight - (Number(density?.nameVerticalPad) || 3) - sourceHeight;
+      const sizeForNeededLines = availableHeight / neededLines / (Number(density?.nameLineRatio) || 1.08);
+      const nextSize = clampNumber(sizeForNeededLines, min, fontSize);
+      if (Math.abs(nextSize - fontSize) < 0.05) break;
+      fontSize = nextSize;
+      continue;
     }
-    ctx.restore();
+    const allowed = contentWidth * currentLines * (currentLines > 1 ? 0.96 : 0.92);
+    if (measured <= allowed || allowed <= 0) break;
+    const nextSize = clampNumber(fontSize * clampNumber(allowed / measured, 0.84, 1), min, fontSize);
+    if (Math.abs(nextSize - fontSize) < 0.05) break;
+    fontSize = nextSize;
   }
-  const heightCap = Math.max(min, chipHeight - 2.8);
-  return clampNumber(size, min, Math.min(max, heightCap));
+
+  const sourceFontSize = getSourceFontSize(fontSize, density);
+  const maxLines = getMaxNameLines({ fontSize, chipHeight, density, hasSource });
+  const lineHeight = getNameLineHeight(fontSize, density);
+  return {
+    fontSize,
+    lineHeight,
+    sourceFontSize,
+    sourceLineHeight: getSourceLineHeight(sourceFontSize),
+    maxLines,
+  };
 };
 
-const getHtmlSmartNameFontSize = ({ pilgrims = [], rowCount = 1, density }) => {
-  const base = Number.parseFloat(String(density?.html?.nameFont || "8px")) || 8;
-  const min = Math.max(6.6, base - 1.6);
-  const max = Math.min(13.2, base + (rowCount <= 2 ? 3 : rowCount === 3 ? 2.1 : rowCount === 4 ? 1.3 : 0.7));
-  const longest = getLongestNameLength(pilgrims);
-  let size = base;
-  if (rowCount <= 2) size += 2.35;
-  else if (rowCount === 3) size += 1.35;
-  else if (rowCount === 4) size += 0.65;
-  else if (rowCount >= 5) size += 0.15;
-  if (longest > 58) size -= 1.2;
-  else if (longest > 44) size -= 0.8;
-  else if (longest > 34) size -= 0.35;
-  else if (longest <= 18 && rowCount <= 3) size += 0.7;
-  return `${clampNumber(size, min, max).toFixed(1)}px`;
+const getHtmlContentWidth = (density) => {
+  const cardWidth = (Number(density?.maxCardWidth) || 120) * (96 / 72);
+  const padding = getHorizontalPaddingPx(density?.html?.itemPadding || "0");
+  return Math.max(32, cardWidth - padding - 4);
 };
 
 const drawRoundRect = (ctx, x, y, width, height, radius) => {
@@ -320,10 +424,33 @@ const drawText = (ctx, value, x, y, {
   ctx.fillStyle = color;
   ctx.textAlign = align;
   ctx.textBaseline = baseline;
-  ctx.font = `${weight} ${size}pt Arial, Tahoma, sans-serif`;
+  ctx.font = `${weight} ${size}pt ${ROOMING_PRINT_FONT_FAMILY}`;
   if (maxWidth) ctx.fillText(String(value || ""), x, y, maxWidth);
   else ctx.fillText(String(value || ""), x, y);
   ctx.restore();
+};
+
+const drawFitText = (ctx, value, x, y, {
+  size = 10,
+  minSize = 7,
+  weight = 400,
+  color = "#111827",
+  align = "right",
+  baseline = "top",
+  maxWidth,
+  direction = "rtl",
+} = {}) => {
+  let nextSize = size;
+  if (maxWidth) {
+    ctx.save();
+    ctx.font = `${weight} ${nextSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+    while (nextSize > minSize && ctx.measureText(String(value || "")).width > maxWidth) {
+      nextSize -= 0.35;
+      ctx.font = `${weight} ${nextSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+    }
+    ctx.restore();
+  }
+  drawText(ctx, value, x, y, { size: nextSize, weight, color, align, baseline, maxWidth, direction });
 };
 
 const loadImage = async (url) => {
@@ -351,10 +478,11 @@ const drawContainImage = (ctx, image, x, y, width, height) => {
   return true;
 };
 
-const truncateToWidth = (ctx, value, maxWidth) => {
+const truncateToWidth = (ctx, value, maxWidth, { forceEllipsis = false } = {}) => {
   const raw = String(value || "");
-  if (ctx.measureText(raw).width <= maxWidth) return raw;
   const ellipsis = "…";
+  const displayed = forceEllipsis && raw ? `${raw}${ellipsis}` : raw;
+  if (ctx.measureText(displayed).width <= maxWidth) return displayed;
   let lo = 0;
   let hi = raw.length;
   while (lo < hi) {
@@ -410,7 +538,7 @@ const wrapText = (ctx, value, maxWidth, maxLines = 2, { ellipsis = false } = {})
     return safeLines;
   }
   const clipped = safeLines.slice(0, maxLines);
-  if (ellipsis) clipped[maxLines - 1] = truncateToWidth(ctx, `${clipped[maxLines - 1]}…`, maxWidth);
+  if (ellipsis) clipped[maxLines - 1] = truncateToWidth(ctx, clipped[maxLines - 1], maxWidth, { forceEllipsis: true });
   return clipped;
 };
 
@@ -425,11 +553,12 @@ const measureRoomCard = (ctx, room, cardWidth, settings = {}) => {
   );
 };
 
-const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang }) => {
+const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, programName = "" }) => {
   const direction = getDirection(lang);
   const right = page.width - page.margin;
   const left = page.margin;
   const center = page.width / 2;
+  const titleMaxWidth = 390;
   const logoSize = 30;
   if (logoImage) {
     drawContainImage(ctx, logoImage, left, 12, logoSize, logoSize);
@@ -454,13 +583,25 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
     direction,
     maxWidth: 150,
   });
-  drawText(ctx, section.cityLabel || "", center, section.combined ? 12 : 9, {
-    size: section.combined ? 12.8 : 20,
+  const hotelTitle = section.combined ? (section.cityLabel || "") : (section.hotel || "");
+  if (!section.combined) {
+    drawText(ctx, section.cityLabel || "", center, 10, {
+      size: 10.4,
+      weight: 900,
+      color: "#64748b",
+      align: "center",
+      direction,
+      maxWidth: titleMaxWidth,
+    });
+  }
+  drawFitText(ctx, hotelTitle, center, section.combined ? 15 : 25, {
+    size: section.combined ? 13.8 : 16.2,
+    minSize: section.combined ? 9.2 : 10.2,
     weight: 900,
     color: "#0f172a",
     align: "center",
     direction,
-    maxWidth: 360,
+    maxWidth: titleMaxWidth,
   });
   if (section.combined && Array.isArray(section.dateRanges)) {
     section.dateRanges.slice(0, 2).forEach((range, index) => {
@@ -473,14 +614,6 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
         direction,
         maxWidth: 390,
       });
-    });
-  } else {
-    drawText(ctx, section.hotel || "", center, 37, {
-      size: 9.8,
-      weight: 800,
-      color: "#9a7418",
-      align: "center",
-      direction,
     });
   }
 
@@ -515,6 +648,17 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang })
       direction: item.value.match(/\d/) ? "ltr" : direction,
     });
   });
+  if (programName) {
+    drawFitText(ctx, programName, right - metricWidth * metrics.length / 2, 47, {
+      size: 6.9,
+      minSize: 5.8,
+      weight: 800,
+      color: "#64748b",
+      align: "center",
+      direction,
+      maxWidth: metricWidth * metrics.length - 10,
+    });
+  }
   ctx.strokeStyle = "#b99235";
   ctx.lineWidth = 1.05;
   ctx.beginPath();
@@ -537,18 +681,7 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
   const topRowHeight = density.writeAreaHeight;
   const rowAreaTop = y + topRowHeight;
   const rowHeight = density.chipMinHeight;
-  const fontSize = getSmartNameFontSize({
-    ctx,
-    pilgrims,
-    rows,
-    rowCount,
-    chipHeight: rowHeight,
-    contentWidth,
-    density,
-  });
-  const lineHeight = fontSize + density.lineHeightExtra;
-  const sourceFontSize = Math.max(5.8, fontSize - density.sourceFontOffset);
-  const sourceLineHeight = sourceFontSize + 1.8;
+  const occupiedCount = getOccupiedNameCount(pilgrims);
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(x, y, width, cardHeight);
@@ -574,7 +707,6 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
     maxWidth: width - density.cardPadX * 2,
   });
 
-  ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
   rows.forEach((pilgrim, index) => {
     const rowY = rowAreaTop + index * rowHeight;
     const isLast = index === rows.length - 1;
@@ -590,29 +722,39 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
     if (empty) return;
     const sourceText = !empty ? text(pilgrim.source, "") : "";
     const sourceLabel = sourceText ? text(sourceText, "") : "";
-    const rowMaxLines = Math.max(1, Math.min(
-      density.maxNameLines,
-      Math.floor((rowHeight - 5 - (sourceLabel ? sourceLineHeight : 0)) / lineHeight) || 1
-    ));
-    ctx.font = `700 ${fontSize}pt Arial, Tahoma, sans-serif`;
-    const lines = wrapText(ctx, pilgrim.name, contentWidth, rowMaxLines);
-    const textBlockHeight = lines.length * lineHeight + (sourceLabel ? sourceLineHeight : 0);
-    let lineY = rowY + Math.max(2.4, (rowHeight - textBlockHeight) / 2);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 0.8, rowY + 0.6, width - 1.6, rowHeight - 1.2);
+    ctx.clip();
+    const nameMetrics = getAdaptiveNameFontMetrics({
+      ctx,
+      name: pilgrim.name,
+      rowCount,
+      occupiedCount,
+      chipHeight: rowHeight,
+      contentWidth,
+      density,
+      hasSource: Boolean(sourceLabel),
+    });
+    ctx.font = `800 ${nameMetrics.fontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+    const lines = wrapText(ctx, pilgrim.name, contentWidth, nameMetrics.maxLines, { ellipsis: true });
+    const textBlockHeight = lines.length * nameMetrics.lineHeight + (sourceLabel ? nameMetrics.sourceLineHeight : 0);
+    let lineY = rowY + Math.max(1.4, (rowHeight - textBlockHeight) / 2);
     lines.forEach((line) => {
       const lineX = direction === "rtl" ? right : left;
       drawText(ctx, line, lineX, lineY, {
-        size: fontSize,
+        size: nameMetrics.fontSize,
         weight: 800,
         color: "#111827",
         align: direction === "rtl" ? "right" : "left",
         direction,
         maxWidth: contentWidth,
       });
-      lineY += lineHeight;
+      lineY += nameMetrics.lineHeight;
     });
     if (sourceLabel) {
       drawText(ctx, sourceLabel, direction === "rtl" ? right : left, lineY, {
-        size: sourceFontSize,
+        size: nameMetrics.sourceFontSize,
         weight: 700,
         color: "#64748b",
         align: direction === "rtl" ? "right" : "left",
@@ -620,10 +762,11 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
         maxWidth: contentWidth,
       });
     }
+    ctx.restore();
   });
 };
 
-const makeCanvasPage = ({ labels, lang, agencyName, logoImage, section }) => {
+const makeCanvasPage = ({ labels, lang, agencyName, logoImage, section, programName = "" }) => {
   const width = A4_LANDSCAPE.widthPt;
   const height = A4_LANDSCAPE.heightPt;
   const canvas = document.createElement("canvas");
@@ -634,7 +777,7 @@ const makeCanvasPage = ({ labels, lang, agencyName, logoImage, section }) => {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
   const page = { width, height, margin: 22 };
-  if (section) drawHeader(ctx, page, { section, logoImage, agencyName, labels, lang });
+  if (section) drawHeader(ctx, page, { section, logoImage, agencyName, labels, lang, programName });
   return { canvas, ctx, page };
 };
 
@@ -665,7 +808,7 @@ const drawTypeSectionTitle = (ctx, page, label, y, lang, settings = {}) => {
   const direction = getDirection(lang);
   const right = page.width - page.margin;
   const left = page.margin;
-  ctx.font = "900 8.6pt Arial, Tahoma, sans-serif";
+  ctx.font = `900 8.6pt ${ROOMING_PRINT_FONT_FAMILY}`;
   const textWidth = Math.min(130, Math.max(72, ctx.measureText(label).width + 28));
   const x = right - textWidth;
   drawRoundRect(ctx, x, y, textWidth, layout.sectionTitleHeight, 8.5);
@@ -953,7 +1096,7 @@ const drawRoomRow = (ctx, page, rooms, y, rowHeight, labels, lang, settings = {}
   });
 };
 
-const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks = [] }) => {
+const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks = [], programName = "" }) => {
   const baseLayout = getFlowLayout(printSettings);
   const pages = [];
   const logoImage = await loadImage(agencyLogoUrl);
@@ -966,13 +1109,13 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
   };
 
   const startPage = (section, layout = baseLayout) => {
-    current = makeCanvasPage({ labels, lang, agencyName, logoImage, section });
+    current = makeCanvasPage({ labels, lang, agencyName, logoImage, section, programName });
     cursorY = layout.contentTop;
   };
 
   const sections = groupRooms(rooms, labels, sectionOverride, printSettings, lang, roomLinks);
   if (!sections.length) {
-    current = makeCanvasPage({ labels, lang, agencyName, logoImage, section: {
+    current = makeCanvasPage({ labels, lang, agencyName, logoImage, programName, section: {
       cityLabel: labels.rooming || "Rooming",
       hotel: "",
       checkIn: "",
@@ -1136,7 +1279,7 @@ export async function downloadRoomingPdf({
   printSettings = {},
   roomLinks = [],
 } = {}) {
-  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks });
+  const pages = await buildPages({ rooms, labels, lang, agencyName, agencyLogoUrl, sectionOverride, printSettings, roomLinks, programName });
   const pdf = await makePdf(pages);
   downloadBlob(pdf, filename || `rooming-${sanitizeFile(programName)}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -1169,17 +1312,33 @@ export const createRoomingPrintHtml = ({
     const capacity = Math.max(1, Number(room.capacity) || pilgrims.length || 1);
     const rowCount = Math.max(capacity, pilgrims.length);
     const rows = Array.from({ length: rowCount }, (_, index) => pilgrims[index] || { name: "", source: "" });
-    const smartNameFontSize = getHtmlSmartNameFontSize({ pilgrims, rowCount, density });
+    const occupiedCount = getOccupiedNameCount(pilgrims);
+    const contentWidth = getHtmlContentWidth(density);
+    const chipHeight = parseCssLengthToPx(density.html.itemMinHeight || "0") || density.chipMinHeight * (96 / 72);
     return `
-      <article class="room-card" style="--smart-name-font:${smartNameFontSize}">
+      <article class="room-card">
         <div class="manual-room-row"><span>${MANUAL_ROOM_NUMBER_LABEL}</span></div>
         <ol>
           ${rows.map((pilgrim) => {
             const empty = !pilgrim.name || pilgrim.name === "—";
+            const sourceLabel = !empty && normalizedPrintSettings.showRegistrationSource && pilgrim.source ? pilgrim.source : "";
+            const nameMetrics = empty ? null : getAdaptiveNameFontMetrics({
+              name: pilgrim.name,
+              rowCount,
+              occupiedCount,
+              chipHeight,
+              contentWidth,
+              density,
+              hasSource: Boolean(sourceLabel),
+              unit: "px",
+            });
+            const nameStyle = nameMetrics
+              ? ` style="--smart-name-font:${nameMetrics.fontSize.toFixed(1)}px;--smart-name-line:${(nameMetrics.lineHeight / nameMetrics.fontSize).toFixed(2)};--smart-name-max-height:${(nameMetrics.lineHeight * nameMetrics.maxLines).toFixed(1)}px;--smart-name-lines:${nameMetrics.maxLines}"`
+              : "";
             return `
               <li class="${empty ? "empty" : ""}">
-                ${empty ? "" : `<span class="pilgrim-name">${escapeHtml(pilgrim.name)}</span>`}
-                ${!empty && normalizedPrintSettings.showRegistrationSource && pilgrim.source ? `<span class="source-label">${escapeHtml(pilgrim.source)}</span>` : ""}
+                ${empty ? "" : `<span class="pilgrim-name"${nameStyle}>${escapeHtml(pilgrim.name)}</span>`}
+                ${sourceLabel ? `<span class="source-label">${escapeHtml(sourceLabel)}</span>` : ""}
               </li>
             `;
           }).join("")}
@@ -1189,6 +1348,11 @@ export const createRoomingPrintHtml = ({
   };
   const sectionsHtml = sections.length ? sections.map((section) => {
     const typeGroups = getOrderedTypeGroups(section, labels, lang, normalizedPrintSettings);
+    const hotelTitle = section.combined ? (section.cityLabel || "") : (section.hotel || "");
+    const hotelTitleLength = String(hotelTitle || "").trim().length;
+    const hotelTitleSize = section.combined
+      ? (hotelTitleLength > 42 ? "12px" : hotelTitleLength > 28 ? "13px" : "14px")
+      : (hotelTitleLength > 42 ? "13px" : hotelTitleLength > 28 ? "14.5px" : "16px");
     return `
       <section class="rooming-section">
         <header class="print-header">
@@ -1197,18 +1361,21 @@ export const createRoomingPrintHtml = ({
             <strong>${escapeHtml(agencyName || "—")}</strong>
           </div>
           <div class="title-block">
-            <h1>${escapeHtml(section.cityLabel || labels.rooming || "Rooming")}</h1>
+            ${section.combined ? "" : `<h1>${escapeHtml(section.cityLabel || labels.rooming || "Rooming")}</h1>`}
+            <p class="hotel-title" style="font-size:${hotelTitleSize}">${escapeHtml(hotelTitle)}</p>
             ${section.combined && Array.isArray(section.dateRanges)
               ? section.dateRanges.slice(0, 2).map((range) => (
-                `<p>${escapeHtml(range.label)}: ${escapeHtml(labels.checkIn || "Check-in")} ${escapeHtml(formatDate(range.checkIn))} / ${escapeHtml(labels.checkOut || "Check-out")} ${escapeHtml(formatDate(range.checkOut))}</p>`
+                `<p class="date-line">${escapeHtml(range.label)}: ${escapeHtml(labels.checkIn || "Check-in")} ${escapeHtml(formatDate(range.checkIn))} / ${escapeHtml(labels.checkOut || "Check-out")} ${escapeHtml(formatDate(range.checkOut))}</p>`
               )).join("")
-              : `<p>${escapeHtml(section.hotel || "")}</p>`}
-            ${programName ? `<small>${escapeHtml(programName)}</small>` : ""}
+              : ""}
           </div>
           <div class="metric-strip">
-            <div><span>${escapeHtml(labels.roomsCount || "Rooms")}</span><b>${escapeHtml(String(section.rooms.length))}</b></div>
-            <div><span>${escapeHtml(labels.checkIn || "Check-in")}</span><b>${escapeHtml(formatDate(section.checkIn))}</b></div>
-            <div><span>${escapeHtml(labels.checkOut || "Check-out")}</span><b>${escapeHtml(formatDate(section.checkOut))}</b></div>
+            <div class="metric-row">
+              <div><span>${escapeHtml(labels.roomsCount || "Rooms")}</span><b>${escapeHtml(String(section.rooms.length))}</b></div>
+              <div><span>${escapeHtml(labels.checkIn || "Check-in")}</span><b>${escapeHtml(formatDate(section.checkIn))}</b></div>
+              <div><span>${escapeHtml(labels.checkOut || "Check-out")}</span><b>${escapeHtml(formatDate(section.checkOut))}</b></div>
+            </div>
+            ${programName ? `<small class="metric-program">${escapeHtml(programName)}</small>` : ""}
           </div>
         </header>
         <div class="divider"></div>
@@ -1260,20 +1427,22 @@ export const createRoomingPrintHtml = ({
     }
     *{box-sizing:border-box}
     html,body{margin:0;background:#fff;color:#0f172a}
-    body{font-family:Arial,Tahoma,sans-serif;font-size:9px;line-height:1.25}
+    body{font-family:${ROOMING_PRINT_FONT_FAMILY};font-size:9px;line-height:1.25}
     .rooming-section{break-after:page;page-break-after:always}
     .rooming-section:last-child{break-after:auto;page-break-after:auto}
-    .print-header{position:relative;display:grid;grid-template-columns:48mm minmax(0,1fr) 86mm;align-items:start;gap:8mm;min-height:16mm;padding:0 0 2.5mm}
+	    .print-header{position:relative;display:grid;grid-template-columns:48mm minmax(0,1fr) 86mm;align-items:start;gap:8mm;height:16mm;min-height:16mm;overflow:hidden;padding:0 0 2.5mm}
     .agency-brand{display:flex;align-items:center;gap:2.5mm;min-width:0}
     .agency-logo,.agency-logo-fallback{width:10mm;height:10mm;flex:0 0 auto;object-fit:contain;border-radius:2mm}
     .agency-logo-fallback{border:1px solid #d7dbe2;display:inline-flex;align-items:center;justify-content:center;color:#9a7418;font-size:12px;font-weight:900}
     .agency-brand strong{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;color:#0f172a}
     .title-block{text-align:center;min-width:0}
-    .title-block h1{margin:0;color:#0f172a;font-size:15px;line-height:1.1;font-weight:900}
-    .title-block p{margin:2px 0 0;color:#9a7418;font-size:8px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .title-block small{display:block;margin-top:1px;color:#64748b;font-size:7.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .metric-strip{display:grid;grid-template-columns:repeat(3,1fr);height:12mm;border-inline-start:1px solid #d9c491}
-    .metric-strip div{display:flex;flex-direction:column;align-items:center;justify-content:center;border-inline-end:1px solid #d9c491;padding:0 2mm;text-align:center;min-width:0}
+    .title-block h1{margin:0;color:#64748b;font-size:10.5px;line-height:1;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .title-block .hotel-title{margin:2px 0 0;color:#0f172a;line-height:1.08;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .title-block .date-line{margin:2px 0 0;color:#9a7418;font-size:7.4px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .metric-strip{display:flex;flex-direction:column;height:12mm;border-inline-start:1px solid #d9c491;min-width:0}
+    .metric-row{display:grid;grid-template-columns:repeat(3,1fr);min-height:0;flex:1 1 auto}
+    .metric-row div{display:flex;flex-direction:column;align-items:center;justify-content:center;border-inline-end:1px solid #d9c491;padding:0 2mm;text-align:center;min-width:0}
+    .metric-program{display:block;height:3.2mm;line-height:3.2mm;padding:0 2mm;border-inline-end:1px solid #d9c491;border-top:1px solid #eadfca;color:#64748b;font-size:7px;font-weight:800;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .metric-strip span{font-size:7px;color:#475569;font-weight:800;white-space:nowrap}
     .metric-strip b{font-size:8.2px;color:#0f172a;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
     .divider{height:1px;background:#b99235;margin:0 0 3mm}
@@ -1288,8 +1457,8 @@ export const createRoomingPrintHtml = ({
     ol{list-style:none;margin:0;padding:0;display:block}
     li{display:flex;flex-direction:column;justify-content:center;height:var(--item-min-height);border-top:1px solid #94a3b8;padding:var(--item-padding);min-width:0;overflow:hidden;background:#fff;direction:rtl;text-align:right}
     ol li:first-child{border-top:0}
-    .pilgrim-name{display:block;min-width:0;max-width:100%;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:normal;color:#111827;font-size:var(--smart-name-font,var(--name-font));line-height:var(--name-line);font-weight:800}
-    .source-label{display:block;max-width:100%;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;color:#64748b;font-size:var(--source-font);font-weight:700;line-height:1.18;margin-top:.35mm}
+    .pilgrim-name{display:-webkit-box;min-width:0;max-width:100%;overflow:hidden;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;word-break:normal;color:#111827;font-size:var(--smart-name-font,var(--name-font));line-height:var(--smart-name-line,var(--name-line));font-weight:800;max-height:var(--smart-name-max-height,none);-webkit-box-orient:vertical;-webkit-line-clamp:var(--smart-name-lines,2)}
+    .source-label{display:block;max-width:100%;overflow:hidden;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;color:#64748b;font-size:var(--source-font);font-weight:700;line-height:1.18;margin-top:.25mm}
     li.empty{background:#fff}
     .empty-state{margin:18mm 0 0;text-align:center;color:#64748b;font-size:12px;font-weight:800}
     @media print{

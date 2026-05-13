@@ -2236,6 +2236,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     loading: t.loading || (lang === "fr" ? "Chargement..." : lang === "en" ? "Loading..." : "جاري التحميل..."),
     noClients: lang === "fr" ? "Aucun pèlerin à exporter." : lang === "en" ? "No pilgrims available for contract export." : "لا يوجد معتمرون لتصدير عقودهم",
     success: lang === "fr" ? "Les contrats Word ont été générés avec succès." : lang === "en" ? "Word contracts generated successfully." : "تم تجهيز عقود Word بنجاح",
+    missingTemplate: lang === "fr" ? "Importez d’abord le modèle de contrat Word." : lang === "en" ? "Upload the Word contract template first." : "ارفع قالب العقد أولًا لتصدير عقود Word.",
     error: lang === "fr" ? "Impossible d’exporter les contrats Word." : lang === "en" ? "Unable to export Word contracts." : "تعذر تصدير عقود Word",
   }), [lang, t.loading]);
   const closeHeaderActions = React.useCallback(() => {
@@ -2443,8 +2444,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       });
       onToast(wordContractsExportLabels.success, "success");
     } catch (error) {
-      console.error("[Contracts] Bulk Word export failed:", error);
-      onToast(wordContractsExportLabels.error, "error");
+      if (error?.code === "missing-contract-template") {
+        onToast(wordContractsExportLabels.missingTemplate, "error");
+      } else {
+        console.error("[Contracts] Bulk Word export failed:", error);
+        onToast(wordContractsExportLabels.error, "error");
+      }
     } finally {
       setWordContractExportBusy(false);
     }
@@ -5385,6 +5390,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           >
             <span>{t.addRooms || t.addRoom || "إضافة غرف"}</span>
           </RoomingToolbarButton>
+          <RoomingToolbarButton
+            title={roomingPrintLabels.title}
+            onClick={() => setRoomingPrintSettingsOpen(true)}
+            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource}
+            icon={<Settings size={15} />}
+          >
+            <span>{roomingPrintLabels.title}</span>
+          </RoomingToolbarButton>
           <RoomingToolbarButton title={t.roomingAutoArrange || "ترتيب تلقائي"} onClick={autoArrangeRooms} icon={<LayoutGrid size={15} />} />
           <RoomingToolbarButton
             title={t.roomingLinkRooms || (lang === "fr" ? "Lier les chambres" : lang === "en" ? "Link rooms" : "ربط الغرف")}
@@ -5444,14 +5457,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
             icon={<AppIcon name="save" size={15} />}
           />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
-          <RoomingToolbarButton
-            title={roomingPrintLabels.title}
-            onClick={() => setRoomingPrintSettingsOpen(true)}
-            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource}
-            icon={<Settings size={15} />}
-          >
-            <span>{roomingPrintLabels.title}</span>
-          </RoomingToolbarButton>
           <RoomingToolbarButton
             title={t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF")}
             onClick={() => handleDownloadRoomingPdf("single")}
