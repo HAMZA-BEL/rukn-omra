@@ -336,7 +336,7 @@ export function StatCard({ label, value, icon, color = t.gold, sub, delay = 0 })
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-export function Modal({ open, onClose, title, children, width = 560 }) {
+export function Modal({ open, onClose, title, children, width = 560, portalContainer = null }) {
   React.useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") onClose(); };
     if (open) window.addEventListener("keydown", handler);
@@ -416,7 +416,7 @@ export function Modal({ open, onClose, title, children, width = 560 }) {
   );
 
   if (typeof document === "undefined") return modalContent;
-  return createPortal(modalContent, document.body);
+  return createPortal(modalContent, portalContainer || document.body);
 }
 
 // ── Search Bar ────────────────────────────────────────────────────────────────

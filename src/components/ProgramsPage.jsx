@@ -3047,6 +3047,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const fullWorkspace = roomingWorkspaceMode !== "normal";
   const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
+  const roomingModalPortalContainer = browserFullscreenMode ? roomingFullscreenRef.current : null;
   const canPersistRoomingRemote = Boolean(supabaseRoomingEnabled && agencyId && program?.id);
   const packageByLevel = React.useMemo(() => {
     const map = new Map();
@@ -6008,6 +6009,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           onClose={() => setRoomingPrintSettingsOpen(false)}
           title={roomingPrintLabels.title}
           width={460}
+          portalContainer={roomingModalPortalContainer}
         >
           <div className="rooming-modal-surface" style={{ display: "grid", gap: 16 }}>
             <label style={{
@@ -6122,7 +6124,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           </div>
         </Modal>
 
-        <Modal open={Boolean(pendingDrop)} onClose={cancelPendingDrop} title={pendingDropCopy?.title || ""} width={520}>
+        <Modal open={Boolean(pendingDrop)} onClose={cancelPendingDrop} title={pendingDropCopy?.title || ""} width={520} portalContainer={roomingModalPortalContainer}>
           {pendingDrop && pendingDropCopy && (
             <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <p style={{ color: "var(--rooming-text-soft)", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
@@ -6230,7 +6232,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           )}
         </Modal>
 
-        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420}>
+        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420} portalContainer={roomingModalPortalContainer}>
           <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} />
             <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} />
@@ -6262,7 +6264,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           </div>
         </Modal>
 
-        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); setPickerSearch(""); }} title={t.addPilgrim || "إضافة معتمر"} width={560}>
+        <Modal open={pickerOpen} onClose={() => { setPickerOpen(false); setSelectedPilgrimIds([]); setPickerSearch(""); }} title={t.addPilgrim || "إضافة معتمر"} width={560} portalContainer={roomingModalPortalContainer}>
           <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Input
               label=""

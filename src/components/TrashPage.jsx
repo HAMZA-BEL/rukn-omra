@@ -853,6 +853,105 @@ export default function TrashPage({ store, onToast }) {
       document.body
     )
     : null;
+  const paginationControls = showPaginationControls ? (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+      flexWrap: "wrap",
+      paddingTop: 9,
+      borderTop: "1px solid var(--rukn-border-soft)",
+    }}>
+      <span style={{ fontSize: 11.5, color: "var(--rukn-text-muted)", fontWeight: 800 }}>
+        {rangeLabel}
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <select
+          value={pageSize}
+          onChange={handlePageSizeChange}
+          aria-label={paginationText.showPerPage(pageSize)}
+          style={{
+            height: 32,
+            borderRadius: 999,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "var(--rukn-bg-card)",
+            color: "var(--rukn-text)",
+            padding: "0 11px",
+            fontSize: 11.5,
+            fontWeight: 800,
+            fontFamily: "'Cairo',sans-serif",
+            cursor: "pointer",
+          }}
+        >
+          <option value={DEFAULT_PAGE_SIZE} hidden>
+            {paginationText.showPerPage(DEFAULT_PAGE_SIZE)}
+          </option>
+          {PAGE_SIZE_OPTIONS.map((size) => (
+            <option key={size} value={size}>
+              {paginationText.showPerPage(size)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => changePage(safePage - 1)}
+          disabled={safePage === 1}
+          style={{
+            height: 32,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "var(--rukn-bg-card)",
+            color: safePage === 1 ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
+            fontSize: 11.5,
+            fontWeight: 800,
+            fontFamily: "'Cairo',sans-serif",
+            cursor: safePage === 1 ? "default" : "pointer",
+            opacity: safePage === 1 ? 0.55 : 1,
+          }}
+        >
+          {paginationText.previous}
+        </button>
+        <span style={{
+          minHeight: 32,
+          minWidth: 96,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 10px",
+          borderRadius: 999,
+          border: "1px solid var(--rukn-border-soft)",
+          background: "var(--rukn-bg-soft)",
+          color: "var(--rukn-text-muted)",
+          fontSize: 11.5,
+          fontWeight: 800,
+        }}>
+          {pageLabel}
+        </span>
+        <button
+          type="button"
+          onClick={() => changePage(safePage + 1)}
+          disabled={safePage === totalPages}
+          style={{
+            height: 32,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: "1px solid var(--rukn-border-soft)",
+            background: "var(--rukn-bg-card)",
+            color: safePage === totalPages ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
+            fontSize: 11.5,
+            fontWeight: 800,
+            fontFamily: "'Cairo',sans-serif",
+            cursor: safePage === totalPages ? "default" : "pointer",
+            opacity: safePage === totalPages ? 0.55 : 1,
+          }}
+        >
+          {paginationText.next}
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div style={{ padding: "22px 24px 28px", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -936,6 +1035,7 @@ export default function TrashPage({ store, onToast }) {
             </Button>
           </div>
         </div>
+        {paginationControls}
       </GlassCard>
       {filterMenu}
 
@@ -968,58 +1068,59 @@ export default function TrashPage({ store, onToast }) {
               <GlassCard
                 key={item.key}
                 style={{
-                  padding: "13px 14px",
+                  padding: "9px 12px",
                   display: "grid",
-                  gap: 10,
+                  gap: 7,
                   background: checked ? "linear-gradient(135deg, rgba(212,175,55,.1), rgba(212,175,55,.04))" : "var(--rukn-bg-card)",
                   border: checked ? "1px solid rgba(212,175,55,.34)" : "1px solid var(--rukn-border-soft)",
-                  boxShadow: checked ? "0 14px 34px rgba(212,175,55,.08)" : "0 10px 30px rgba(15,23,42,.07)",
-                  borderRadius: 14,
+                  boxShadow: checked ? "0 10px 24px rgba(212,175,55,.07)" : "0 6px 18px rgba(15,23,42,.045)",
+                  borderRadius: 10,
                 }}
               >
                 <div style={{
                   display: "grid",
                   gridTemplateColumns: "auto minmax(0,1fr) auto",
                   alignItems: "center",
-                  gap: 12,
+                  gap: 10,
                   flexWrap: "wrap",
                 }}>
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggleItem(item.key)}
-                    style={{ width: 18, height: 18 }}
+                    style={{ width: 16, height: 16 }}
                   />
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                       <span style={{
-                        fontSize: 11.5,
+                        fontSize: 11,
                         color: badgeColor,
                         border: `1px solid ${badgeBorder}`,
                         borderRadius: 999,
-                        padding: "2px 8px",
+                        padding: "1px 7px",
                         background: badgeBackground,
                         fontWeight: 800,
                         lineHeight: 1.45,
                       }}>
                         {badgeText}
                       </span>
-                      <strong style={{ fontSize: 15, color: "var(--rukn-text)", lineHeight: 1.35 }}>{item.name}</strong>
+                      <strong style={{ fontSize: 14.5, color: "var(--rukn-text)", lineHeight: 1.3 }}>{item.name}</strong>
                     </div>
                     {item.subtitle && (
-                      <p style={{ marginTop: 4, fontSize: 12.5, color: "var(--rukn-text-muted)", lineHeight: 1.55 }}>{item.subtitle}</p>
+                      <p style={{ marginTop: 2, fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.45 }}>{item.subtitle}</p>
                     )}
                     {item.programName && (
-                      <p style={{ marginTop: 2, fontSize: 12, color: "var(--rukn-text-muted)" }}>
+                      <p style={{ marginTop: 1, fontSize: 11.5, color: "var(--rukn-text-muted)" }}>
                         {item.programName}
                       </p>
                     )}
                     {item.type === "client" && (
                       <p style={{
-                        marginTop: 2,
-                        fontSize: 12,
+                        marginTop: 1,
+                        fontSize: 11.5,
                         color: clientDeleteBlocked ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
                         fontWeight: clientDeleteBlocked ? 800 : 700,
+                        lineHeight: 1.4,
                       }}>
                         {item.permanentDeleteCheckPending
                           ? paymentGuardText.checking
@@ -1027,20 +1128,20 @@ export default function TrashPage({ store, onToast }) {
                       </p>
                     )}
                     {isProgram && item.linkedCount > 0 && (
-                      <p style={{ marginTop: 2, fontSize: 12, color: "var(--rukn-text-muted)" }}>
+                      <p style={{ marginTop: 1, fontSize: 11.5, color: "var(--rukn-text-muted)" }}>
                         {t.trashClientsLinked.replace("{count}", item.linkedCount)}
                       </p>
                     )}
                   </div>
                   <div style={{
                     textAlign: dir === "rtl" ? "left" : "right",
-                    minWidth: 126,
-                    padding: "5px 0",
+                    minWidth: 112,
+                    padding: "1px 0",
                   }}>
-                    <p style={{ fontSize: 11, color: "var(--rukn-text-muted)", fontWeight: 700 }}>{t.trashDeletedOn}</p>
-                    <p style={{ fontSize: 13, fontWeight: 800, color: "var(--rukn-text)", marginTop: 3 }}>{formatDate(item.deletedAt)}</p>
+                    <p style={{ fontSize: 10.5, color: "var(--rukn-text-muted)", fontWeight: 700 }}>{t.trashDeletedOn}</p>
+                    <p style={{ fontSize: 12.5, fontWeight: 800, color: "var(--rukn-text)", marginTop: 2 }}>{formatDate(item.deletedAt)}</p>
                     {item.batchId && (
-                      <p style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
+                      <p style={{ fontSize: 10.5, color: "var(--rukn-text-muted)" }}>
                         #{item.batchId.slice(0, 8)}
                       </p>
                     )}
@@ -1051,97 +1152,6 @@ export default function TrashPage({ store, onToast }) {
           })
         )}
       </div>
-
-      {showPaginationControls && (
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 10,
-          flexWrap: "wrap",
-          paddingTop: 4,
-        }}>
-          <select
-            value={pageSize}
-            onChange={handlePageSizeChange}
-            aria-label={paginationText.showPerPage(pageSize)}
-            style={{
-              height: 34,
-              borderRadius: 999,
-              border: "1px solid var(--rukn-border-soft)",
-              background: "var(--rukn-bg-card)",
-              color: "var(--rukn-text)",
-              padding: "0 12px",
-              fontSize: 12,
-              fontWeight: 800,
-              fontFamily: "'Cairo',sans-serif",
-              cursor: "pointer",
-            }}
-          >
-            <option value={DEFAULT_PAGE_SIZE} hidden>
-              {paginationText.showPerPage(DEFAULT_PAGE_SIZE)}
-            </option>
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>
-                {paginationText.showPerPage(size)}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => changePage(safePage - 1)}
-            disabled={safePage === 1}
-            style={{
-              height: 34,
-              padding: "0 14px",
-              borderRadius: 999,
-              border: "1px solid var(--rukn-border-soft)",
-              background: "var(--rukn-bg-card)",
-              color: safePage === 1 ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
-              fontSize: 12,
-              fontWeight: 800,
-              fontFamily: "'Cairo',sans-serif",
-              cursor: safePage === 1 ? "default" : "pointer",
-              opacity: safePage === 1 ? 0.55 : 1,
-            }}
-          >
-            {paginationText.previous}
-          </button>
-          <div style={{
-            minWidth: 140,
-            display: "grid",
-            gap: 2,
-            textAlign: "center",
-            color: "var(--rukn-text-muted)",
-            fontSize: 12,
-            fontWeight: 800,
-            lineHeight: 1.35,
-          }}>
-            <span>{pageLabel}</span>
-            {rangeLabel && <span style={{ fontSize: 11, fontWeight: 700 }}>{rangeLabel}</span>}
-          </div>
-          <button
-            type="button"
-            onClick={() => changePage(safePage + 1)}
-            disabled={safePage === totalPages}
-            style={{
-              height: 34,
-              padding: "0 14px",
-              borderRadius: 999,
-              border: "1px solid var(--rukn-border-soft)",
-              background: "var(--rukn-bg-card)",
-              color: safePage === totalPages ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
-              fontSize: 12,
-              fontWeight: 800,
-              fontFamily: "'Cairo',sans-serif",
-              cursor: safePage === totalPages ? "default" : "pointer",
-              opacity: safePage === totalPages ? 0.55 : 1,
-            }}
-          >
-            {paginationText.next}
-          </button>
-        </div>
-      )}
 
       <Modal
         open={confirmOpen}
