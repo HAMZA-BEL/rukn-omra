@@ -32,6 +32,7 @@ import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
 import BulkClientActionsBar from "./programs/BulkClientActionsBar";
 import ProgramClientsTable from "./programs/ProgramClientsTable";
 import ProgramClientRow from "./programs/ProgramClientRow";
+import TransferClientModal from "./programs/TransferClientModal";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -44,7 +45,6 @@ import {
 } from "../utils/hotelDates";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { db } from "../lib/db";
-import TransferSheet from "./TransferSheet";
 import { AppIcon } from "./Icon";
 import {
   getPackageRoomPrice,
@@ -2935,11 +2935,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             onCancel={()=>setEditingClient(null)} />
         )}
       </Modal>
-      <TransferSheet
-        open={transferSheetOpen}
+      <TransferClientModal
+        isOpen={transferSheetOpen}
         onClose={closeTransferSheet}
         clients={transferList}
-        programs={allPrograms}
+        availablePrograms={allPrograms}
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
         getClientPayments={getClientPayments}
