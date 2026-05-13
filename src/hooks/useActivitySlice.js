@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import {
-  archiveOldActivity,
+  clearActivityEntries,
   fetchActivityPage,
   fetchRecentActivity,
   insertActivityEntry,
@@ -8,6 +8,12 @@ import {
 
 const DASHBOARD_ACTIVITY_LIMIT = 5;
 const ACTIVITY_CACHE_LIMIT = 500;
+
+const getActivityTimestamp = (entry = {}) => {
+  const raw = entry.time || entry.created_at || entry.createdAt || entry.date || entry.timestamp;
+  const date = raw ? new Date(raw) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+};
 
 export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) {
   const [activityLog, setActivityLog] = useState([]);
@@ -30,12 +36,27 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
     [agencyId, isSupabaseEnabled, activityLog]
   );
 
-  const archiveActivityLog = useCallback(
-    (days = 180) => {
+  const clearActivityLog = useCallback(
+    async (days = 0) => {
+      const numericDays = Math.max(0, Number(days) || 0);
+      const cutoff = Date.now() - numericDays * 86400000;
       if (!isSupabaseEnabled || !agencyId) {
-        return Promise.resolve({ data: null, error: null });
+        let deleted = 0;
+        setActivityLog((prev) => {
+          const next = prev.filter((entry) => {
+            const keep = getActivityTimestamp(entry) >= cutoff;
+            if (!keep) deleted += 1;
+            return keep;
+          });
+          return next;
+        });
+        return { data: deleted, error: null };
       }
-      return archiveOldActivity(agencyId, days);
+      const result = await clearActivityEntries(agencyId, numericDays);
+      if (!result?.error) {
+        setActivityLog((prev) => prev.filter((entry) => getActivityTimestamp(entry) >= cutoff));
+      }
+      return result;
     },
     [agencyId, isSupabaseEnabled]
   );
@@ -61,7 +82,7 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
     activityLog,
     setInitialActivity,
     fetchActivityLogPage,
-    archiveActivityLog,
+    clearActivityLog,
     logActivity,
   };
 }

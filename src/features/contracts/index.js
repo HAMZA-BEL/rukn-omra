@@ -1,5 +1,8 @@
 export { ContractTemplatesSettings } from "./components/ContractTemplatesSettings";
-export { downloadSingleContract } from "./services/contractGeneration";
+export {
+  downloadSingleContract,
+  exportProgramWordContractsZip,
+} from "./services/contractGeneration";
 export {
   fetchContractTemplates,
   saveContractTemplate,

@@ -1,7 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { Filter } from "lucide-react";
-import { GlassCard, Button, SearchBar } from "./UI";
+import { GlassCard, Button, SearchBar, Modal } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { translateActivityDescription } from "../utils/i18nValues";
@@ -99,7 +99,7 @@ const getPeriodStartIso = (periodKey) => {
   return new Date(now.getTime() - days * 86400000).toISOString();
 };
 
-export default function ActivityLogPage({ store }) {
+export default function ActivityLogPage({ store, onToast }) {
   const { t, lang } = useLang();
   const [category, setCategory] = React.useState("all");
   const [period, setPeriod] = React.useState("30");
@@ -110,7 +110,9 @@ export default function ActivityLogPage({ store }) {
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
-  const [archiveBusy, setArchiveBusy] = React.useState(false);
+  const [cleanupBusy, setCleanupBusy] = React.useState(false);
+  const [cleanupConfirmOpen, setCleanupConfirmOpen] = React.useState(false);
+  const [cleanupError, setCleanupError] = React.useState("");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const searchDebounce = React.useRef(null);
   const filtersRef = React.useRef(null);
@@ -120,7 +122,7 @@ export default function ActivityLogPage({ store }) {
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
-  const archiveOldActivityLog = store.archiveOldActivityLog;
+  const clearActivityLog = store.clearActivityLog;
   const cachedActivity = store.activityLog || [];
   const canFetchRemoteActivity = Boolean(store.isSupabaseEnabled && fetchActivityLogPage);
 
@@ -306,15 +308,64 @@ export default function ActivityLogPage({ store }) {
     )
     : null;
 
-  const handleArchivePurge = async () => {
-    if (!archiveOldActivityLog) return;
-    setArchiveBusy(true);
+  const cleanupLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        title: "Confirmer la suppression du journal",
+        message: "Êtes-vous sûr de vouloir supprimer définitivement le journal d’activité ? Ces entrées ne pourront pas être récupérées.",
+        confirm: "Supprimer définitivement",
+        cancel: "Annuler",
+        success: "Journal d’activité supprimé définitivement",
+        error: "Impossible de supprimer le journal d’activité",
+        migrationError: "Impossible de supprimer le journal d’activité : la fonction Supabase clear_activity_log n’est pas installée. Exécutez la migration Activity Log cleanup dans Supabase SQL Editor, puis réessayez.",
+      };
+    }
+    if (lang === "en") {
+      return {
+        title: "Confirm activity log deletion",
+        message: "Are you sure you want to permanently delete the activity log? These entries cannot be recovered.",
+        confirm: "Delete permanently",
+        cancel: "Cancel",
+        success: "Activity log permanently deleted",
+        error: "Unable to delete the activity log",
+        migrationError: "Unable to delete the activity log: the Supabase clear_activity_log function is not installed. Run the Activity Log cleanup migration in Supabase SQL Editor, then try again.",
+      };
+    }
+    return {
+      title: "تأكيد تنظيف السجل",
+      message: "هل أنت متأكد من حذف سجل النشاط نهائيًا؟ لا يمكن استرجاع هذه السجلات بعد الحذف.",
+      confirm: "حذف السجل نهائيًا",
+      cancel: "إلغاء",
+      success: "تم حذف سجل النشاط نهائيًا",
+      error: "تعذر حذف سجل النشاط",
+      migrationError: "تعذر حذف سجل النشاط لأن دالة Supabase clear_activity_log غير مثبتة. شغّل ترحيل تنظيف سجل النشاط في Supabase SQL Editor ثم أعد المحاولة.",
+    };
+  }, [lang]);
+
+  const handleClearActivityLog = async () => {
+    if (!clearActivityLog) return;
+    setCleanupBusy(true);
+    setCleanupError("");
     try {
-      await archiveOldActivityLog(180);
+      const result = await clearActivityLog(0);
+      if (result?.error) {
+        const message = result.error.isMissingMigration ? cleanupLabels.migrationError : cleanupLabels.error;
+        setCleanupError(message);
+        setError(message);
+        onToast?.(message, "error");
+        return;
+      }
+      setCleanupConfirmOpen(false);
+      onToast?.(cleanupLabels.success, "success");
       if (page !== 1) setPage(1);
       else await loadActivities();
+    } catch (err) {
+      console.error("[ActivityLogPage] cleanup failed", err);
+      setCleanupError(cleanupLabels.error);
+      setError(cleanupLabels.error);
+      onToast?.(cleanupLabels.error, "error");
     } finally {
-      setArchiveBusy(false);
+      setCleanupBusy(false);
     }
   };
 
@@ -325,8 +376,16 @@ export default function ActivityLogPage({ store }) {
           <h1 style={{ fontSize:20, fontWeight:800, color:theme.colors.white, lineHeight:1.2 }}>{t.activityLog || "سجل النشاط"}</h1>
           <p style={{ fontSize:12, color:theme.colors.grey, marginTop:3 }}>{t.activityLogDesc || "جميع الأحداث المهمة في النظام"}</p>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleArchivePurge} disabled={archiveBusy}>
-          {archiveBusy ? (t.loading || "جاري التحميل...") : (t.activityArchiveAction || "تنظيف السجل")}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setCleanupError("");
+            setCleanupConfirmOpen(true);
+          }}
+          disabled={cleanupBusy}
+        >
+          {cleanupBusy ? (t.loading || "جاري التحميل...") : (t.activityArchiveAction || "تنظيف السجل")}
         </Button>
       </div>
 
@@ -428,6 +487,56 @@ export default function ActivityLogPage({ store }) {
           </div>
         </div>
       )}
+
+      <Modal
+        open={cleanupConfirmOpen}
+        onClose={() => {
+          if (!cleanupBusy) {
+            setCleanupConfirmOpen(false);
+            setCleanupError("");
+          }
+        }}
+        title={cleanupLabels.title}
+        width={460}
+      >
+        <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+          <p style={{ margin:0, color:"var(--rukn-text-strong)", fontSize:14, lineHeight:1.8 }}>
+            {cleanupLabels.message}
+          </p>
+          {cleanupError && (
+            <div style={{
+              padding:"10px 12px",
+              borderRadius:12,
+              border:"1px solid rgba(239,68,68,.35)",
+              background:"rgba(239,68,68,.12)",
+              color:theme.colors.danger,
+              fontSize:13,
+              lineHeight:1.7,
+            }}>
+              {cleanupError}
+            </div>
+          )}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCleanupConfirmOpen(false);
+                setCleanupError("");
+              }}
+              disabled={cleanupBusy}
+            >
+              {cleanupLabels.cancel}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleClearActivityLog}
+              disabled={cleanupBusy}
+            >
+              {cleanupBusy ? (t.loading || "جاري التحميل...") : cleanupLabels.confirm}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

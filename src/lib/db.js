@@ -26,6 +26,17 @@ const cleanPostgrestSearch = (value) => (
     : ""
 );
 
+const isMissingRpcError = (error, rpcName) => {
+  if (!error) return false;
+  const text = [error.code, error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return text.includes("pgrst202")
+    || (text.includes(rpcName.toLowerCase()) && text.includes("schema cache"))
+    || (text.includes(rpcName.toLowerCase()) && text.includes("could not find"));
+};
+
 const fetchPagedRows = async (buildQuery, pageSize = 1000) => {
   const rows = [];
   let from = 0;
@@ -1277,10 +1288,20 @@ export const db = {
         });
       return { error };
     },
-    async archiveOld(agencyId, days = 180) {
+    async clear(agencyId, days = 0) {
       if (!agencyId) return { data: null, error: null };
-      const { data, error } = await supabase
-        .rpc("archive_activity_log", { days_threshold: days });
+      const { data, error, status } = await supabase
+        .rpc("clear_activity_log", { days_threshold: days });
+      if (status === 404 || isMissingRpcError(error, "clear_activity_log")) {
+        return {
+          data,
+          error: {
+            ...error,
+            isMissingMigration: true,
+            missingRpc: "clear_activity_log",
+          },
+        };
+      }
       return { data, error };
     },
   },

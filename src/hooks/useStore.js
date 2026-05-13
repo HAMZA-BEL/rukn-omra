@@ -460,7 +460,7 @@ export function useStore(agencyId, onToast) {
     activityLog,
     setInitialActivity,
     fetchActivityLogPage,
-    archiveActivityLog,
+    clearActivityLog,
     logActivity,
   } = useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID });
   const {
@@ -604,7 +604,7 @@ export function useStore(agencyId, onToast) {
   // ── Archived / Active split ───────────────────────────────────────────────
   const archivedClients      = useMemo(() => clients.filter(c => !!c.archived),  [clients]);
   const activeClients        = useMemo(() => clients.filter(c => !c.archived),   [clients]);
-  const archiveOldActivityLog = useCallback((days = 180) => archiveActivityLog(days), [archiveActivityLog]);
+  const clearActivityLogConfirmed = useCallback((days = 0) => clearActivityLog(days), [clearActivityLog]);
 
   const badgePhotoApi = useMemo(() => (
     isSupabaseEnabled && agencyId && canUseBadgePhotoStorage()
@@ -1070,21 +1070,6 @@ export function useStore(agencyId, onToast) {
     }
   }, [agencyId, isSupabaseEnabled]);
 
-  useEffect(() => {
-    if (!isSupabaseEnabled || !agencyId) return;
-    const key = `umrah_activity_archive_last_${ns}`;
-    let lastRun = null;
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) lastRun = new Date(raw);
-    } catch { lastRun = null; }
-    const now = new Date();
-    const elapsed = lastRun ? now - lastRun : Number.POSITIVE_INFINITY;
-    if (elapsed < 24 * 60 * 60 * 1000) return;
-    archiveOldActivityLog().finally(() => {
-      try { localStorage.setItem(key, now.toISOString()); } catch {}
-    });
-  }, [archiveOldActivityLog, agencyId, isSupabaseEnabled, ns]);
   // ── Real-time subscriptions ───────────────────────────────────────────────
   useEffect(() => {
     if (!isSupabaseEnabled || !agencyId) return;
@@ -2500,6 +2485,6 @@ export function useStore(agencyId, onToast) {
     deleteNotification,
     deleteNotifications,
     deleteAllArchivedNotifications: deleteAllArchived,
-    fetchActivityLogPage, archiveOldActivityLog, recordActivity: logActivity,
+    fetchActivityLogPage, clearActivityLog: clearActivityLogConfirmed, recordActivity: logActivity,
   };
 }

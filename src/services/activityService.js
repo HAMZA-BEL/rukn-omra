@@ -12,6 +12,6 @@ export function insertActivityEntry(agencyId, userId, entry) {
   return db.activityLog.insert(agencyId, userId, entry);
 }
 
-export function archiveOldActivity(agencyId, days) {
-  return db.activityLog.archiveOld(agencyId, days);
+export function clearActivityEntries(agencyId, days) {
+  return db.activityLog.clear(agencyId, days);
 }

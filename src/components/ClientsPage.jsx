@@ -68,7 +68,7 @@ export default function ClientsPage({ store, onToast }) {
   const { t, tr, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { activeClients, archivedClients, programs,
-          getClientStatus, getClientTotalPaid,
+          getClientStatus, getClientTotalPaid, getClientPayments,
           deleteClient, deleteClientsBulk,
           archiveClient, archiveClients, restoreClient,
           updateClient, transferClients: transferClientsToProgram } = store;
@@ -1161,6 +1161,8 @@ export default function ClientsPage({ store, onToast }) {
         programs={programs}
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
+        getClientPayments={getClientPayments}
+        invoiceApi={store.invoiceApi}
       />
     </div>
   );

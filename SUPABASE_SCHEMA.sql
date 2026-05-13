@@ -271,17 +271,6 @@ create table if not exists public.activity_log (
   created_at   timestamptz default now()
 );
 
-create table if not exists public.activity_log_archive (
-  id           uuid primary key,
-  agency_id    uuid not null references public.agencies(id) on delete cascade,
-  user_id      uuid references auth.users(id) on delete set null,
-  type         text,
-  description  text,
-  client_name  text,
-  created_at   timestamptz default now(),
-  archived_at  timestamptz default now()
-);
-
 drop view if exists public.activity_log_all;
 create view public.activity_log_all
 with (security_invoker = true) as
@@ -357,8 +346,6 @@ create unique index if not exists idx_invoices_active_key
   where invoice_key is not null and status <> 'deleted';
 create index if not exists idx_activity_agency           on public.activity_log(agency_id);
 create index if not exists idx_activity_agency_created   on public.activity_log(agency_id, created_at desc);
-create index if not exists idx_activity_archive_agency   on public.activity_log_archive(agency_id);
-create index if not exists idx_activity_archive_created  on public.activity_log_archive(agency_id, created_at desc);
 create index if not exists idx_notifications_agency on public.notifications(agency_id);
 create index if not exists idx_notifications_state  on public.notifications(agency_id, is_archived, is_read);
 create index if not exists idx_badge_templates_agency on public.badge_templates(agency_id, is_default, updated_at desc);
@@ -392,7 +379,6 @@ alter table public.invoices enable row level security;
 alter table public.badge_templates enable row level security;
 alter table public.contract_templates enable row level security;
 alter table public.activity_log enable row level security;
-alter table public.activity_log_archive enable row level security;
 alter table public.notifications enable row level security;
 
 -- ── 5. RLS Policies ───────────────────────────────────────────
@@ -1295,40 +1281,38 @@ create policy "activity_select" on public.activity_log
 create policy "activity_insert" on public.activity_log
   for insert with check (agency_id = public.get_agency_id());
 
--- activity_log_archive
-drop policy if exists "activity_archive_select" on public.activity_log_archive;
-drop policy if exists "activity_archive_insert" on public.activity_log_archive;
-create policy "activity_archive_select" on public.activity_log_archive
-  for select using (agency_id = public.get_agency_id());
-create policy "activity_archive_insert" on public.activity_log_archive
-  for insert with check (agency_id = public.get_agency_id());
-
--- Archive helper
-create or replace function public.archive_activity_log(days_threshold integer default 180)
+-- Activity log cleanup helper
+create or replace function public.clear_activity_log(days_threshold integer default 0)
 returns integer
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  moved integer;
+  deleted_count integer;
+  current_agency_id uuid;
+  safe_days integer;
 begin
-  with expired as (
-    delete from public.activity_log
-    where agency_id = public.get_agency_id()
-      and created_at < now() - make_interval(days => days_threshold)
-    returning *
-  ),
-  inserted as (
-    insert into public.activity_log_archive (id, agency_id, user_id, type, description, client_name, created_at, archived_at)
-    select id, agency_id, user_id, type, description, client_name, created_at, now()
-    from expired
-    returning 1
-  )
-  select count(*) into moved from inserted;
-  return coalesce(moved, 0);
+  current_agency_id := public.get_agency_id();
+
+  if current_agency_id is null then
+    return 0;
+  end if;
+
+  safe_days := greatest(coalesce(days_threshold, 0), 0);
+
+  delete from public.activity_log
+  where agency_id = current_agency_id
+    and created_at < now() - make_interval(days => safe_days);
+
+  get diagnostics deleted_count = row_count;
+
+  return coalesce(deleted_count, 0);
 end;
 $$;
+
+revoke all on function public.clear_activity_log(integer) from public, anon;
+grant execute on function public.clear_activity_log(integer) to authenticated;
 
 -- ── 6. Trigger: auto-create user profile on auth signup ───────
 create or replace function public.handle_new_auth_user()

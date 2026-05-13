@@ -84,6 +84,9 @@ import {
   downloadProgramBadgesPdf,
 } from "../features/badges";
 import {
+  exportProgramWordContractsZip,
+} from "../features/contracts";
+import {
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -1815,6 +1818,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
   const [badgeExportBusy, setBadgeExportBusy] = React.useState(false);
+  const [wordContractExportBusy, setWordContractExportBusy] = React.useState(false);
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
@@ -2226,11 +2230,23 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     if (lang === "en") return "Export Amadeus Excel";
     return "تصدير Amadeus Excel";
   }, [lang]);
+  const wordContractsExportLabels = React.useMemo(() => ({
+    action: lang === "fr" ? "Exporter les contrats Word" : lang === "en" ? "Export Word contracts" : "تصدير عقود Word",
+    busy: lang === "fr" ? "Génération des contrats Word..." : lang === "en" ? "Generating Word contracts..." : "جاري تجهيز عقود Word...",
+    loading: t.loading || (lang === "fr" ? "Chargement..." : lang === "en" ? "Loading..." : "جاري التحميل..."),
+    noClients: lang === "fr" ? "Aucun pèlerin à exporter." : lang === "en" ? "No pilgrims available for contract export." : "لا يوجد معتمرون لتصدير عقودهم",
+    success: lang === "fr" ? "Les contrats Word ont été générés avec succès." : lang === "en" ? "Word contracts generated successfully." : "تم تجهيز عقود Word بنجاح",
+    error: lang === "fr" ? "Impossible d’exporter les contrats Word." : lang === "en" ? "Unable to export Word contracts." : "تعذر تصدير عقود Word",
+  }), [lang, t.loading]);
   const closeHeaderActions = React.useCallback(() => {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
   }, []);
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
+  const getCurrentWordContractExportClients = React.useCallback(() => {
+    if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
+    return getCurrentExportClients();
+  }, [checkedIds, getCurrentExportClients, progClients]);
   const notifyNoExportClients = React.useCallback(() => {
     onToast(participantTerms.noMatching, "info");
   }, [onToast, participantTerms.noMatching]);
@@ -2401,6 +2417,38 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
   }, [closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
+  const handleWordContractsExport = React.useCallback(async () => {
+    closeHeaderActions();
+    if (wordContractExportBusy) return;
+    if (!paymentsReady) {
+      onToast(wordContractsExportLabels.loading, "info");
+      return;
+    }
+    const exportClients = getCurrentWordContractExportClients();
+    if (exportClients.length === 0) {
+      onToast(wordContractsExportLabels.noClients, "info");
+      return;
+    }
+    setWordContractExportBusy(true);
+    try {
+      await exportProgramWordContractsZip({
+        agencyId: store.agencyId,
+        clients: exportClients,
+        programClients: progClients,
+        program,
+        getClientPayments,
+        getClientTotalPaid,
+        agency,
+        lang,
+      });
+      onToast(wordContractsExportLabels.success, "success");
+    } catch (error) {
+      console.error("[Contracts] Bulk Word export failed:", error);
+      onToast(wordContractsExportLabels.error, "error");
+    } finally {
+      setWordContractExportBusy(false);
+    }
+  }, [agency, closeHeaderActions, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
   const headerActions = React.useMemo(() => ([
     {
       key: "edit",
@@ -2445,12 +2493,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       onClick: handleBadgePdfExport,
     },
     {
+      key: "word-contracts",
+      icon: "file",
+      label: wordContractExportBusy ? wordContractsExportLabels.busy : wordContractsExportLabels.action,
+      onClick: handleWordContractsExport,
+    },
+    {
       key: "contracts",
       icon: "download",
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -2899,6 +2953,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         programs={allPrograms}
         occupancy={programOccupancy}
         onConfirm={handleTransferConfirm}
+        getClientPayments={getClientPayments}
+        invoiceApi={store.invoiceApi}
       />
       <Modal
         open={bulkDeleteOpen}
@@ -4681,6 +4737,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullWorkspace ? "100%" : "min(72vh, 720px)";
+  const fullWorkspacePanelTop = toolbarCollapsed ? 106 : "calc(58px + 22vh + 18px)";
   const expandRoomingLabel = t.roomingExpandWorkspace || (lang === "fr" ? "Agrandir le rooming dans l’application" : lang === "en" ? "Expand rooming in app" : "توسيع التسكين داخل النظام");
   const browserFullscreenLabel = t.roomingBrowserFullscreen || (lang === "fr" ? "Plein écran" : lang === "en" ? "Full screen" : "فتح بملء الشاشة");
   const exitFullWorkspaceLabel = t.roomingExitFullWorkspace || (lang === "fr" ? "Quitter le mode rooming plein écran" : lang === "en" ? "Exit full rooming mode" : "الخروج من وضع التسكين الكامل");
@@ -5311,6 +5368,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               maxHeight: "22vh",
               overflow: "auto",
               backdropFilter: "blur(14px)",
+              boxSizing: "border-box",
             } : {}),
           }}>
             <RoomingToolbarButton
@@ -5744,12 +5802,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
               boxShadow: fullWorkspace ? "var(--rooming-popover-shadow)" : "var(--rooming-panel-shadow)",
               ...(fullWorkspace ? {
                 position: "absolute",
-                top: 18,
+                top: fullWorkspacePanelTop,
                 bottom: 18,
                 left: 18,
                 zIndex: 31,
                 width: "min(340px, calc(100vw - 36px))",
                 maxWidth: "calc(100vw - 36px)",
+                maxHeight: toolbarCollapsed ? "calc(100vh - 124px)" : "calc(100vh - 58px - 22vh - 36px)",
                 backdropFilter: "blur(14px)",
               } : {}),
             }}>
