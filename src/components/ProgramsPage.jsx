@@ -29,6 +29,7 @@ import BulkClientActionsBar from "./programs/BulkClientActionsBar";
 import ProgramClientsTable from "./programs/ProgramClientsTable";
 import ProgramClientRow from "./programs/ProgramClientRow";
 import ProgramClientModals from "./programs/ProgramClientModals";
+import ProgramDetailOverview from "./programs/ProgramDetailOverview";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -2511,39 +2512,26 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         addClientLabel={participantTerms.addAction || t.addClient}
       />
 
-      <div style={{
-        display:"inline-flex",
-        gap:4,
-        padding:4,
-        marginBottom:18,
-        borderRadius:14,
-        background:"rgba(255,255,255,.04)",
-        border:"1px solid rgba(212,175,55,.14)",
-      }}>
-        {[
+      <ProgramDetailOverview
+        activeTab={programTab}
+        onTabChange={setProgramTab}
+        tabs={[
           { key:"clients", label:participantTerms.plural || t.clients, icon:"users" },
           { key:"rooming", label:"التسكين", icon:"hotel" },
-        ].map(tab => (
-          <button key={tab.key} type="button" onClick={() => setProgramTab(tab.key)}
-            style={{
-              display:"inline-flex",
-              alignItems:"center",
-              gap:7,
-              border:0,
-              borderRadius:11,
-              padding:"8px 14px",
-              background:programTab === tab.key ? "rgba(212,175,55,.16)" : "transparent",
-              color:programTab === tab.key ? tc.gold : tc.grey,
-              fontSize:13,
-              fontWeight:800,
-              cursor:"pointer",
-              fontFamily:"'Cairo',sans-serif",
-            }}>
-            <AppIcon name={tab.icon} size={15} color={programTab === tab.key ? tc.gold : tc.grey} />
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        ]}
+        showSummary={detailDataReady && programTab !== "rooming"}
+        statCards={[
+          { icon:"users", label:t.registered, value:progClients.length, color:tc.gold },
+          { icon:"success", label:t.cleared, value:statusCounts.cleared, color:tc.greenLight },
+          { icon:"partial", label:t.partial, value:statusCounts.partial, color:tc.warning },
+          { icon:"unpaid", label:t.unpaid, value:statusCounts.unpaid, color:tc.danger },
+          { icon:"banknote", label:t.collected, value:formatCurrencyForLang(totals.paid), color:tc.gold },
+          { icon:"hourglass", label:t.remaining, value:formatCurrencyForLang(totalRem), color:tc.warning },
+        ]}
+        clearanceLabel={t.programClearanceRate}
+        clearanceValueLabel={`${pct}% ${t.cleared}`}
+        clearancePercent={pct}
+      />
 
       {!detailDataReady ? (
         <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
@@ -2562,40 +2550,6 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         />
       ) : (
         <>
-      {/* KPI row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))", gap:12, marginBottom:24 }}>
-        {[
-          ["users", t.registered, progClients.length,          tc.gold],
-          ["success", t.cleared,    statusCounts.cleared,        tc.greenLight],
-          ["partial", t.partial,    statusCounts.partial,        tc.warning],
-          ["unpaid", t.unpaid,     statusCounts.unpaid,         tc.danger],
-          ["banknote", t.collected,  formatCurrencyForLang(totals.paid), tc.gold],
-          ["hourglass", t.remaining,  formatCurrencyForLang(totalRem),    tc.warning],
-        ].map(([ic,lb,vl,cl],i)=>(
-          <div key={lb} className="animate-fadeInUp" style={{ animationDelay:`${i*.04}s` }}>
-            <GlassCard gold style={{ padding:"14px 16px", textAlign:"center" }}>
-              <AppIcon name={ic} size={20} color={cl} style={{ marginBottom:5 }} />
-              <p style={{ fontSize:15, fontWeight:800, color:cl, fontFamily:"'Amiri',serif", lineHeight:1 }}>{vl}</p>
-              <p style={{ fontSize:11, color:tc.grey, marginTop:5 }}>{lb}</p>
-            </GlassCard>
-          </div>
-        ))}
-      </div>
-
-      {/* clearance progress */}
-      <div style={{ background:"rgba(255,255,255,.03)", border:"1px solid rgba(212,175,55,.15)",
-        borderRadius:12, padding:"14px 20px", marginBottom:22 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, fontSize:13 }}>
-          <span style={{ color:tc.grey }}>{t.programClearanceRate}</span>
-          <span style={{ color:tc.gold, fontWeight:700 }}>{pct}% {t.cleared}</span>
-        </div>
-        <div style={{ height:8, background:"rgba(255,255,255,.06)", borderRadius:4, overflow:"hidden" }}>
-          <div style={{ height:"100%", width:`${pct}%`,
-            background:"linear-gradient(90deg,#22c55e,#d4af37)", borderRadius:4,
-            transition:"width 1.2s ease", boxShadow:"0 0 12px rgba(34,197,94,.4)" }} />
-        </div>
-      </div>
-
       <GlassCard gold style={{ padding:"14px 16px", marginBottom:18 }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:10 }}>
           <div>
