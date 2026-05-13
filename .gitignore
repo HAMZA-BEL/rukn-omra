@@ -3,4 +3,4 @@ build/
 dist/
 .env/
 .env.local
-.env.production
+.env.production.claude/settings.local.json
