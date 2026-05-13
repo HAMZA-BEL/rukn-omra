@@ -1,5 +1,4 @@
 import React from "react";
-import { createPortal } from "react-dom";
 import jspreadsheet from "jspreadsheet-ce";
 import "jspreadsheet-ce/dist/jspreadsheet.css";
 import "jsuites/dist/jsuites.css";
@@ -18,7 +17,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, StatusBadge, preventNumberInputWheelChange } from "./UI";
+import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, preventNumberInputWheelChange } from "./UI";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
 import ImportClientsModal from "./ImportClientsModal";
@@ -32,6 +31,7 @@ import ProgramDetailHeader from "./programs/ProgramDetailHeader";
 import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
 import BulkClientActionsBar from "./programs/BulkClientActionsBar";
 import ProgramClientsTable from "./programs/ProgramClientsTable";
+import ProgramClientRow from "./programs/ProgramClientRow";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -74,12 +74,10 @@ import {
 import {
   INCOMPLETE_INFO_FILTER,
   clientNeedsCompletion,
-  getClientCompletionBadges,
   getClientCompletionLabels,
   getClientDisplayStatus,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
-import { isMinor } from "../utils/age";
 import {
   downloadProgramBadgesPdf,
 } from "../features/badges";
@@ -133,20 +131,6 @@ const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
 const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
 const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
-const completionBadgeStyle = (tone) => ({
-  display:"inline-flex",
-  alignItems:"center",
-  gap:4,
-  padding:"1px 6px",
-  borderRadius:999,
-  border:tone === "warning" ? "1px solid rgba(245,158,11,.32)" : "1px solid rgba(148,163,184,.25)",
-  background:tone === "warning" ? "rgba(245,158,11,.12)" : "rgba(148,163,184,.1)",
-  color:tone === "warning" ? tc.warning : tc.grey,
-  fontSize:9.5,
-  lineHeight:1.35,
-  fontWeight:800,
-  whiteSpace:"nowrap",
-});
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
 const ROOMING_BASE_CELL_WIDTH = 132;
@@ -2859,7 +2843,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             const rem  = Math.max(0, (c.salePrice||c.price||0) - paid);
             const stat = getClientDisplayStatus(c, program, getClientStatus(c));
             return (
-              <InnerClientRow key={c.id} client={c} index={programClientStartIndex + i}
+              <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
                 paid={paid} remaining={rem} status={stat}
                 onClick={()=>setSelectedClient(c)}
@@ -8700,7 +8684,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
 }
 
 // ═══════════════════════════════════════
-// INNER CLIENT ROW
+// HEADER SELECT CHECKBOX
 // ═══════════════════════════════════════
 function HeaderSelectCheckbox({ checked, indeterminate, onChange, label }) {
   const inputRef = React.useRef(null);
@@ -8725,337 +8709,5 @@ function HeaderSelectCheckbox({ checked, indeterminate, onChange, label }) {
         }}
       />
     </span>
-  );
-}
-
-function InnerClientRow({
-  client,
-  program,
-  index,
-  paid,
-  remaining,
-  status,
-  onClick,
-  onEdit,
-  onDelete,
-  onTransfer,
-  selectMode = false,
-  showCheckbox = false,
-  isChecked = false,
-  onCheck,
-  gridTemplate,
-}) {
-  const [hov, setHov] = React.useState(false);
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  const { lang, dir, t } = useLang();
-  const isRTL = dir === "rtl";
-  const paidLabel = formatCurrency(paid, lang);
-  const remainingLabel = formatCurrency(remaining, lang);
-  const btnRef = React.useRef();
-  const menuRef = React.useRef();
-  const menuPos = useDropdownPosition({
-    anchorRef: btnRef,
-    menuRef,
-    open: menuOpen,
-    rtl: isRTL,
-    offset: MENU_OFFSET_PX,
-  });
-
-  const fallbackName = resolveClientDisplayName(client, "؟");
-  const avatarInitial = fallbackName ? fallbackName[0] : "؟";
-  const phoneLabel = client.phone ? `${client.phone}` : "";
-  const cityLabel = client.city ? `• ${client.city}` : "";
-  const packageLabel = translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "";
-  const roomLabel = translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "";
-  const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
-  const registrationSource = (client.registrationSource || client.registration_source || "").trim();
-  const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
-  const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
-  const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
-
-  const handleRowClick = () => {
-    if (selectMode && showCheckbox) {
-      onCheck?.();
-      return;
-    }
-    onClick?.();
-  };
-
-  React.useEffect(() => {
-    if (!menuOpen) return;
-    const h = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target) &&
-          btnRef.current  && !btnRef.current.contains(e.target)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [menuOpen]);
-
-  React.useEffect(() => {
-    if (selectMode && menuOpen) {
-      setMenuOpen(false);
-    }
-  }, [selectMode, menuOpen]);
-
-  React.useEffect(() => {
-    if (!menuOpen) return;
-    const closeOnScroll = () => setMenuOpen(false);
-    window.addEventListener("scroll", closeOnScroll, true);
-    return () => window.removeEventListener("scroll", closeOnScroll, true);
-  }, [menuOpen]);
-
-  return (
-    <div
-      className="animate-fadeInUp"
-      style={{ animationDelay: `${index * .025}s` }}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-    >
-      <div
-        style={{
-          display: "flex",
-          gap: 9,
-          padding: "8px 12px",
-          background: isChecked
-            ? "rgba(212,175,55,.12)"
-            : hov
-            ? "rgba(212,175,55,.05)"
-            : "rgba(255,255,255,.02)",
-          border: `1px solid ${
-            isChecked
-              ? "rgba(212,175,55,.35)"
-              : hov
-              ? "rgba(212,175,55,.2)"
-              : "rgba(255,255,255,.05)"
-          }`,
-          borderRadius: 10,
-          transition: "all .15s",
-          width: "100%",
-          maxWidth: "100%",
-          boxSizing: "border-box",
-        }}
-      >
-        <div
-          onClick={handleRowClick}
-          style={{
-            display: "grid",
-            gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 140px 140px 130px 130px 110px",
-            gap: 10,
-            flex: 1,
-            minWidth: 0,
-            width: "100%",
-            cursor: "pointer",
-            alignItems: "center",
-          }}
-        >
-          {showCheckbox && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <input
-                type="checkbox"
-                checked={isChecked}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  onCheck?.();
-                }}
-                onClick={(e) => e.stopPropagation()}
-                style={{ width: 18, height: 18, accentColor: tc.gold, cursor: "pointer" }}
-              />
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ fontSize: 11, color: tc.grey, fontWeight: 600, width: 20, textAlign: "center" }}>
-              {index + 1}
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 9,
-                  background: "linear-gradient(135deg,rgba(212,175,55,.25),rgba(212,175,55,.08))",
-                  border: "1px solid rgba(212,175,55,.2)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: tc.gold,
-                }}
-              >
-                {avatarInitial}
-              </div>
-            </div>
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              minWidth: 0,
-              flexWrap: "wrap",
-              direction: isRTL ? "rtl" : "ltr",
-            }}>
-              <p style={{ fontWeight: 700, fontSize: 12.5, color: tc.white, margin: 0, minWidth: 0 }}>
-                {fallbackName || "—"}
-              </p>
-              {minorClient && (
-                <span style={{
-                  fontSize: 9.5,
-                  lineHeight: 1.4,
-                  fontWeight: 800,
-                  padding: "1px 7px",
-                  borderRadius: 999,
-                  background: "rgba(59,130,246,.1)",
-                  border: "1px solid rgba(59,130,246,.2)",
-                  color: "var(--rukn-text-strong)",
-                  whiteSpace: "nowrap",
-                }}>
-                  {t.minorBadge || (lang === "fr" ? "Mineur" : lang === "en" ? "Minor" : "قاصر")}
-                </span>
-              )}
-              {secondaryBadges.map((badge) => (
-                <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
-                  {badge.label}
-                </span>
-              ))}
-            </div>
-            <p style={{ fontSize: 10.5, color: tc.grey }}>{infoLine || "—"}</p>
-          </div>
-          <span style={{ color: tc.grey, textAlign: "center", fontSize: 11 }}>
-            {roomLabel || "—"}
-          </span>
-          <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 11 }}>
-            {client.ticketNo || "—"}
-          </span>
-          <span style={{ color: tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
-            {paidLabel}
-          </span>
-          <span style={{ color: remaining > 0 ? tc.warning : tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
-            {remainingLabel}
-          </span>
-          <div style={{ textAlign: "center" }}>
-            <StatusBadge status={status} />
-          </div>
-        </div>
-        {!selectMode && (
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              ref={btnRef}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen((o) => !o);
-              }}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: menuOpen ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
-                border: `1px solid ${
-                  menuOpen ? "var(--rukn-border-hover)" : "var(--rukn-border-soft)"
-                }`,
-                color: menuOpen ? tc.gold : tc.grey,
-                cursor: "pointer",
-                fontSize: 17,
-                fontWeight: 900,
-                letterSpacing: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "all .15s",
-              }}
-            >
-              ···
-            </button>
-            {menuOpen &&
-              createPortal(
-                <div
-                  ref={menuRef}
-                  style={{
-                    position: "fixed",
-                    top: menuPos.top,
-                    left: menuPos.left,
-                    visibility: menuPos.visibility,
-                    zIndex: 9999,
-                    background: "var(--rukn-menu-bg, rgba(20,30,50,0.96))",
-                    border: "1px solid var(--rukn-menu-border, rgba(212,175,55,.3))",
-                    borderRadius: 12,
-                    boxShadow: "var(--rukn-menu-shadow, 0 10px 25px rgba(0,0,0,0.35))",
-                    minWidth: 150,
-                    overflow: "hidden",
-                  }}
-                >
-                  <InnerMenuBtn
-                    icon="edit"
-                    label={t.editLabel || "تعديل"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onEdit();
-                    }}
-                    color="var(--rukn-text-strong)"
-                    hoverBg="var(--rukn-gold-dim)"
-                    isRTL={isRTL}
-                    border
-                  />
-                  {onTransfer && (
-                    <InnerMenuBtn
-                      icon="refresh"
-                      label={t.transferClient || "نقل إلى برنامج"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpen(false);
-                        onTransfer();
-                      }}
-                      color="var(--rukn-text-strong)"
-                      hoverBg="var(--rukn-gold-dim)"
-                      isRTL={isRTL}
-                      border
-                    />
-                  )}
-                  <InnerMenuBtn
-                    icon="trash"
-                    label={t.deleteLabel || "حذف"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpen(false);
-                      onDelete();
-                    }}
-                    color="var(--rukn-danger)"
-                    hoverBg="var(--rukn-danger-dim)"
-                    isRTL={isRTL}
-                  />
-                </div>,
-                document.body
-              )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════
-// SMALL HELPERS
-// ═══════════════════════════════════════
-function InnerMenuBtn({ icon, label, onClick, color, hoverBg, isRTL, border }) {
-  const [hov, setHov] = React.useState(false);
-  return (
-    <button onClick={onClick}
-      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{
-        display:"flex", alignItems:"center", gap:10,
-        flexDirection: isRTL ? "row" : "row-reverse",
-        width:"100%", padding:"11px 16px",
-        background: hov ? hoverBg : "transparent",
-        border:"none",
-        borderBottom: border ? "1px solid var(--rukn-menu-divider, rgba(255,255,255,.06))" : "none",
-        color, fontSize:13, fontWeight:600,
-        cursor:"pointer", fontFamily:"'Cairo',sans-serif",
-        textAlign: isRTL ? "right" : "left",
-        transition:"background .15s",
-      }}>
-      <AppIcon name={icon} size={15} color={color} />
-      <span>{label}</span>
-    </button>
   );
 }
