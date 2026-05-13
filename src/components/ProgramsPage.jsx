@@ -18,10 +18,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, preventNumberInputWheelChange } from "./UI";
-import ClientDetail from "./ClientDetail";
-import ClientForm from "./ClientForm";
-import ImportClientsModal from "./ImportClientsModal";
-import MRZReader from "./MRZReader";
 import { theme } from "./styles";
 import ProgramCard from "./programs/ProgramCard";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
@@ -32,7 +28,7 @@ import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
 import BulkClientActionsBar from "./programs/BulkClientActionsBar";
 import ProgramClientsTable from "./programs/ProgramClientsTable";
 import ProgramClientRow from "./programs/ProgramClientRow";
-import TransferClientModal from "./programs/TransferClientModal";
+import ProgramClientModals from "./programs/ProgramClientModals";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -2873,108 +2869,52 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       )}
 
       {/* modals */}
-      <Modal open={!!selectedClient} onClose={()=>setSelectedClient(null)} title={participantTerms.fileTitle || t.clientFile} width={640}>
-        {selectedClient && (
-          <ClientDetail client={selectedClient} store={store}
-            onClose={()=>setSelectedClient(null)}
-            onEdit={c=>{setSelectedClient(null);setEditingClient(c);}}
-            onToast={onToast} />
-        )}
-      </Modal>
-      <Modal open={showAddClient} onClose={()=>setShowAddClient(false)} title={participantTerms.addAction || t.addClient} width={600}>
-        <ClientForm store={store} defaultProgramId={program.id} lockProgramId={program.id}
-          onSave={()=>{setShowAddClient(false);onToast(t.addSuccess,"success");}}
-          onCancel={()=>setShowAddClient(false)} />
-      </Modal>
-      <Modal open={showExcelImport} onClose={closeExcelImportModal} title={participantExcelImportLabel} width={920}>
-        {showExcelImport && (
-          <ImportClientsModal
-            store={store}
-            onClose={closeExcelImportModal}
-            onToast={onToast}
-            onImportingChange={setExcelImportSaving}
-            programContext={{
-              id: program.id,
-              name: program.name,
-              type: program.type,
-              programType: program.programType,
-              program_type: program.program_type,
-              category: program.category,
-              packages,
-            }}
-          />
-        )}
-      </Modal>
-      <Modal
-        open={showPassportImport}
-        onClose={() => setShowPassportImport(false)}
-        title={participantTerms.passportImport || completionLabels.passportImport}
-        width={1040}
-      >
-        {showPassportImport && (
-          <MRZReader
-            store={store}
-            onToast={onToast}
-            onClose={() => setShowPassportImport(false)}
-            programContext={{
-              id: program.id,
-              name: program.name,
-              type: program.type,
-              programType: program.programType,
-              program_type: program.program_type,
-              category: program.category,
-              packages,
-            }}
-          />
-        )}
-      </Modal>
-      <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={`${t.edit} — ${participantTerms.fileTitle || t.clientFile}`} width={600}>
-        {editingClient && (
-          <ClientForm client={editingClient} store={store}
-            onSave={()=>{setEditingClient(null);onToast(t.updateSuccess,"success");}}
-            onCancel={()=>setEditingClient(null)} />
-        )}
-      </Modal>
-      <TransferClientModal
-        isOpen={transferSheetOpen}
-        onClose={closeTransferSheet}
-        clients={transferList}
+      <ProgramClientModals
+        store={store}
+        onToast={onToast}
+        t={t}
+        tr={tr}
+        program={program}
+        packages={packages}
+        participantTerms={participantTerms}
+        completionLabels={completionLabels}
+        participantExcelImportLabel={participantExcelImportLabel}
+        selectedClient={selectedClient}
+        onCloseClientDetail={() => setSelectedClient(null)}
+        onEditClientFromDetail={(client) => {
+          setSelectedClient(null);
+          setEditingClient(client);
+        }}
+        isAddClientOpen={showAddClient}
+        onCloseAddClient={() => setShowAddClient(false)}
+        onSaveAddClient={() => {
+          setShowAddClient(false);
+          onToast(t.addSuccess, "success");
+        }}
+        isExcelImportOpen={showExcelImport}
+        onCloseExcelImport={closeExcelImportModal}
+        onExcelImportingChange={setExcelImportSaving}
+        isPassportImportOpen={showPassportImport}
+        onClosePassportImport={() => setShowPassportImport(false)}
+        editingClient={editingClient}
+        onCloseEditClient={() => setEditingClient(null)}
+        onSaveEditClient={() => {
+          setEditingClient(null);
+          onToast(t.updateSuccess, "success");
+        }}
+        isTransferOpen={transferSheetOpen}
+        onCloseTransfer={closeTransferSheet}
+        transferClients={transferList}
         availablePrograms={allPrograms}
-        occupancy={programOccupancy}
-        onConfirm={handleTransferConfirm}
+        programOccupancy={programOccupancy}
+        onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
         invoiceApi={store.invoiceApi}
+        isBulkDeleteOpen={bulkDeleteOpen}
+        onCloseBulkDelete={() => setBulkDeleteOpen(false)}
+        bulkDeleteSelectedCount={checkedIds.size}
+        onConfirmBulkDelete={handleConfirmDeleteSelected}
       />
-      <Modal
-        open={bulkDeleteOpen}
-        onClose={() => setBulkDeleteOpen(false)}
-        title={t.confirmDeleteSelectedTitle || t.deleteSelected || "Delete selected"}
-        width={440}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <p style={{
-            margin: 0,
-            color: "var(--rukn-text-strong)",
-            fontSize: 14,
-            lineHeight: 1.8,
-          }}>
-            {tr("confirmDeleteSelected", { count: checkedIds.size })}
-          </p>
-          <div style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 10,
-            flexWrap: "wrap",
-          }}>
-            <Button variant="ghost" onClick={() => setBulkDeleteOpen(false)}>
-              {t.cancel}
-            </Button>
-            <Button variant="danger" icon="trash" onClick={handleConfirmDeleteSelected}>
-              {t.confirmDeleteSelectedAction || t.deleteSelected}
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }
