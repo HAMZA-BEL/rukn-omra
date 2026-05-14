@@ -99,6 +99,7 @@ const normalizePackage = (pkg, index, program = {}) => {
     mealPlan: cleanText(pkg?.mealPlan, program.mealPlan || ""),
     notes: cleanText(pkg?.notes, ""),
     prices,
+    ...(isPlainObject(pkg?.programCosting) ? { programCosting: pkg.programCosting } : {}),
   };
 };
 

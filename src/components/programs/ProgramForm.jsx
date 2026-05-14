@@ -32,6 +32,7 @@ const PROGRAM_TYPE_OPTIONS = [
   { value: "عمرة", label: "عمرة" },
   { value: "حج", label: "حج" },
 ];
+const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);
 
 export default function ProgramForm({ program, store, onSave, onCancel }) {
   const { addProgram, updateProgram } = store;
@@ -140,6 +141,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
       mealPlan: (pkg.mealPlan || "").trim(),
       notes: (pkg.notes || "").trim(),
       prices,
+      ...(isPlainObject(pkg.programCosting) ? { programCosting: pkg.programCosting } : {}),
     };
   }), [packages]);
 

@@ -30,6 +30,8 @@ import ProgramClientsTable from "./programs/ProgramClientsTable";
 import ProgramClientRow from "./programs/ProgramClientRow";
 import ProgramClientModals from "./programs/ProgramClientModals";
 import ProgramDetailOverview from "./programs/ProgramDetailOverview";
+import ProgramCostingModal from "./programs/ProgramCostingModal";
+import { getProgramCostingLabels } from "./programs/programCosting";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -1757,6 +1759,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     transferClients,
     deleteClientsBulk,
     deleteClient,
+    updateProgram,
   } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -1794,6 +1797,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const [programClientPage, setProgramClientPage] = React.useState(1);
   const [programClientPageSize, setProgramClientPageSize] = React.useState(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
   const [programTab, setProgramTab] = React.useState("clients");
+  const [costingOpen, setCostingOpen] = React.useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -2220,6 +2224,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     missingTemplate: lang === "fr" ? "Importez d’abord le modèle de contrat Word." : lang === "en" ? "Upload the Word contract template first." : "ارفع قالب العقد أولًا لتصدير عقود Word.",
     error: lang === "fr" ? "Impossible d’exporter les contrats Word." : lang === "en" ? "Unable to export Word contracts." : "تعذر تصدير عقود Word",
   }), [lang, t.loading]);
+  const costingLabels = React.useMemo(() => getProgramCostingLabels(lang), [lang]);
   const closeHeaderActions = React.useCallback(() => {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
@@ -2319,6 +2324,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     closeHeaderActions();
     onEditProgram?.();
   }, [closeHeaderActions, onEditProgram]);
+  const handleCostingOpen = React.useCallback(() => {
+    closeHeaderActions();
+    setCostingOpen(true);
+  }, [closeHeaderActions]);
   const handlePilgrimsListExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -2443,6 +2452,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       onClick: handleEditProgram,
     },
     {
+      key: "costing",
+      icon: "coins",
+      label: costingLabels.action,
+      onClick: handleCostingOpen,
+    },
+    {
       key: "excel-import",
       icon: "import",
       label: participantExcelImportLabel,
@@ -2490,7 +2505,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -2823,6 +2838,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       )}
 
       {/* modals */}
+      <ProgramCostingModal
+        open={costingOpen}
+        onClose={() => setCostingOpen(false)}
+        program={program}
+        packages={packages}
+        agency={agency}
+        onUpdateProgram={(nextProgram) => updateProgram?.(program.id, nextProgram)}
+        onToast={onToast}
+      />
       <ProgramClientModals
         store={store}
         onToast={onToast}
