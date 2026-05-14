@@ -7,6 +7,7 @@ import { supabase } from "./supabase";
 import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
+import { getClientServiceType } from "../utils/clientServiceTypes";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -178,6 +179,7 @@ const fromProgram = (row) => ({
 
 const toClient = (c, agencyId) => {
   const normalizedGender = normalizeGender(c.gender || c.passport?.gender);
+  const serviceType = getClientServiceType(c);
   const rooming = c.docs?.rooming || (
     c.roomingGroupId || c.roomCategory
       ? {
@@ -218,7 +220,7 @@ const toClient = (c, agencyId) => {
   represented_by_client_id: normalizeForeignKey(c.representedByClientId ?? c.represented_by_client_id ?? c.guardianClientId ?? c.guardian_client_id),
   represented_by_relationship: cleanString(c.representedByRelationship ?? c.represented_by_relationship ?? c.guardianRelationship ?? c.guardian_relationship),
   passport:          passport,
-  docs:              { ...(c.docs ?? {}), ...(badgePhotoPath ? { badgePhotoPath } : {}), ...(rooming ? { rooming } : {}) },
+  docs:              { ...(c.docs ?? {}), serviceType, ...(badgePhotoPath ? { badgePhotoPath } : {}), ...(rooming ? { rooming } : {}) },
   notes:             cleanString(c.notes),
   registration_date: c.registrationDate ?? null,
   last_modified:     c.lastModified     ?? null,
@@ -232,6 +234,7 @@ const toClient = (c, agencyId) => {
 
 const fromClient = (row) => {
   const gender = normalizeGender(row.gender || row.passport?.gender);
+  const serviceType = getClientServiceType({ docs: row.docs });
   const rooming = row.docs?.rooming || {};
   return {
   id:               row.id,
@@ -252,6 +255,7 @@ const fromClient = (row) => {
   hotelMadina:      row.hotel_madina,
   roomType:         row.room_type,
   roomTypeLabel:    getRoomTypeLabel(row.room_type),
+  serviceType,
   roomingGroupId:   rooming.groupId || "",
   roomingGroupName: rooming.groupName || "",
   roomCategory:     rooming.category || "",
@@ -267,7 +271,7 @@ const fromClient = (row) => {
   representedByRelationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
   represented_by_relationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
   passport:         row.passport ?? {},
-  docs:             row.docs ?? {},
+  docs:             { ...(row.docs ?? {}), serviceType },
   badgePhotoPath:   row.docs?.badgePhotoPath || "",
   notes:            row.notes,
   registrationDate: row.registration_date,

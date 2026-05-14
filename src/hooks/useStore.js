@@ -44,6 +44,8 @@ import {
 } from "../services/agencyBackupArchiveService";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
+import { getClientServiceType } from "../utils/clientServiceTypes";
+import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
@@ -132,6 +134,7 @@ const sanitizeDocs = (docs = {}) => ({
   photo:        Boolean(docs.photo),
   vaccine:      Boolean(docs.vaccine),
   contract:     Boolean(docs.contract),
+  serviceType:  getClientServiceType(docs),
   ...(trimString(docs.badgePhotoPath) ? { badgePhotoPath: trimString(docs.badgePhotoPath) } : {}),
   ...(docs.rooming ? { rooming: docs.rooming } : {}),
   ...(docs.deletedProgramSnapshot && typeof docs.deletedProgramSnapshot === "object"
@@ -305,6 +308,7 @@ const prepareClientForSave = (data) => {
   const passport = sanitizePassport(data.passport);
   const rooming = sanitizeRoomingMeta(data, data.docs);
   const badgePhotoPath = trimString(data.badgePhotoPath || data.docs?.badgePhotoPath);
+  const serviceType = getClientServiceType(data);
   const cleaned = {
     ...data,
     firstName: trimString(data.firstName),
@@ -319,6 +323,7 @@ const prepareClientForSave = (data) => {
     representedByRelationship: trimString(data.representedByRelationship || data.represented_by_relationship),
     notes:     typeof data.notes === "string" ? data.notes.trim() : data.notes ?? "",
     gender,
+    serviceType,
     passport:  {
       ...passport,
       cin: trimString(data.cin || passport.cin),
@@ -326,7 +331,7 @@ const prepareClientForSave = (data) => {
     },
     badgePhotoPath,
     docs:      {
-      ...sanitizeDocs({ ...data.docs, badgePhotoPath }),
+      ...sanitizeDocs({ ...data.docs, badgePhotoPath, serviceType }),
       ...(rooming ? { rooming } : {}),
     },
   };
@@ -1126,11 +1131,12 @@ export function useStore(agencyId, onToast) {
       hotelMadina: row.hotel_madina,
       roomType: row.room_type,
       roomTypeLabel: getRoomTypeLabel(row.room_type),
+      serviceType: getClientServiceType({ docs: row.docs }),
       officialPrice: Number(row.official_price ?? 0),
       salePrice: Number(row.sale_price ?? 0),
       ticketNo: row.ticket_no,
       passport: row.passport ?? {},
-      docs: row.docs ?? {},
+      docs: { ...(row.docs ?? {}), serviceType: getClientServiceType({ docs: row.docs }) },
       notes: row.notes,
       registrationDate: row.registration_date,
       lastModified: row.last_modified,
@@ -1219,7 +1225,7 @@ export function useStore(agencyId, onToast) {
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getClientStatus = useCallback((client) => {
     const paid  = getClientTotalPaid(client.id);
-    const price = client.salePrice ?? client.price ?? 0;
+    const price = getClientEffectiveSalePrice(client);
     if (paid === 0)    return "unpaid";
     if (paid >= price) return "cleared";
     return "partial";
@@ -1517,7 +1523,7 @@ export function useStore(agencyId, onToast) {
     const getPaid = (clientId) => paidMap.get(clientId) || 0;
     const getStatus = (client) => {
       const paid  = getPaid(client.id);
-      const price = client.salePrice ?? client.price ?? 0;
+      const price = getClientEffectiveSalePrice(client);
       if (paid === 0)    return "unpaid";
       if (paid >= price) return "cleared";
       return "partial";
@@ -1530,10 +1536,10 @@ export function useStore(agencyId, onToast) {
       cleared:        operationalClients.filter(c => getStatus(c) === "cleared").length,
       partial:        operationalClients.filter(c => getStatus(c) === "partial").length,
       unpaid:         operationalClients.filter(c => getStatus(c) === "unpaid").length,
-      totalRevenue:   operationalClients.reduce((s,c) => s+(c.salePrice??c.price??0), 0),
+      totalRevenue:   operationalClients.reduce((s,c) => s + getClientEffectiveSalePrice(c), 0),
       totalCollected: operationalClients.reduce((s,c) => s+getPaid(c.id), 0),
-      totalRemaining: operationalClients.reduce((s,c) => s+Math.max(0,(c.salePrice??c.price??0)-getPaid(c.id)), 0),
-      totalDiscount:  operationalClients.reduce((s,c) => s+Math.max(0,(c.officialPrice??0)-(c.salePrice??c.officialPrice??0)), 0),
+      totalRemaining: operationalClients.reduce((s,c) => s + getClientRemainingAmount(c, getPaid(c.id)), 0),
+      totalDiscount:  operationalClients.reduce((s,c) => s + Math.max(0, getClientEffectiveOfficialPrice(c) - getClientEffectiveSalePrice(c)), 0),
       docsIncomplete: operationalClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
       programClientCounts: operationalClients.reduce((acc, client) => {
         if (client.programId) acc[client.programId] = (acc[client.programId] || 0) + 1;

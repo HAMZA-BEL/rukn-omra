@@ -52,6 +52,14 @@ import {
   normalizeProgramPackages,
 } from "../utils/programPackages";
 import {
+  CLIENT_SERVICE_TYPES,
+  doesServiceTypeNeedAccommodation,
+  getClientServiceType,
+  getClientServiceTypeAllFilterLabel,
+  getClientServiceTypeLabel,
+} from "../utils/clientServiceTypes";
+import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import {
   buildDuplicateProgramName,
   createDuplicateProgramPayload,
   getProgramDepartureYear,
@@ -346,6 +354,41 @@ const normalizeRoomingCanvasState = (payload = {}, clients = []) => {
   };
 };
 
+const filterRoomingMapByClientIds = (source = {}, allowedClientIds = new Set()) => (
+  Object.fromEntries(Object.entries(source || {}).filter(([clientId]) => allowedClientIds.has(clientId)))
+);
+
+const sanitizeRoomingStateForEligibleClients = (state = {}, eligibleClientIds = new Set()) => {
+  const sourceRooms = Array.isArray(state.rooms) ? state.rooms : [];
+  const sourceUnassigned = Array.isArray(state.unassigned) ? state.unassigned : [];
+  let removedCount = 0;
+  const rooms = sourceRooms.map((room) => {
+    const originalOccupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
+    const occupantIds = originalOccupantIds.filter((clientId) => eligibleClientIds.has(clientId));
+    removedCount += originalOccupantIds.length - occupantIds.length;
+    return {
+      ...room,
+      occupantIds,
+      genderOverrides: filterRoomingMapByClientIds(room.genderOverrides, new Set(occupantIds)),
+      priceOverrides: filterRoomingMapByClientIds(room.priceOverrides, new Set(occupantIds)),
+    };
+  });
+  const assignedIds = new Set(rooms.flatMap((room) => room.occupantIds || []));
+  const unassigned = sourceUnassigned.filter((item) => {
+    const clientId = item?.clientId;
+    return eligibleClientIds.has(clientId) && !assignedIds.has(clientId);
+  });
+  removedCount += sourceUnassigned.length - unassigned.length;
+  const roomLinks = normalizeRoomingLinks(state.roomLinks, rooms);
+  return {
+    rooms,
+    unassigned,
+    roomLinks,
+    version: Number(state.version || 4),
+    removedCount,
+  };
+};
+
 const getRoomBlockHeight = (capacity) => Math.max(1, Number(capacity) || 1) + 3;
 
 const isCoordsInsideRoom = (room, x, y) => {
@@ -524,7 +567,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
     const validOccupantIds = (Array.isArray(room.occupantIds) ? room.occupantIds : [])
       .filter((clientId) => {
         const client = clientsById.get(clientId);
-        return client && String(client.programId || "") === String(programId || "");
+        return client && String(client.programId || "") === String(programId || "") && doesServiceTypeNeedAccommodation(client);
       });
     if (!validOccupantIds.length) return;
     const roomType = normalizeRoomingRoomType(room.roomType) || getRoomingRoomTypeFromCapacity(room.capacity);
@@ -869,6 +912,7 @@ const buildPilgrimsListSheet = (clients = [], lang = "ar", labels = {}) => {
       localName: safeCellValue(getClientArabicName(client) || resolveClientDisplayName(client, "")),
       phone: safeCellValue(client.phone),
       source: safeCellValue(getClientRegistrationSource(client)),
+      serviceType: safeCellValue(getClientServiceTypeLabel(client, {}, lang)),
       index,
     }))
     .sort((a, b) => (
@@ -884,8 +928,9 @@ const buildPilgrimsListSheet = (clients = [], lang = "ar", labels = {}) => {
       labels.localName,
       labels.phone,
       labels.registrationSource,
+      labels.serviceType,
     ],
-    ...rows.map((row) => [row.latinName, row.localName, row.phone, row.source]),
+    ...rows.map((row) => [row.latinName, row.localName, row.phone, row.source, row.serviceType]),
   ];
   const merges = [];
   ["phone", "source"].forEach((field) => {
@@ -1666,15 +1711,15 @@ export default function ProgramsPage({ store, onToast }) {
             {filteredPrograms.map((p, i) => {
               const pc  = clients.filter(c => c.programId === p.id);
               const reg = pc.length;
-              const pct = Math.min((reg / p.seats) * 100, 100);
-            const rev = pc.reduce((s,c) => s + (c.salePrice || c.price || 0), 0);
+            const pct = Math.min((reg / p.seats) * 100, 100);
             const paid= pc.reduce((s,c) => s + getClientTotalPaid(c.id), 0);
+            const rem = pc.reduce((s,c) => s + getClientRemainingAmount(c, getClientTotalPaid(c.id)), 0);
             const cl  = pc.filter(c => getClientStatus(c) === "cleared").length;
             const un  = pc.filter(c => getClientStatus(c) === "unpaid").length;
             return (
               <ProgramCard key={p.id} program={p}
                 registered={reg} pct={pct}
-                totalPaid={paid} totalRemaining={rev-paid}
+                totalPaid={paid} totalRemaining={rem}
                 cleared={cl} unpaid={un} delay={i*.06}
                 onClick={() => openProgramDetail(p.id)}
                 onEdit={e => { e.stopPropagation(); setEditing(p); }}
@@ -1794,11 +1839,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [excelImportSaving]);
   const [bulkActionsOpen, setBulkActionsOpen] = React.useState(false);
   const [packageFilter, setPackageFilter] = React.useState("all");
+  const [serviceTypeFilter, setServiceTypeFilter] = React.useState("all");
   const [programClientPage, setProgramClientPage] = React.useState(1);
   const [programClientPageSize, setProgramClientPageSize] = React.useState(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
   const [programTab, setProgramTab] = React.useState("clients");
   const [costingOpen, setCostingOpen] = React.useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
+  const [serviceTypeFilterOpen, setServiceTypeFilterOpen] = React.useState(false);
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
@@ -1811,6 +1858,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const bulkActionsMenuRef = React.useRef(null);
   const packageFilterRef = React.useRef(null);
   const statusFilterRef = React.useRef(null);
+  const serviceTypeFilterRef = React.useRef(null);
   const detailHydrationRequestedRef = React.useRef(false);
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
@@ -1856,13 +1904,14 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       || (packageFilter === INCOMPLETE_INFO_FILTER && clientNeedsCompletion(c))
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
+    const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(c) === serviceTypeFilter;
     const q   = search.toLowerCase();
     const name = resolveClientDisplayName(c, "").toLowerCase();
     const phone = (c.phone || "").toLowerCase();
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
-    return matchesFilter && matchesPackage && matchesSearch;
-  }), [progClients, filter, packageFilter, search, getClientStatus, program]);
+    return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
+  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getClientStatus, program]);
 
   const totalProgramClientItems = filtered.length;
   const totalProgramClientPages = Math.max(1, Math.ceil(totalProgramClientItems / programClientPageSize));
@@ -1876,9 +1925,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const filteredPaymentTotals = React.useMemo(() => (
     filtered.reduce((acc, client) => {
       const paid = getClientTotalPaid(client.id);
-      const salePrice = client.salePrice || client.price || 0;
       acc.paid += paid;
-      acc.remaining += Math.max(0, salePrice - paid);
+      acc.remaining += getClientRemainingAmount(client, paid);
       return acc;
     }, { paid: 0, remaining: 0 })
   ), [filtered, getClientTotalPaid]);
@@ -1897,6 +1945,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
 
   React.useEffect(() => {
     setPackageFilter("all");
+    setServiceTypeFilter("all");
   }, [program.id]);
 
   React.useEffect(() => {
@@ -1910,7 +1959,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     setProgramClientPage(1);
     setCheckedIds(new Set());
     setBulkActionsOpen(false);
-  }, [search, filter, packageFilter, programTab]);
+  }, [search, filter, packageFilter, serviceTypeFilter, programTab]);
 
   React.useEffect(() => {
     setProgramClientPage((current) => Math.min(Math.max(1, current), totalProgramClientPages));
@@ -1938,7 +1987,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [headerActionsOpen]);
 
   React.useEffect(() => {
-    if (!packageFilterOpen && !statusFilterOpen) return undefined;
+    if (!packageFilterOpen && !statusFilterOpen && !serviceTypeFilterOpen) return undefined;
     const handleOutside = (event) => {
       if (packageFilterOpen && packageFilterRef.current && !packageFilterRef.current.contains(event.target)) {
         setPackageFilterOpen(false);
@@ -1946,11 +1995,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       if (statusFilterOpen && statusFilterRef.current && !statusFilterRef.current.contains(event.target)) {
         setStatusFilterOpen(false);
       }
+      if (serviceTypeFilterOpen && serviceTypeFilterRef.current && !serviceTypeFilterRef.current.contains(event.target)) {
+        setServiceTypeFilterOpen(false);
+      }
     };
     const handleKeyDown = (event) => {
       if (event.key !== "Escape") return;
       setPackageFilterOpen(false);
       setStatusFilterOpen(false);
+      setServiceTypeFilterOpen(false);
     };
     document.addEventListener("pointerdown", handleOutside);
     document.addEventListener("keydown", handleKeyDown);
@@ -1958,7 +2011,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       document.removeEventListener("pointerdown", handleOutside);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [packageFilterOpen, statusFilterOpen]);
+  }, [packageFilterOpen, statusFilterOpen, serviceTypeFilterOpen]);
 
   React.useEffect(() => {
     if (!bulkActionsOpen) return undefined;
@@ -2128,10 +2181,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [totalProgramClientPages]);
 
   const totals = React.useMemo(() => ({
-    revenue: progClients.reduce((s,c)=>s+(c.salePrice||c.price||0),0),
+    revenue: progClients.reduce((s,c)=>s + getClientEffectiveSalePrice(c),0),
     paid:    progClients.reduce((s,c)=>s+getClientTotalPaid(c.id),0),
+    remaining: progClients.reduce((s,c)=>s + getClientRemainingAmount(c, getClientTotalPaid(c.id)),0),
   }), [progClients, getClientTotalPaid]);
-  const totalRem  = Math.max(0, totals.revenue - totals.paid);
+  const totalRem  = totals.remaining;
   const statusCounts = React.useMemo(() => ({
     cleared: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="cleared").length,
     partial: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="partial").length,
@@ -2146,6 +2200,25 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     { key:"unpaid",  label:t.unpaidFilter,  count:statusCounts.unpaid },
   ];
   const activeStatusFilter = filters.find(f => f.key === filter) || filters[0];
+  const serviceTypeFilters = React.useMemo(() => {
+    const countForServiceType = (serviceType) => (
+      progClients.filter((client) => getClientServiceType(client) === serviceType).length
+    );
+    return [
+      {
+        key: "all",
+        label: getClientServiceTypeAllFilterLabel(t, lang),
+        menuLabel: t.all,
+        count: progClients.length,
+      },
+      ...CLIENT_SERVICE_TYPES.map((serviceType) => ({
+        key: serviceType.value,
+        label: getClientServiceTypeLabel(serviceType.value, t, lang),
+        count: countForServiceType(serviceType.value),
+      })),
+    ];
+  }, [progClients, t, lang]);
+  const activeServiceTypeFilter = serviceTypeFilters.find(f => f.key === serviceTypeFilter) || serviceTypeFilters[0];
   const packageChips = React.useMemo(() => {
     const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
     const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
@@ -2199,9 +2272,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     fontSize:10,
   });
   const tableGridTemplate = selectMode
-    ? "38px 46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)"
-    : "46px minmax(0,2.2fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.9fr)";
-  const totalsGridColumn = selectMode ? "1 / span 3" : "1 / span 2";
+    ? "38px 46px minmax(0,2.1fr) minmax(0,.95fr) minmax(0,1.05fr) minmax(0,1fr) minmax(0,.95fr) minmax(0,.95fr) minmax(0,.85fr)"
+    : "46px minmax(0,2.1fr) minmax(0,.95fr) minmax(0,1.05fr) minmax(0,1fr) minmax(0,.95fr) minmax(0,.95fr) minmax(0,.85fr)";
+  const totalsGridColumn = selectMode ? "1 / span 4" : "1 / span 3";
   const packageById = React.useMemo(() => new Map(packages.map((pkg) => [pkg.id, pkg])), [packages]);
   const packageByLevel = React.useMemo(() => new Map(packages.map((pkg) => [pkg.level, pkg])), [packages]);
   const headerActionsLabel = lang === "fr" ? "Actions" : lang === "en" ? "Actions" : "إجراءات";
@@ -2337,10 +2410,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       localName: "الاسم الكامل",
       phone: "رقم الهاتف",
       registrationSource: "جهة التسجيل",
+      serviceType: t.serviceType || (lang === "fr" ? "Type de service" : lang === "en" ? "Service type" : "نوع الخدمة"),
     };
     const { data, merges } = buildPilgrimsListSheet(exportClients, lang, labels);
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws["!cols"] = [{ wch: 28 }, { wch: 32 }, { wch: 18 }, { wch: 24 }];
+    ws["!cols"] = [{ wch: 28 }, { wch: 32 }, { wch: 18 }, { wch: 24 }, { wch: 18 }];
     if (merges.length) ws["!merges"] = merges;
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "pilgrims");
@@ -2351,7 +2425,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       { bookType: "xlsx", compression: true }
     );
     onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
-  }, [activePackageChip?.label, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady]);
+  }, [activePackageChip?.label, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType]);
   const handleContractsExcelExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -2703,16 +2777,32 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         selectMode={selectMode}
         statusFilterRef={statusFilterRef}
         statusFilterOpen={statusFilterOpen}
-        onToggleStatusFilter={() => setStatusFilterOpen(open => !open)}
+        onToggleStatusFilter={() => {
+          setStatusFilterOpen(open => !open);
+          setServiceTypeFilterOpen(false);
+        }}
         activeStatusFilter={activeStatusFilter}
         filter={filter}
         filters={filters}
+        serviceTypeFilterRef={serviceTypeFilterRef}
+        serviceTypeFilterOpen={serviceTypeFilterOpen}
+        onToggleServiceTypeFilter={() => {
+          setServiceTypeFilterOpen(open => !open);
+          setStatusFilterOpen(false);
+        }}
+        activeServiceTypeFilter={activeServiceTypeFilter}
+        serviceTypeFilter={serviceTypeFilter}
+        serviceTypeFilters={serviceTypeFilters}
         filterMenuBaseStyle={filterMenuBaseStyle}
         filterMenuItemStyle={filterMenuItemStyle}
         filterMenuCountStyle={filterMenuCountStyle}
         onSelectStatusFilter={(key) => {
           setFilter(key);
           setStatusFilterOpen(false);
+        }}
+        onSelectServiceTypeFilter={(key) => {
+          setServiceTypeFilter(key);
+          setServiceTypeFilterOpen(false);
         }}
         searchExpanded={searchExpanded}
         search={search}
@@ -2795,6 +2885,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         labels={{
           name: t.name,
           roomType: t.roomType,
+          serviceType: t.serviceType || "نوع الخدمة",
           ticketNo: t.ticketNo,
           paid: t.paid,
           remaining: t.remaining,
@@ -2805,7 +2896,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         rows={paginatedProgramClients}
         renderRow={(c,i)=>{
             const paid = getClientTotalPaid(c.id);
-            const rem  = Math.max(0, (c.salePrice||c.price||0) - paid);
+            const rem  = getClientRemainingAmount(c, paid);
             const stat = getClientDisplayStatus(c, program, getClientStatus(c));
             return (
               <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
@@ -2968,7 +3059,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     });
     return map;
   }, [packages]);
-  const clientsById = React.useMemo(() => Object.fromEntries(clients.map((client) => [client.id, client])), [clients]);
+  const roomingEligibleClients = React.useMemo(
+    () => clients.filter((client) => doesServiceTypeNeedAccommodation(client)),
+    [clients]
+  );
+  const roomingEligibleClientIds = React.useMemo(
+    () => new Set(roomingEligibleClients.map((client) => client.id).filter(Boolean)),
+    [roomingEligibleClients]
+  );
+  const excludedRoomingClientCount = Math.max(0, clients.length - roomingEligibleClients.length);
+  const clientsById = React.useMemo(() => Object.fromEntries(roomingEligibleClients.map((client) => [client.id, client])), [roomingEligibleClients]);
   const roomingCityLabels = React.useMemo(() => ({
     makkah: t.roomingMakkah || ROOMING_CITY_LABELS.makkah,
     madinah: t.roomingMadinah || ROOMING_CITY_LABELS.madinah,
@@ -2999,6 +3099,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (lang === "fr") return "La répartition a été enregistrée, mais certaines informations des pèlerins n’ont pas pu être mises à jour.";
     if (lang === "en") return "Rooming was saved, but some pilgrim details could not be updated.";
     return "تم حفظ التسكين، لكن تعذر تحديث بعض بيانات المعتمرين.";
+  }, [lang]);
+  const roomingServiceTypeHiddenNote = React.useMemo(() => {
+    if (lang === "fr") return "Certains clients sont masqués de l’hébergement car leur type de service ne nécessite pas d’hébergement.";
+    if (lang === "en") return "Some clients are hidden from rooming because their service type does not require accommodation.";
+    return "تم إخفاء بعض العملاء من التسكين لأن نوع خدمتهم لا يحتاج سكنًا.";
   }, [lang]);
   const unknownGenderBadgeLabel = React.useMemo(() => {
     if (lang === "fr") return "Sexe non défini";
@@ -3085,12 +3190,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const hotelOptions = React.useMemo(() => {
     const values = new Set(getProgramHotelsForCity(program, packages, city));
-    clients.forEach((client) => {
+    roomingEligibleClients.forEach((client) => {
       const hotel = getClientContext(client).hotel;
       if (hotel) values.add(hotel);
     });
     return Array.from(values);
-  }, [program, packages, city, clients, getClientContext]);
+  }, [program, packages, city, roomingEligibleClients, getClientContext]);
 
   const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = [], nextRoomLinks = []) => ({
     kind: "rooming-canvas",
@@ -3104,10 +3209,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const syncRoomingClientsFromRooms = React.useCallback(async (nextRooms = []) => {
     if (typeof syncRoomingClientFields !== "function") return { error: null, updatedCount: 0, skippedCount: 0 };
-    const updates = buildRoomingClientFieldUpdates({ rooms: nextRooms, clients, programId: program.id, city, packages });
+    const updates = buildRoomingClientFieldUpdates({ rooms: nextRooms, clients: roomingEligibleClients, programId: program.id, city, packages });
     if (!updates.length) return { error: null, updatedCount: 0, skippedCount: 0 };
     return syncRoomingClientFields(program.id, updates);
-  }, [city, clients, packages, program.id, syncRoomingClientFields]);
+  }, [city, roomingEligibleClients, packages, program.id, syncRoomingClientFields]);
 
   const writeCanvasCache = React.useCallback((targetCity, payload) => {
     try {
@@ -3130,13 +3235,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       try {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
-        return normalizeRoomingCanvasState(JSON.parse(raw), clients);
+        return normalizeRoomingCanvasState(JSON.parse(raw), roomingEligibleClients);
       } catch (error) {
         console.warn("[rooming] local cache read failed", error);
       }
     }
     return { rooms: [], unassigned: [], roomLinks: [], version: 4 };
-  }, [agencyId, clients, program.id]);
+  }, [agencyId, roomingEligibleClients, program.id]);
 
   React.useEffect(() => {
     let active = true;
@@ -3145,11 +3250,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
     const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
       if (!active || roomingLoadSeqRef.current !== loadSeq) return;
-      const loadedRooms = Array.isArray(loaded.rooms) ? loaded.rooms : [];
-      setRooms(loadedRooms);
-      setUnassigned(Array.isArray(loaded.unassigned) ? loaded.unassigned : []);
-      setRoomLinks(normalizeRoomingLinks(loaded.roomLinks, loadedRooms));
-      setDirty(false);
+      const sanitized = sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
+      setRooms(sanitized.rooms);
+      setUnassigned(sanitized.unassigned);
+      setRoomLinks(normalizeRoomingLinks(sanitized.roomLinks, sanitized.rooms));
+      setDirty(Boolean(sanitized.removedCount));
       roomingRevisionRef.current += 1;
       setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
       setSelectedRoomId(null);
@@ -3160,7 +3265,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       setLinkStartRoomId(null);
       setSelectedRoomLinkId(null);
       setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
-      setRoomingSaveStatus("idle");
+      setRoomingSaveStatus(sanitized.removedCount ? "dirty" : "idle");
     };
 
     const loadRooming = async () => {
@@ -3183,7 +3288,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       }
 
       if (data) {
-        const loaded = normalizeRoomingCanvasState(data, clients);
+        const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
         writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
         applyLoadedState(loaded, data.updatedAt);
         setRoomingLoadStatus("remote");
@@ -3198,7 +3303,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return () => {
       active = false;
     };
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, clients, onToast, program.id, readCanvasStateFromStorage, t.roomingLoadFailed, writeCanvasCache]);
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, roomingEligibleClientIds, roomingEligibleClients, t.roomingLoadFailed, writeCanvasCache]);
 
   const exitRoomingWorkspace = React.useCallback(async () => {
     setRoomingWorkspaceMode("normal");
@@ -3276,7 +3381,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const saveCanvas = React.useCallback(async (notify = true) => {
     const revision = roomingRevisionRef.current;
-    const payload = buildCanvasPayload(city, rooms, unassigned, roomLinks);
+    const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
+    const payload = buildCanvasPayload(city, sanitized.rooms, sanitized.unassigned, sanitized.roomLinks);
     try {
       writeCanvasCache(city, payload);
 
@@ -3328,13 +3434,27 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         );
       }
     }
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomLinks, roomingClientSyncWarning, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
+  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomLinks, roomingClientSyncWarning, roomingEligibleClientIds, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
 
   const markDirty = React.useCallback(() => {
     roomingRevisionRef.current += 1;
     setDirty(true);
     setRoomingSaveStatus("dirty");
   }, []);
+
+  React.useEffect(() => {
+    const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
+    if (!sanitized.removedCount) return;
+    setRooms(sanitized.rooms);
+    setUnassigned(sanitized.unassigned);
+    setRoomLinks(normalizeRoomingLinks(sanitized.roomLinks, sanitized.rooms));
+    setSelectedUnassignedIds((current) => {
+      const available = new Set(sanitized.unassigned.map((item) => item.clientId));
+      const next = new Set(Array.from(current).filter((clientId) => available.has(clientId)));
+      return next.size === current.size ? current : next;
+    });
+    markDirty();
+  }, [markDirty, rooms, roomLinks, roomingEligibleClientIds, unassigned]);
 
   React.useEffect(() => {
     if (!dirty) return undefined;
@@ -3398,13 +3518,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const normalizedUnassigned = React.useMemo(() => {
     const explicit = new Map(unassigned.map((item) => [item.clientId, item]));
-    clients.forEach((client) => {
+    roomingEligibleClients.forEach((client) => {
       if (!clientIdsInRooms.has(client.id) && !explicit.has(client.id)) {
         explicit.set(client.id, { clientId: client.id, reason: "" });
       }
     });
     return Array.from(explicit.values()).filter((item) => clientsById[item.clientId] && !clientIdsInRooms.has(item.clientId));
-  }, [clients, clientsById, clientIdsInRooms, unassigned]);
+  }, [roomingEligibleClients, clientsById, clientIdsInRooms, unassigned]);
 
   React.useEffect(() => {
     const availableIds = new Set(normalizedUnassigned.map((item) => item.clientId));
@@ -3439,6 +3559,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const getCompatibilityResult = React.useCallback((client, room) => {
     if (!client || !room) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
     if (String(client.programId || "") !== String(program.id || "")) return { ok: false, reason: t.programNotFound || "البرنامج غير متاح" };
+    if (!doesServiceTypeNeedAccommodation(client)) return { ok: false, reason: roomingServiceTypeHiddenNote };
     const context = getClientContext(client);
     const occupantIds = room.occupantIds || [];
     const roomType = normalizeRoomingRoomType(room.roomType);
@@ -3449,7 +3570,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (room.category === "male_only" && clientGender === "female") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
     if (room.category === "female_only" && clientGender === "male") return { ok: false, reason: t.roomingGenderMismatch || "الجنس غير متوافق" };
     return { ok: true };
-  }, [getClientContext, program.id, t]);
+  }, [getClientContext, program.id, roomingServiceTypeHiddenNote, t]);
 
   const getRoomingDropConflicts = React.useCallback((client, room) => {
     if (!client || !room) return null;
@@ -3651,10 +3772,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     sourceRooms.forEach((room) => (room.occupantIds || []).forEach((id) => {
       if (clientsById[id]) assigned.add(id);
     }));
-    const total = clients.length;
+    const total = roomingEligibleClients.length;
     const percent = total ? Math.round((assigned.size / total) * 100) : 0;
     return { assigned: assigned.size, total, percent };
-  }, [city, rooms, readCanvasStateFromStorage, clients.length, clientsById]);
+  }, [city, rooms, readCanvasStateFromStorage, roomingEligibleClients.length, clientsById]);
 
   const roomingProgress = React.useMemo(() => ({
     makkah: getRoomingProgressForCity("makkah"),
@@ -3673,7 +3794,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const roomNeeds = React.useMemo(() => {
     const counts = new Map();
-    clients.forEach((client) => {
+    roomingEligibleClients.forEach((client) => {
       const type = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
       if (!type) return;
       counts.set(type, (counts.get(type) || 0) + 1);
@@ -3696,7 +3817,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       totalRooms: details.reduce((sum, item) => sum + item.rooms, 0),
       totalPilgrims: details.reduce((sum, item) => sum + item.pilgrims, 0),
     };
-  }, [clients, getLocalizedRoomTypeLabel]);
+  }, [roomingEligibleClients, getLocalizedRoomTypeLabel]);
 
   const getNextRoomNumber = React.useCallback(() => {
     const values = rooms
@@ -3729,13 +3850,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const generateRooms = React.useCallback(() => {
     if (rooms.length && !window.confirm(t.roomingRegenerateConfirm || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا. سيتم استبدال التسكين الحالي. هل تريد المتابعة؟")) return;
     const nextRooms = [];
-    const nextUnassignedByClientId = new Map(clients.map((client) => [client.id, { clientId: client.id, reason: "" }]));
+    const nextUnassignedByClientId = new Map(roomingEligibleClients.map((client) => [client.id, { clientId: client.id, reason: "" }]));
     const grouped = new Map();
     const addUnassigned = (client, reason) => {
       nextUnassignedByClientId.set(client.id, { clientId: client.id, reason });
     };
 
-    clients.forEach((client) => {
+    roomingEligibleClients.forEach((client) => {
       const context = getClientContext(client);
       if (!context.hotel) return addUnassigned(client, t.roomingMissingHotel || "فندق غير محدد");
       if (!context.roomType) return addUnassigned(client, t.roomingMissingRoomType || "نوع الغرفة غير محدد");
@@ -3798,7 +3919,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setSelectedRoomId(null);
     setDirty(true);
     onToast?.(t.roomingGenerated || "تم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.", "success");
-  }, [rooms.length, clients, getClientContext, onToast, t]);
+  }, [rooms.length, roomingEligibleClients, getClientContext, onToast, t]);
 
   const openCreateRoom = React.useCallback((position = { x: 0, y: 0 }) => {
     setRoomDraft({
@@ -4506,14 +4627,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
-    return readCanvasStateFromStorage(targetCity).rooms;
-  }, [city, rooms, readCanvasStateFromStorage]);
+    return sanitizeRoomingStateForEligibleClients(readCanvasStateFromStorage(targetCity), roomingEligibleClientIds).rooms;
+  }, [city, rooms, readCanvasStateFromStorage, roomingEligibleClientIds]);
 
   const getStoredCanvasLinks = React.useCallback((targetCity) => {
-    const cityRooms = targetCity === city ? rooms : readCanvasStateFromStorage(targetCity).rooms;
-    const cityLinks = targetCity === city ? roomLinks : readCanvasStateFromStorage(targetCity).roomLinks;
+    const stored = targetCity === city
+      ? { rooms, roomLinks }
+      : sanitizeRoomingStateForEligibleClients(readCanvasStateFromStorage(targetCity), roomingEligibleClientIds);
+    const cityRooms = stored.rooms;
+    const cityLinks = stored.roomLinks;
     return normalizeRoomingLinks(cityLinks, cityRooms);
-  }, [city, rooms, roomLinks, readCanvasStateFromStorage]);
+  }, [city, rooms, roomLinks, readCanvasStateFromStorage, roomingEligibleClientIds]);
 
   const getRoomingStayDates = React.useCallback((targetCity, room) => {
     const firstClient = (room.occupantIds || []).map((id) => clientsById[id]).find(Boolean);
@@ -5164,13 +5288,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           <div>
             <p style={{ color: "var(--rooming-text)", fontWeight: 900, fontSize: 16 }}>{t.roomingDesigner || "مصمم التسكين الذكي"}</p>
             <p style={{ color: "var(--rooming-muted)", fontSize: 12, marginTop: 3 }}>
-              {program.name || "—"} • {roomingCityLabels[city]} • {clients.length} {t.pilgrimUnit || "معتمر"}
+              {program.name || "—"} • {roomingCityLabels[city]} • {roomingEligibleClients.length} {t.pilgrimUnit || "معتمر"}
               {roomingStatusText ? ` • ${roomingStatusText}` : ""}
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: "1 1 280px", justifyContent: "center" }}>
             {Object.entries(roomingCityLabels).map(([key, label]) => {
-              const progress = roomingProgress[key] || { assigned: 0, total: clients.length, percent: 0 };
+              const progress = roomingProgress[key] || { assigned: 0, total: roomingEligibleClients.length, percent: 0 };
               return (
                 <div key={key} style={{
                   minWidth: 132,
@@ -5729,6 +5853,21 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                 <Select label="" value={panelHotel} onChange={(event) => setPanelHotel(event.target.value)} options={[{ value: "all", label: t.allHotels || "كل الفنادق" }, ...hotelOptions.map((hotel) => ({ value: hotel, label: hotel }))]} />
                 <Select label="" value={panelRoomType} onChange={(event) => setPanelRoomType(event.target.value)} options={[{ value: "all", label: t.allRooms || "كل الغرف" }, ...roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))]} />
               </div>
+              {excludedRoomingClientCount > 0 && (
+                <p style={{
+                  marginBottom:10,
+                  padding:"8px 10px",
+                  borderRadius:10,
+                  background:"rgba(148,163,184,.08)",
+                  border:"1px solid var(--rooming-panel-border)",
+                  color:"var(--rooming-muted)",
+                  fontSize:11.5,
+                  lineHeight:1.55,
+                  fontWeight:800,
+                }}>
+                  {roomingServiceTypeHiddenNote}
+                </p>
+              )}
               {selectedUnassignedList.length > 0 && (
                 <div style={{
                   display: "grid",

@@ -7,6 +7,11 @@ import { useLang } from "../../hooks/useLang";
 import { useDropdownPosition } from "../../hooks/useDropdownPosition";
 import { formatCurrency } from "../../utils/currency";
 import { getRoomTypeLabel } from "../../utils/programPackages";
+import {
+  clientServiceIncludesAccommodation,
+  getClientServiceType,
+  getClientServiceTypeLabel,
+} from "../../utils/clientServiceTypes";
 import { getClientDisplayName as resolveClientDisplayName } from "../../utils/clientNames";
 import { getClientCompletionBadges } from "../../utils/clientCompletionStatus";
 import { translateHotelLevel, translateRoomType } from "../../utils/i18nValues";
@@ -69,7 +74,11 @@ export default function ProgramClientRow({
   const cityLabel = client.city ? `• ${client.city}` : "";
   const packageLabel = translateHotelLevel(client.packageLevel || client.hotelLevel, lang) || client.packageLevel || client.hotelLevel || "";
   const roomLabel = translateRoomType(client.roomTypeLabel || client.roomType, lang) || getRoomTypeLabel(client.roomType) || "";
-  const bookingLabel = [packageLabel, roomLabel].filter(Boolean).join(" / ");
+  const serviceType = getClientServiceType(client);
+  const serviceTypeLabel = getClientServiceTypeLabel(serviceType, t, lang);
+  const hasAccommodation = clientServiceIncludesAccommodation(serviceType);
+  const displayedRoomLabel = hasAccommodation ? roomLabel : "-";
+  const bookingLabel = [packageLabel, hasAccommodation ? roomLabel : ""].filter(Boolean).join(" / ");
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
   const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
@@ -141,7 +150,7 @@ export default function ProgramClientRow({
           onClick={handleRowClick}
           style={{
             display: "grid",
-            gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 140px 140px 130px 130px 110px",
+            gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 130px 140px 130px 120px 120px 100px",
             gap: 10,
             flex: 1,
             minWidth: 0,
@@ -224,7 +233,25 @@ export default function ProgramClientRow({
             <p style={{ fontSize: 10.5, color: tc.grey }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 11 }}>
-            {roomLabel || "—"}
+            {displayedRoomLabel || "—"}
+          </span>
+          <span style={{ display:"flex", justifyContent:"center", minWidth:0 }}>
+            <span style={{
+              maxWidth:"100%",
+              padding:"3px 8px",
+              borderRadius:999,
+              border:"1px solid rgba(212,175,55,.18)",
+              background:"rgba(212,175,55,.08)",
+              color:tc.gold,
+              fontSize:10.5,
+              fontWeight:800,
+              lineHeight:1.4,
+              whiteSpace:"nowrap",
+              overflow:"hidden",
+              textOverflow:"ellipsis",
+            }}>
+              {serviceTypeLabel}
+            </span>
           </span>
           <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 11 }}>
             {client.ticketNo || "—"}

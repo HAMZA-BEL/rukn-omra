@@ -9,12 +9,15 @@ import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
-import { translateActivityDescription, translateHotelLevel, translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
+import { translateActivityDescription, translateHotelLevel, translatePaymentMethod, translateRoomCategory, translateRoomType } from "../utils/i18nValues";
+import { getStoredProgramCosting } from "./programs/programCosting";
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
 import { downloadSingleContract } from "../features/contracts";
+import { clientServiceIncludesAccommodation, getClientServiceType, getClientServiceTypeLabel } from "../utils/clientServiceTypes";
+import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import {
   getRepresentedByClientId,
   isEligibleRepresentative,
@@ -67,6 +70,29 @@ const translateClientLevel = (value, lang) => {
   return normalized || raw;
 };
 
+const translateClientRoomCategory = (client, lang) => {
+  const raw = client?.roomCategoryLabel
+    || client?.roomCategory
+    || client?.docs?.rooming?.categoryLabel
+    || client?.docs?.rooming?.category
+    || "";
+  return translateRoomCategory(raw, lang) || raw;
+};
+
+const getReferenceCostLabel = (serviceType, fallback, lang) => {
+  if (serviceType === "visa_only") {
+    if (lang === "fr") return "Coût du visa selon la cotation";
+    if (lang === "en") return "Visa cost from costing";
+    return "تكلفة التأشيرة حسب التسعير";
+  }
+  if (serviceType === "ticket_only") {
+    if (lang === "fr") return "Coût du billet selon la cotation";
+    if (lang === "en") return "Ticket cost from costing";
+    return "تكلفة التذكرة حسب التسعير";
+  }
+  return fallback;
+};
+
 const translateProgramAirline = (program, lang) => {
   const airline = getProgramAirline(program);
   if (!airline) return program?.transport || "";
@@ -95,11 +121,28 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
   const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, client, lang), [client, program, lang]);
+  const serviceType = getClientServiceType(client);
+  const serviceTypeLabel = getClientServiceTypeLabel(serviceType, t, lang);
+  const serviceTypeFieldLabel = t.serviceType || (lang === "fr" ? "Type de service" : lang === "en" ? "Service type" : "نوع الخدمة");
+  const serviceHasAccommodation = clientServiceIncludesAccommodation(serviceType);
+  const costingReferenceCost = React.useMemo(() => {
+    if (!program) return 0;
+    const costing = getStoredProgramCosting(program);
+    const sharedCosts = costing?.sharedCosts || {};
+    const value = serviceType === "visa_only"
+      ? sharedCosts.visa
+      : serviceType === "ticket_only"
+        ? sharedCosts.flight
+        : 0;
+    const next = Number(value);
+    return Number.isFinite(next) && next > 0 ? next : 0;
+  }, [program, serviceType]);
+  const referenceCostLabel = getReferenceCostLabel(serviceType, t.officialPrice, lang);
   const payments    = paymentsReady ? getClientPayments(client.id) : [];
   const totalPaid   = paymentsReady ? getClientTotalPaid(client.id) : 0;
-  const salePrice   = client.salePrice   || client.price || 0;
-  const offPrice    = client.officialPrice || salePrice;
-  const remaining   = paymentsReady ? Math.max(0, salePrice - totalPaid) : null;
+  const salePrice   = getClientEffectiveSalePrice(client);
+  const offPrice    = getClientEffectiveOfficialPrice(client);
+  const remaining   = paymentsReady ? getClientRemainingAmount(client, totalPaid) : null;
   const discount    = Math.max(0, offPrice - salePrice);
   const status      = paymentsReady ? getClientStatus(client) : "";
   const displayStatus = paymentsReady ? getClientDisplayStatus(client, program, status) : "";
@@ -306,7 +349,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   }, [paymentsReady, store.ensurePaymentsLoaded, store.isSupabaseEnabled, store.paymentsLoading]);
 
   const financialCards = React.useMemo(() => ([
-    { label:t.officialPrice, val:money(offPrice), color:tc.grey },
+    { label:referenceCostLabel, val:serviceHasAccommodation ? money(offPrice) : costingReferenceCost ? money(costingReferenceCost) : "—", color:tc.grey },
     { label:t.salePrice,     val:money(salePrice), color:tc.gold },
     { label:t.paid,          val:paymentsReady ? money(totalPaid) : loadingLabel, color:paymentsReady ? tc.greenLight : tc.grey },
     {
@@ -314,7 +357,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       val:paymentsReady ? money(remaining) : loadingLabel,
       color:paymentsReady && remaining > 0 ? tc.warning : paymentsReady ? tc.greenLight : tc.grey,
     },
-  ]), [loadingLabel, money, offPrice, paymentsReady, remaining, salePrice, t.officialPrice, t.paid, t.remaining, t.salePrice, totalPaid]);
+  ]), [costingReferenceCost, loadingLabel, money, offPrice, paymentsReady, referenceCostLabel, remaining, salePrice, serviceHasAccommodation, t.paid, t.remaining, t.salePrice, totalPaid]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -330,6 +373,32 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const passExpiry  = p.expiry ? new Date(p.expiry) : null;
   const daysToExp   = passExpiry ? Math.ceil((passExpiry - new Date())/(1000*60*60*24)) : null;
   const minorClient = isMinor(p.birthDate);
+  const showTravelDetails = serviceType === "full_package" || serviceType === "without_visa" || serviceType === "ticket_only";
+  const showProgramDates = serviceType !== "visa_only";
+  const showProgramContacts = serviceType === "full_package" || serviceType === "without_visa" || serviceType === "accommodation_only";
+  const roomCategoryDisplay = translateClientRoomCategory(client, lang);
+  const programDetailRows = [
+    [t.program, program?.name || (showDeletedProgramSnapshot ? getClientDeletedProgramLabel(client, lang) : completionLabels.deletedProgram)],
+    [serviceTypeFieldLabel, serviceTypeLabel],
+    ...(serviceHasAccommodation ? [
+      [t.level || "المستوى", translateClientLevel(client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel, lang) || client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel || "—"],
+      [t.hotelMecca, client.hotelMecca || deletedProgramSnapshot?.hotelMecca || "—"],
+      [t.hotelMadina, client.hotelMadina || deletedProgramSnapshot?.hotelMadina || "—"],
+      [t.roomType, translateRoomType(client.roomTypeLabel || client.roomType || deletedProgramSnapshot?.roomTypeLabel || deletedProgramSnapshot?.roomType, lang) || getRoomTypeLabel(client.roomType || deletedProgramSnapshot?.roomType) || "—"],
+      ...(roomCategoryDisplay ? [[t.roomCategory || "تصنيف الغرفة", roomCategoryDisplay]] : []),
+    ] : []),
+    ...(showTravelDetails ? [
+      [t.transport, program ? (translateProgramAirline(program, lang) || program.transport || "—") : (deletedProgramSnapshot?.transport || "—")],
+      ...(client.ticketNo ? [[t.ticketNo || "رقم التذكرة", client.ticketNo]] : []),
+    ] : []),
+    ...(showProgramContacts && program?.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
+    ...(showProgramContacts && program?.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
+    ...(showProgramContacts && program?.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
+    ...(showProgramDates ? [
+      [t.departure, program?.departure || deletedProgramSnapshot?.departure || "—"],
+      [t.returnDate, program?.returnDate || deletedProgramSnapshot?.returnDate || "—"],
+    ] : []),
+  ];
 
   return (
     <div>
@@ -377,6 +446,20 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 {badge.label}
               </span>
             ))}
+            <span style={{
+              fontSize:11,
+              fontWeight:800,
+              padding:"2px 10px",
+              borderRadius:20,
+              background:"rgba(212,175,55,.12)",
+              border:"1px solid rgba(212,175,55,.28)",
+              color:tc.gold,
+              display:"inline-flex",
+              alignItems:"center",
+              gap:5,
+            }}>
+              <AppIcon name="program" size={12} color={tc.gold} /> {serviceTypeFieldLabel}: {serviceTypeLabel}
+            </span>
           </div>
           {/* Amadeus format */}
           {(client.nom || client.prenom) && (
@@ -397,7 +480,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
                 <AppIcon name="location" size={13} color={tc.grey} /> {t.address || "العنوان"}: {address}
               </span>
             )}
-            {client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
+            {showTravelDetails && client.ticketNo && <span style={{ fontSize:12, color:tc.gold, display:"inline-flex", alignItems:"center", gap:4 }}><AppIcon name="ticket" size={13} color={tc.gold} /> {client.ticketNo}</span>}
           </div>
         </div>
         {paymentsReady ? (
@@ -461,19 +544,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
             )}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-            {[
-              [t.program,     program?.name || (showDeletedProgramSnapshot ? getClientDeletedProgramLabel(client, lang) : completionLabels.deletedProgram)],
-              [t.level || "المستوى",  translateClientLevel(client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel, lang) || client.packageLevel || client.hotelLevel || deletedProgramSnapshot?.packageLevel || deletedProgramSnapshot?.hotelLevel || "—"],
-              [t.hotelMecca,  client.hotelMecca || deletedProgramSnapshot?.hotelMecca || "—"],
-              [t.hotelMadina, client.hotelMadina || deletedProgramSnapshot?.hotelMadina || "—"],
-              [t.roomType,    translateRoomType(client.roomTypeLabel || client.roomType || deletedProgramSnapshot?.roomTypeLabel || deletedProgramSnapshot?.roomType, lang) || getRoomTypeLabel(client.roomType || deletedProgramSnapshot?.roomType) || "—"],
-              [t.transport,   program ? (translateProgramAirline(program, lang) || program.transport || "—") : (deletedProgramSnapshot?.transport || "—")],
-              ...(program?.guidePhone ? [[t.guidePhone || "رقم المؤطر", program.guidePhone]] : []),
-              ...(program?.saudiPhone1 ? [[t.saudiPhone1 || "رقم سعودي 1", program.saudiPhone1]] : []),
-              ...(program?.saudiPhone2 ? [[t.saudiPhone2 || "رقم سعودي 2", program.saudiPhone2]] : []),
-              [t.departure,   program?.departure || deletedProgramSnapshot?.departure || "—"],
-              [t.returnDate,  program?.returnDate || deletedProgramSnapshot?.returnDate || "—"],
-            ].map(([k,v]) => (
+            {programDetailRows.map(([k,v]) => (
               <div key={k}>
                 <p style={{ fontSize:10, color:tc.grey }}>{k}</p>
                 <p style={{ fontSize:12, fontWeight:600, color:"var(--rukn-text-strong)" }}>{v}</p>

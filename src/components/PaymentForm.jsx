@@ -4,6 +4,7 @@ import { PAYMENT_METHODS } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
+import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 
 const normalizePaymentMethodKind = (value = "") => {
   const method = String(value).trim().toLowerCase();
@@ -17,9 +18,9 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   const { t, tr, lang } = useLang();
   const usesServerReceipt = Boolean(store.isSupabaseEnabled && store.agencyId);
   const client    = clients.find(c => c.id === clientId);
-  const salePrice = client ? (client.salePrice || client.price || 0) : 0;
+  const salePrice = client ? getClientEffectiveSalePrice(client) : 0;
   const totalPaid = getClientTotalPaid(clientId);
-  const remaining = Math.max(0, salePrice - totalPaid);
+  const remaining = client ? getClientRemainingAmount(client, totalPaid) : Math.max(0, salePrice - totalPaid);
 
   // Auto-generate receipt number
   const nextReceiptNo = "REC-" + String(payments.length + 1).padStart(3, "0");

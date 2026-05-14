@@ -12,10 +12,17 @@ export default function ProgramClientsToolbar({
   activeStatusFilter,
   filter,
   filters,
+  serviceTypeFilterRef,
+  serviceTypeFilterOpen,
+  onToggleServiceTypeFilter,
+  activeServiceTypeFilter,
+  serviceTypeFilter,
+  serviceTypeFilters = [],
   filterMenuBaseStyle,
   filterMenuItemStyle,
   filterMenuCountStyle,
   onSelectStatusFilter,
+  onSelectServiceTypeFilter,
   searchExpanded,
   search,
   searchInputRef,
@@ -96,6 +103,56 @@ export default function ProgramClientsToolbar({
                   <button key={f.key} type="button" onClick={() => onSelectStatusFilter(f.key)} style={filterMenuItemStyle(filter === f.key)}>
                     <span>{f.label}</span>
                     <span style={filterMenuCountStyle(filter === f.key)}>{f.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div ref={serviceTypeFilterRef} style={{ position:"relative" }}>
+            <button type="button" onClick={onToggleServiceTypeFilter} style={{
+              minWidth:166,
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"space-between",
+              gap:10,
+              padding:"7px 11px",
+              borderRadius:12,
+              background:"rgba(255,255,255,.04)",
+              border:"1px solid rgba(255,255,255,.1)",
+              color:tc.grey,
+              fontSize:12,
+              fontWeight:800,
+              cursor:"pointer",
+              fontFamily:"'Cairo',sans-serif",
+            }}>
+              <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+                <AppIcon name="program" size={14} color={serviceTypeFilter === "all" ? tc.grey : tc.gold} />
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{activeServiceTypeFilter.label}</span>
+              </span>
+              <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+                <span style={{
+                  minWidth:20,
+                  textAlign:"center",
+                  borderRadius:999,
+                  padding:"0 6px",
+                  background:"rgba(255,255,255,.06)",
+                  color:serviceTypeFilter === "all" ? tc.grey : tc.gold,
+                  fontSize:10,
+                }}>{activeServiceTypeFilter.count}</span>
+                <AppIcon name="chevronBack" size={13} color={tc.grey} style={{ transform:"rotate(-90deg)" }} />
+              </span>
+            </button>
+            {serviceTypeFilterOpen && (
+              <div style={{
+                ...filterMenuBaseStyle,
+                insetInlineStart:0,
+                width:218,
+              }}>
+                {serviceTypeFilters.map(f=>(
+                  <button key={f.key} type="button" onClick={() => onSelectServiceTypeFilter(f.key)} style={filterMenuItemStyle(serviceTypeFilter === f.key)}>
+                    <span>{f.menuLabel || f.label}</span>
+                    <span style={filterMenuCountStyle(serviceTypeFilter === f.key)}>{f.count}</span>
                   </button>
                 ))}
               </div>

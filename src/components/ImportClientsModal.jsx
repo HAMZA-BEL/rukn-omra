@@ -5,6 +5,10 @@ import { theme } from "./styles";
 import { AppIcon, IconBubble } from "./Icon";
 import { getPackageRoomPrice, getRoomTypeLabel, normalizeProgramPackages, normalizeRoomTypeKey } from "../utils/programPackages";
 import { getParticipantTerminology } from "../utils/participantTerminology";
+import {
+  getClientServiceTypeLabel,
+  parseClientServiceTypeValue,
+} from "../utils/clientServiceTypes";
 
 const tc = theme.colors;
 const previewText = "var(--rukn-text)";
@@ -102,6 +106,11 @@ const FIELD_DEFS = [
     aliases: ["جهة التسجيل", "المصدر", "source", "registration source", "agence", "وكالة"],
   },
   {
+    key: "serviceType",
+    label: { ar: "نوع الخدمة", fr: "Type de service", en: "Service type" },
+    aliases: ["نوع الخدمة", "الخدمة", "نوع الخدمه", "type de service", "service type", "service"],
+  },
+  {
     key: "notes",
     label: { ar: "ملاحظات", fr: "Notes", en: "Notes" },
     aliases: ["ملاحظات", "ملاحظة", "notes", "remarques"],
@@ -148,6 +157,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "الجنس",
       "CIN",
       "جهة التسجيل",
+      "نوع الخدمة",
       "نوع الغرفة",
       "سعر البيع",
       "ملاحظات",
@@ -172,6 +182,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "Sexe",
       "CIN",
       "Source d’inscription",
+      "Type de service",
       "Type de chambre",
       "Prix de vente",
       "Notes",
@@ -196,6 +207,7 @@ const OFFICIAL_TEMPLATE_BY_LANG = {
       "Gender",
       "National ID",
       "Registration source",
+      "Service type",
       "Room type",
       "Sale price",
       "Notes",
@@ -217,6 +229,7 @@ const OFFICIAL_TEMPLATE_FIELD_KEYS = [
   "gender",
   "cin",
   "registrationSource",
+  "serviceType",
   "roomType",
   "salePrice",
   "notes",
@@ -616,6 +629,7 @@ const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, p
     fields.passportExpiry = expiry.value;
     fields.gender = normalizeGender(fields.gender);
     fields.salePrice = parsePrice(fields.salePrice);
+    fields.serviceType = parseClientServiceTypeValue(fields.serviceType);
 
     const displayName = buildName(fields);
     const displayValues = {
@@ -626,6 +640,7 @@ const buildPreviewRows = ({ rawRows, mapping, edits, existingClients, lang, t, p
       birthDate: fields.birthDate,
       passportExpiry: fields.passportExpiry,
       gender: fields.gender,
+      serviceTypeLabel: getClientServiceTypeLabel(fields.serviceType, t, lang),
       notes: fields.notes,
     };
     const warnings = [];
@@ -749,6 +764,7 @@ const makeClientPayload = (previewRow, programContext, selectedImportHotel = nul
     cin: fields.cin,
     city: fields.city,
     registrationSource: fields.registrationSource,
+    serviceType: fields.serviceType || parseClientServiceTypeValue(""),
     programId: programSelected ? programContext.id : null,
     packageId: selectedPackage?.id || "",
     packageLevel: level,
@@ -1692,7 +1708,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, minWidth: 940, color: previewText }}>
             <thead>
               <tr style={{ background: previewTableHeadBg }}>
-                {[t.row || "#", t.name, t.phone, t.passportNo || "رقم الجواز", t.nationality || "الجنسية", t.birthDate || "تاريخ الميلاد", t.passportExpiry || "انتهاء الجواز", t.gender || "الجنس", t.status || "الحالة", t.notes || "ملاحظات"].map((header) => (
+                {[t.row || "#", t.name, t.phone, t.passportNo || "رقم الجواز", t.nationality || "الجنسية", t.birthDate || "تاريخ الميلاد", t.passportExpiry || "انتهاء الجواز", t.gender || "الجنس", t.serviceType || "نوع الخدمة", t.status || "الحالة", t.notes || "ملاحظات"].map((header) => (
                   <th key={header} style={{
                     padding: "8px 10px",
                     color: tc.gold,
@@ -1715,6 +1731,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
                   <td style={tdStyle(isRTL)}>{row.birthDate || "—"}</td>
                   <td style={tdStyle(isRTL)}>{row.passportExpiry || "—"}</td>
                   <td style={tdStyle(isRTL)}>{row.gender || "—"}</td>
+                  <td style={tdStyle(isRTL)}>{row.serviceTypeLabel || getClientServiceTypeLabel(row.fields?.serviceType, t, lang)}</td>
                   <td style={tdStyle(isRTL)}>
                     <StatusPill accepted={row.accepted} label={row.accepted ? labels.accepted : labels.rejected} />
                   </td>

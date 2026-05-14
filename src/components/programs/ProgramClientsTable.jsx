@@ -39,6 +39,7 @@ export default function ProgramClientsTable({
           <span>#</span>
           <span>{labels.name}</span>
           <span style={{ textAlign:"center" }}>{labels.roomType}</span>
+          <span style={{ textAlign:"center" }}>{labels.serviceType}</span>
           <span style={{ textAlign:"center" }}>{labels.ticketNo}</span>
           <span style={{ textAlign:"center" }}>{labels.paid}</span>
           <span style={{ textAlign:"center" }}>{labels.remaining}</span>
