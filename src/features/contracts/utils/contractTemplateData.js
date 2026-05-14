@@ -1,7 +1,8 @@
 import { getProgramKind } from "../../../utils/participantTerminology";
 import { getClientDisplayName } from "../../../utils/clientNames";
 import { formatCurrency } from "../../../utils/currency";
-import { getRoomTypeLabel } from "../../../utils/programPackages";
+import { calculateHotelStayDates } from "../../../utils/hotelDates";
+import { getRoomTypeLabel, normalizeProgramPackages } from "../../../utils/programPackages";
 import { translateProgramType, translateRoomType } from "../../../utils/i18nValues";
 import { getProgramAirline, normalizeAirlineCode } from "../../../utils/airlines";
 import { getClientCin } from "../../../utils/clientRepresentation";
@@ -71,6 +72,27 @@ const getClientRoomType = (client = {}, lang = "ar") => {
   return translateRoomType(raw, lang) || getRoomTypeLabel(raw) || raw;
 };
 
+const getClientProgramPackage = (program = {}, client = {}) => {
+  const packages = normalizeProgramPackages(program);
+  const packageId = firstValue(client.packageId, client.package_id);
+  const level = firstValue(client.packageLevel, client.hotelLevel, client.hotel_level);
+  return (
+    packages.find((pkg) => packageId && clean(pkg.id) === packageId)
+    || packages.find((pkg) => level && clean(pkg.level) === level)
+    || null
+  );
+};
+
+const getProgramHotelStayDates = (program = {}, client = {}) => {
+  const pkg = getClientProgramPackage(program, client);
+  return calculateHotelStayDates({
+    departureDate: firstValue(program.departure, program.departureDate, program.departure_date),
+    returnDate: firstValue(program.returnDate, program.return_date),
+    visitOrder: firstValue(program.visitOrder, program.visit_order),
+    madinahNights: firstValue(pkg?.madinahNights, pkg?.madinah_nights, program.madinahNights, program.madinah_nights),
+  });
+};
+
 const getRepresentedMinorName = (client = {}) => (
   firstValue(
     [client.firstName, client.lastName].map(clean).filter(Boolean).join(" "),
@@ -134,6 +156,7 @@ export const buildContractTemplateData = ({
   const remaining = Math.max(0, finalSalePrice - paidAmount);
   const programType = translateProgramType(program.type, lang) || clean(program.type);
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
+  const hotelStayDates = getProgramHotelStayDates(program, client);
 
   return {
     represented_minors_list: getRepresentedMinorsText(representedMinorItems, lang),
@@ -157,11 +180,11 @@ export const buildContractTemplateData = ({
       return_date: formatDateValue(firstValue(program.returnDate, program.return_date)),
       airline: getProgramAirlineLabel(program, lang),
       madinah_hotel: firstValue(client.hotelMadina, client.hotel_madina, program.hotelMadina, program.hotel_madina),
-      madinah_checkin: formatDateValue(firstValue(program.madinahCheckin, program.madinah_checkin, program.madinaCheckin, program.madina_checkin)),
-      madinah_checkout: formatDateValue(firstValue(program.madinahCheckout, program.madinah_checkout, program.madinaCheckout, program.madina_checkout)),
+      madinah_checkin: formatDateValue(hotelStayDates.medinaCheckIn),
+      madinah_checkout: formatDateValue(hotelStayDates.medinaCheckOut),
       makkah_hotel: firstValue(client.hotelMecca, client.hotel_mecca, program.hotelMecca, program.hotel_mecca),
-      makkah_checkin: formatDateValue(firstValue(program.makkahCheckin, program.makkah_checkin, program.meccaCheckin, program.mecca_checkin)),
-      makkah_checkout: formatDateValue(firstValue(program.makkahCheckout, program.makkah_checkout, program.meccaCheckout, program.mecca_checkout)),
+      makkah_checkin: formatDateValue(hotelStayDates.makkahCheckIn),
+      makkah_checkout: formatDateValue(hotelStayDates.makkahCheckOut),
     },
     payment: {
       sale_price: formatMoney(finalSalePrice, lang),
