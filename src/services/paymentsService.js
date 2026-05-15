@@ -1,4 +1,5 @@
 import { db } from "../lib/db";
+import { isPreviousPaymentRecord } from "../utils/paymentRecords";
 
 export function fetchPayments(agencyId) {
   return db.payments.fetchAll(agencyId);
@@ -9,6 +10,7 @@ export function fetchTrashedPayments(agencyId) {
 }
 
 export function savePayment(payment, agencyId) {
+  if (isPreviousPaymentRecord(payment)) return db.payments.createPrevious(payment, agencyId);
   return db.payments.upsert(payment, agencyId);
 }
 

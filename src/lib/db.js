@@ -4,7 +4,7 @@
  * on top of Supabase RLS policies).
  */
 import { supabase } from "./supabase";
-import { normalizePaymentRecord } from "../utils/paymentRecords";
+import { isPreviousPaymentRecord, normalizePaymentRecord } from "../utils/paymentRecords";
 import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
@@ -882,6 +882,9 @@ export const db = {
       return { data: data?.map(fromPayment) ?? [], error };
     },
     async upsert(payment, agencyId) {
+      if (isPreviousPaymentRecord(payment)) {
+        return this.createPrevious(payment, agencyId);
+      }
       const { error } = await supabase
         .from("payments").upsert(toPayment(payment, agencyId), { onConflict: "id" });
       return { error };
