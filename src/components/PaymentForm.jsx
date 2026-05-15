@@ -4,7 +4,9 @@ import { PAYMENT_METHODS } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
+import { getStoredProgramCosting } from "./programs/programCosting";
 import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientServiceType } from "../utils/clientServiceTypes";
 
 const normalizePaymentMethodKind = (value = "") => {
   const method = String(value).trim().toLowerCase();
@@ -14,13 +16,24 @@ const normalizePaymentMethodKind = (value = "") => {
 };
 
 export default function PaymentForm({ clientId, clientName, store, onSave, onCancel }) {
-  const { getClientTotalPaid, clients, payments } = store;
+  const { getClientTotalPaid, clients, payments, programs = [] } = store;
   const { t, tr, lang } = useLang();
   const usesServerReceipt = Boolean(store.isSupabaseEnabled && store.agencyId);
   const client    = clients.find(c => c.id === clientId);
-  const salePrice = client ? getClientEffectiveSalePrice(client) : 0;
+  const clientProgram = client ? programs.find((program) => program.id === client.programId) : null;
+  const serviceType = getClientServiceType(client);
+  const costing = clientProgram ? getStoredProgramCosting(clientProgram) : null;
+  const sharedCosts = costing?.sharedCosts || {};
+  const rawReferencePrice = serviceType === "visa_only"
+    ? Number(sharedCosts.visa || 0)
+    : serviceType === "ticket_only"
+      ? Number(sharedCosts.flight || 0)
+      : 0;
+  const referencePrice = Number.isFinite(rawReferencePrice) && rawReferencePrice > 0 ? rawReferencePrice : 0;
+  const pricingOptions = { referencePrice, program: clientProgram };
+  const salePrice = client ? getClientEffectiveSalePrice(client, pricingOptions) : 0;
   const totalPaid = getClientTotalPaid(clientId);
-  const remaining = client ? getClientRemainingAmount(client, totalPaid) : Math.max(0, salePrice - totalPaid);
+  const remaining = client ? getClientRemainingAmount(client, totalPaid, pricingOptions) : Math.max(0, salePrice - totalPaid);
 
   // Auto-generate receipt number
   const nextReceiptNo = "REC-" + String(payments.length + 1).padStart(3, "0");

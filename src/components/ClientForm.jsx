@@ -200,6 +200,19 @@ const getReferenceCostLabel = (serviceType, fallback, lang) => {
   return fallback;
 };
 
+const getProgramServiceReferenceCost = (program, serviceType) => {
+  if (!program) return 0;
+  const costing = getStoredProgramCosting(program);
+  const sharedCosts = costing?.sharedCosts || {};
+  const value = serviceType === "visa_only"
+    ? sharedCosts.visa
+    : serviceType === "ticket_only"
+      ? sharedCosts.flight
+      : 0;
+  const next = Number(value);
+  return Number.isFinite(next) && next > 0 ? next : 0;
+};
+
 const createGroupPerson = (index = 0) => ({
   id: `grp-person-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
   firstName: "",
@@ -286,12 +299,20 @@ const buildFormState = (client, defaultProgramId, programs) => {
   const serviceType = getClientServiceType(client);
   const serviceUsesManualOnlyPrice = serviceType === "ticket_only" || serviceType === "visa_only";
   const manualOnlySalePrice = pickNumber(client?.salePrice, client?.sale_price);
-  const packageComparablePrice = pickNumber(client?.officialPrice, client?.official_price, client?.price);
+  const manualOnlyReferencePrice = getProgramServiceReferenceCost(selectedProgram, serviceType);
+  const salePriceLooksPackageDerived = [
+    client?.officialPrice,
+    client?.official_price,
+    client?.price,
+  ].some((value) => {
+    const number = pickNumber(value);
+    return number > 0 && manualOnlySalePrice === number && number !== manualOnlyReferencePrice;
+  });
   const salePrice = serviceUsesManualOnlyPrice
     ? (
-      packageComparablePrice > 0 && manualOnlySalePrice === packageComparablePrice
-        ? 0
-        : manualOnlySalePrice
+      salePriceLooksPackageDerived
+        ? (manualOnlyReferencePrice || "")
+        : manualOnlySalePrice > 0 ? manualOnlySalePrice : (manualOnlyReferencePrice || "")
     )
     : pickNumber(
       client?.salePrice,
@@ -563,33 +584,41 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     [selectedPackage, form.roomType]
   );
   const costingReferenceCost = React.useMemo(() => {
-    if (!selectedProgram) return 0;
-    const costing = getStoredProgramCosting(selectedProgram);
-    const sharedCosts = costing?.sharedCosts || {};
-    const value = normalizedServiceType === "visa_only"
-      ? sharedCosts.visa
-      : normalizedServiceType === "ticket_only"
-        ? sharedCosts.flight
-        : 0;
-    const next = Number(value);
-    return Number.isFinite(next) && next > 0 ? next : 0;
+    return getProgramServiceReferenceCost(selectedProgram, normalizedServiceType);
   }, [normalizedServiceType, selectedProgram]);
   const displayedOfficialPrice = serviceNeedsAccommodation ? derivedOfficialPrice : costingReferenceCost;
   const referenceCostLabel = getReferenceCostLabel(normalizedServiceType, t.officialPrice, lang);
   const canApplyOfficialPrice = Boolean(serviceNeedsAccommodation && displayedOfficialPrice);
+  const getDefaultSalePriceForService = React.useCallback((serviceType) => {
+    if (serviceType === "ticket_only" || serviceType === "visa_only") {
+      return getProgramServiceReferenceCost(selectedProgram, serviceType) || "";
+    }
+    if (serviceType === "accommodation_only") return derivedOfficialPrice || "";
+    return null;
+  }, [derivedOfficialPrice, selectedProgram]);
   const handleServiceTypeChange = React.useCallback((e) => {
     const nextServiceType = normalizeClientServiceType(e.target.value);
     const nextNeedsAccommodation = clientServiceIncludesAccommodation(nextServiceType);
-    const nextUsesManualOnlyPrice = nextServiceType === "ticket_only" || nextServiceType === "visa_only";
+    const nextDefaultSalePrice = getDefaultSalePriceForService(nextServiceType);
     setAutoPriceNote("");
     setForm((prev) => ({
       ...prev,
       serviceType: nextServiceType,
       officialPrice: nextNeedsAccommodation ? prev.officialPrice : 0,
-      ...(nextUsesManualOnlyPrice ? { salePrice: "" } : {}),
+      ...(nextDefaultSalePrice !== null ? { salePrice: nextDefaultSalePrice } : {}),
     }));
-  }, []);
+  }, [getDefaultSalePriceForService]);
   const officialPriceMissing = Boolean(serviceNeedsAccommodation && selectedPackage && form.roomType && !derivedOfficialPrice);
+
+  React.useEffect(() => {
+    const fallback = getDefaultSalePriceForService(normalizedServiceType);
+    const fallbackNumber = Number(fallback);
+    if (fallback === null || !Number.isFinite(fallbackNumber) || fallbackNumber <= 0) return;
+    if (Number(form.salePrice || 0) > 0) return;
+    setForm((prev) => (
+      Number(prev.salePrice || 0) > 0 ? prev : { ...prev, salePrice: fallbackNumber }
+    ));
+  }, [form.salePrice, getDefaultSalePriceForService, normalizedServiceType]);
 
   React.useEffect(() => {
     if (!hasCin) return;
@@ -926,6 +955,28 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
   return (
     <div>
+      <style>{`
+        .client-form-pricing-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          align-items: start;
+        }
+        .client-form-pricing-grid > * {
+          min-width: 0;
+        }
+        .client-form-pricing-grid label {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 100%;
+        }
+        @media (max-width: 640px) {
+          .client-form-pricing-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
       {!isEdit && (
         <GlassCard gold style={{ padding:16, marginBottom:14 }}>
           <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12 }}>{t.entryModeTitle || "طريقة الإدخال"}</p>
@@ -1273,14 +1324,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       </GlassCard>
 
       {/* ── Price ── */}
-      <GlassCard gold style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="banknote" size={14} color={tc.gold} /> {t.priceSection}</p>
-        <div style={{
-          display:"grid",
-          gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",
-          gap:12,
-          alignItems:"start",
-        }}>
+      <GlassCard gold style={{ padding:14, marginBottom:14 }}>
+        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="banknote" size={14} color={tc.gold} /> {t.priceSection}</p>
+        <div className="client-form-pricing-grid">
           <Input
             label={`${referenceCostLabel} (${currencyLabel})`}
             value={displayedOfficialPrice || ""}
@@ -1288,7 +1334,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             type="number"
             readOnly
             inputStyle={{
-              height:42,
+              height:36,
+              padding:"7px 10px",
+              fontSize:13,
               cursor:"not-allowed",
               background:"var(--rukn-bg-soft)",
               border:"1px solid var(--rukn-border-soft)",
@@ -1306,7 +1354,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             step="0.01"
             error={errors.salePrice}
             inputStyle={{
-              height:42,
+              height:36,
+              padding:"7px 10px",
+              fontSize:13,
               border:`1px solid ${hasSelectedProgram ? tc.gold : "var(--rukn-border-soft)"}`,
               color:hasSelectedProgram ? tc.gold : "var(--rukn-text-muted)",
               fontWeight:700,
@@ -1316,16 +1366,16 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             }}
             disabled={!hasSelectedProgram}
           />
-          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey }}>{t.discount}</label>
             <div style={{
-              height:42,
+              height:36,
               display:"flex",
               alignItems:"center",
               background:"rgba(239,68,68,.08)",
               border:"1px solid rgba(239,68,68,.2)",
-              borderRadius:10,
-              padding:"0 12px",
+              borderRadius:8,
+              padding:"0 10px",
               boxSizing:"border-box",
               color:discount>0?tc.danger:tc.grey, fontSize:13, fontWeight:700 }}>
               {discount>0 ? `- ${formatPrice(discount)} ${currencyLabel}` : t.noDiscount}
@@ -1333,9 +1383,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
           </div>
         </div>
         {(hasSelectedProgram || canApplyOfficialPrice) && (
-          <div style={{ marginTop:10, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
+          <div style={{ marginTop:8, display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, flexWrap:"wrap" }}>
             {hasSelectedProgram && (
-              <p style={{ fontSize:11, color:"var(--rukn-text-muted)", margin:0, lineHeight:1.6 }}>{salePriceHelpText}</p>
+              <p style={{ fontSize:10.5, color:"var(--rukn-text-muted)", margin:0, lineHeight:1.5 }}>{salePriceHelpText}</p>
             )}
             {canApplyOfficialPrice && (
               <button
@@ -1346,8 +1396,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                   background:"rgba(212,175,55,.08)",
                   color:tc.gold,
                   borderRadius:8,
-                  padding:"5px 10px",
-                  fontSize:11,
+                  padding:"4px 9px",
+                  fontSize:10.5,
                   fontWeight:700,
                   fontFamily:"'Cairo',sans-serif",
                   cursor:"pointer",

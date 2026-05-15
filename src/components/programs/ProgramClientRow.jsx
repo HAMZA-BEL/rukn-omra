@@ -13,7 +13,7 @@ import {
   getClientServiceTypeLabel,
 } from "../../utils/clientServiceTypes";
 import { getClientDisplayName as resolveClientDisplayName } from "../../utils/clientNames";
-import { getClientCompletionBadges } from "../../utils/clientCompletionStatus";
+import { getClientCompletionBadges, getClientCompletionTooltip } from "../../utils/clientCompletionStatus";
 import { translateHotelLevel, translateRoomType } from "../../utils/i18nValues";
 import { isMinor } from "../../utils/age";
 
@@ -51,6 +51,7 @@ export default function ProgramClientRow({
   isChecked = false,
   onCheck,
   gridTemplate,
+  completionTooltip = "",
 }) {
   const [hov, setHov] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -83,6 +84,9 @@ export default function ProgramClientRow({
   const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
   const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
+  const incompleteTooltip = status === "information_incomplete"
+    ? completionTooltip || getClientCompletionTooltip(client, lang, program)
+    : "";
 
   const handleRowClick = () => {
     if (selectMode && showCheckbox) {
@@ -225,7 +229,7 @@ export default function ProgramClientRow({
                 </span>
               )}
               {secondaryBadges.map((badge) => (
-                <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+                <span key={badge.key} title={badge.title || badge.label} style={completionBadgeStyle(badge.tone)}>
                   {badge.label}
                 </span>
               ))}
@@ -262,7 +266,7 @@ export default function ProgramClientRow({
           <span style={{ color: remaining > 0 ? tc.warning : tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
             {remainingLabel}
           </span>
-          <div style={{ textAlign: "center" }}>
+          <div style={{ textAlign: "center" }} title={incompleteTooltip || undefined}>
             <StatusBadge status={status} />
           </div>
         </div>

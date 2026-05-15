@@ -1,4 +1,6 @@
 import { getPackageRoomPrice, normalizeProgramPackages, normalizeRoomTypeKey } from "./programPackages";
+import { getClientArabicName } from "./clientNames";
+import { clientServiceIncludesAccommodation } from "./clientServiceTypes";
 
 export const UNASSIGNED_PROGRAM_FILTER = "__unassigned_program";
 export const INCOMPLETE_INFO_FILTER = "__incomplete_info";
@@ -10,6 +12,13 @@ const LABELS = {
   ar: {
     unassignedProgram: "غير مدرج في أي برنامج",
     informationIncomplete: "يرجى إكمال المعلومات",
+    missingPrefix: "ينقص:",
+    missingArabicName: "الاسم",
+    missingPhone: "رقم الهاتف",
+    missingLevel: "المستوى",
+    missingRoomType: "نوع الغرفة",
+    missingRoomCategory: "تصنيف الغرفة",
+    missingPrice: "السعر",
     unassignedFilter: "غير مدرجين في أي برنامج",
     incompleteFilter: "معلومات ناقصة",
     importAction: "استيراد",
@@ -28,6 +37,13 @@ const LABELS = {
   fr: {
     unassignedProgram: "Non affecté à un programme",
     informationIncomplete: "Informations à compléter",
+    missingPrefix: "Manquant :",
+    missingArabicName: "nom",
+    missingPhone: "téléphone",
+    missingLevel: "niveau",
+    missingRoomType: "type de chambre",
+    missingRoomCategory: "classification de chambre",
+    missingPrice: "prix",
     unassignedFilter: "Non affectés à un programme",
     incompleteFilter: "Infos incomplètes",
     importAction: "Importer",
@@ -45,7 +61,14 @@ const LABELS = {
   },
   en: {
     unassignedProgram: "Not assigned to a program",
-    informationIncomplete: "Information needs completion",
+    informationIncomplete: "Please complete information",
+    missingPrefix: "Missing:",
+    missingArabicName: "name",
+    missingPhone: "phone number",
+    missingLevel: "level",
+    missingRoomType: "room type",
+    missingRoomCategory: "room classification",
+    missingPrice: "price",
     unassignedFilter: "Not assigned to a program",
     incompleteFilter: "Incomplete info",
     importAction: "Import",
@@ -64,6 +87,14 @@ const LABELS = {
 };
 
 const hasText = (value) => String(value || "").trim().length > 0;
+
+const firstText = (...values) => {
+  for (const value of values) {
+    const textValue = String(value || "").trim();
+    if (textValue) return textValue;
+  }
+  return "";
+};
 
 export const getClientCompletionLabels = (lang) => LABELS[lang] || LABELS.ar;
 
@@ -98,20 +129,62 @@ const getClientKnownPrice = (client = {}) => {
   return 0;
 };
 
+const getClientPackageId = (client = {}) => firstText(client.packageId, client.package_id);
+
+const getClientPackageLevel = (client = {}) => firstText(
+  client.packageLevel,
+  client.package_level,
+  client.hotelLevel,
+  client.hotel_level,
+);
+
+const getClientRoomType = (client = {}) => normalizeRoomTypeKey(firstText(
+  client.roomType,
+  client.room_type,
+  client.roomTypeLabel,
+  client.room_type_label,
+));
+
+const getSelectedProgramPackage = (client = {}, program = null) => {
+  if (!program) return null;
+  const packages = normalizeProgramPackages(program);
+  if (!packages.length) return null;
+  const clientPackageId = getClientPackageId(client);
+  const clientLevel = getClientPackageLevel(client);
+  return packages.find((pkg) => (
+    (clientPackageId && pkg.id === clientPackageId)
+    || (clientLevel && pkg.level === clientLevel)
+  )) || packages[0] || null;
+};
+
 const getProgramDerivedPrice = (client = {}, program = null) => {
   if (!program) return 0;
   const flatPrice = positiveNumber(program.price);
-  const packages = normalizeProgramPackages(program);
-  const clientLevel = String(client.packageLevel || client.hotelLevel || "").trim();
-  const clientPackageId = String(client.packageId || "").trim();
-  const clientRoomType = normalizeRoomTypeKey(client.roomType || client.roomTypeLabel || "");
-  const selectedPackage = packages.find((pkg) => (
-    (clientPackageId && pkg.id === clientPackageId)
-    || (clientLevel && pkg.level === clientLevel)
-  )) || (packages.length === 1 ? packages[0] : null);
+  const selectedPackage = getSelectedProgramPackage(client, program);
   if (!selectedPackage) return flatPrice;
+  const clientRoomType = getClientRoomType(client) || "double";
   const roomPrice = getPackageRoomPrice(selectedPackage, clientRoomType);
   return roomPrice || flatPrice;
+};
+
+const getClientProgramDetailPresence = (client = {}, program = null) => {
+  const rooming = client.docs?.rooming || {};
+  const selectedPackage = getSelectedProgramPackage(client, program);
+  return {
+    selectedPackage,
+    hasLevel: hasText(getClientPackageId(client))
+      || hasText(getClientPackageLevel(client))
+      || hasText(selectedPackage?.id)
+      || hasText(selectedPackage?.level)
+      || (program ? !programHasExplicitLevels(program) : false),
+    hasRoomType: hasText(getClientRoomType(client)) || Boolean(program),
+    hasRoomCategory: hasText(client.roomCategory)
+      || hasText(client.room_category)
+      || hasText(client.roomCategoryLabel)
+      || hasText(client.room_category_label)
+      || hasText(rooming.category)
+      || Boolean(program),
+  };
 };
 
 const getProgramPackages = (program = {}) => (
@@ -145,26 +218,67 @@ export const getClientDeletedProgramLabel = (client = {}, lang = "ar") => {
   return name ? `${name} (${labels.deletedProgramShort})` : labels.deletedProgram;
 };
 
-export const clientMissingProgramDetails = (client = {}) => {
+export const clientMissingProgramDetails = (client = {}, program = null) => {
   if (!hasProgramAssignment(client)) return false;
-  const rooming = client.docs?.rooming || {};
-  const hasLevel = hasText(client.packageId) || hasText(client.packageLevel) || hasText(client.hotelLevel);
-  const hasRoomType = hasText(client.roomType) || hasText(client.roomTypeLabel);
-  const hasRoomCategory = hasText(client.roomCategory) || hasText(client.roomCategoryLabel) || hasText(rooming.category);
+  if (!clientServiceIncludesAccommodation(client)) return false;
+
+  const { hasLevel, hasRoomType, hasRoomCategory } = getClientProgramDetailPresence(client, program);
   return !hasLevel || !hasRoomType || !hasRoomCategory;
 };
 
 export const clientMissingContactOrArabicName = (client = {}) => {
-  const hasArabicFirst = hasText(client.firstName) || hasText(client.arabicFirstName) || hasText(client.first_name);
-  const hasArabicLast = hasText(client.lastName) || hasText(client.arabicLastName) || hasText(client.last_name);
-  return !hasArabicFirst || !hasArabicLast || !hasText(client.phone);
+  const hasArabicParts = (
+    hasText(client.firstName) || hasText(client.arabicFirstName) || hasText(client.first_name)
+  ) && (
+    hasText(client.lastName) || hasText(client.arabicLastName) || hasText(client.last_name)
+  );
+  const hasArabicName = hasArabicParts || hasText(getClientArabicName(client));
+  const hasPhone = hasText(firstText(client.phone, client.phoneNumber, client.mobile, client.telephone));
+  return !hasArabicName || !hasPhone;
 };
 
-export const clientNeedsCompletion = (client = {}) => (
-  clientMissingProgramDetails(client) || clientMissingContactOrArabicName(client)
+export const clientNeedsCompletion = (client = {}, program = null) => (
+  clientMissingProgramDetails(client, program) || clientMissingContactOrArabicName(client)
 );
 
-export const getClientPaymentEligibility = (client = {}, program = null) => {
+export const getClientMissingCompletionItems = (client = {}, lang = "ar", program = null, options = {}) => {
+  const labels = getClientCompletionLabels(lang);
+  const items = [];
+  const hasArabicParts = (
+    hasText(client.firstName) || hasText(client.arabicFirstName) || hasText(client.first_name)
+  ) && (
+    hasText(client.lastName) || hasText(client.arabicLastName) || hasText(client.last_name)
+  );
+  const hasArabicName = hasArabicParts || hasText(getClientArabicName(client));
+  const hasPhone = hasText(firstText(client.phone, client.phoneNumber, client.mobile, client.telephone));
+  if (!hasArabicName) items.push(labels.missingArabicName);
+  if (!hasPhone) items.push(labels.missingPhone);
+
+  if (hasProgramAssignment(client) && clientServiceIncludesAccommodation(client)) {
+    const { hasLevel, hasRoomType, hasRoomCategory } = getClientProgramDetailPresence(client, program);
+    if (!hasLevel) items.push(labels.missingLevel);
+    if (!hasRoomType) items.push(labels.missingRoomType);
+    if (!hasRoomCategory) items.push(labels.missingRoomCategory);
+  }
+
+  if (hasActiveProgramAssignment(client, program)) {
+    const eligibility = getClientPaymentEligibility(client, program, options);
+    if (eligibility.paymentEligibilityReason === "incomplete_program_info") {
+      items.push(labels.missingPrice);
+    }
+  }
+
+  return Array.from(new Set(items.filter(Boolean)));
+};
+
+export const getClientCompletionTooltip = (client = {}, lang = "ar", program = null, options = {}) => {
+  const labels = getClientCompletionLabels(lang);
+  const items = getClientMissingCompletionItems(client, lang, program, options);
+  if (!items.length) return labels.informationIncomplete;
+  return `${labels.missingPrefix} ${items.join(lang === "ar" ? "، " : ", ")}`;
+};
+
+export const getClientPaymentEligibility = (client = {}, program = null, { referencePrice = 0 } = {}) => {
   if (isUnassignedFromActiveProgram(client, program)) {
     return {
       isAssignedToProgram: false,
@@ -175,11 +289,17 @@ export const getClientPaymentEligibility = (client = {}, program = null) => {
     };
   }
 
-  const hasKnownPrice = Boolean(getClientKnownPrice(client) || getProgramDerivedPrice(client, program));
-  const hasLevel = hasText(client.packageId) || hasText(client.packageLevel) || hasText(client.hotelLevel);
-  const hasRoomType = hasText(client.roomType) || hasText(client.roomTypeLabel);
-  const needsLevel = programHasExplicitLevels(program);
-  const needsRoomType = programPricingDependsOnRoomType(program);
+  const needsAccommodation = clientServiceIncludesAccommodation(client);
+  const hasKnownPrice = Boolean(
+    getClientKnownPrice(client)
+    || positiveNumber(referencePrice)
+    || (needsAccommodation ? getProgramDerivedPrice(client, program) : 0)
+  );
+  const selectedPackage = getSelectedProgramPackage(client, program);
+  const hasLevel = hasText(getClientPackageId(client)) || hasText(getClientPackageLevel(client)) || hasText(selectedPackage?.id) || hasText(selectedPackage?.level);
+  const hasRoomType = hasText(getClientRoomType(client)) || Boolean(program);
+  const needsLevel = needsAccommodation && programHasExplicitLevels(program);
+  const needsRoomType = needsAccommodation && programPricingDependsOnRoomType(program);
   const isCommercialInfoComplete = hasKnownPrice
     || ((!needsLevel || hasLevel) && (!needsRoomType || hasRoomType) && hasKnownPrice);
 
@@ -202,24 +322,30 @@ export const getClientPaymentEligibility = (client = {}, program = null) => {
   };
 };
 
-export const getClientDisplayStatus = (client = {}, program = null, paymentStatus = "unpaid") => {
-  const eligibility = getClientPaymentEligibility(client, program);
+export const getClientDisplayStatus = (client = {}, program = null, paymentStatus = "unpaid", options = {}) => {
+  const eligibility = getClientPaymentEligibility(client, program, options);
   if (!eligibility.canAddPayment) return eligibility.statusPriority;
   return ["cleared", "partial", "unpaid"].includes(paymentStatus) ? paymentStatus : "unpaid";
 };
 
-export const isIncompleteInfo = (client = {}, program = null) => (
-  getClientPaymentEligibility(client, program).paymentEligibilityReason === "incomplete_program_info"
+export const isIncompleteInfo = (client = {}, program = null, options = {}) => (
+  getClientPaymentEligibility(client, program, options).paymentEligibilityReason === "incomplete_program_info"
 );
 
-export const getClientCompletionBadges = (client = {}, lang = "ar", program = null) => {
+export const getClientCompletionBadges = (client = {}, lang = "ar", program = null, options = {}) => {
   const labels = getClientCompletionLabels(lang);
   const badges = [];
   if (isUnassignedFromActiveProgram(client, program)) {
     badges.push({ key: "unassigned_program", label: labels.unassignedProgram, tone: "muted" });
   }
-  if (clientNeedsCompletion(client)) {
-    badges.push({ key: "information_incomplete", label: labels.informationIncomplete, tone: "warning" });
+  if (clientNeedsCompletion(client, program)) {
+    badges.push({
+      key: "information_incomplete",
+      label: labels.informationIncomplete,
+      tone: "warning",
+      title: getClientCompletionTooltip(client, lang, program, options),
+      missingItems: getClientMissingCompletionItems(client, lang, program, options),
+    });
   }
   return badges;
 };

@@ -2313,7 +2313,7 @@ export const TRANSLATIONS = {
     deletedProgramBadge: "Previous program deleted",
     deletedProgramShort: "deleted",
     unassignedProgramBadge: "Not assigned to a program",
-    informationIncompleteBadge: "Information needs completion",
+    informationIncompleteBadge: "Please complete information",
     unassignedProgramFilter: "Not assigned to a program",
     incompleteInfoFilter: "Incomplete info",
     paymentNotEligible: "Not eligible for payment",

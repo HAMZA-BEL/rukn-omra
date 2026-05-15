@@ -23,7 +23,7 @@ import {
   isEligibleRepresentative,
   isClientMinorWithoutCin,
 } from "../utils/clientRepresentation";
-import { getClientCompletionBadges, getClientCompletionLabels, getClientDeletedProgramLabel, getClientDisplayStatus, getClientPaymentEligibility, getClientProgramId } from "../utils/clientCompletionStatus";
+import { getClientCompletionBadges, getClientCompletionLabels, getClientCompletionTooltip, getClientDeletedProgramLabel, getClientDisplayStatus, getClientMissingCompletionItems, getClientPaymentEligibility, getClientProgramId } from "../utils/clientCompletionStatus";
 
 const tc = theme.colors;
 const printActionButtonStyle = {
@@ -102,7 +102,8 @@ const translateProgramAirline = (program, lang) => {
 };
 
 export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
-  const { t, lang } = useLang();
+  const { t, lang, dir } = useLang();
+  const isRTL = dir === "rtl";
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
           getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi } = store;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
@@ -140,12 +141,21 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const referenceCostLabel = getReferenceCostLabel(serviceType, t.officialPrice, lang);
   const payments    = paymentsReady ? getClientPayments(client.id) : [];
   const totalPaid   = paymentsReady ? getClientTotalPaid(client.id) : 0;
-  const salePrice   = getClientEffectiveSalePrice(client);
-  const offPrice    = getClientEffectiveOfficialPrice(client);
-  const remaining   = paymentsReady ? getClientRemainingAmount(client, totalPaid) : null;
+  const pricingOptions = React.useMemo(() => ({
+    referencePrice: costingReferenceCost,
+    program,
+  }), [costingReferenceCost, program]);
+  const salePrice   = getClientEffectiveSalePrice(client, pricingOptions);
+  const offPrice    = getClientEffectiveOfficialPrice(client, pricingOptions);
+  const remaining   = paymentsReady ? getClientRemainingAmount(client, totalPaid, pricingOptions) : null;
   const discount    = Math.max(0, offPrice - salePrice);
-  const status      = paymentsReady ? getClientStatus(client) : "";
-  const displayStatus = paymentsReady ? getClientDisplayStatus(client, program, status) : "";
+  const status      = paymentsReady
+    ? (totalPaid === 0 ? "unpaid" : totalPaid >= salePrice ? "cleared" : "partial")
+    : "";
+  const displayStatus = paymentsReady ? getClientDisplayStatus(client, program, status, pricingOptions) : "";
+  const incompleteTooltip = displayStatus === "information_incomplete"
+    ? getClientCompletionTooltip(client, lang, program, pricingOptions)
+    : "";
   const pct         = paymentsReady && salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
   const lastPmt     = paymentsReady ? getClientLastPayment(client.id) : null;
   const sortedPayments = React.useMemo(
@@ -154,13 +164,20 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   );
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
-  const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program), [client, lang, program]);
+  const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program, pricingOptions), [client, lang, program, pricingOptions]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
-  const paymentEligibility = React.useMemo(() => getClientPaymentEligibility(client, program), [client, program]);
+  const paymentEligibility = React.useMemo(() => getClientPaymentEligibility(client, program, pricingOptions), [client, program, pricingOptions]);
+  const missingCompletionItems = React.useMemo(
+    () => getClientMissingCompletionItems(client, lang, program, pricingOptions),
+    [client, lang, program, pricingOptions],
+  );
   const secondaryCompletionBadges = React.useMemo(
     () => completionBadges.filter((badge) => badge.key !== displayStatus),
     [completionBadges, displayStatus],
   );
+  const hasIncompleteCompletionBadge = completionBadges.some((badge) => badge.key === "information_incomplete");
+  const showMissingInfoWarning = missingCompletionItems.length > 0
+    && (displayStatus === "information_incomplete" || hasIncompleteCompletionBadge);
   const cin = client.cin || client.CIN || client.nationalId || client.national_id || p.cin || p.nationalId || "";
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
@@ -442,7 +459,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
               </span>
             )}
             {secondaryCompletionBadges.map((badge) => (
-              <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+              <span key={badge.key} title={badge.title || badge.label} style={completionBadgeStyle(badge.tone)}>
                 {badge.label}
               </span>
             ))}
@@ -484,7 +501,9 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           </div>
         </div>
         {paymentsReady ? (
-          <StatusBadge status={displayStatus} />
+          <span title={incompleteTooltip || undefined}>
+            <StatusBadge status={displayStatus} />
+          </span>
         ) : (
           <span style={{
             padding:"3px 8px",
@@ -499,6 +518,45 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           </span>
         )}
       </div>
+
+      {showMissingInfoWarning && (
+        <div style={{
+          display:"flex",
+          alignItems:"flex-start",
+          gap:10,
+          padding:"10px 12px",
+          marginBottom:14,
+          borderRadius:12,
+          border:"1px solid rgba(245,158,11,.28)",
+          background:"rgba(245,158,11,.09)",
+          color:"var(--rukn-text-strong)",
+        }}>
+          <AppIcon name="alert" size={16} color={tc.warning} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <p style={{ fontSize:12.5, fontWeight:900, color:tc.warning, marginBottom:5 }}>
+              {completionLabels.informationIncomplete}
+            </p>
+            <p style={{ fontSize:11.5, color:tc.grey, fontWeight:800, marginBottom:4 }}>
+              {completionLabels.missingPrefix}
+            </p>
+            <ul style={{
+              margin:0,
+              paddingInlineStart:isRTL ? 0 : 18,
+              paddingInlineEnd:isRTL ? 18 : 0,
+              display:"grid",
+              gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",
+              gap:"3px 12px",
+              color:"var(--rukn-text-strong)",
+              fontSize:12,
+              fontWeight:700,
+            }}>
+              {missingCompletionItems.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Print buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
@@ -558,7 +616,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
             <AppIcon name="program" size={14} color={tc.gold} />
             {secondaryCompletionBadges.map((badge) => (
-              <span key={badge.key} style={completionBadgeStyle(badge.tone)}>
+              <span key={badge.key} title={badge.title || badge.label} style={completionBadgeStyle(badge.tone)}>
                 {badge.label}
               </span>
             ))}

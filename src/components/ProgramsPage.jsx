@@ -31,7 +31,7 @@ import ProgramClientRow from "./programs/ProgramClientRow";
 import ProgramClientModals from "./programs/ProgramClientModals";
 import ProgramDetailOverview from "./programs/ProgramDetailOverview";
 import ProgramCostingModal from "./programs/ProgramCostingModal";
-import { getProgramCostingLabels } from "./programs/programCosting";
+import { getProgramCostingLabels, getStoredProgramCosting } from "./programs/programCosting";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -82,6 +82,7 @@ import {
   INCOMPLETE_INFO_FILTER,
   clientNeedsCompletion,
   getClientCompletionLabels,
+  getClientCompletionTooltip,
   getClientDisplayStatus,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
@@ -138,6 +139,48 @@ const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
 const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
 const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
+const getProgramPricingReferenceCost = (program, client) => {
+  if (!program || !client) return 0;
+  const serviceType = getClientServiceType(client);
+  if (serviceType !== "ticket_only" && serviceType !== "visa_only") return 0;
+  const costing = getStoredProgramCosting(program);
+  const sharedCosts = costing?.sharedCosts || {};
+  const value = serviceType === "visa_only" ? sharedCosts.visa : sharedCosts.flight;
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+};
+
+const getProgramClientSalePrice = (program, client) => (
+  getClientEffectiveSalePrice(client, {
+    referencePrice: getProgramPricingReferenceCost(program, client),
+    program,
+  })
+);
+
+const getProgramClientRemainingAmount = (program, client, paid) => (
+  getClientRemainingAmount(client, paid, {
+    referencePrice: getProgramPricingReferenceCost(program, client),
+    program,
+  })
+);
+
+const getProgramClientPaymentStatus = (program, client, paid) => {
+  const price = getProgramClientSalePrice(program, client);
+  if (paid === 0) return "unpaid";
+  if (paid >= price) return "cleared";
+  return "partial";
+};
+
+const getProgramClientDisplayStatus = (program, client, paid) => (
+  getClientDisplayStatus(
+    client,
+    program,
+    getProgramClientPaymentStatus(program, client, paid),
+    { referencePrice: getProgramPricingReferenceCost(program, client) },
+  )
+);
+
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
 const ROOMING_BASE_CELL_WIDTH = 132;
@@ -1713,9 +1756,9 @@ export default function ProgramsPage({ store, onToast }) {
               const reg = pc.length;
             const pct = Math.min((reg / p.seats) * 100, 100);
             const paid= pc.reduce((s,c) => s + getClientTotalPaid(c.id), 0);
-            const rem = pc.reduce((s,c) => s + getClientRemainingAmount(c, getClientTotalPaid(c.id)), 0);
-            const cl  = pc.filter(c => getClientStatus(c) === "cleared").length;
-            const un  = pc.filter(c => getClientStatus(c) === "unpaid").length;
+            const rem = pc.reduce((s,c) => s + getProgramClientRemainingAmount(p, c, getClientTotalPaid(c.id)), 0);
+            const cl  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "cleared").length;
+            const un  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "unpaid").length;
             return (
               <ProgramCard key={p.id} program={p}
                 registered={reg} pct={pct}
@@ -1897,11 +1940,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     clients.filter(c => c.programId === program.id), [clients, program.id]);
 
   const filtered = React.useMemo(() => progClients.filter(c => {
-    const status = getClientDisplayStatus(c, program, getClientStatus(c));
+    const status = getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id));
     const matchesFilter = filter === "all" || status === filter;
     const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
     const matchesPackage = packageFilter === "all"
-      || (packageFilter === INCOMPLETE_INFO_FILTER && clientNeedsCompletion(c))
+      || (packageFilter === INCOMPLETE_INFO_FILTER && clientNeedsCompletion(c, program))
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
     const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(c) === serviceTypeFilter;
@@ -1911,7 +1954,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
     return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
-  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getClientStatus, program]);
+  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getClientTotalPaid, program]);
 
   const totalProgramClientItems = filtered.length;
   const totalProgramClientPages = Math.max(1, Math.ceil(totalProgramClientItems / programClientPageSize));
@@ -1926,10 +1969,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     filtered.reduce((acc, client) => {
       const paid = getClientTotalPaid(client.id);
       acc.paid += paid;
-      acc.remaining += getClientRemainingAmount(client, paid);
+      acc.remaining += getProgramClientRemainingAmount(program, client, paid);
       return acc;
     }, { paid: 0, remaining: 0 })
-  ), [filtered, getClientTotalPaid]);
+  ), [filtered, getClientTotalPaid, program]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
   const programClientPageSizeOptions = React.useMemo(() => (
@@ -2181,16 +2224,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [totalProgramClientPages]);
 
   const totals = React.useMemo(() => ({
-    revenue: progClients.reduce((s,c)=>s + getClientEffectiveSalePrice(c),0),
+    revenue: progClients.reduce((s,c)=>s + getProgramClientSalePrice(program, c),0),
     paid:    progClients.reduce((s,c)=>s+getClientTotalPaid(c.id),0),
-    remaining: progClients.reduce((s,c)=>s + getClientRemainingAmount(c, getClientTotalPaid(c.id)),0),
-  }), [progClients, getClientTotalPaid]);
+    remaining: progClients.reduce((s,c)=>s + getProgramClientRemainingAmount(program, c, getClientTotalPaid(c.id)),0),
+  }), [progClients, getClientTotalPaid, program]);
   const totalRem  = totals.remaining;
   const statusCounts = React.useMemo(() => ({
-    cleared: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="cleared").length,
-    partial: progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="partial").length,
-    unpaid:  progClients.filter(c=>getClientDisplayStatus(c, program, getClientStatus(c))==="unpaid").length,
-  }), [progClients, getClientStatus, program]);
+    cleared: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="cleared").length,
+    partial: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="partial").length,
+    unpaid:  progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="unpaid").length,
+  }), [progClients, getClientTotalPaid, program]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
 
   const filters = [
@@ -2222,14 +2265,14 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const packageChips = React.useMemo(() => {
     const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
     const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
-    const incompleteCount = progClients.filter(clientNeedsCompletion).length;
+    const incompleteCount = progClients.filter((client) => clientNeedsCompletion(client, program)).length;
     return [
       { key: "all", label: t.all, count: progClients.length },
       ...(incompleteCount ? [{ key: INCOMPLETE_INFO_FILTER, label: completionLabels.incompleteFilter, count: incompleteCount }] : []),
       ...packages.map(pkg => ({ key: pkg.level, label: translateHotelLevel(pkg.level, lang) || pkg.level, count: countForLevel(pkg.level) })),
       ...(unassignedCount ? [{ key: "__unassigned", label: t.noHotel || "غير محدد", count: unassignedCount }] : []),
     ];
-  }, [completionLabels.incompleteFilter, packages, progClients, t, lang]);
+  }, [completionLabels.incompleteFilter, packages, progClients, program, t, lang]);
   const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned" || packageFilter === INCOMPLETE_INFO_FILTER
     ? null
     : packages.find(pkg => pkg.level === packageFilter) || null;
@@ -2896,12 +2939,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         rows={paginatedProgramClients}
         renderRow={(c,i)=>{
             const paid = getClientTotalPaid(c.id);
-            const rem  = getClientRemainingAmount(c, paid);
-            const stat = getClientDisplayStatus(c, program, getClientStatus(c));
+            const rem  = getProgramClientRemainingAmount(program, c, paid);
+            const stat = getProgramClientDisplayStatus(program, c, paid);
+            const completionTooltip = getClientCompletionTooltip(c, lang, program, {
+              referencePrice: getProgramPricingReferenceCost(program, c),
+            });
             return (
               <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
                 paid={paid} remaining={rem} status={stat}
+                completionTooltip={completionTooltip}
                 onClick={()=>setSelectedClient(c)}
                 onEdit={()=>setEditingClient(c)}
                 selectMode={selectMode}
@@ -3025,6 +3072,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomingPrintSettingsOpen, setRoomingPrintSettingsOpen] = React.useState(false);
   const [roomingPrintSettings, setRoomingPrintSettings] = React.useState({
     showRegistrationSource: true,
+    showBedNumbers: false,
     density: "normal",
     layoutMode: "default",
   });
@@ -3116,6 +3164,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       return {
         title: "Paramètres d’impression",
         showSource: "Afficher la source d’inscription",
+        showBedNumbers: "Afficher la numérotation des lits dans la chambre",
         density: "Densité d’impression",
         comfortable: "Confortable",
         normal: "Normal",
@@ -3131,6 +3180,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       return {
         title: "Print settings",
         showSource: "Show registration source",
+        showBedNumbers: "Show bed numbering inside the room",
         density: "Print density",
         comfortable: "Comfortable",
         normal: "Normal",
@@ -3145,6 +3195,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return {
       title: "إعدادات الطباعة",
       showSource: "إظهار جهة التسجيل",
+      showBedNumbers: "إظهار ترقيم الأسرة داخل الغرفة",
       density: "حجم الغرف",
       comfortable: "كبير",
       normal: "عادي",
@@ -5419,7 +5470,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           <RoomingToolbarButton
             title={roomingPrintLabels.title}
             onClick={() => setRoomingPrintSettingsOpen(true)}
-            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource}
+            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource || roomingPrintSettings.showBedNumbers}
             icon={<Settings size={15} />}
           >
             <span>{roomingPrintLabels.title}</span>
@@ -6080,6 +6131,31 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   showRegistrationSource: event.target.checked,
                 }))}
                 style={{ width: 18, height: 18, accentColor: "#2563eb" }}
+              />
+            </label>
+
+            <label style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "10px 12px",
+              border: "1px solid var(--rooming-modal-section-border)",
+              borderRadius: 12,
+              background: "var(--rooming-modal-section-bg)",
+              color: "var(--rooming-text)",
+              fontSize: 13,
+              fontWeight: 900,
+            }}>
+              <span>{roomingPrintLabels.showBedNumbers}</span>
+              <input
+                type="checkbox"
+                checked={roomingPrintSettings.showBedNumbers}
+                onChange={(event) => setRoomingPrintSettings((prev) => ({
+                  ...prev,
+                  showBedNumbers: event.target.checked,
+                }))}
+                style={{ width: 18, height: 18, accentColor: "#b99235" }}
               />
             </label>
 
