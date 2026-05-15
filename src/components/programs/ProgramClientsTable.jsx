@@ -16,6 +16,7 @@ export default function ProgramClientsTable({
   totalsGridColumn,
   totalLabel,
   summaryLabel,
+  amountTotalLabel,
   paidTotalLabel,
   remainingTotalLabel,
 }) {
@@ -41,6 +42,7 @@ export default function ProgramClientsTable({
           <span style={{ textAlign:"center" }}>{labels.roomType}</span>
           <span style={{ textAlign:"center" }}>{labels.serviceType}</span>
           <span style={{ textAlign:"center" }}>{labels.ticketNo}</span>
+          <span style={{ textAlign:"center" }}>{labels.amount}</span>
           <span style={{ textAlign:"center" }}>{labels.paid}</span>
           <span style={{ textAlign:"center" }}>{labels.remaining}</span>
           <span style={{ textAlign:"center" }}>{labels.status}</span>
@@ -92,6 +94,9 @@ export default function ProgramClientsTable({
           </div>
           <span />
           <span />
+          <span style={{ color:tc.gold, textAlign:"center" }}>
+            {amountTotalLabel}
+          </span>
           <span style={{ color:tc.greenLight, textAlign:"center" }}>
             {paidTotalLabel}
           </span>

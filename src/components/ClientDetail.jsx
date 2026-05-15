@@ -949,51 +949,72 @@ function PaymentRow({ payment, onPrint, onDelete }) {
   ].filter(Boolean).join(" • ");
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-        padding:"10px 14px",
+      style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+        padding:"7px 10px",
         background:hov?"var(--rukn-row-hover)":"var(--rukn-row-bg)",
         border:"1px solid var(--rukn-row-border)", borderRadius:10, transition:"all .2s" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <AppIcon name={icons[payment.method] || "payment"} size={18} color={theme.colors.gold} />
-        <div>
-          <p style={{ fontWeight:700, color:theme.colors.greenLight, fontSize:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0, flex:1 }}>
+        <span style={{
+          width:28,
+          height:28,
+          borderRadius:9,
+          display:"inline-flex",
+          alignItems:"center",
+          justifyContent:"center",
+          flexShrink:0,
+          background:"rgba(212,175,55,.09)",
+          border:"1px solid rgba(212,175,55,.16)",
+        }}>
+          <AppIcon name={icons[payment.method] || "payment"} size={15} color={theme.colors.gold} />
+        </span>
+        <div style={{ minWidth:0, flex:1 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", lineHeight:1.35 }}>
+            <span style={{ fontWeight:800, color:theme.colors.greenLight, fontSize:13.5, whiteSpace:"nowrap" }}>
             {formatCurrency(payment.amount, lang)}
-          </p>
-          <p style={{ fontSize:11, color:theme.colors.grey }}>
-            {translatePaymentMethod(payment.method, lang)} • {payment.date}
-            {isPrevious ? "" : <> • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong></>}
-          </p>
-          {isPrevious && (
-            <span style={{
-              display:"inline-flex",
-              alignItems:"center",
-              marginTop:4,
-              padding:"2px 8px",
-              borderRadius:999,
-              background:"rgba(245,158,11,.12)",
-              border:"1px solid rgba(245,158,11,.25)",
-              color:theme.colors.warning,
-              fontSize:10.5,
-              fontWeight:800,
-            }}>
-              {previousPaymentLabel}
             </span>
+            <span style={{ fontSize:11, color:theme.colors.grey }}>{payment.date}</span>
+            <span style={{ fontSize:11, color:theme.colors.grey }}>{translatePaymentMethod(payment.method, lang)}</span>
+            {!isPrevious && payment.receiptNo && (
+              <strong style={{ color:theme.colors.gold, fontSize:11, whiteSpace:"nowrap" }}>
+                {payment.receiptNo}
+              </strong>
+            )}
+          </div>
+          {(isPrevious || extraDetails || payment.note) && (
+            <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginTop:3, lineHeight:1.35 }}>
+              {isPrevious && (
+                <span style={{
+                  display:"inline-flex",
+                  alignItems:"center",
+                  padding:"1px 7px",
+                  borderRadius:999,
+                  background:"rgba(245,158,11,.11)",
+                  border:"1px solid rgba(245,158,11,.22)",
+                  color:theme.colors.warning,
+                  fontSize:10,
+                  fontWeight:800,
+                  whiteSpace:"nowrap",
+                }}>
+                  {previousPaymentLabel}
+                </span>
+              )}
+              {extraDetails && <span style={{ fontSize:10.8, color:theme.colors.grey }}>{extraDetails}</span>}
+              {payment.note && <span style={{ fontSize:10.8, color:theme.colors.grey }}>{payment.note}</span>}
+            </div>
           )}
-          {extraDetails && <p style={{ fontSize:11, color:theme.colors.grey }}>{extraDetails}</p>}
-          {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>{payment.note}</p>}
         </div>
       </div>
       {hov && (
-        <div style={{ display:"flex", gap:6 }}>
+        <div style={{ display:"flex", gap:5, flexShrink:0 }}>
           {!isPrevious && (
             <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
               border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
-              borderRadius:8, padding:"4px 10px", fontSize:11,
+              borderRadius:8, padding:"3px 8px", fontSize:11,
               cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}><AppIcon name="print" size={13} color={theme.colors.gold} /></button>
           )}
           <button onClick={onDelete} style={{ background:"rgba(239,68,68,.1)",
             border:"1px solid rgba(239,68,68,.2)", color:"#ef4444",
-            borderRadius:8, padding:"4px 10px", fontSize:11,
+            borderRadius:8, padding:"3px 8px", fontSize:11,
             cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>{t.delete}</button>
         </div>
       )}

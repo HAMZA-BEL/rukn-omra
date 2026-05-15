@@ -58,7 +58,7 @@ import {
   getClientServiceTypeAllFilterLabel,
   getClientServiceTypeLabel,
 } from "../utils/clientServiceTypes";
-import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import {
   buildDuplicateProgramName,
   createDuplicateProgramPayload,
@@ -157,6 +157,14 @@ const getProgramClientSalePrice = (program, client) => (
     program,
   })
 );
+
+const getProgramClientOfficialPrice = (program, client) => {
+  const referencePrice = getProgramPricingReferenceCost(program, client);
+  return getClientEffectiveOfficialPrice(client, {
+    referencePrice,
+    program,
+  }) || referencePrice;
+};
 
 const getProgramClientRemainingAmount = (program, client, paid) => (
   getClientRemainingAmount(client, paid, {
@@ -1219,7 +1227,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 // ═══════════════════════════════════════
 export default function ProgramsPage({ store, onToast }) {
   const { programs, clients, addProgram, updateProgram, deleteProgram,
-          getClientTotalPaid, getClientStatus } = store;
+          getClientTotalPaid } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
@@ -1840,7 +1848,6 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     clients,
     getClientTotalPaid,
     getClientPayments,
-    getClientStatus,
     agency,
     programs: allPrograms,
     activeClients = [],
@@ -1968,10 +1975,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const filteredPaymentTotals = React.useMemo(() => (
     filtered.reduce((acc, client) => {
       const paid = getClientTotalPaid(client.id);
+      acc.amount += getProgramClientSalePrice(program, client);
       acc.paid += paid;
       acc.remaining += getProgramClientRemainingAmount(program, client, paid);
       return acc;
-    }, { paid: 0, remaining: 0 })
+    }, { amount: 0, paid: 0, remaining: 0 })
   ), [filtered, getClientTotalPaid, program]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
@@ -2315,8 +2323,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     fontSize:10,
   });
   const tableGridTemplate = selectMode
-    ? "38px 46px minmax(0,2.1fr) minmax(0,.95fr) minmax(0,1.05fr) minmax(0,1fr) minmax(0,.95fr) minmax(0,.95fr) minmax(0,.85fr)"
-    : "46px minmax(0,2.1fr) minmax(0,.95fr) minmax(0,1.05fr) minmax(0,1fr) minmax(0,.95fr) minmax(0,.95fr) minmax(0,.85fr)";
+    ? "38px 44px minmax(0,2fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.8fr)"
+    : "44px minmax(0,2fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,.8fr)";
   const totalsGridColumn = selectMode ? "1 / span 4" : "1 / span 3";
   const packageById = React.useMemo(() => new Map(packages.map((pkg) => [pkg.id, pkg])), [packages]);
   const packageByLevel = React.useMemo(() => new Map(packages.map((pkg) => [pkg.level, pkg])), [packages]);
@@ -2360,14 +2368,17 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     printProgramPDF({
       program,
       clients: exportClients,
-      getClientStatus,
+      getClientStatus: (client) => getProgramClientPaymentStatus(program, client, getClientTotalPaid(client.id)),
+      getClientOfficialPrice: (client) => getProgramClientOfficialPrice(program, client),
+      getClientSalePrice: (client) => getProgramClientSalePrice(program, client),
+      getClientRemainingAmount: (client, paid) => getProgramClientRemainingAmount(program, client, paid),
       getClientTotalPaid,
       getClientPayments,
       lang,
       t,
       agency,
     });
-  }, [agency, closeHeaderActions, getClientPayments, getClientStatus, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
+  }, [agency, closeHeaderActions, getClientPayments, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
   const handleAmadeusExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -2930,6 +2941,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           roomType: t.roomType,
           serviceType: t.serviceType || "نوع الخدمة",
           ticketNo: t.ticketNo,
+          amount: t.amount || (lang === "fr" ? "Montant" : lang === "en" ? "Amount" : "المبلغ"),
           paid: t.paid,
           remaining: t.remaining,
           status: t.statusLabel || t.status || "الحالة",
@@ -2939,6 +2951,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         rows={paginatedProgramClients}
         renderRow={(c,i)=>{
             const paid = getClientTotalPaid(c.id);
+            const amount = getProgramClientSalePrice(program, c);
             const rem  = getProgramClientRemainingAmount(program, c, paid);
             const stat = getProgramClientDisplayStatus(program, c, paid);
             const completionTooltip = getClientCompletionTooltip(c, lang, program, {
@@ -2947,7 +2960,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             return (
               <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
-                paid={paid} remaining={rem} status={stat}
+                amount={amount} paid={paid} remaining={rem} status={stat}
                 completionTooltip={completionTooltip}
                 onClick={()=>setSelectedClient(c)}
                 onEdit={()=>setEditingClient(c)}
@@ -2969,6 +2982,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         totalsGridColumn={totalsGridColumn}
         totalLabel={participantTerms.totalLabel ? participantTerms.totalLabel(filtered.length) : tr("programTotalsLabel", { count: filtered.length })}
         summaryLabel={t.summary || participantTerms.plural || t.clients}
+        amountTotalLabel={formatCurrencyForLang(filteredPaymentTotals.amount)}
         paidTotalLabel={formatCurrencyForLang(filteredPaymentTotals.paid)}
         remainingTotalLabel={formatCurrencyForLang(filteredPaymentTotals.remaining)}
       />

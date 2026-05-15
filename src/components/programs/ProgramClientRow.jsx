@@ -39,6 +39,7 @@ export default function ProgramClientRow({
   client,
   program,
   index,
+  amount,
   paid,
   remaining,
   status,
@@ -57,6 +58,7 @@ export default function ProgramClientRow({
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { lang, dir, t } = useLang();
   const isRTL = dir === "rtl";
+  const amountLabel = formatCurrency(amount, lang);
   const paidLabel = formatCurrency(paid, lang);
   const remainingLabel = formatCurrency(remaining, lang);
   const btnRef = React.useRef();
@@ -154,7 +156,7 @@ export default function ProgramClientRow({
           onClick={handleRowClick}
           style={{
             display: "grid",
-            gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 130px 140px 130px 120px 120px 100px",
+            gridTemplateColumns: gridTemplate || "50px minmax(240px,2fr) 120px 135px 120px 120px 120px 120px 100px",
             gap: 10,
             flex: 1,
             minWidth: 0,
@@ -259,6 +261,9 @@ export default function ProgramClientRow({
           </span>
           <span style={{ color: tc.gold, fontWeight: 600, textAlign: "center", fontSize: 11 }}>
             {client.ticketNo || "—"}
+          </span>
+          <span style={{ color: tc.white, fontWeight: 800, textAlign: "center", fontSize: 12 }}>
+            {amountLabel}
           </span>
           <span style={{ color: tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
             {paidLabel}

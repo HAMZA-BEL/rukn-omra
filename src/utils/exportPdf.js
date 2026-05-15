@@ -1,12 +1,28 @@
 import { getParticipantTerminology } from "./participantTerminology";
 import { escapeHtml } from "./escapeHtml";
+import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "./clientPricing";
+import { clientServiceIncludesAccommodation, getClientServiceTypeLabel } from "./clientServiceTypes";
+import { translateRoomType } from "./i18nValues";
+import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "./paymentRecords";
 
 /**
  * Generates a print-ready HTML page for a program's pilgrim list
  * and opens it in a new window for window.print().
  * No external libraries — pure HTML/CSS.
  */
-export function printProgramPDF({ program, clients, getClientStatus, getClientTotalPaid, getClientPayments, lang, t, agency }) {
+export function printProgramPDF({
+  program,
+  clients,
+  getClientStatus,
+  getClientOfficialPrice,
+  getClientSalePrice,
+  getClientRemainingAmount: getClientRemainingAmountForProgram,
+  getClientTotalPaid,
+  getClientPayments,
+  lang,
+  t,
+  agency,
+}) {
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
   const terms = getParticipantTerminology(program, lang);
@@ -25,13 +41,20 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     fullName:     t.fullName     || (lang === "fr" ? "Nom complet"     : "الاسم الكامل"),
     passportNo:   t.passportNo   || (lang === "fr" ? "N° Passeport"    : "رقم الجواز"),
     birthDate:    t.birthDate    || (lang === "fr" ? "Date naissance"   : "تاريخ الميلاد"),
-    gender:       t.gender       || (lang === "fr" ? "Sexe"             : "الجنس"),
     roomType:     t.roomType     || (lang === "fr" ? "Chambre"          : "نوع الغرفة"),
+    serviceType:  t.serviceType  || (lang === "fr" ? "Type de service"  : lang === "en" ? "Service type" : "نوع الخدمة"),
     officialPrice: lang === "fr" ? "Prix officiel" : lang === "en" ? "Official price" : "السعر الرسمي",
-    salePrice:    lang === "fr" ? "Prix de vente" : lang === "en" ? "Sale price" : "سعر البيع",
+    salePrice:    lang === "fr" ? "Prix de vente / Montant" : lang === "en" ? "Selling price / Amount" : "سعر البيع / المبلغ",
     firstPayment: lang === "fr" ? "1er paiement" : lang === "en" ? "First payment" : "الدفعة الأولى",
     secondPayment: lang === "fr" ? "2e paiement" : lang === "en" ? "Second payment" : "الدفعة الثانية",
     thirdPayment: lang === "fr" ? "3e paiement" : lang === "en" ? "Third payment" : "الدفعة الثالثة",
+    paid:         t.paid || (lang === "fr" ? "Payé" : lang === "en" ? "Paid" : "المدفوع"),
+    receiptsPayments: lang === "fr" ? "Reçus / paiements" : lang === "en" ? "Receipts / payments" : "الوصولات / الدفعات",
+    normalPayment: lang === "fr" ? "Paiement normal" : lang === "en" ? "Normal payment" : "دفعة عادية",
+    previousPayment: lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة",
+    ruknReceipt:  lang === "fr" ? "Reçu Rukn" : lang === "en" ? "Rukn receipt" : "وصل Rukn",
+    oldReceipt:   lang === "fr" ? "Ancien reçu" : lang === "en" ? "Old receipt" : "وصل قديم",
+    noReceiptNumber: lang === "fr" ? "Sans numéro de reçu" : lang === "en" ? "No receipt number" : "بدون رقم وصل",
     status:       lang === "fr" ? "Statut"    : lang === "en" ? "Status"     : "الحالة",
     remaining:    t.remaining    || (lang === "fr" ? "Reste"            : "المتبقي"),
     cleared:      t.status_cleared || (lang === "fr" ? "Soldé"          : "مصفّى"),
@@ -41,19 +64,36 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
       ? `إجمالي ${terms.plural}`
       : t.totalClients || (lang === "fr" ? "Total pèlerins" : "Total Pilgrims"),
     collected:    t.collected      || (lang === "fr" ? "Encaissé"       : "المحصَّل"),
-    male:         lang === "fr" ? "M" : "ذ",
-    female:       lang === "fr" ? "F" : "أ",
     currency:     "MAD",
   };
 
   // ── Totals ───────────────────────────────────────────────────────────────
-  const totalRevenue  = clients.reduce((s, c) => s + (c.salePrice || c.price || 0), 0);
-  const totalPaid     = clients.reduce((s, c) => s + getClientTotalPaid(c.id), 0);
-  const totalRem      = Math.max(0, totalRevenue - totalPaid);
   const fmt           = (n) => Number(n).toLocaleString("fr-MA") + " " + L.currency;
   const today         = new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : "ar-MA");
-  const getSalePrice  = (client = {}) => Number(client.salePrice || client.price || 0) || 0;
-  const getOfficialPrice = (client = {}) => Number(client.officialPrice || getSalePrice(client)) || 0;
+  const resolveSalePrice = (client = {}) => {
+    if (typeof getClientSalePrice === "function") return Number(getClientSalePrice(client)) || 0;
+    return getClientEffectiveSalePrice(client, { program });
+  };
+  const resolveOfficialPrice = (client = {}) => {
+    if (typeof getClientOfficialPrice === "function") return Number(getClientOfficialPrice(client)) || 0;
+    return getClientEffectiveOfficialPrice(client, { program });
+  };
+  const resolveRemaining = (client = {}, paid = 0) => {
+    if (typeof getClientRemainingAmountForProgram === "function") {
+      return Number(getClientRemainingAmountForProgram(client, paid)) || 0;
+    }
+    return getClientRemainingAmount(client, paid, { program });
+  };
+  const resolveStatus = (client = {}, paid = 0, salePrice = 0) => {
+    if (typeof getClientStatus === "function") return getClientStatus(client, paid, salePrice);
+    if (paid === 0) return "unpaid";
+    return paid >= salePrice ? "cleared" : "partial";
+  };
+  const getClientPaidTotal = (client = {}) => (
+    typeof getClientTotalPaid === "function" ? Number(getClientTotalPaid(client.id)) || 0 : 0
+  );
+  const totalPaid     = clients.reduce((s, c) => s + getClientPaidTotal(c), 0);
+  const totalRem      = clients.reduce((s, c) => s + resolveRemaining(c, getClientPaidTotal(c)), 0);
   const getPaymentSortTime = (payment = {}) => {
     for (const raw of [payment.date, payment.createdAt, payment.created_at]) {
       if (!raw) continue;
@@ -62,32 +102,56 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     }
     return Number.POSITIVE_INFINITY;
   };
-  const getFirstPayments = (clientId) => (
+  const getSortedPayments = (clientId) => (
     (typeof getClientPayments === "function" ? getClientPayments(clientId) : [])
       .map((payment, index) => ({ payment, index }))
       .sort((a, b) => {
         const byDate = getPaymentSortTime(a.payment) - getPaymentSortTime(b.payment);
         return byDate || a.index - b.index;
       })
-      .slice(0, 3)
-      .map(({ payment }) => Number(payment.amount) || 0)
+      .map(({ payment }) => payment)
   );
-  const paymentCell = (payments, index) => (
-    payments[index] > 0 ? escapeHtml(fmt(payments[index])) : "—"
-  );
+  const getReceiptNumber = (payment = {}) => String(
+    payment.receiptNo
+      || payment.receipt_no
+      || payment.receiptNumber
+      || payment.receipt_number
+      || ""
+  ).trim();
+  const renderPaymentsCell = (payments = []) => {
+    if (!payments.length) return "—";
+    return payments.map((payment) => {
+      const isPrevious = isPreviousPaymentRecord(payment);
+      const legacyReceiptNumber = getLegacyReceiptNumber(payment);
+      const receiptNumber = getReceiptNumber(payment);
+      const amount = Number(payment.amount) || 0;
+      const receiptLabel = isPrevious
+        ? (legacyReceiptNumber ? `${L.oldReceipt}: ${legacyReceiptNumber}` : `${L.previousPayment} ${L.noReceiptNumber}`)
+        : (receiptNumber ? `${L.ruknReceipt}: ${receiptNumber}` : `${L.normalPayment} ${L.noReceiptNumber}`);
+      return `<div class="receipt-line"><span>${escapeHtml(receiptLabel)}</span><strong>${escapeHtml(fmt(amount))}</strong></div>`;
+    }).join("");
+  };
+  const paymentAmountCell = (payments = [], index) => {
+    const amount = Number(payments[index]?.amount) || 0;
+    return amount > 0 ? escapeHtml(fmt(amount)) : "—";
+  };
 
   // ── Table rows ───────────────────────────────────────────────────────────
   const rows = clients.map((c, i) => {
-    const status  = getClientStatus(c);
-    const paid    = getClientTotalPaid(c.id);
-    const salePrice = getSalePrice(c);
-    const officialPrice = getOfficialPrice(c);
-    const firstPayments = getFirstPayments(c.id);
-    const rem     = Math.max(0, salePrice - paid);
+    const paid    = getClientPaidTotal(c);
+    const salePrice = resolveSalePrice(c);
+    const officialPrice = resolveOfficialPrice(c);
+    const rem     = resolveRemaining(c, paid);
+    const status  = resolveStatus(c, paid, salePrice);
     const sLabel  = status === "cleared" ? L.cleared : status === "partial" ? L.partial : L.unpaid;
     const sClass  = status === "cleared" ? "cleared" : status === "partial" ? "partial" : "unpaid";
-    const gLabel  = c.passport?.gender === "F" ? L.female : c.passport?.gender === "M" ? L.male : "—";
     const name    = [c.lastName, c.firstName || c.nom || c.prenom].filter(Boolean).join(" ") || c.name || "—";
+    const roomLabel = clientServiceIncludesAccommodation(c)
+      ? (translateRoomType(c.roomTypeLabel || c.roomType, lang) || c.roomTypeLabel || c.roomType || "—")
+      : "-";
+    const serviceTypeLabel = getClientServiceTypeLabel(c, t, lang);
+    const sortedPayments = getSortedPayments(c.id);
+    const paymentsCell = renderPaymentsCell(sortedPayments);
 
     return `
       <tr>
@@ -95,22 +159,40 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
         <td style="font-weight:600">${escapeHtml(name)}</td>
         <td style="font-family:monospace;font-size:10px">${escapeHtml(c.passport?.number || "—")}</td>
         <td style="text-align:center">${escapeHtml(c.passport?.birthDate || "—")}</td>
-        <td style="text-align:center">${escapeHtml(gLabel)}</td>
-        <td>${escapeHtml(c.roomType || "—")}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600">${escapeHtml(fmt(officialPrice))}</td>
+        <td>${escapeHtml(roomLabel)}</td>
+        <td>${escapeHtml(serviceTypeLabel)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600">${officialPrice > 0 ? escapeHtml(fmt(officialPrice)) : "—"}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:#0d4a1a">${escapeHtml(fmt(salePrice))}</td>
-        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 0)}</td>
-        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 1)}</td>
-        <td style="text-align:${isRTL ? "left" : "right"}">${paymentCell(firstPayments, 2)}</td>
-        <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 0)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 1)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 2)}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#15803d">${escapeHtml(fmt(paid))}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "OK"}</td>
+        <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
+        <td>${paymentsCell}</td>
       </tr>`;
   }).join("");
 
   // ── Column headers ───────────────────────────────────────────────────────
-  const headers = [L.num, L.fullName, L.passportNo, L.birthDate, L.gender, L.roomType, L.officialPrice, L.salePrice, L.firstPayment, L.secondPayment, L.thirdPayment, L.status, L.remaining]
+  const headers = [
+    L.num,
+    L.fullName,
+    L.passportNo,
+    L.birthDate,
+    L.roomType,
+    L.serviceType,
+    L.officialPrice,
+    L.salePrice,
+    L.firstPayment,
+    L.secondPayment,
+    L.thirdPayment,
+    L.paid,
+    L.remaining,
+    L.status,
+    L.receiptsPayments,
+  ]
     .map(h => `<th>${escapeHtml(h)}</th>`).join("");
-  const columnWidths = [3, 17, 9, 8, 4, 7, 8, 8, 7, 7, 7, 6, 9];
+  const columnWidths = [3, 12, 7, 6, 6, 7, 7, 7, 5, 5, 5, 6, 6, 5, 13];
   const colgroup = columnWidths.map((width) => `<col style="width:${width}%">`).join("");
 
   // ── Full HTML ─────────────────────────────────────────────────────────────
@@ -191,22 +273,22 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
       border-collapse: collapse;
       margin-bottom: 14px;
       table-layout: fixed;
-      font-size: 8.2px;
+      font-size: 7.7px;
     }
     thead tr {
       background: #0d4a1a;
     }
     th {
       color: #d4af37;
-      padding: 6px 3px;
+      padding: 5px 2px;
       font-weight: 700;
-      font-size: 8.2px;
+      font-size: 7.5px;
       border: 1px solid #0a3a15;
       white-space: normal;
       line-height: 1.25;
     }
     td {
-      padding: 4px 3px;
+      padding: 3px 2px;
       border: 1px solid #ddd;
       vertical-align: middle;
       overflow: hidden;
@@ -215,12 +297,32 @@ export function printProgramPDF({ program, clients, getClientStatus, getClientTo
     }
     tbody tr:nth-child(even) td { background: #f4fbf5; }
     tbody tr:hover td { background: #e8f5ea; }
+    .receipt-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+      padding: 1px 0;
+      line-height: 1.25;
+    }
+    .receipt-line + .receipt-line {
+      border-top: 1px solid rgba(13,74,26,.12);
+    }
+    .receipt-line span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .receipt-line strong {
+      flex-shrink: 0;
+      color: #0d4a1a;
+      font-size: 7.2px;
+    }
     /* ── Status badges ── */
     .status {
       display: inline-block;
-      padding: 2px 5px;
+      padding: 2px 4px;
       border-radius: 20px;
-      font-size: 7.8px;
+      font-size: 7.2px;
       font-weight: 700;
       white-space: nowrap;
     }
