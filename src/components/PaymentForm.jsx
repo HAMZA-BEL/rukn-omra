@@ -7,6 +7,7 @@ import { formatCurrency } from "../utils/currency";
 import { getStoredProgramCosting } from "./programs/programCosting";
 import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import { getClientServiceType } from "../utils/clientServiceTypes";
+import { PAYMENT_TYPE_NORMAL, PAYMENT_TYPE_PREVIOUS } from "../utils/paymentRecords";
 
 const normalizePaymentMethodKind = (value = "") => {
   const method = String(value).trim().toLowerCase();
@@ -39,10 +40,12 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   const nextReceiptNo = "REC-" + String(payments.length + 1).padStart(3, "0");
 
   const [form, setForm] = React.useState({
+    paymentType: PAYMENT_TYPE_NORMAL,
     amount:    "",
     method:    t.paymentMethods ? t.paymentMethods[0] : "نقدًا",
     date:      new Date().toISOString().split("T")[0],
     receiptNo: nextReceiptNo,
+    legacyReceiptNumber: "",
     chequeNumber: "",
     paidBy:    "",
     note:      "",
@@ -50,6 +53,26 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   const [errors, setErrors] = React.useState({});
   const [saving, setSaving] = React.useState(false);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  const isPreviousPayment = form.paymentType === PAYMENT_TYPE_PREVIOUS;
+  const paymentTypeLabel = t.paymentTypeLabel || (lang === "fr" ? "Type de paiement" : lang === "en" ? "Payment type" : "نوع الدفعة");
+  const normalPaymentLabel = t.normalPayment || (lang === "fr" ? "Paiement normal" : lang === "en" ? "Normal payment" : "دفعة عادية");
+  const previousPaymentLabel = t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة");
+  const oldReceiptNumberLabel = t.oldReceiptNumber || (lang === "fr" ? "Ancien numéro de reçu" : lang === "en" ? "Old receipt number" : "رقم الوصل القديم");
+  const previousPaymentNotePlaceholder = t.previousPaymentNotePlaceholder
+    || (lang === "fr" ? "Exemple : paiement effectué avant l’utilisation du système" : lang === "en" ? "Example: payment made before using the system" : "مثال: دفعة قبل إدخال البرنامج للنظام");
+  const paymentTypeOptions = [
+    { value: PAYMENT_TYPE_NORMAL, label: normalPaymentLabel },
+    { value: PAYMENT_TYPE_PREVIOUS, label: previousPaymentLabel },
+  ];
+  const handlePaymentTypeChange = (event) => {
+    const nextType = event.target.value;
+    setForm((current) => ({
+      ...current,
+      paymentType: nextType,
+      receiptNo: nextType === PAYMENT_TYPE_PREVIOUS ? "" : (current.receiptNo || nextReceiptNo),
+    }));
+    setErrors((current) => ({ ...current, receiptNo: "" }));
+  };
   const methodKind = normalizePaymentMethodKind(form.method);
 
   const handleSave = async () => {
@@ -60,7 +83,7 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
     if (Number(form.amount) > remaining + 1)
       e.amount = (t.amountExceedsError || "").replace("{remaining}", formatCurrency(remaining, lang));
     if (!form.date)      e.date = t.dateError;
-    if (!usesServerReceipt && !form.receiptNo) e.receiptNo = t.receiptError;
+    if (!isPreviousPayment && !usesServerReceipt && !form.receiptNo) e.receiptNo = t.receiptError;
     if (methodKind === "cheque" && !form.chequeNumber.trim())
       e.chequeNumber = t.chequeNumberRequired || "يرجى إدخال رقم الشيك";
     if ((methodKind === "cheque" || methodKind === "bank") && !form.paidBy.trim())
@@ -74,7 +97,13 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
       saved = await store.addPayment({
         clientId, amount: Number(form.amount),
         method: form.method, payment_method: form.method, date: form.date,
-        ...(usesServerReceipt ? {} : {
+        paymentType: form.paymentType,
+        payment_type: form.paymentType,
+        isPreviousPayment,
+        is_previous_payment: isPreviousPayment,
+        legacyReceiptNumber: isPreviousPayment ? form.legacyReceiptNumber.trim() : "",
+        legacy_receipt_number: isPreviousPayment ? form.legacyReceiptNumber.trim() : "",
+        ...((usesServerReceipt || isPreviousPayment) ? {} : {
           receiptNo: form.receiptNo, receipt_no: form.receiptNo,
           receiptNumber: form.receiptNo, receipt_number: form.receiptNo,
         }),
@@ -100,6 +129,8 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
         </strong>
       </p>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+        <Select label={paymentTypeLabel} value={form.paymentType} onChange={handlePaymentTypeChange}
+          options={paymentTypeOptions} />
         <Input label={t.amountLabel} value={form.amount} onChange={set("amount")}
           type="number" required error={errors.amount}
           placeholder={t.amountPlaceholder} />
@@ -107,9 +138,15 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
           options={t.paymentMethods || PAYMENT_METHODS} />
         <Input label={t.dateLabel} value={form.date} onChange={set("date")}
           type="date" required error={errors.date} />
-        <Input label={t.receiptNoLabel} value={form.receiptNo} onChange={set("receiptNo")}
-          placeholder={t.receiptPlaceholder} required error={errors.receiptNo}
-          inputStyle={{ color: theme.colors.gold, fontWeight: 700 }} />
+        {isPreviousPayment ? (
+          <Input label={oldReceiptNumberLabel} value={form.legacyReceiptNumber} onChange={set("legacyReceiptNumber")}
+            placeholder={oldReceiptNumberLabel}
+            inputStyle={{ color: theme.colors.gold, fontWeight: 700 }} />
+        ) : (
+          <Input label={t.receiptNoLabel} value={form.receiptNo} onChange={set("receiptNo")}
+            placeholder={t.receiptPlaceholder} required error={errors.receiptNo}
+            inputStyle={{ color: theme.colors.gold, fontWeight: 700 }} />
+        )}
         {methodKind === "cheque" && (
           <Input label={t.chequeNumber || "رقم الشيك"} value={form.chequeNumber} onChange={set("chequeNumber")}
             placeholder={t.chequeNumberPlaceholder || "000000"} required error={errors.chequeNumber} />
@@ -119,7 +156,7 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
             placeholder={t.paidByPlaceholder || "اسم الدافع"} required error={errors.paidBy} />
         )}
         <Input label={t.noteLabel} value={form.note} onChange={set("note")}
-          placeholder={t.notePlaceholder} style={{ gridColumn:"1/-1" }} />
+          placeholder={isPreviousPayment ? previousPaymentNotePlaceholder : t.notePlaceholder} style={{ gridColumn:"1/-1" }} />
       </div>
       <div style={{ display:"flex", gap:8 }}>
         <Button variant="success" onClick={handleSave} icon="save" disabled={saving}>{t.savePayment}</Button>

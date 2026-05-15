@@ -18,6 +18,7 @@ import { isMinor } from "../utils/age";
 import { downloadSingleContract } from "../features/contracts";
 import { clientServiceIncludesAccommodation, getClientServiceType, getClientServiceTypeLabel } from "../utils/clientServiceTypes";
 import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "../utils/paymentRecords";
 import {
   getRepresentedByClientId,
   isEligibleRepresentative,
@@ -327,6 +328,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, loadingLabel, onToast, paymentsReady, program, store]);
 
   const openReceiptSelector = React.useCallback((payment) => {
+    if (isPreviousPaymentRecord(payment)) return;
     if (payment) setReceiptPayment(payment);
   }, []);
 
@@ -560,7 +562,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
 
       {/* Print buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
-        {paymentsReady && payments.map && payments.length > 0 && lastPmt && (
+        {paymentsReady && payments.map && payments.length > 0 && lastPmt && !isPreviousPaymentRecord(lastPmt) && (
           <Button variant="secondary" size="sm" icon="print"
             style={printActionButtonStyle}
             onClick={() => openReceiptSelector(lastPmt)}>
@@ -793,7 +795,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       {lastPmt && (
         <div style={{ marginTop:10, display:"flex", gap:14, flexWrap:"wrap" }}>
           <span style={{ fontSize:12, color:tc.grey }}>{t.lastPayment}: <strong style={{color:"var(--rukn-text-strong)"}}>{lastPmt.date}</strong></span>
-          <span style={{ fontSize:12, color:tc.grey }}>{t.lastReceipt}: <strong style={{color:tc.gold}}>{lastPmt.receiptNo}</strong></span>
+          <span style={{ fontSize:12, color:tc.grey }}>{isPreviousPaymentRecord(lastPmt) ? (t.oldReceipt || "وصل قديم") : t.lastReceipt}: <strong style={{color:tc.gold}}>{isPreviousPaymentRecord(lastPmt) ? (getLegacyReceiptNumber(lastPmt) || (t.previousPayment || "دفعة سابقة")) : lastPmt.receiptNo}</strong></span>
           <span style={{ fontSize:12, color:tc.grey }}>{t.paymentCount}: <strong style={{color:"var(--rukn-text-strong)"}}>{payments.length}</strong></span>
         </div>
       )}
@@ -936,9 +938,14 @@ function PaymentRow({ payment, onPrint, onDelete }) {
   const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","إيداع بنكي":"bank","بطاقة بنكية":"payment","وقفة بنك":"bank","وقفة بنكية":"bank"};
+  const isPrevious = isPreviousPaymentRecord(payment);
+  const legacyReceiptNumber = getLegacyReceiptNumber(payment);
+  const previousPaymentLabel = t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة");
+  const oldReceiptLabel = t.oldReceipt || (lang === "fr" ? "Ancien reçu" : lang === "en" ? "Old receipt" : "وصل قديم");
   const extraDetails = [
     payment.chequeNumber ? `${t.chequeNumber || "رقم الشيك"}: ${payment.chequeNumber}` : "",
     payment.paidBy ? `${t.paidBy || "من طرف"}: ${payment.paidBy}` : "",
+    isPrevious && legacyReceiptNumber ? `${oldReceiptLabel}: ${legacyReceiptNumber}` : "",
   ].filter(Boolean).join(" • ");
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
@@ -953,18 +960,37 @@ function PaymentRow({ payment, onPrint, onDelete }) {
             {formatCurrency(payment.amount, lang)}
           </p>
           <p style={{ fontSize:11, color:theme.colors.grey }}>
-            {translatePaymentMethod(payment.method, lang)} • {payment.date} • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong>
+            {translatePaymentMethod(payment.method, lang)} • {payment.date}
+            {isPrevious ? "" : <> • <strong style={{color:theme.colors.gold}}>{payment.receiptNo}</strong></>}
           </p>
+          {isPrevious && (
+            <span style={{
+              display:"inline-flex",
+              alignItems:"center",
+              marginTop:4,
+              padding:"2px 8px",
+              borderRadius:999,
+              background:"rgba(245,158,11,.12)",
+              border:"1px solid rgba(245,158,11,.25)",
+              color:theme.colors.warning,
+              fontSize:10.5,
+              fontWeight:800,
+            }}>
+              {previousPaymentLabel}
+            </span>
+          )}
           {extraDetails && <p style={{ fontSize:11, color:theme.colors.grey }}>{extraDetails}</p>}
           {payment.note && <p style={{ fontSize:11, color:theme.colors.grey }}>{payment.note}</p>}
         </div>
       </div>
       {hov && (
         <div style={{ display:"flex", gap:6 }}>
-          <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
-            border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
-            borderRadius:8, padding:"4px 10px", fontSize:11,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}><AppIcon name="print" size={13} color={theme.colors.gold} /></button>
+          {!isPrevious && (
+            <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
+              border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
+              borderRadius:8, padding:"4px 10px", fontSize:11,
+              cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}><AppIcon name="print" size={13} color={theme.colors.gold} /></button>
+          )}
           <button onClick={onDelete} style={{ background:"rgba(239,68,68,.1)",
             border:"1px solid rgba(239,68,68,.2)", color:"#ef4444",
             borderRadius:8, padding:"4px 10px", fontSize:11,

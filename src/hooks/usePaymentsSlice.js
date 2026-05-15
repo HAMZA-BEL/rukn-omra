@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { normalizePaymentRecord } from "../utils/paymentRecords";
 
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
 
@@ -23,7 +24,7 @@ export function usePaymentsSlice() {
     const method = row.method || row.payment_method || "";
     const receiptNo = row.receipt_no || row.receipt_number || "";
     const chequeNumber = row.cheque_number || row.check_number || "";
-    const note = row.note || row.notes || "";
+    const noteMeta = normalizePaymentRecord(row);
     return {
       id: row.id,
       clientId: row.client_id || row.clientId,
@@ -38,8 +39,14 @@ export function usePaymentsSlice() {
       receipt_number: receiptNo,
       receiptSequence: row.receipt_sequence ?? row.receiptSequence ?? null,
       receipt_sequence: row.receipt_sequence ?? row.receiptSequence ?? null,
-      note,
-      notes: note,
+      paymentType: noteMeta.paymentType,
+      payment_type: noteMeta.paymentType,
+      isPreviousPayment: noteMeta.isPreviousPayment,
+      is_previous_payment: noteMeta.isPreviousPayment,
+      legacyReceiptNumber: noteMeta.legacyReceiptNumber,
+      legacy_receipt_number: noteMeta.legacyReceiptNumber,
+      note: noteMeta.note,
+      notes: noteMeta.note,
       chequeNumber,
       cheque_number: chequeNumber,
       checkNumber: chequeNumber,

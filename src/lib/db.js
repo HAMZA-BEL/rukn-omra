@@ -4,6 +4,7 @@
  * on top of Supabase RLS policies).
  */
 import { supabase } from "./supabase";
+import { normalizePaymentRecord } from "../utils/paymentRecords";
 import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
@@ -284,28 +285,33 @@ const fromClient = (row) => {
   };
 };
 
-const toPayment = (p, agencyId) => ({
-  id:         p.id,
-  agency_id:  agencyId,
-  client_id:  normalizeForeignKey(p.clientId),
-  amount:     p.amount,
-  date:       p.date      ?? null,
-  method:     p.method ?? p.paymentMethod ?? p.payment_method ?? null,
-  receipt_no: p.receiptNo ?? p.receipt_no ?? p.receiptNumber ?? p.receipt_number ?? null,
-  receipt_sequence: p.receiptSequence ?? p.receipt_sequence ?? null,
-  cheque_number: cleanString(p.chequeNumber ?? p.cheque_number ?? p.checkNumber ?? p.check_number),
-  paid_by: cleanString(p.paidBy ?? p.paid_by),
-  note:       p.note ?? p.notes ?? null,
-  status: p.status ?? "active",
-  trashed_at: p.trashedAt ?? p.trashed_at ?? null,
-  deleted_at: p.deletedAt ?? p.deleted_at ?? null,
-});
+const toPayment = (p, agencyId) => {
+  const normalized = normalizePaymentRecord(p);
+  return {
+    id:         p.id,
+    agency_id:  agencyId,
+    client_id:  normalizeForeignKey(p.clientId),
+    amount:     p.amount,
+    date:       p.date      ?? null,
+    method:     p.method ?? p.paymentMethod ?? p.payment_method ?? null,
+    receipt_no: p.receiptNo ?? p.receipt_no ?? p.receiptNumber ?? p.receipt_number ?? null,
+    receipt_sequence: p.receiptSequence ?? p.receipt_sequence ?? null,
+    cheque_number: cleanString(p.chequeNumber ?? p.cheque_number ?? p.checkNumber ?? p.check_number),
+    paid_by: cleanString(p.paidBy ?? p.paid_by),
+    note:       cleanString(p.note ?? p.notes),
+    payment_type: normalized.paymentType,
+    legacy_receipt_number: cleanString(normalized.legacyReceiptNumber),
+    status: p.status ?? "active",
+    trashed_at: p.trashedAt ?? p.trashed_at ?? null,
+    deleted_at: p.deletedAt ?? p.deleted_at ?? null,
+  };
+};
 
 const fromPayment = (row) => {
   const method = row.method || row.payment_method || "";
   const receiptNo = row.receipt_no || row.receipt_number || "";
   const chequeNumber = row.cheque_number || row.check_number || "";
-  const note = row.note || row.notes || "";
+  const normalized = normalizePaymentRecord(row);
   return {
     id:        row.id,
     clientId:  row.client_id,
@@ -326,8 +332,14 @@ const fromPayment = (row) => {
     check_number: chequeNumber,
     paidBy: row.paid_by || "",
     paid_by: row.paid_by || "",
-    note,
-    notes: note,
+    paymentType: normalized.paymentType,
+    payment_type: normalized.paymentType,
+    isPreviousPayment: normalized.isPreviousPayment,
+    is_previous_payment: normalized.isPreviousPayment,
+    legacyReceiptNumber: normalized.legacyReceiptNumber,
+    legacy_receipt_number: normalized.legacyReceiptNumber,
+    note: normalized.note,
+    notes: normalized.note,
     status: row.status || "active",
     trashedAt: row.trashed_at || "",
     trashed_at: row.trashed_at || "",

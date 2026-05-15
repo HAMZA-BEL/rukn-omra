@@ -186,6 +186,8 @@ create table if not exists public.payments (
   date        date,
   method      text,
   receipt_no  text,
+  payment_type text not null default 'normal',
+  legacy_receipt_number text,
   note        text,
   created_at  timestamptz default now()
 );
@@ -193,15 +195,23 @@ create table if not exists public.payments (
 alter table public.payments add column if not exists cheque_number text;
 alter table public.payments add column if not exists paid_by text;
 alter table public.payments add column if not exists receipt_sequence integer;
+alter table public.payments add column if not exists payment_type text not null default 'normal';
+alter table public.payments add column if not exists legacy_receipt_number text;
 alter table public.payments add column if not exists status text default 'active';
 alter table public.payments add column if not exists trashed_at timestamptz;
 alter table public.payments add column if not exists deleted_at timestamptz;
+
+alter table public.payments drop constraint if exists payments_payment_type_check;
+alter table public.payments add constraint payments_payment_type_check
+  check (payment_type in ('normal', 'previous'));
 
 create unique index if not exists payments_agency_receipt_sequence_unique
   on public.payments (agency_id, receipt_sequence)
   where receipt_sequence is not null;
 create index if not exists payments_agency_status_idx
   on public.payments (agency_id, status);
+create index if not exists idx_payments_agency_payment_type
+  on public.payments (agency_id, payment_type);
 create index if not exists payments_agency_trashed_at_idx
   on public.payments (agency_id, trashed_at)
   where status = 'trashed';
@@ -1019,6 +1029,7 @@ begin
     method,
     receipt_no,
     receipt_sequence,
+    payment_type,
     note,
     cheque_number,
     paid_by
@@ -1032,6 +1043,7 @@ begin
     nullif(trim(p_method), ''),
     next_receipt_no,
     next_number,
+    'normal',
     nullif(trim(p_note), ''),
     nullif(trim(p_cheque_number), ''),
     nullif(trim(p_paid_by), '')

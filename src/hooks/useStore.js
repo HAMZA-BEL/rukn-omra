@@ -32,6 +32,7 @@ import {
 import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
 import { usePaymentsSlice } from "./usePaymentsSlice";
+import { isPreviousPaymentRecord, normalizePaymentRecord, PAYMENT_TYPE_PREVIOUS } from "../utils/paymentRecords";
 import { useClientsSlice } from "./useClientsSlice";
 import { fetchAgencyUsers } from "../services/usersService";
 import { buildExportPayload, parseImportPayload } from "../services/dataBackupService";
@@ -1970,11 +1971,15 @@ export function useStore(agencyId, onToast) {
 
   const addPayment = useCallback(async (data) => {
     const id          = genId("PMT");
-    const autoReceipt = "REC-" + id.slice(-6).toUpperCase();
-    const receiptNo = data.receiptNo || data.receipt_no || data.receiptNumber || data.receipt_number || autoReceipt;
+    const incomingPaymentType = data.paymentType || data.payment_type || (data.isPreviousPayment ? PAYMENT_TYPE_PREVIOUS : "");
+    const isPreviousPayment = isPreviousPaymentRecord({ paymentType: incomingPaymentType, isPreviousPayment: data.isPreviousPayment });
+    const autoReceipt = isPreviousPayment ? "" : "REC-" + id.slice(-6).toUpperCase();
+    const receiptNo = isPreviousPayment
+      ? ""
+      : (data.receiptNo || data.receipt_no || data.receiptNumber || data.receipt_number || autoReceipt);
     const chequeNumber = trimString(data.chequeNumber ?? data.cheque_number ?? data.checkNumber ?? data.check_number);
     const paidBy = trimString(data.paidBy ?? data.paid_by);
-    const pmt = {
+    const pmt = normalizePaymentRecord({
       ...data, id,
       method: data.method || data.paymentMethod || data.payment_method || "",
       payment_method: data.payment_method || data.method || data.paymentMethod || "",
@@ -1990,21 +1995,35 @@ export function useStore(agencyId, onToast) {
       paidBy,
       paid_by: paidBy,
       notes: data.notes ?? data.note ?? "",
-    };
+      paymentType: isPreviousPayment ? PAYMENT_TYPE_PREVIOUS : "normal",
+      payment_type: isPreviousPayment ? PAYMENT_TYPE_PREVIOUS : "normal",
+      isPreviousPayment,
+      is_previous_payment: isPreviousPayment,
+      legacyReceiptNumber: data.legacyReceiptNumber ?? data.legacy_receipt_number ?? "",
+      legacy_receipt_number: data.legacyReceiptNumber ?? data.legacy_receipt_number ?? "",
+    });
     const c   = clients.find(x => x.id === data.clientId);
     const now = new Date().toISOString().split("T")[0];
 
     if (isSupabaseEnabled && agencyId) {
       setSyncStatus("syncing");
       try {
-        const { data: savedPayment, error } = await createPaymentWithReceipt(pmt, agencyId);
-        if (error) throw error;
-        if (!savedPayment) throw new Error("Payment creation did not return a row");
+        let savedPayment = null;
+        if (isPreviousPayment) {
+          const { error } = await savePayment(pmt, agencyId);
+          if (error) throw error;
+          savedPayment = pmt;
+        } else {
+          const result = await createPaymentWithReceipt(pmt, agencyId);
+          if (result.error) throw result.error;
+          if (!result.data) throw new Error("Payment creation did not return a row");
+          savedPayment = result.data;
+        }
         addPaymentLocal(savedPayment);
         setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
         logActivity(
           "payment_add",
-          translateActivityDescription(`دفعة ${formatCurrency(savedPayment.amount, getUiLang())} — ${savedPayment.receiptNo}`),
+          translateActivityDescription(`دفعة ${formatCurrency(savedPayment.amount, getUiLang())} — ${savedPayment.receiptNo || savedPayment.legacyReceiptNumber || "سابقة"}`),
           c?.name || data.clientId,
           { skipRemote: true }
         );
@@ -2025,7 +2044,7 @@ export function useStore(agencyId, onToast) {
     setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
     logActivity(
       "payment_add",
-      translateActivityDescription(`دفعة ${formatCurrency(data.amount, getUiLang())} — ${pmt.receiptNo}`),
+      translateActivityDescription(`دفعة ${formatCurrency(data.amount, getUiLang())} — ${pmt.receiptNo || pmt.legacyReceiptNumber || "سابقة"}`),
       c?.name || data.clientId,
       { skipRemote: isSupabaseEnabled }
     );
