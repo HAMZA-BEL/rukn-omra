@@ -154,6 +154,13 @@ export default function ProgramCostingModal({
     }));
   }, []);
 
+  const setStandaloneSalePrice = React.useCallback((key, value) => {
+    setDraft((prev) => ({
+      ...prev,
+      standaloneSalePrices: { ...(prev.standaloneSalePrices || {}), [key]: value },
+    }));
+  }, []);
+
   const setLevelField = React.useCallback((index, city, key, value) => {
     setDraft((prev) => ({
       ...prev,
@@ -285,11 +292,16 @@ export default function ProgramCostingModal({
       <div style={inputGridStyle}>
         <NumberField label={labels.exchangeRate} value={draft.exchangeRate} onChange={(value) => setDraft((prev) => ({ ...prev, exchangeRate: value }))} />
         <NumberField label={labels.flight} value={draft.sharedCosts?.flight} onChange={(value) => setSharedCost("flight", value)} />
+        <NumberField label={labels.ticketOnlySalePrice} value={draft.standaloneSalePrices?.ticketOnly} onChange={(value) => setStandaloneSalePrice("ticketOnly", value)} />
         <NumberField label={labels.visa} value={draft.sharedCosts?.visa} onChange={(value) => setSharedCost("visa", value)} />
+        <NumberField label={labels.visaOnlySalePrice} value={draft.standaloneSalePrices?.visaOnly} onChange={(value) => setStandaloneSalePrice("visaOnly", value)} />
         <NumberField label={labels.transport} value={draft.sharedCosts?.transport} onChange={(value) => setSharedCost("transport", value)} />
         <NumberField label={labels.guide} value={draft.sharedCosts?.guide} onChange={(value) => setSharedCost("guide", value)} />
         <NumberField label={labels.miscellaneous} value={draft.sharedCosts?.miscellaneous} onChange={(value) => setSharedCost("miscellaneous", value)} />
       </div>
+      <p style={{ margin:"10px 0 0", color:tc.grey, fontSize:11, lineHeight:1.7 }}>
+        {labels.standaloneSalePriceHint}
+      </p>
       <div style={{
         marginTop:14,
         padding:"10px 12px",

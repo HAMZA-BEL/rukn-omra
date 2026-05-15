@@ -10,14 +10,22 @@ import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { translateActivityDescription, translateHotelLevel, translatePaymentMethod, translateRoomCategory, translateRoomType } from "../utils/i18nValues";
-import { getStoredProgramCosting } from "./programs/programCosting";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
 import { downloadSingleContract } from "../features/contracts";
 import { clientServiceIncludesAccommodation, getClientServiceType, getClientServiceTypeLabel } from "../utils/clientServiceTypes";
-import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import {
+  getClientEffectiveOfficialPrice,
+  getClientEffectiveSalePrice,
+  getClientOverpaidAmount,
+  getClientRemainingAmount,
+} from "../utils/clientPricing";
 import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "../utils/paymentRecords";
 import {
   getRepresentedByClientId,
@@ -94,6 +102,12 @@ const getReferenceCostLabel = (serviceType, fallback, lang) => {
   return fallback;
 };
 
+const getOverpaidLabel = (lang) => {
+  if (lang === "fr") return "Trop-perçu";
+  if (lang === "en") return "Overpaid";
+  return "الزائد";
+};
+
 const translateProgramAirline = (program, lang) => {
   const airline = getProgramAirline(program);
   if (!airline) return program?.transport || "";
@@ -127,28 +141,26 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const serviceTypeLabel = getClientServiceTypeLabel(serviceType, t, lang);
   const serviceTypeFieldLabel = t.serviceType || (lang === "fr" ? "Type de service" : lang === "en" ? "Service type" : "نوع الخدمة");
   const serviceHasAccommodation = clientServiceIncludesAccommodation(serviceType);
-  const costingReferenceCost = React.useMemo(() => {
-    if (!program) return 0;
-    const costing = getStoredProgramCosting(program);
-    const sharedCosts = costing?.sharedCosts || {};
-    const value = serviceType === "visa_only"
-      ? sharedCosts.visa
-      : serviceType === "ticket_only"
-        ? sharedCosts.flight
-        : 0;
-    const next = Number(value);
-    return Number.isFinite(next) && next > 0 ? next : 0;
-  }, [program, serviceType]);
+  const costingReferenceCost = React.useMemo(
+    () => getProgramServiceCostingReferenceCost(program, serviceType),
+    [program, serviceType],
+  );
+  const standaloneServiceSalePrice = React.useMemo(
+    () => getProgramStandaloneServiceSalePrice(program, serviceType),
+    [program, serviceType],
+  );
   const referenceCostLabel = getReferenceCostLabel(serviceType, t.officialPrice, lang);
   const payments    = paymentsReady ? getClientPayments(client.id) : [];
   const totalPaid   = paymentsReady ? getClientTotalPaid(client.id) : 0;
   const pricingOptions = React.useMemo(() => ({
     referencePrice: costingReferenceCost,
+    standaloneSalePrice: standaloneServiceSalePrice,
     program,
-  }), [costingReferenceCost, program]);
+  }), [costingReferenceCost, standaloneServiceSalePrice, program]);
   const salePrice   = getClientEffectiveSalePrice(client, pricingOptions);
   const offPrice    = getClientEffectiveOfficialPrice(client, pricingOptions);
   const remaining   = paymentsReady ? getClientRemainingAmount(client, totalPaid, pricingOptions) : null;
+  const overpaid    = paymentsReady ? getClientOverpaidAmount(client, totalPaid, pricingOptions) : 0;
   const discount    = Math.max(0, offPrice - salePrice);
   const status      = paymentsReady
     ? (totalPaid === 0 ? "unpaid" : totalPaid >= salePrice ? "cleared" : "partial")
@@ -377,6 +389,7 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       color:paymentsReady && remaining > 0 ? tc.warning : paymentsReady ? tc.greenLight : tc.grey,
     },
   ]), [costingReferenceCost, loadingLabel, money, offPrice, paymentsReady, referenceCostLabel, remaining, salePrice, serviceHasAccommodation, t.paid, t.remaining, t.salePrice, totalPaid]);
+  const overpaidLabel = React.useMemo(() => getOverpaidLabel(lang), [lang]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -639,6 +652,25 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
           </div>
         ))}
       </div>
+      {paymentsReady && overpaid > 0 && (
+        <div style={{
+          marginTop:-6,
+          marginBottom:14,
+          padding:"6px 10px",
+          borderRadius:9,
+          border:"1px solid rgba(212,175,55,.18)",
+          background:"rgba(212,175,55,.06)",
+          display:"inline-flex",
+          alignItems:"center",
+          gap:8,
+          color:"var(--rukn-text-muted)",
+          fontSize:11.5,
+          fontWeight:800,
+        }}>
+          <span>{overpaidLabel}</span>
+          <strong style={{ color:tc.gold }}>{money(overpaid)}</strong>
+        </div>
+      )}
 
       {discount > 0 && (
         <div style={{ background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.18)",

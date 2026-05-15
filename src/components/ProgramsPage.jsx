@@ -31,7 +31,11 @@ import ProgramClientRow from "./programs/ProgramClientRow";
 import ProgramClientModals from "./programs/ProgramClientModals";
 import ProgramDetailOverview from "./programs/ProgramDetailOverview";
 import ProgramCostingModal from "./programs/ProgramCostingModal";
-import { getProgramCostingLabels, getStoredProgramCosting } from "./programs/programCosting";
+import {
+  getProgramCostingLabels,
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
@@ -58,7 +62,12 @@ import {
   getClientServiceTypeAllFilterLabel,
   getClientServiceTypeLabel,
 } from "../utils/clientServiceTypes";
-import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import {
+  getClientEffectiveOfficialPrice,
+  getClientEffectiveSalePrice,
+  getClientOverpaidAmount,
+  getClientRemainingAmount,
+} from "../utils/clientPricing";
 import {
   buildDuplicateProgramName,
   createDuplicateProgramPayload,
@@ -142,18 +151,18 @@ const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 const getProgramPricingReferenceCost = (program, client) => {
   if (!program || !client) return 0;
-  const serviceType = getClientServiceType(client);
-  if (serviceType !== "ticket_only" && serviceType !== "visa_only") return 0;
-  const costing = getStoredProgramCosting(program);
-  const sharedCosts = costing?.sharedCosts || {};
-  const value = serviceType === "visa_only" ? sharedCosts.visa : sharedCosts.flight;
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : 0;
+  return getProgramServiceCostingReferenceCost(program, getClientServiceType(client));
+};
+
+const getProgramStandaloneSalePrice = (program, client) => {
+  if (!program || !client) return 0;
+  return getProgramStandaloneServiceSalePrice(program, getClientServiceType(client));
 };
 
 const getProgramClientSalePrice = (program, client) => (
   getClientEffectiveSalePrice(client, {
     referencePrice: getProgramPricingReferenceCost(program, client),
+    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
     program,
   })
 );
@@ -169,6 +178,15 @@ const getProgramClientOfficialPrice = (program, client) => {
 const getProgramClientRemainingAmount = (program, client, paid) => (
   getClientRemainingAmount(client, paid, {
     referencePrice: getProgramPricingReferenceCost(program, client),
+    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
+    program,
+  })
+);
+
+const getProgramClientOverpaidAmount = (program, client, paid) => (
+  getClientOverpaidAmount(client, paid, {
+    referencePrice: getProgramPricingReferenceCost(program, client),
+    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
     program,
   })
 );
@@ -185,7 +203,10 @@ const getProgramClientDisplayStatus = (program, client, paid) => (
     client,
     program,
     getProgramClientPaymentStatus(program, client, paid),
-    { referencePrice: getProgramPricingReferenceCost(program, client) },
+    {
+      referencePrice: getProgramPricingReferenceCost(program, client),
+      standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
+    },
   )
 );
 
@@ -225,6 +246,9 @@ const ROOMING_LAYOUT_HORIZONTAL_GAP = 40;
 const ROOMING_LAYOUT_VERTICAL_GAP = 36;
 const ROOMING_LAYOUT_GROUP_VERTICAL_GAP = 96;
 const ROOMING_LAYOUT_MAX_COLUMNS = 6;
+const ROOMING_CLIENT_DRAG_PAN_EDGE = 82;
+const ROOMING_CLIENT_DRAG_PAN_MIN_SPEED = 2.2;
+const ROOMING_CLIENT_DRAG_PAN_MAX_SPEED = 18;
 const ROOMING_LAYOUT_TYPE_ORDER = ["double", "triple", "quad", "quint"];
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
@@ -2953,14 +2977,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             const paid = getClientTotalPaid(c.id);
             const amount = getProgramClientSalePrice(program, c);
             const rem  = getProgramClientRemainingAmount(program, c, paid);
+            const overpaid = getProgramClientOverpaidAmount(program, c, paid);
             const stat = getProgramClientDisplayStatus(program, c, paid);
             const completionTooltip = getClientCompletionTooltip(c, lang, program, {
               referencePrice: getProgramPricingReferenceCost(program, c),
+              standaloneSalePrice: getProgramStandaloneSalePrice(program, c),
             });
             return (
               <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
-                amount={amount} paid={paid} remaining={rem} status={stat}
+                amount={amount} paid={paid} remaining={rem} overpaid={overpaid} status={stat}
                 completionTooltip={completionTooltip}
                 onClick={()=>setSelectedClient(c)}
                 onEdit={()=>setEditingClient(c)}
@@ -3095,6 +3121,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomingLoadStatus, setRoomingLoadStatus] = React.useState("idle");
   const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
   const [draggingClientId, setDraggingClientId] = React.useState(null);
+  const [hoveredDropRoomId, setHoveredDropRoomId] = React.useState(null);
   const flowRef = React.useRef(null);
   const roomingFullscreenRef = React.useRef(null);
   const flowNodesRef = React.useRef([]);
@@ -3102,6 +3129,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const dragStartPositionRef = React.useRef(new Map());
   const lastValidPositionRef = React.useRef(new Map());
   const dragInvalidRef = React.useRef(new Map());
+  const clientDragPointerRef = React.useRef(null);
+  const clientDragPanFrameRef = React.useRef(0);
   const roomingLoadSeqRef = React.useRef(0);
   const roomingRevisionRef = React.useRef(0);
 
@@ -4432,6 +4461,76 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     if (room) openEditRoom(room);
   }, [rooms, openEditRoom]);
 
+  const clearRoomingDragState = React.useCallback(() => {
+    setDraggingClientId(null);
+    setHoveredDropRoomId(null);
+    clientDragPointerRef.current = null;
+    if (clientDragPanFrameRef.current) {
+      window.cancelAnimationFrame(clientDragPanFrameRef.current);
+      clientDragPanFrameRef.current = 0;
+    }
+  }, []);
+
+  const enterRoomingDropHover = React.useCallback((roomId) => {
+    setHoveredDropRoomId((current) => current === roomId ? current : roomId);
+  }, []);
+
+  const leaveRoomingDropHover = React.useCallback((roomId) => {
+    setHoveredDropRoomId((current) => current === roomId ? null : current);
+  }, []);
+
+  const getRoomingDropVisualStatus = React.useCallback((client, room) => {
+    if (!client || !room) return null;
+    const fullMessage = lang === "fr" ? "Chambre complète" : lang === "en" ? "Room is full" : "الغرفة ممتلئة";
+    const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
+    const roomType = normalizeRoomingRoomType(room.roomType) || getRoomingRoomTypeFromCapacity(room.capacity);
+    const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(roomType));
+    if (occupantIds.length >= capacity) return { state: "full", message: fullMessage };
+
+    const clientGender = normalizeRoomingGender(client.gender);
+    const occupantGenders = occupantIds
+      .map((clientId) => normalizeRoomingGender(clientsById[clientId]?.gender))
+      .filter((gender) => gender === "male" || gender === "female");
+    const hasOppositeGender = ["male", "female"].includes(clientGender)
+      && occupantGenders.some((gender) => gender !== clientGender);
+    if (hasOppositeGender) {
+      return { state: "invalid", message: t.roomingGenderMismatch || "الجنس غير متوافق" };
+    }
+
+    const hardReason = getCompatibilityReason(client, room);
+    if (hardReason) return { state: "invalid", message: hardReason };
+
+    const conflict = getRoomingDropConflicts(client, room);
+    if (conflict) {
+      return {
+        state: "mismatch",
+        message: t.roomingDropNeedsConfirmation || "سيتم طلب تأكيد لتحديث بيانات المعتمر",
+      };
+    }
+
+    const context = getClientContext(client);
+    const targetHotel = isMissingRoomingValue(room.hotel) ? "" : String(room.hotel).trim();
+    const currentHotel = isMissingRoomingValue(context.hotel) ? "" : String(context.hotel).trim();
+    if (targetHotel && currentHotel && normalizeRoomingHotel(targetHotel) !== normalizeRoomingHotel(currentHotel)) {
+      return {
+        state: "mismatch",
+        message: t.roomingDropNeedsConfirmation || "سيتم طلب تأكيد لتحديث بيانات المعتمر",
+      };
+    }
+
+    const clientLevel = normalizeRoomingText(client.packageLevel || client.hotelLevel || client.hotel_level || "");
+    const roomPackage = findRoomingPackageFromRoom(room, packages, city);
+    const roomLevel = normalizeRoomingText(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "");
+    if (clientLevel && roomLevel && clientLevel !== roomLevel) {
+      return {
+        state: "mismatch",
+        message: t.roomingDropNeedsConfirmation || "سيتم طلب تأكيد لتحديث بيانات المعتمر",
+      };
+    }
+
+    return { state: "match", message: t.canInsertPilgrimHere || "يمكن إدراج المعتمر هنا" };
+  }, [city, clientsById, getClientContext, getCompatibilityReason, getRoomingDropConflicts, lang, packages, t]);
+
   const roomFlowNodes = React.useMemo(() => visibleRooms.map((room) => ({
     id: room.id,
     type: "room",
@@ -4441,11 +4540,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       clientsById,
       draggingClientId,
       draggingClient: draggingClientId ? clientsById[draggingClientId] : null,
+      hoveredDropRoomId,
       dragInvalid: false,
       getDropReason: getCompatibilityReason,
+      getDropVisualStatus: getRoomingDropVisualStatus,
       onDropClient: insertClientIntoRoom,
       onDropClients: insertClientsIntoRoom,
-      onDragComplete: () => setDraggingClientId(null),
+      onDragComplete: clearRoomingDragState,
+      onDropHoverEnter: enterRoomingDropHover,
+      onDropHoverLeave: leaveRoomingDropHover,
       onAdd: openPickerForRoom,
       onEdit: openEditRoomById,
       onCopy: copyRoom,
@@ -4459,7 +4562,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     },
     draggable: !room.locked && !roomSelectionMode,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, getCompatibilityReason, insertClientIntoRoom, insertClientsIntoRoom, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, linkMode, linkStartRoomId, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, hoveredDropRoomId, getCompatibilityReason, getRoomingDropVisualStatus, insertClientIntoRoom, insertClientsIntoRoom, clearRoomingDragState, enterRoomingDropHover, leaveRoomingDropHover, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, linkMode, linkStartRoomId, selectedRoomId]);
 
   const roomLinkDeleteLabel = t.roomingDeleteLink || (lang === "fr" ? "Supprimer le lien" : lang === "en" ? "Delete link" : "حذف الرابط");
   const roomFlowEdges = React.useMemo(() => {
@@ -4507,6 +4610,79 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       setSelectedRoomId(null);
     }
   }, [selectedRoomId, visibleRooms]);
+
+  React.useEffect(() => {
+    if (!draggingClientId) {
+      clientDragPointerRef.current = null;
+      if (clientDragPanFrameRef.current) {
+        window.cancelAnimationFrame(clientDragPanFrameRef.current);
+        clientDragPanFrameRef.current = 0;
+      }
+      return undefined;
+    }
+
+    const getPanSpeed = (distanceToEdge) => {
+      const ratio = Math.min(1, Math.max(0, (ROOMING_CLIENT_DRAG_PAN_EDGE - distanceToEdge) / ROOMING_CLIENT_DRAG_PAN_EDGE));
+      if (ratio <= 0) return 0;
+      return ROOMING_CLIENT_DRAG_PAN_MIN_SPEED
+        + (ROOMING_CLIENT_DRAG_PAN_MAX_SPEED - ROOMING_CLIENT_DRAG_PAN_MIN_SPEED) * ratio * ratio;
+    };
+
+    const panLoop = () => {
+      clientDragPanFrameRef.current = window.requestAnimationFrame(panLoop);
+      const pointer = clientDragPointerRef.current;
+      const flow = flowRef.current;
+      if (!pointer || !flow?.getViewport || !flow?.setViewport) return;
+      const canvas = document.querySelector(".rooming-flow-canvas");
+      const rect = canvas?.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+
+      let dx = 0;
+      let dy = 0;
+      if (pointer.x - rect.left < ROOMING_CLIENT_DRAG_PAN_EDGE) {
+        dx = getPanSpeed(pointer.x - rect.left);
+      } else if (rect.right - pointer.x < ROOMING_CLIENT_DRAG_PAN_EDGE) {
+        dx = -getPanSpeed(rect.right - pointer.x);
+      }
+      if (pointer.y - rect.top < ROOMING_CLIENT_DRAG_PAN_EDGE) {
+        dy = getPanSpeed(pointer.y - rect.top);
+      } else if (rect.bottom - pointer.y < ROOMING_CLIENT_DRAG_PAN_EDGE) {
+        dy = -getPanSpeed(rect.bottom - pointer.y);
+      }
+      if (!dx && !dy) return;
+      const viewport = flow.getViewport();
+      flow.setViewport({ x: viewport.x + dx, y: viewport.y + dy, zoom: viewport.zoom });
+    };
+
+    const handleDragOver = (event) => {
+      if (!event.clientX && !event.clientY) return;
+      clientDragPointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    const handleDragEnd = () => clearRoomingDragState();
+    const handleDrop = () => {
+      clientDragPointerRef.current = null;
+      if (clientDragPanFrameRef.current) {
+        window.cancelAnimationFrame(clientDragPanFrameRef.current);
+        clientDragPanFrameRef.current = 0;
+      }
+    };
+
+    window.addEventListener("dragover", handleDragOver);
+    window.addEventListener("dragend", handleDragEnd);
+    window.addEventListener("drop", handleDrop);
+    clientDragPanFrameRef.current = window.requestAnimationFrame(panLoop);
+
+    return () => {
+      window.removeEventListener("dragover", handleDragOver);
+      window.removeEventListener("dragend", handleDragEnd);
+      window.removeEventListener("drop", handleDrop);
+      if (clientDragPanFrameRef.current) {
+        window.cancelAnimationFrame(clientDragPanFrameRef.current);
+        clientDragPanFrameRef.current = 0;
+      }
+      clientDragPointerRef.current = null;
+    };
+  }, [clearRoomingDragState, draggingClientId]);
 
   React.useEffect(() => {
     setSelectedRoomIds((current) => {
@@ -6010,13 +6186,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                             ? selectedUnassignedList
                             : [item.clientId];
                           setDraggingClientId(item.clientId);
+                          setHoveredDropRoomId(null);
+                          clientDragPointerRef.current = { x: event.clientX, y: event.clientY };
                           event.dataTransfer.effectAllowed = "move";
                           event.dataTransfer.setData("application/x-rukn-client-id", item.clientId);
                           event.dataTransfer.setData("application/x-rukn-client-ids", JSON.stringify(dragIds));
                           event.dataTransfer.setData("text/plain", dragIds.length > 1 ? `${dragIds.length} ${unassignedSelectionLabels.selected}` : (context.name || item.clientId));
                           setUnassignedGroupDragImage(event, dragIds, context.name);
                         }}
-                        onDragEnd={() => setDraggingClientId(null)}
+                        onDragEnd={clearRoomingDragState}
                         style={{
                           position: "relative",
                           border: draggingClientId === item.clientId || unassignedSelected ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-panel-border)",
@@ -6491,16 +6669,38 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   const occupantIds = room.occupantIds || [];
   const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
   const isFull = occupantIds.length === capacity;
-  const dropReason = data.draggingClient ? data.getDropReason(data.draggingClient, room) : "";
-  const isDropTarget = Boolean(data.draggingClient);
-  const canDrop = isDropTarget && !dropReason;
+  const isDropHovered = Boolean(data.draggingClient && data.hoveredDropRoomId === room.id);
+  const dropFeedback = data.draggingClient && data.getDropVisualStatus
+    ? data.getDropVisualStatus(data.draggingClient, room)
+    : null;
+  const dropState = dropFeedback?.state || "";
+  const canDrop = dropState === "match";
+  const needsDropReview = dropState === "mismatch";
+  const cannotDrop = dropState === "invalid";
+  const isFullDropTarget = dropState === "full";
   const isInvalidPosition = Boolean(data.dragInvalid);
   const selectionMode = Boolean(data.selectionMode);
   const selectionChecked = Boolean(data.selectionChecked);
   const linkMode = Boolean(data.linkMode);
   const linkActive = Boolean(data.linkActive);
-  const dropBorder = isInvalidPosition ? "#ef4444" : canDrop ? "#16a34a" : isDropTarget ? "#ef4444" : linkActive ? "#2563eb" : selectionChecked ? "#d4af37" : selected ? accent.border : "var(--rooming-card-border)";
+  const dropBorder = isInvalidPosition
+    ? "#ef4444"
+    : canDrop
+      ? "#16a34a"
+      : needsDropReview
+        ? "#d97706"
+        : cannotDrop
+          ? "#ef4444"
+          : isFullDropTarget
+            ? "rgba(100,116,139,.56)"
+            : linkActive ? "#2563eb" : selectionChecked ? "#d4af37" : selected ? accent.border : "var(--rooming-card-border)";
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const dragHoverDepthRef = React.useRef(0);
+
+  React.useEffect(() => {
+    if (data.draggingClient) return;
+    dragHoverDepthRef.current = 0;
+  }, [data.draggingClient]);
 
   React.useEffect(() => {
     if (!menuOpen) return undefined;
@@ -6512,16 +6712,30 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   return (
     <article
       className="rooming-flow-node"
-      title={isInvalidPosition ? (t.invalidRoomOverlap || "لا يمكن وضع غرفة فوق غرفة أخرى") : isDropTarget ? (dropReason || t.canInsertPilgrimHere || "يمكن إدراج المعتمر هنا") : undefined}
+      title={isInvalidPosition ? (t.invalidRoomOverlap || "لا يمكن وضع غرفة فوق غرفة أخرى") : isDropHovered ? (dropFeedback?.message || t.canInsertPilgrimHere || "يمكن إدراج المعتمر هنا") : undefined}
       onContextMenu={(event) => event.stopPropagation()}
+      onDragEnter={(event) => {
+        if (!data.draggingClient) return;
+        event.preventDefault();
+        dragHoverDepthRef.current += 1;
+        data.onDropHoverEnter?.(room.id);
+      }}
       onDragOver={(event) => {
         if (!data.draggingClient) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
+        data.onDropHoverEnter?.(room.id);
+      }}
+      onDragLeave={() => {
+        if (!data.draggingClient) return;
+        dragHoverDepthRef.current = Math.max(0, dragHoverDepthRef.current - 1);
+        if (dragHoverDepthRef.current === 0) data.onDropHoverLeave?.(room.id);
       }}
       onDrop={(event) => {
         event.preventDefault();
         event.stopPropagation();
+        dragHoverDepthRef.current = 0;
+        data.onDropHoverLeave?.(room.id);
         const clientId = event.dataTransfer.getData("application/x-rukn-client-id");
         let clientIds = [];
         try {
@@ -6538,19 +6752,44 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       style={{
         width: 250,
         position: "relative",
-        background: isInvalidPosition ? "var(--rooming-danger-soft-bg)" : canDrop ? "rgba(22,163,74,.14)" : isDropTarget ? "var(--rooming-danger-soft-bg)" : linkActive ? "rgba(37,99,235,.12)" : selectionChecked ? "rgba(212,175,55,.16)" : "var(--rooming-card-bg)",
+        background: isInvalidPosition
+          ? "var(--rooming-danger-soft-bg)"
+          : canDrop
+            ? (isDropHovered ? "rgba(22,163,74,.18)" : "rgba(22,163,74,.12)")
+            : needsDropReview
+              ? (isDropHovered ? "rgba(217,119,6,.13)" : "rgba(217,119,6,.075)")
+              : cannotDrop
+                ? "var(--rooming-danger-soft-bg)"
+                : isFullDropTarget
+                  ? "rgba(100,116,139,.09)"
+                  : linkActive ? "rgba(37,99,235,.12)" : selectionChecked ? "rgba(212,175,55,.16)" : "var(--rooming-card-bg)",
         border: `1px solid ${dropBorder}`,
         borderRight: `4px solid ${accent.border}`,
         borderRadius: 10,
-        outline: isInvalidPosition ? "2px solid rgba(239,68,68,.28)" : linkActive ? "2px solid rgba(37,99,235,.30)" : selectionChecked ? "2px solid rgba(212,175,55,.34)" : "none",
+        outline: isInvalidPosition
+          ? "2px solid rgba(239,68,68,.28)"
+          : canDrop
+            ? (isDropHovered ? "2px solid rgba(22,163,74,.34)" : "1px solid rgba(22,163,74,.18)")
+            : needsDropReview
+              ? (isDropHovered ? "2px solid rgba(217,119,6,.26)" : "1px solid rgba(217,119,6,.14)")
+              : cannotDrop
+                ? (isDropHovered ? "2px solid rgba(239,68,68,.30)" : "1px solid rgba(239,68,68,.16)")
+                : isFullDropTarget
+                  ? (isDropHovered ? "2px solid rgba(100,116,139,.30)" : "1px solid rgba(100,116,139,.16)")
+                  : linkActive ? "2px solid rgba(37,99,235,.30)" : selectionChecked ? "2px solid rgba(212,175,55,.34)" : "none",
         boxShadow: isInvalidPosition
           ? "0 18px 40px rgba(239,68,68,.20)"
           : canDrop
-          ? "0 16px 36px rgba(22,163,74,.18)"
-          : isDropTarget
-            ? "0 16px 36px rgba(239,68,68,.16)"
-            : selectionChecked ? "0 16px 34px rgba(212,175,55,.18)"
-            : selected ? "0 14px 30px rgba(37,99,235,.18)" : "var(--rooming-card-shadow)",
+          ? (isDropHovered ? "0 18px 40px rgba(22,163,74,.22)" : "0 12px 28px rgba(22,163,74,.13)")
+          : needsDropReview
+            ? (isDropHovered ? "0 16px 36px rgba(217,119,6,.17)" : "0 10px 24px rgba(217,119,6,.10)")
+            : cannotDrop
+              ? (isDropHovered ? "0 16px 36px rgba(239,68,68,.18)" : "0 10px 24px rgba(239,68,68,.11)")
+              : isFullDropTarget
+                ? (isDropHovered ? "0 16px 34px rgba(100,116,139,.16)" : "0 8px 20px rgba(100,116,139,.10)")
+                : selectionChecked ? "0 16px 34px rgba(212,175,55,.18)"
+                : selected ? "0 14px 30px rgba(37,99,235,.18)" : "var(--rooming-card-shadow)",
+        opacity: isFullDropTarget ? 0.78 : 1,
         padding: 12,
         direction: "rtl",
         fontFamily: "'Cairo',sans-serif",
@@ -6863,6 +7102,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.room === next.data.room
   && prev.data.clientsById === next.data.clientsById
   && prev.data.draggingClientId === next.data.draggingClientId
+  && prev.data.hoveredDropRoomId === next.data.hoveredDropRoomId
   && prev.data.dragInvalid === next.data.dragInvalid
   && prev.data.selectionMode === next.data.selectionMode
   && prev.data.selectionChecked === next.data.selectionChecked
@@ -6876,6 +7116,11 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
   && prev.data.onRemoveClient === next.data.onRemoveClient
   && prev.data.onDropClient === next.data.onDropClient
   && prev.data.onDropClients === next.data.onDropClients
+  && prev.data.onDragComplete === next.data.onDragComplete
+  && prev.data.onDropHoverEnter === next.data.onDropHoverEnter
+  && prev.data.onDropHoverLeave === next.data.onDropHoverLeave
+  && prev.data.getDropReason === next.data.getDropReason
+  && prev.data.getDropVisualStatus === next.data.getDropVisualStatus
 ));
 
 function RoomingProximityEdge({

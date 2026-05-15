@@ -56,6 +56,7 @@ export function printProgramPDF({
     noReceiptNumber: lang === "fr" ? "Sans numéro de reçu" : lang === "en" ? "No receipt number" : "بدون رقم وصل",
     status:       lang === "fr" ? "Statut"    : lang === "en" ? "Status"     : "الحالة",
     remaining:    t.remaining    || (lang === "fr" ? "Reste"            : "المتبقي"),
+    overpaid:     lang === "fr" ? "Trop-perçu" : lang === "en" ? "Overpaid" : "زائد",
     cleared:      t.status_cleared || (lang === "fr" ? "Soldé"          : "مصفّى"),
     partial:      t.status_partial || (lang === "fr" ? "Partiel"        : "جزئي"),
     unpaid:       t.status_unpaid  || (lang === "fr" ? "Non payé"       : "لم يدفع"),
@@ -143,6 +144,7 @@ export function printProgramPDF({
     const salePrice = resolveSalePrice(c);
     const officialPrice = resolveOfficialPrice(c);
     const rem     = resolveRemaining(c, paid);
+    const overpaid = Math.max(0, paid - salePrice);
     const status  = resolveStatus(c, paid, salePrice);
     const sLabel  = status === "cleared" ? L.cleared : status === "partial" ? L.partial : L.unpaid;
     const sClass  = status === "cleared" ? "cleared" : status === "partial" ? "partial" : "unpaid";
@@ -167,7 +169,7 @@ export function printProgramPDF({
         <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 1)}</td>
         <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 2)}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#15803d">${escapeHtml(fmt(paid))}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "—"}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : `—${overpaid > 0 ? `<div class="overpaid-note">${escapeHtml(L.overpaid)} ${escapeHtml(fmt(overpaid))}</div>` : ""}`}</td>
         <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
         <td>${paymentsCell}</td>
       </tr>`;
@@ -315,6 +317,14 @@ export function printProgramPDF({
       flex-shrink: 0;
       color: #0d4a1a;
       font-size: 7.2px;
+    }
+    .overpaid-note {
+      margin-top: 1px;
+      color: #6b7280;
+      font-size: 6.9px;
+      font-weight: 700;
+      line-height: 1.15;
+      white-space: nowrap;
     }
     /* ── Status badges ── */
     .status {

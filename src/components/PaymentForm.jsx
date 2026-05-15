@@ -4,7 +4,10 @@ import { PAYMENT_METHODS } from "../data/initialData";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
-import { getStoredProgramCosting } from "./programs/programCosting";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import { getClientServiceType } from "../utils/clientServiceTypes";
 import { PAYMENT_TYPE_NORMAL, PAYMENT_TYPE_PREVIOUS } from "../utils/paymentRecords";
@@ -16,6 +19,13 @@ const normalizePaymentMethodKind = (value = "") => {
   return "cash";
 };
 
+const getProjectedOverpaymentText = (amount, lang) => {
+  const formatted = formatCurrency(amount, lang);
+  if (lang === "fr") return `Il y aura un trop-perçu de ${formatted}`;
+  if (lang === "en") return `This will create an overpayment of ${formatted}`;
+  return `سيصبح هناك مبلغ زائد قدره ${formatted}`;
+};
+
 export default function PaymentForm({ clientId, clientName, store, onSave, onCancel }) {
   const { getClientTotalPaid, clients, payments, programs = [] } = store;
   const { t, tr, lang } = useLang();
@@ -23,15 +33,9 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   const client    = clients.find(c => c.id === clientId);
   const clientProgram = client ? programs.find((program) => program.id === client.programId) : null;
   const serviceType = getClientServiceType(client);
-  const costing = clientProgram ? getStoredProgramCosting(clientProgram) : null;
-  const sharedCosts = costing?.sharedCosts || {};
-  const rawReferencePrice = serviceType === "visa_only"
-    ? Number(sharedCosts.visa || 0)
-    : serviceType === "ticket_only"
-      ? Number(sharedCosts.flight || 0)
-      : 0;
-  const referencePrice = Number.isFinite(rawReferencePrice) && rawReferencePrice > 0 ? rawReferencePrice : 0;
-  const pricingOptions = { referencePrice, program: clientProgram };
+  const referencePrice = getProgramServiceCostingReferenceCost(clientProgram, serviceType);
+  const standaloneSalePrice = getProgramStandaloneServiceSalePrice(clientProgram, serviceType);
+  const pricingOptions = { referencePrice, standaloneSalePrice, program: clientProgram };
   const salePrice = client ? getClientEffectiveSalePrice(client, pricingOptions) : 0;
   const totalPaid = getClientTotalPaid(clientId);
   const remaining = client ? getClientRemainingAmount(client, totalPaid, pricingOptions) : Math.max(0, salePrice - totalPaid);
@@ -53,6 +57,10 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
   const [errors, setErrors] = React.useState({});
   const [saving, setSaving] = React.useState(false);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  const enteredAmount = Number(form.amount);
+  const projectedOverpayment = Number.isFinite(enteredAmount) && enteredAmount > 0
+    ? Math.max(0, totalPaid + enteredAmount - salePrice)
+    : 0;
   const isPreviousPayment = form.paymentType === PAYMENT_TYPE_PREVIOUS;
   const paymentTypeLabel = t.paymentTypeLabel || (lang === "fr" ? "Type de paiement" : lang === "en" ? "Payment type" : "نوع الدفعة");
   const normalPaymentLabel = t.normalPayment || (lang === "fr" ? "Paiement normal" : lang === "en" ? "Normal payment" : "دفعة عادية");
@@ -158,6 +166,16 @@ export default function PaymentForm({ clientId, clientName, store, onSave, onCan
         <Input label={t.noteLabel} value={form.note} onChange={set("note")}
           placeholder={isPreviousPayment ? previousPaymentNotePlaceholder : t.notePlaceholder} style={{ gridColumn:"1/-1" }} />
       </div>
+      {projectedOverpayment > 0 && (
+        <p style={{
+          fontSize:11.5,
+          color:theme.colors.grey,
+          margin:"-4px 0 10px",
+          fontWeight:700,
+        }}>
+          {getProjectedOverpaymentText(projectedOverpayment, lang)}
+        </p>
+      )}
       <div style={{ display:"flex", gap:8 }}>
         <Button variant="success" onClick={handleSave} icon="save" disabled={saving}>{t.savePayment}</Button>
         <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>

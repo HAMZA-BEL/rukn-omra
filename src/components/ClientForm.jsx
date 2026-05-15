@@ -15,7 +15,11 @@ import {
   normalizeProgramPackages,
   normalizeRoomTypeKey,
 } from "../utils/programPackages";
-import { getStoredProgramCosting } from "./programs/programCosting";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramServiceSalePriceFallback,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { translateRoomType } from "../utils/i18nValues";
 import {
   clientServiceIncludesAccommodation,
@@ -186,6 +190,12 @@ const getManualSellingPriceHelpText = (lang) => {
   return "يمكنك تحديد سعر البيع حسب الاتفاق مع العميل.";
 };
 
+const getMissingCostingHint = (lang) => {
+  if (lang === "fr") return "Aucune tarification enregistrée pour ce programme. Vous pouvez saisir le prix de vente manuellement.";
+  if (lang === "en") return "No saved costing was found for this program. You can enter the selling price manually.";
+  return "لم يتم العثور على تسعير محفوظ لهذا البرنامج. يمكنك إدخال سعر البيع يدويًا.";
+};
+
 const getReferenceCostLabel = (serviceType, fallback, lang) => {
   if (serviceType === "visa_only") {
     if (lang === "fr") return "Coût du visa selon la cotation";
@@ -198,19 +208,6 @@ const getReferenceCostLabel = (serviceType, fallback, lang) => {
     return "تكلفة التذكرة حسب التسعير";
   }
   return fallback;
-};
-
-const getProgramServiceReferenceCost = (program, serviceType) => {
-  if (!program) return 0;
-  const costing = getStoredProgramCosting(program);
-  const sharedCosts = costing?.sharedCosts || {};
-  const value = serviceType === "visa_only"
-    ? sharedCosts.visa
-    : serviceType === "ticket_only"
-      ? sharedCosts.flight
-      : 0;
-  const next = Number(value);
-  return Number.isFinite(next) && next > 0 ? next : 0;
 };
 
 const createGroupPerson = (index = 0) => ({
@@ -299,20 +296,20 @@ const buildFormState = (client, defaultProgramId, programs) => {
   const serviceType = getClientServiceType(client);
   const serviceUsesManualOnlyPrice = serviceType === "ticket_only" || serviceType === "visa_only";
   const manualOnlySalePrice = pickNumber(client?.salePrice, client?.sale_price);
-  const manualOnlyReferencePrice = getProgramServiceReferenceCost(selectedProgram, serviceType);
+  const manualOnlyFallbackSalePrice = getProgramServiceSalePriceFallback(selectedProgram, serviceType);
   const salePriceLooksPackageDerived = [
     client?.officialPrice,
     client?.official_price,
     client?.price,
   ].some((value) => {
     const number = pickNumber(value);
-    return number > 0 && manualOnlySalePrice === number && number !== manualOnlyReferencePrice;
+    return number > 0 && manualOnlySalePrice === number && number !== manualOnlyFallbackSalePrice;
   });
   const salePrice = serviceUsesManualOnlyPrice
     ? (
       salePriceLooksPackageDerived
-        ? (manualOnlyReferencePrice || "")
-        : manualOnlySalePrice > 0 ? manualOnlySalePrice : (manualOnlyReferencePrice || "")
+        ? (manualOnlyFallbackSalePrice || "")
+        : manualOnlySalePrice > 0 ? manualOnlySalePrice : (manualOnlyFallbackSalePrice || "")
     )
     : pickNumber(
       client?.salePrice,
@@ -452,6 +449,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     return "اختياري — يمكن تحديده لاحقًا";
   }, [lang]);
   const manualSellingPriceHelpText = React.useMemo(() => getManualSellingPriceHelpText(lang), [lang]);
+  const missingCostingHint = React.useMemo(() => getMissingCostingHint(lang), [lang]);
   const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
     ...option,
     label: option.value === "male_only"
@@ -584,18 +582,27 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     [selectedPackage, form.roomType]
   );
   const costingReferenceCost = React.useMemo(() => {
-    return getProgramServiceReferenceCost(selectedProgram, normalizedServiceType);
+    return getProgramServiceCostingReferenceCost(selectedProgram, normalizedServiceType);
   }, [normalizedServiceType, selectedProgram]);
+  const standaloneServiceSalePrice = React.useMemo(() => (
+    getProgramStandaloneServiceSalePrice(selectedProgram, normalizedServiceType)
+  ), [normalizedServiceType, selectedProgram]);
   const displayedOfficialPrice = serviceNeedsAccommodation ? derivedOfficialPrice : costingReferenceCost;
   const referenceCostLabel = getReferenceCostLabel(normalizedServiceType, t.officialPrice, lang);
   const canApplyOfficialPrice = Boolean(serviceNeedsAccommodation && displayedOfficialPrice);
   const getDefaultSalePriceForService = React.useCallback((serviceType) => {
     if (serviceType === "ticket_only" || serviceType === "visa_only") {
-      return getProgramServiceReferenceCost(selectedProgram, serviceType) || "";
+      return getProgramServiceSalePriceFallback(selectedProgram, serviceType) || "";
     }
     if (serviceType === "accommodation_only") return derivedOfficialPrice || "";
     return null;
   }, [derivedOfficialPrice, selectedProgram]);
+  const showMissingCostingHint = Boolean(
+    selectedProgram
+    && (normalizedServiceType === "ticket_only" || normalizedServiceType === "visa_only")
+    && !costingReferenceCost
+    && !standaloneServiceSalePrice
+  );
   const handleServiceTypeChange = React.useCallback((e) => {
     const nextServiceType = normalizeClientServiceType(e.target.value);
     const nextNeedsAccommodation = clientServiceIncludesAccommodation(nextServiceType);
@@ -1411,6 +1418,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         {officialPriceMissing && (
           <p style={{ fontSize:11, color:tc.warning, marginTop:8 }}>
             {t.officialPriceMissing || "لم يتم تحديد سعر لهذا المستوى ونوع الغرفة في البرنامج"}
+          </p>
+        )}
+        {showMissingCostingHint && (
+          <p style={{ fontSize:11, color:tc.grey, marginTop:8, lineHeight:1.6 }}>
+            {missingCostingHint}
           </p>
         )}
       </GlassCard>

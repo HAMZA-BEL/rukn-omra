@@ -10,6 +10,10 @@ export const COSTING_ROOM_TYPES = [
 const COSTING_META_KEY = "programCosting";
 const DEFAULT_EXCHANGE_RATE = 2.7;
 const SHARED_COST_KEYS = ["flight", "visa", "transport", "guide", "miscellaneous"];
+const STANDALONE_SALE_PRICE_KEYS = {
+  ticket_only: "ticketOnly",
+  visa_only: "visaOnly",
+};
 
 const TEXT = {
   ar: {
@@ -21,7 +25,12 @@ const TEXT = {
     resultsPrices: "النتائج والأسعار",
     exchangeRate: "سعر الصرف SAR/MAD",
     flight: "ثمن التذكرة",
+    ticketOnlySalePrice: "سعر بيع التذكرة فقط - اختياري",
+    ticketOnlySalePriceReport: "سعر بيع التذكرة فقط",
     visa: "ثمن التأشيرة",
+    visaOnlySalePrice: "سعر بيع التأشيرة فقط - اختياري",
+    visaOnlySalePriceReport: "سعر بيع التأشيرة فقط",
+    standaloneSalePriceHint: "إذا تُرك فارغًا، سيتم استعمال ثمن التذكرة / التأشيرة كسعر بيع افتراضي.",
     transport: "النقل",
     guide: "المؤطر / المرشد",
     miscellaneous: "مصاريف أخرى",
@@ -82,7 +91,12 @@ const TEXT = {
     resultsPrices: "Résultats et prix",
     exchangeRate: "Taux de change SAR/MAD",
     flight: "Billet d’avion",
+    ticketOnlySalePrice: "Prix de vente billet seul - optionnel",
+    ticketOnlySalePriceReport: "Prix de vente billet seul",
     visa: "Visa",
+    visaOnlySalePrice: "Prix de vente visa seul - optionnel",
+    visaOnlySalePriceReport: "Prix de vente visa seul",
+    standaloneSalePriceHint: "Si vide, le coût du billet / visa sera utilisé comme prix de vente par défaut.",
     transport: "Transport",
     guide: "Accompagnateur / guide",
     miscellaneous: "Frais divers",
@@ -143,7 +157,12 @@ const TEXT = {
     resultsPrices: "Results and prices",
     exchangeRate: "SAR/MAD exchange rate",
     flight: "Flight ticket",
+    ticketOnlySalePrice: "Ticket-only selling price - optional",
+    ticketOnlySalePriceReport: "Ticket-only selling price",
     visa: "Visa",
+    visaOnlySalePrice: "Visa-only selling price - optional",
+    visaOnlySalePriceReport: "Visa-only selling price",
+    standaloneSalePriceHint: "If left empty, the ticket / visa cost will be used as the default selling price.",
     transport: "Transport",
     guide: "Guide / leader",
     miscellaneous: "Miscellaneous costs",
@@ -343,6 +362,11 @@ const normalizeCostingHotelBlock = (source = {}) => ({
   roomPriceSar: asNumber(source.roomPriceSar, 0),
 });
 
+const normalizeStandaloneSalePrices = (source = {}) => ({
+  ticketOnly: source.ticketOnly === "" || source.ticketOnly === null || source.ticketOnly === undefined ? "" : asNumber(source.ticketOnly, ""),
+  visaOnly: source.visaOnly === "" || source.visaOnly === null || source.visaOnly === undefined ? "" : asNumber(source.visaOnly, ""),
+});
+
 export function createInitialCostingDraft({ program = {}, lang = "ar" } = {}) {
   const labels = getProgramCostingLabels(lang);
   const existing = getStoredProgramCosting(program) || {};
@@ -391,6 +415,7 @@ export function createInitialCostingDraft({ program = {}, lang = "ar" } = {}) {
       acc[key] = asNumber(existing.sharedCosts?.[key], 0);
       return acc;
     }, {}),
+    standaloneSalePrices: normalizeStandaloneSalePrices(existing.standaloneSalePrices),
     levels,
     createdAt: existing.createdAt || "",
     updatedAt: existing.updatedAt || "",
@@ -414,6 +439,7 @@ export function prepareCostingDraftForSave(draft = {}) {
       acc[key] = asNumber(draft.sharedCosts?.[key], 0);
       return acc;
     }, {}),
+    standaloneSalePrices: normalizeStandaloneSalePrices(draft.standaloneSalePrices),
     levels: cleanedLevels,
     createdAt: draft.createdAt || now,
     updatedAt: now,
@@ -439,6 +465,30 @@ export function prepareCostingDraftForSave(draft = {}) {
 
 export function getSharedCostTotal(draft = {}) {
   return SHARED_COST_KEYS.reduce((sum, key) => sum + asNumber(draft.sharedCosts?.[key], 0), 0);
+}
+
+export function getProgramServiceCostingReferenceCost(program = {}, serviceType = "") {
+  const costing = getStoredProgramCosting(program);
+  const sharedCosts = costing?.sharedCosts || {};
+  const value = serviceType === "visa_only"
+    ? sharedCosts.visa
+    : serviceType === "ticket_only"
+      ? sharedCosts.flight
+      : 0;
+  return asNumber(value, 0);
+}
+
+export function getProgramStandaloneServiceSalePrice(program = {}, serviceType = "") {
+  const key = STANDALONE_SALE_PRICE_KEYS[serviceType];
+  if (!key) return 0;
+  const costing = getStoredProgramCosting(program);
+  return asNumber(costing?.standaloneSalePrices?.[key], 0);
+}
+
+export function getProgramServiceSalePriceFallback(program = {}, serviceType = "") {
+  return getProgramStandaloneServiceSalePrice(program, serviceType)
+    || getProgramServiceCostingReferenceCost(program, serviceType)
+    || 0;
 }
 
 export function isValidCostingExchangeRate(draft = {}) {

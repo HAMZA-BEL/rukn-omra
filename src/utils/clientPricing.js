@@ -65,10 +65,13 @@ export const isManualOnlyPriceServiceType = (source) => {
   return serviceType === "ticket_only" || serviceType === "visa_only";
 };
 
-export const getClientEffectiveSalePrice = (client = {}, { referencePrice = 0, program = null, officialPrice } = {}) => {
+export const getClientEffectiveSalePrice = (client = {}, { referencePrice = 0, standaloneSalePrice = 0, program = null, officialPrice } = {}) => {
   const salePrice = toClientPriceNumber(client.salePrice ?? client.sale_price);
   const fallbackReferencePrice = toClientPriceNumber(referencePrice);
-  if (isManualOnlyPriceServiceType(client)) return salePrice > 0 ? salePrice : fallbackReferencePrice;
+  const fallbackStandaloneSalePrice = toClientPriceNumber(standaloneSalePrice);
+  if (isManualOnlyPriceServiceType(client)) {
+    return salePrice > 0 ? salePrice : firstPositiveClientPrice(fallbackStandaloneSalePrice, fallbackReferencePrice);
+  }
 
   if (salePrice > 0) return salePrice;
   return firstPositiveClientPrice(
@@ -93,4 +96,8 @@ export const getClientEffectiveOfficialPrice = (client = {}, { referencePrice = 
 
 export const getClientRemainingAmount = (client = {}, paid = 0, options = {}) => (
   Math.max(0, getClientEffectiveSalePrice(client, options) - toClientPriceNumber(paid))
+);
+
+export const getClientOverpaidAmount = (client = {}, paid = 0, options = {}) => (
+  Math.max(0, toClientPriceNumber(paid) - getClientEffectiveSalePrice(client, options))
 );

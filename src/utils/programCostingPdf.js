@@ -32,12 +32,18 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
   const sharedRows = [
     [labels.exchangeRate, Number(draft.exchangeRate || 0).toLocaleString("fr-MA", { maximumFractionDigits: 4 })],
     [labels.flight, fmt(draft.sharedCosts?.flight)],
+    Number(draft.standaloneSalePrices?.ticketOnly || 0) > 0
+      ? [labels.ticketOnlySalePriceReport || labels.ticketOnlySalePrice, fmt(draft.standaloneSalePrices?.ticketOnly)]
+      : null,
     [labels.visa, fmt(draft.sharedCosts?.visa)],
+    Number(draft.standaloneSalePrices?.visaOnly || 0) > 0
+      ? [labels.visaOnlySalePriceReport || labels.visaOnlySalePrice, fmt(draft.standaloneSalePrices?.visaOnly)]
+      : null,
     [labels.transport, fmt(draft.sharedCosts?.transport)],
     [labels.guide, fmt(draft.sharedCosts?.guide)],
     [labels.miscellaneous, fmt(draft.sharedCosts?.miscellaneous)],
     [labels.totalShared, fmt(sharedTotal)],
-  ].map(([label, value]) => `
+  ].filter(Boolean).map(([label, value]) => `
     <div class="kv">
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(value)}</strong>

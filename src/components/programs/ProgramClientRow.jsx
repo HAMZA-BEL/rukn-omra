@@ -35,6 +35,12 @@ const completionBadgeStyle = (tone) => ({
   whiteSpace:"nowrap",
 });
 
+const getOverpaidLabel = (lang) => {
+  if (lang === "fr") return "Trop-perçu";
+  if (lang === "en") return "Overpaid";
+  return "زائد";
+};
+
 export default function ProgramClientRow({
   client,
   program,
@@ -42,6 +48,7 @@ export default function ProgramClientRow({
   amount,
   paid,
   remaining,
+  overpaid = 0,
   status,
   onClick,
   onEdit,
@@ -61,6 +68,10 @@ export default function ProgramClientRow({
   const amountLabel = formatCurrency(amount, lang);
   const paidLabel = formatCurrency(paid, lang);
   const remainingLabel = formatCurrency(remaining, lang);
+  const overpaidAmount = Number(overpaid) || 0;
+  const overpaidLabel = overpaidAmount > 0
+    ? `${getOverpaidLabel(lang)} ${formatCurrency(overpaidAmount, lang)}`
+    : "";
   const btnRef = React.useRef();
   const menuRef = React.useRef();
   const menuPos = useDropdownPosition({
@@ -271,8 +282,19 @@ export default function ProgramClientRow({
           <span style={{ color: remaining > 0 ? tc.warning : tc.greenLight, fontWeight: 700, textAlign: "center", fontSize: 12 }}>
             {remainingLabel}
           </span>
-          <div style={{ textAlign: "center" }} title={incompleteTooltip || undefined}>
+          <div style={{ textAlign: "center", display:"flex", flexDirection:"column", alignItems:"center", gap:2 }} title={incompleteTooltip || undefined}>
             <StatusBadge status={status} />
+            {overpaidLabel && (
+              <span style={{
+                fontSize:9.5,
+                lineHeight:1.2,
+                color:tc.grey,
+                fontWeight:800,
+                whiteSpace:"nowrap",
+              }}>
+                {overpaidLabel}
+              </span>
+            )}
           </div>
         </div>
         {!selectMode && (
