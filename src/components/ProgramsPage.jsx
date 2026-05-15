@@ -4666,16 +4666,52 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         clientDragPanFrameRef.current = 0;
       }
     };
+    const handleWheel = (event) => {
+      const flow = flowRef.current;
+      if (!flow?.getViewport || !flow?.setViewport) return;
+      const canvas = document.querySelector(".rooming-flow-canvas");
+      const rect = canvas?.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      const fallbackPoint = clientDragPointerRef.current;
+      const point = event.clientX || event.clientY
+        ? { x: event.clientX, y: event.clientY }
+        : fallbackPoint;
+      if (!point) return;
+      const insideCanvas = point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+      if (!insideCanvas) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      clientDragPointerRef.current = point;
+
+      const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? rect.height : 1;
+      let panX = event.deltaX * unit;
+      let panY = event.deltaY * unit;
+      if (event.shiftKey && Math.abs(panX) < 0.5) {
+        panX = panY;
+        panY = 0;
+      }
+      const limitDelta = (value) => Math.max(-180, Math.min(180, value));
+      const viewport = flow.getViewport();
+      flow.setViewport({
+        x: viewport.x - limitDelta(panX),
+        y: viewport.y - limitDelta(panY),
+        zoom: viewport.zoom,
+      });
+    };
 
     window.addEventListener("dragover", handleDragOver);
     window.addEventListener("dragend", handleDragEnd);
     window.addEventListener("drop", handleDrop);
+    window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
     clientDragPanFrameRef.current = window.requestAnimationFrame(panLoop);
 
     return () => {
       window.removeEventListener("dragover", handleDragOver);
       window.removeEventListener("dragend", handleDragEnd);
       window.removeEventListener("drop", handleDrop);
+      window.removeEventListener("wheel", handleWheel, { capture: true });
       if (clientDragPanFrameRef.current) {
         window.cancelAnimationFrame(clientDragPanFrameRef.current);
         clientDragPanFrameRef.current = 0;
