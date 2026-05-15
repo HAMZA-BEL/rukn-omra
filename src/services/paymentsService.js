@@ -16,6 +16,10 @@ export function createPaymentWithReceipt(payment, agencyId) {
   return db.payments.createWithReceipt(payment, agencyId);
 }
 
+export function createPreviousPayment(payment, agencyId) {
+  return db.payments.createPrevious(payment, agencyId);
+}
+
 export function deletePayment(id, agencyId) {
   return db.payments.delete(id, agencyId);
 }

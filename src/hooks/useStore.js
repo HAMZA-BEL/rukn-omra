@@ -5,6 +5,7 @@ import { db } from "../lib/db";
 import { fetchRecentActivity } from "../services/activityService";
 import { fetchNotifications } from "../services/notificationsService";
 import {
+  createPreviousPayment,
   createPaymentWithReceipt,
   deletePayment as deletePaymentRemote,
   deleteTrashedPayment as deleteTrashedPaymentRemote,
@@ -2010,9 +2011,10 @@ export function useStore(agencyId, onToast) {
       try {
         let savedPayment = null;
         if (isPreviousPayment) {
-          const { error } = await savePayment(pmt, agencyId);
-          if (error) throw error;
-          savedPayment = pmt;
+          const result = await createPreviousPayment(pmt, agencyId);
+          if (result.error) throw result.error;
+          if (!result.data) throw new Error("Previous payment creation did not return a row");
+          savedPayment = result.data;
         } else {
           const result = await createPaymentWithReceipt(pmt, agencyId);
           if (result.error) throw result.error;

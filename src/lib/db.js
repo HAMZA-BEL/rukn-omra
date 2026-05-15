@@ -900,6 +900,21 @@ export const db = {
       });
       return { data: data ? fromPayment(data) : null, error };
     },
+    async createPrevious(payment, agencyId) {
+      const { data, error } = await supabase.rpc("create_previous_payment", {
+        p_agency_id: agencyId,
+        p_client_id: normalizeForeignKey(payment.clientId),
+        p_amount: payment.amount,
+        p_date: payment.date ?? null,
+        p_method: payment.method ?? payment.paymentMethod ?? payment.payment_method ?? null,
+        p_note: payment.note ?? payment.notes ?? null,
+        p_cheque_number: cleanString(payment.chequeNumber ?? payment.cheque_number ?? payment.checkNumber ?? payment.check_number),
+        p_paid_by: cleanString(payment.paidBy ?? payment.paid_by),
+        p_legacy_receipt_number: cleanString(payment.legacyReceiptNumber ?? payment.legacy_receipt_number),
+        p_payment_id: payment.id ?? null,
+      });
+      return { data: data ? fromPayment(data) : null, error };
+    },
     async delete(id, agencyId) {
       if (!agencyId || !id) return { data: null, error: null };
       const { data, error } = await supabase.rpc("trash_payment", {
