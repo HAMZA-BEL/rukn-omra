@@ -5,6 +5,79 @@ import { clientServiceIncludesAccommodation, getClientServiceTypeLabel } from ".
 import { translateRoomType } from "./i18nValues";
 import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "./paymentRecords";
 
+const getFinalInvoiceNumber = (invoice = {}) => String(
+  invoice.invoiceDisplayNumber
+    || invoice.invoiceNumber
+    || invoice.invoice_number
+    || ""
+).trim();
+
+const getFinalInvoiceClientId = (invoice = {}) => String(
+  invoice.clientId
+    || invoice.client_id
+    || ""
+).trim();
+
+const getFinalInvoiceProgramId = (invoice = {}) => String(
+  invoice.programId
+    || invoice.program_id
+    || ""
+).trim();
+
+const isFinalInvoiceSnapshot = (invoice = {}) => {
+  const number = getFinalInvoiceNumber(invoice);
+  if (!number) return false;
+  const status = String(invoice.status || "issued").trim().toLowerCase();
+  if (["trashed", "deleted", "cancelled", "canceled", "void", "draft"].includes(status)) return false;
+  const type = String(
+    invoice.documentType
+      || invoice.document_type
+      || invoice.invoiceType
+      || invoice.invoice_type
+      || invoice.type
+      || ""
+  ).trim().toLowerCase();
+  if (type.includes("proforma") || type.includes("prelim") || type.includes("draft")) return false;
+  return true;
+};
+
+const getInvoiceSortTime = (invoice = {}) => {
+  for (const raw of [invoice.issueDate, invoice.issue_date, invoice.date, invoice.createdAt, invoice.created_at]) {
+    if (!raw) continue;
+    const time = new Date(raw).getTime();
+    if (Number.isFinite(time)) return time;
+  }
+  return 0;
+};
+
+const getInvoiceSortNumber = (invoice = {}) => {
+  const raw = String(invoice.invoiceNumber || invoice.invoice_number || invoice.invoiceDisplayNumber || "");
+  const matches = raw.match(/\d+/g);
+  if (!matches) return 0;
+  const value = Number(matches.join(""));
+  return Number.isFinite(value) ? value : 0;
+};
+
+const getClientFinalInvoiceNumber = (client = {}, finalInvoices = []) => {
+  const clientId = String(client.id || client.clientId || client.client_id || "").trim();
+  if (!clientId) return "-";
+  const programId = String(client.programId || client.program_id || client.prog?.id || "").trim();
+  const matches = (Array.isArray(finalInvoices) ? finalInvoices : [])
+    .map((invoice, index) => ({ invoice, index }))
+    .filter(({ invoice }) => {
+      if (!isFinalInvoiceSnapshot(invoice)) return false;
+      if (getFinalInvoiceClientId(invoice) !== clientId) return false;
+      const invoiceProgramId = getFinalInvoiceProgramId(invoice);
+      return !invoiceProgramId || !programId || invoiceProgramId === programId;
+    })
+    .sort((a, b) => (
+      getInvoiceSortTime(b.invoice) - getInvoiceSortTime(a.invoice)
+      || getInvoiceSortNumber(b.invoice) - getInvoiceSortNumber(a.invoice)
+      || b.index - a.index
+    ));
+  return matches.length ? getFinalInvoiceNumber(matches[0].invoice) : "-";
+};
+
 /**
  * Generates a print-ready HTML page for a program's pilgrim list
  * and opens it in a new window for window.print().
@@ -449,7 +522,7 @@ export function printProgramPDF({
 // ─────────────────────────────────────────────────────────────────────────────
 // CLEARANCE REPORT PDF  (A4 portrait)
 // ─────────────────────────────────────────────────────────────────────────────
-export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }) {
+export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, finalInvoices = [] }) {
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
   const fmt   = (n) => Number(n || 0).toLocaleString("fr-MA") + " MAD";
@@ -469,6 +542,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
     salePrice:     t.salePrice || (lang === "fr" ? "Prix vente" : "سعر البيع"),
     paid:          t.paid     || (lang === "fr" ? "Payé"       : "المدفوع"),
     remaining:     t.remaining || (lang === "fr" ? "Reste"     : "المتبقي"),
+    invoice:       lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة",
     status:        lang === "fr" ? "Statut"     : "الحالة",
     cleared:       t.status_cleared || (lang === "fr" ? "Soldé"    : "مصفّى"),
     partial:       t.status_partial || (lang === "fr" ? "Partiel"  : "جزئي"),
@@ -500,6 +574,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
   const rows = data.map((c, i) => {
     const sLabel = c.status === "cleared" ? L.cleared : c.status === "partial" ? L.partial : L.unpaid;
     const sClass = c.status === "cleared" ? "cleared" : c.status === "partial" ? "partial" : "unpaid";
+    const invoiceNumber = getClientFinalInvoiceNumber(c, finalInvoices);
     return `
       <tr>
         <td style="font-family:monospace;font-size:9px;color:#555">${escapeHtml((c.displayRef || c.id || "—").toString())}</td>
@@ -509,11 +584,14 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
         <td style="text-align:${isRTL ? "left" : "right"};color:#15803d;font-weight:600">${escapeHtml(fmt(c.paid))}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? escapeHtml(fmt(c.remaining)) : "OK"}</td>
         <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
+        <td class="invoice-cell">${escapeHtml(invoiceNumber)}</td>
       </tr>`;
   }).join("");
 
-  const headers = [L.fileId, L.name, L.program, L.salePrice, L.paid, L.remaining, L.status]
+  const headers = [L.fileId, L.name, L.program, L.salePrice, L.paid, L.remaining, L.status, L.invoice]
     .map(h => `<th>${escapeHtml(h)}</th>`).join("");
+  const colgroup = ["9%", "20%", "16%", "11%", "11%", "11%", "9%", "13%"]
+    .map(width => `<col style="width:${width}">`).join("");
 
   // ── HTML ──────────────────────────────────────────────────────────────────
   const html = `<!DOCTYPE html>
@@ -568,7 +646,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
     }
     .title-row { text-align: center; margin-bottom: 12px; }
     /* ── Table ── */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10px; table-layout: fixed; }
     thead tr { background: #0d4a1a; }
     th {
       color: #d4af37;
@@ -579,6 +657,16 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
       white-space: nowrap;
     }
     td { padding: 5px; border: 1px solid #e0e0e0; vertical-align: middle; font-size: 10px; }
+    .invoice-cell {
+      text-align: center;
+      font-family: monospace;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #334155;
+    }
     tbody tr:nth-child(even) td { background: #f4fbf5; }
     .status {
       display: inline-block;
@@ -711,6 +799,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency }
 
   <!-- Table -->
   <table>
+    <colgroup>${colgroup}</colgroup>
     <thead><tr>${headers}</tr></thead>
     <tbody>${rows}</tbody>
   </table>

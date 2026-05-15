@@ -24,15 +24,109 @@ export function buildNotificationStateHash(notification) {
   return `${type}:${target}:${signature}`;
 }
 
+const firstFilled = (...values) => {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const normalizeTargetType = (value) => {
+  const text = firstFilled(value).toLowerCase();
+  if (!text) return "";
+  if (["client", "clients", "pilgrim", "pilgrims", "customer"].includes(text)) return "client";
+  if (["program", "programs", "trip", "travel"].includes(text)) return "program";
+  if (["payment", "payments"].includes(text)) return "payments";
+  return text;
+};
+
+const normalizeRoute = (value) => {
+  const text = firstFilled(value);
+  if (!text) return "";
+  const hashMatch = text.match(/#\/?([^?/#]+)/);
+  const pathMatch = text.match(/^\/?([^?/#]+)/);
+  const route = (hashMatch?.[1] || pathMatch?.[1] || text).trim();
+  return route.replace(/^#\/?/, "").replace(/^\/+/, "");
+};
+
+const getRouteParam = (value, keys = []) => {
+  const text = firstFilled(value);
+  const queryStart = text.indexOf("?");
+  if (queryStart === -1) return "";
+  const query = text.slice(queryStart + 1).split("#")[0];
+  const params = new URLSearchParams(query);
+  for (const key of keys) {
+    const found = params.get(key);
+    if (firstFilled(found)) return found;
+  }
+  return "";
+};
+
 export function resolveNotificationTarget(notification) {
   if (!notification) return null;
-  const metaRoute = notification.meta?.route || notification.meta?.actionRoute;
-  const actionRoute = notification.actionRoute || metaRoute;
-  if (actionRoute) {
-    return { type: "route", route: actionRoute, targetId: notification.targetId };
+  const meta = notification.meta || notification.metadata || {};
+  const targetUrl = firstFilled(
+    notification.targetUrl,
+    notification.target_url,
+    meta.targetUrl,
+    meta.target_url
+  );
+  const actionRoute = firstFilled(
+    notification.actionRoute,
+    notification.action_route,
+    meta.actionRoute,
+    meta.action_route,
+    meta.route,
+    targetUrl
+  );
+  const clientId = firstFilled(
+    notification.clientId,
+    notification.client_id,
+    notification.pilgrimId,
+    notification.pilgrim_id,
+    meta.clientId,
+    meta.client_id,
+    meta.pilgrimId,
+    meta.pilgrim_id,
+    getRouteParam(targetUrl, ["openClientId", "clientId", "client_id", "pilgrimId", "pilgrim_id"])
+  );
+  const programId = firstFilled(
+    notification.programId,
+    notification.program_id,
+    meta.programId,
+    meta.program_id,
+    getRouteParam(targetUrl, ["highlightProgramId", "programId", "program_id"])
+  );
+  const entityType = normalizeTargetType(firstFilled(
+    notification.targetType,
+    notification.target_type,
+    notification.entityType,
+    notification.entity_type,
+    meta.targetType,
+    meta.target_type,
+    meta.entityType,
+    meta.entity_type
+  ));
+  const entityId = firstFilled(
+    notification.targetId,
+    notification.target_id,
+    notification.entityId,
+    notification.entity_id,
+    meta.targetId,
+    meta.target_id,
+    meta.entityId,
+    meta.entity_id,
+    getRouteParam(targetUrl, ["targetId", "target_id", "entityId", "entity_id", "selected"])
+  );
+  let targetType = entityType || (clientId ? "client" : programId ? "program" : "");
+  let targetId = entityId;
+  if (targetType === "client" && !targetId) targetId = clientId;
+  if (targetType === "program" && !targetId) targetId = programId;
+  if (!targetType && actionRoute) {
+    return { type: "route", route: normalizeRoute(actionRoute), targetId: targetId || null };
   }
-  const targetType = notification.targetType || notification.meta?.targetType || (notification.programId ? "program" : null);
-  const targetId = notification.targetId || notification.meta?.targetId || notification.programId || null;
   if (!targetType) return null;
   const defaultRoutes = {
     program: "programs",
@@ -41,7 +135,7 @@ export function resolveNotificationTarget(notification) {
     trash: "trash",
     payments: "clients",
   };
-  const route = defaultRoutes[targetType] || null;
+  const route = normalizeRoute(actionRoute) || defaultRoutes[targetType] || null;
   return { type: targetType, route, targetId };
 }
 

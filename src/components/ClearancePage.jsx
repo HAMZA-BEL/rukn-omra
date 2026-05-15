@@ -937,8 +937,9 @@ export default function ClearancePage({ store }) {
           >
             {labels.exportExcel}
           </Button>
-          <Button variant="ghost" icon="print" disabled={!clearanceDataReady || !data.length} onClick={() => {
+          <Button variant="ghost" icon="print" disabled={!clearanceDataReady || !data.length} onClick={async () => {
             if (data.length === 0) return;
+            const finalInvoices = await refreshSavedInvoices();
             printClearancePDF({
               data,
               totals: tableTotals,
@@ -946,6 +947,7 @@ export default function ClearancePage({ store }) {
               lang,
               t,
               agency,
+              finalInvoices,
             });
           }}>
             {lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF"}

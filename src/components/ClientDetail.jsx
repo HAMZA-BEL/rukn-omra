@@ -116,7 +116,18 @@ const translateProgramAirline = (program, lang) => {
   return code ? `${translatedName} (${code})` : translatedName;
 };
 
-export default function ClientDetail({ client, store, onClose, onEdit, onDelete, onArchive, onRestore, onToast }) {
+export default function ClientDetail({
+  client,
+  store,
+  onClose,
+  onEdit,
+  onDelete,
+  onArchive,
+  onRestore,
+  onToast,
+  highlightFromNotification = false,
+  notificationHighlightToken = null,
+}) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
@@ -129,7 +140,15 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
   const [badgeBusy, setBadgeBusy] = React.useState(false);
   const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
+  const [notificationHighlightActive, setNotificationHighlightActive] = React.useState(false);
   const paymentsHydrationRequestedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!highlightFromNotification || !notificationHighlightToken) return undefined;
+    setNotificationHighlightActive(true);
+    const timer = window.setTimeout(() => setNotificationHighlightActive(false), 3600);
+    return () => window.clearTimeout(timer);
+  }, [highlightFromNotification, notificationHighlightToken]);
 
   const clientProgramId = getClientProgramId(client);
   const program     = getProgramById(clientProgramId);
@@ -438,7 +457,11 @@ export default function ClientDetail({ client, store, onClose, onEdit, onDelete,
       <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20,
         padding:"16px 18px",
         background:"linear-gradient(135deg,rgba(26,107,58,.2),rgba(212,175,55,.08))",
-        borderRadius:14, border:"1px solid rgba(212,175,55,.15)" }}>
+        borderRadius:14, border:"1px solid rgba(212,175,55,.15)",
+        outline: notificationHighlightActive ? "2px solid rgba(59,130,246,.72)" : "2px solid transparent",
+        outlineOffset:3,
+        boxShadow: notificationHighlightActive ? "0 0 0 4px rgba(59,130,246,.14)" : "none",
+        transition:"outline-color .25s ease, box-shadow .35s ease" }}>
         <div style={{ width:56, height:56, borderRadius:12, flexShrink:0,
           background:"linear-gradient(135deg,#d4af37,#b8941e)",
           display:"flex", alignItems:"center", justifyContent:"center",

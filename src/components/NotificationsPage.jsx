@@ -23,16 +23,19 @@ const menuActionStyle = {
 const STATUS_FILTERS = ["all", "unread", "archived"];
 const SEVERITY_FILTERS = ["all", "info", "warn", "critical"];
 
-export default function NotificationsPage({ store, onNotificationAction }) {
+export default function NotificationsPage({ store, onNotificationAction, notificationFocus = null }) {
   const { t, tr, lang } = useLang();
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [severityFilter, setSeverityFilter] = React.useState("all");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [actionMenuId, setActionMenuId] = React.useState(null);
   const [selectedIds, setSelectedIds] = React.useState([]);
+  const [detailNotificationId, setDetailNotificationId] = React.useState(null);
+  const [highlightNotificationId, setHighlightNotificationId] = React.useState("");
   const [confirmState, setConfirmState] = React.useState({ open: false, mode: null, ids: [], count: 0 });
   const filtersRef = React.useRef(null);
   const actionMenuRef = React.useRef(null);
+  const notificationItemRefs = React.useRef(new Map());
   const hydrationRequestedRef = React.useRef(false);
 
   const notifications = store.notifications || [];
@@ -66,6 +69,10 @@ export default function NotificationsPage({ store, onNotificationAction }) {
     [notifications]
   );
   const visibleIds = React.useMemo(() => filtered.map((n) => n.id), [filtered]);
+  const detailNotification = React.useMemo(
+    () => notifications.find((item) => String(item.id) === String(detailNotificationId)) || null,
+    [notifications, detailNotificationId]
+  );
 
   React.useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => visibleIds.includes(id)));
@@ -113,6 +120,31 @@ export default function NotificationsPage({ store, onNotificationAction }) {
     store.paymentsLoaded,
     store.paymentsLoading,
   ]);
+
+  React.useEffect(() => {
+    const targetId = notificationFocus?.targetId || notificationFocus?.notificationId;
+    if (!targetId) return undefined;
+    const normalizedId = String(targetId);
+    setStatusFilter("all");
+    setSeverityFilter("all");
+    setDetailNotificationId(normalizedId);
+    setHighlightNotificationId(normalizedId);
+    store.markNotificationRead?.(targetId);
+
+    const scrollTimer = window.setTimeout(() => {
+      const node = notificationItemRefs.current.get(normalizedId);
+      if (node && typeof node.scrollIntoView === "function") {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 120);
+    const clearTimer = window.setTimeout(() => {
+      setHighlightNotificationId((current) => current === normalizedId ? "" : current);
+    }, 3600);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [notificationFocus?.targetId, notificationFocus?.notificationId, notificationFocus?.token, store.markNotificationRead]);
 
   const selectionCount = selectedIds.length;
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
@@ -377,8 +409,22 @@ export default function NotificationsPage({ store, onNotificationAction }) {
             ? new Date(notification.createdAt).toLocaleString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US")
             : "";
           const isSelected = selectedIds.includes(notification.id);
+          const isFocused = String(highlightNotificationId) === String(notification.id);
           return (
-            <GlassCard key={notification.id} style={{ padding: 16, borderColor: colors.text + "33" }}>
+            <div
+              key={notification.id}
+              data-notification-id={notification.id}
+              ref={(node) => {
+                if (node) notificationItemRefs.current.set(String(notification.id), node);
+                else notificationItemRefs.current.delete(String(notification.id));
+              }}
+            >
+            <GlassCard style={{
+              padding: 16,
+              borderColor: isFocused ? "rgba(59,130,246,.72)" : colors.text + "33",
+              boxShadow: isFocused ? "0 0 0 3px rgba(59,130,246,.14), var(--rukn-shadow-card-hover)" : undefined,
+              transition: "border-color .25s ease, box-shadow .35s ease",
+            }}>
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                 <div style={{ paddingTop: 6 }}>
                   <input
@@ -506,6 +552,7 @@ export default function NotificationsPage({ store, onNotificationAction }) {
                 </div>
               </div>
             </GlassCard>
+            </div>
           );
         })}
 
@@ -517,6 +564,36 @@ export default function NotificationsPage({ store, onNotificationAction }) {
           </GlassCard>
         )}
       </div>
+
+      <Modal
+        open={!!detailNotification}
+        onClose={() => setDetailNotificationId(null)}
+        title={detailNotification?.title || t.notificationsDefaultTitle || "تنبيه"}
+        width={460}
+      >
+        {detailNotification && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p style={{
+              fontSize: 14,
+              color: "var(--rukn-text)",
+              lineHeight: 1.7,
+              whiteSpace: "pre-line",
+            }}>
+              {renderMessage(detailNotification) || detailNotification.message || "—"}
+            </p>
+            {detailNotification.createdAt && (
+              <p style={{ fontSize: 12, color: "var(--rukn-text-muted)" }}>
+                {new Date(detailNotification.createdAt).toLocaleString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US")}
+              </p>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button size="sm" variant="secondary" onClick={() => setDetailNotificationId(null)}>
+                {t.close || "إغلاق"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={confirmState.open}

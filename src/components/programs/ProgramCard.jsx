@@ -32,7 +32,8 @@ function SmallBtn({ icon, onClick, color, title }) {
 }
 
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
-  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onDelete, lang, formatCurrencyForLang }) {
+  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onDelete, lang, formatCurrencyForLang,
+  highlighted = false }) {
   const [hov, setHov] = React.useState(false);
   const { t } = useLang();
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
@@ -61,9 +62,11 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
       <GlassCard gold style={{
         padding:22,
         transform: hov ? "translateY(-5px)" : "none",
-        transition:"all .3s ease",
-        boxShadow: hov ? "var(--rukn-shadow-card-hover)" : "var(--rukn-shadow-card)",
-        border:`1px solid ${hov?"rgba(212,175,55,.45)":"rgba(212,175,55,.2)"}`,
+        transition:"transform .3s ease, border-color .25s ease, box-shadow .35s ease",
+        boxShadow: highlighted
+          ? "0 0 0 3px rgba(59,130,246,.16), var(--rukn-shadow-card-hover)"
+          : hov ? "var(--rukn-shadow-card-hover)" : "var(--rukn-shadow-card)",
+        border:`1px solid ${highlighted ? "rgba(59,130,246,.72)" : hov ? "rgba(212,175,55,.45)" : "rgba(212,175,55,.2)"}`,
       }}>
         {/* header */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>

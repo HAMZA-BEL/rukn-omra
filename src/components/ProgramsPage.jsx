@@ -246,6 +246,7 @@ const ROOMING_LAYOUT_HORIZONTAL_GAP = 40;
 const ROOMING_LAYOUT_VERTICAL_GAP = 36;
 const ROOMING_LAYOUT_GROUP_VERTICAL_GAP = 96;
 const ROOMING_LAYOUT_MAX_COLUMNS = 6;
+const ROOMING_LARGE_GENERATION_THRESHOLD = 80;
 const ROOMING_CLIENT_DRAG_PAN_EDGE = 82;
 const ROOMING_CLIENT_DRAG_PAN_MIN_SPEED = 2.2;
 const ROOMING_CLIENT_DRAG_PAN_MAX_SPEED = 18;
@@ -795,6 +796,59 @@ const autoLayoutRoomNodes = (rooms = []) => {
   });
 };
 
+const getRoomingGeneratedLayoutSummary = (roomCount = 0) => {
+  const count = Math.max(0, Number(roomCount) || 0);
+  if (!count) return { count: 0, columns: 0, rows: 0 };
+  const stepX = ROOMING_LAYOUT_CARD_WIDTH + ROOMING_LAYOUT_HORIZONTAL_GAP;
+  const stepY = ROOMING_LAYOUT_CARD_HEIGHT + ROOMING_LAYOUT_VERTICAL_GAP;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(count * (stepY / stepX))));
+  return {
+    count,
+    columns,
+    rows: Math.ceil(count / columns),
+  };
+};
+
+const getRoomingGeneratedGridPosition = (index = 0, columns = 1, origin = {}) => {
+  const stepX = ROOMING_LAYOUT_CARD_WIDTH + ROOMING_LAYOUT_HORIZONTAL_GAP;
+  const stepY = ROOMING_LAYOUT_CARD_HEIGHT + ROOMING_LAYOUT_VERTICAL_GAP;
+  const safeColumns = Math.max(1, Number(columns) || 1);
+  const columnIndex = index % safeColumns;
+  const rowIndex = Math.floor(index / safeColumns);
+  return {
+    x: Number(origin.x ?? ROOMING_LAYOUT_START_X) + (columnIndex * stepX),
+    y: Number(origin.y ?? ROOMING_LAYOUT_START_Y) + (rowIndex * stepY),
+  };
+};
+
+const autoLayoutGeneratedRoomNodes = (rooms = []) => {
+  const sorted = rooms.slice().sort((a, b) => {
+    const typeRank = getRoomingLayoutTypeRank(a) - getRoomingLayoutTypeRank(b);
+    if (typeRank) return typeRank;
+    const type = String(getRoomingLayoutTypeKey(a)).localeCompare(String(getRoomingLayoutTypeKey(b)), "ar");
+    if (type) return type;
+    const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
+    if (hotel) return hotel;
+    const category = String(a.category || "").localeCompare(String(b.category || ""), "ar");
+    if (category) return category;
+    return (a.order || 0) - (b.order || 0);
+  });
+  const roomCount = sorted.length;
+  if (!roomCount) return [];
+
+  const { columns } = getRoomingGeneratedLayoutSummary(roomCount);
+
+  return sorted.map((room, index) => {
+    const position = getRoomingGeneratedGridPosition(index, columns);
+    return {
+      ...room,
+      order: room.order ?? index,
+      x: position.x,
+      y: position.y,
+    };
+  });
+};
+
 const getRoomingNodeRect = (node, position = node?.position || {}) => {
   const width = Number(node?.measured?.width || node?.width || ROOMING_NODE_WIDTH);
   const capacity = Number(node?.data?.room?.capacity || node?.data?.room?.occupantIds?.length || 2);
@@ -1249,7 +1303,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 // ═══════════════════════════════════════
 // PROGRAMS LIST PAGE
 // ═══════════════════════════════════════
-export default function ProgramsPage({ store, onToast }) {
+export default function ProgramsPage({ store, onToast, notificationFocus = null }) {
   const { programs, clients, addProgram, updateProgram, deleteProgram,
           getClientTotalPaid } = store;
   const { t, lang, dir } = useLang();
@@ -1277,6 +1331,7 @@ export default function ProgramsPage({ store, onToast }) {
   const nextYear = currentYear + 1;
   const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
   const [programTypeFilter, setProgramTypeFilter] = React.useState("all");
+  const [highlightProgramId, setHighlightProgramId] = React.useState("");
   const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
@@ -1286,6 +1341,7 @@ export default function ProgramsPage({ store, onToast }) {
   const yearButtonRef = React.useRef(null);
   const programTypeMenuRef = React.useRef(null);
   const programTypeButtonRef = React.useRef(null);
+  const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -1366,6 +1422,48 @@ export default function ProgramsPage({ store, onToast }) {
     if (programTypeFilter === "all") return baseFilteredPrograms;
     return baseFilteredPrograms.filter((program) => getProgramKind(program) === programTypeFilter);
   }, [baseFilteredPrograms, programTypeFilter]);
+
+  React.useEffect(() => {
+    const targetId = notificationFocus?.targetId;
+    if (!targetId) return undefined;
+    const program = programs.find((item) => String(item.id) === String(targetId));
+    if (!program) {
+      if (onToast) {
+        const message = lang === "fr"
+          ? "Le programme lié est indisponible."
+          : lang === "en"
+            ? "The linked program is unavailable."
+            : "البرنامج المرتبط غير متاح.";
+        onToast(message, "info");
+      }
+      return undefined;
+    }
+    setSearch("");
+    setProgramTypeFilter("all");
+    const departureYear = getProgramDepartureYear(program);
+    setSelectedYear(
+      departureYear === currentYear || departureYear === nextYear
+        ? String(departureYear)
+        : "all"
+    );
+    setActiveProgram(null);
+    setHighlightProgramId(String(targetId));
+    const timer = window.setTimeout(() => {
+      setHighlightProgramId((current) => current === String(targetId) ? "" : current);
+    }, 3600);
+    return () => window.clearTimeout(timer);
+  }, [notificationFocus?.targetId, notificationFocus?.token, programs, onToast, lang, currentYear, nextYear]);
+
+  React.useEffect(() => {
+    if (!highlightProgramId) return undefined;
+    const timer = window.setTimeout(() => {
+      const node = programCardRefs.current.get(String(highlightProgramId));
+      if (node && typeof node.scrollIntoView === "function") {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [highlightProgramId, filteredPrograms]);
 
   const openProgramDetail = React.useCallback((programId) => {
     setActiveProgram(programId);
@@ -1792,25 +1890,34 @@ export default function ProgramsPage({ store, onToast }) {
             const cl  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "cleared").length;
             const un  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "unpaid").length;
             return (
-              <ProgramCard key={p.id} program={p}
-                registered={reg} pct={pct}
-                totalPaid={paid} totalRemaining={rem}
-                cleared={cl} unpaid={un} delay={i*.06}
-                onClick={() => openProgramDetail(p.id)}
-                onEdit={e => { e.stopPropagation(); setEditing(p); }}
-                onDuplicate={e => {
-                  e.stopPropagation();
-                  openDuplicatePrompt(p);
+              <div
+                key={p.id}
+                ref={(node) => {
+                  if (node) programCardRefs.current.set(String(p.id), node);
+                  else programCardRefs.current.delete(String(p.id));
                 }}
-                onDelete={e => {
-                  e.stopPropagation();
-                  setDeletePrompt({ program: p, clients: pc });
-                }}
-                lang={lang}
-                formatCurrencyForLang={formatCurrencyForLang}
-              />
+              >
+                <ProgramCard program={p}
+                  registered={reg} pct={pct}
+                  totalPaid={paid} totalRemaining={rem}
+                  cleared={cl} unpaid={un} delay={i*.06}
+                  highlighted={String(highlightProgramId) === String(p.id)}
+                  onClick={() => openProgramDetail(p.id)}
+                  onEdit={e => { e.stopPropagation(); setEditing(p); }}
+                  onDuplicate={e => {
+                    e.stopPropagation();
+                    openDuplicatePrompt(p);
+                  }}
+                  onDelete={e => {
+                    e.stopPropagation();
+                    setDeletePrompt({ program: p, clients: pc });
+                  }}
+                  lang={lang}
+                  formatCurrencyForLang={formatCurrencyForLang}
+                />
+              </div>
             );
-            })}
+          })}
           </div>
         </div>
       )}
@@ -3109,6 +3216,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const [roomOccupancyFilter, setRoomOccupancyFilter] = React.useState("all");
   const [roomFilterOpen, setRoomFilterOpen] = React.useState(false);
   const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
+  const [largeRoomGenerationConfirm, setLargeRoomGenerationConfirm] = React.useState(null);
   const [roomingPrintSettingsOpen, setRoomingPrintSettingsOpen] = React.useState(false);
   const [roomingPrintSettings, setRoomingPrintSettings] = React.useState({
     showRegistrationSource: true,
@@ -3133,6 +3241,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
   const clientDragPanFrameRef = React.useRef(0);
   const roomingLoadSeqRef = React.useRef(0);
   const roomingRevisionRef = React.useRef(0);
+  const generatedRoomFitPendingRef = React.useRef(null);
 
   const fullWorkspace = roomingWorkspaceMode !== "normal";
   const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
@@ -3179,6 +3288,33 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       : option.value === "female_only" ? (t.roomCategoryFemaleOnly || option.label)
         : (t.roomCategoryFamily || option.label),
   })), [t]);
+  const largeRoomGenerationCopy = React.useMemo(() => ({
+    title: t.roomingLargeGenerationConfirmTitle || (
+      lang === "fr" ? "Confirmer la génération des chambres"
+        : lang === "en" ? "Confirm room generation"
+          : "تأكيد توليد الغرف"
+    ),
+    message: t.roomingLargeGenerationConfirmMessage || (
+      lang === "fr" ? "Le nombre de chambres sélectionné est relativement élevé. Les chambres seront générées et organisées dans l’espace d’hébergement. Voulez-vous continuer ?"
+        : lang === "en" ? "The selected number of rooms is relatively large. The rooms will be generated and arranged in the rooming workspace. Do you want to continue?"
+          : "عدد الغرف المختار كبير نسبيًا. سيتم إنشاء هذه الغرف وترتيبها داخل مساحة التسكين. هل تؤكد المتابعة؟"
+    ),
+    confirm: t.roomingLargeGenerationConfirmAction || (
+      lang === "fr" ? "Confirmer la génération"
+        : lang === "en" ? "Confirm generation"
+          : "تأكيد التوليد"
+    ),
+    cancel: t.roomingLargeGenerationCancelAction || t.cancel || (
+      lang === "fr" ? "Annuler"
+        : lang === "en" ? "Cancel"
+          : "إلغاء"
+    ),
+    countLabel: t.roomingLargeGenerationCountLabel || (
+      lang === "fr" ? "Nombre de chambres"
+        : lang === "en" ? "Number of rooms"
+          : "عدد الغرف"
+    ),
+  }), [lang, t]);
   const getLocalizedRoomTypeLabel = React.useCallback((roomType) => {
     const key = normalizeRoomingRoomType(roomType) || roomType;
     return roomingRoomOptions.find((option) => option.value === key)?.label || getRoomingRoomLabel(key);
@@ -3941,8 +4077,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     return findNearestFreeRoomingPosition(node, allCollisionNodes.filter((item) => item.id !== room.id), preferredPosition);
   }, [allCollisionNodes, roomToCollisionNode]);
 
-  const generateRooms = React.useCallback(() => {
-    if (rooms.length && !window.confirm(t.roomingRegenerateConfirm || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا. سيتم استبدال التسكين الحالي. هل تريد المتابعة؟")) return;
+  const generateRooms = React.useCallback((options = {}) => {
+    const skipLargeConfirm = Boolean(options?.skipLargeConfirm);
+    const skipReplaceConfirm = Boolean(options?.skipReplaceConfirm);
+    if (rooms.length && !skipReplaceConfirm && !window.confirm(t.roomingRegenerateConfirm || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا. سيتم استبدال التسكين الحالي. هل تريد المتابعة؟")) return;
     const nextRooms = [];
     const nextUnassignedByClientId = new Map(roomingEligibleClients.map((client) => [client.id, { clientId: client.id, reason: "" }]));
     const grouped = new Map();
@@ -4004,7 +4142,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       }
     });
 
-    setRooms(autoLayoutRoomNodes(nextRooms));
+    const generatedRooms = autoLayoutGeneratedRoomNodes(nextRooms);
+    if (!skipLargeConfirm && generatedRooms.length >= ROOMING_LARGE_GENERATION_THRESHOLD) {
+      generatedRoomFitPendingRef.current = null;
+      setLargeRoomGenerationConfirm({ mode: "generate", roomCount: generatedRooms.length });
+      return;
+    }
+    generatedRoomFitPendingRef.current = getRoomingGeneratedLayoutSummary(generatedRooms.length);
+    setRooms(generatedRooms);
     setUnassigned(Array.from(nextUnassignedByClientId.values()));
     setRoomLinks([]);
     setLinkMode(false);
@@ -4037,10 +4182,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setRoomModal({ open: true, mode: "edit", roomId: room.id });
   }, [hotelOptions]);
 
-  const saveRoomEdit = React.useCallback(() => {
+  const saveRoomEdit = React.useCallback((options = {}) => {
+    const skipLargeConfirm = Boolean(options?.skipLargeConfirm);
     const capacity = getRoomingCapacity(roomDraft.roomType);
     if (roomModal.mode === "create") {
       const roomCount = normalizeRoomCreateCount(roomDraft.roomCount);
+      if (!skipLargeConfirm && roomCount >= ROOMING_LARGE_GENERATION_THRESHOLD) {
+        setLargeRoomGenerationConfirm({ mode: "create", roomCount });
+        return;
+      }
       const now = new Date().toISOString();
       const roomNumbers = rooms
         .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
@@ -4048,6 +4198,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       const firstRoomNumber = (roomNumbers.length ? Math.max(...roomNumbers) : 0) + 1;
       const createdRooms = [];
       const baseCollisionNodes = rooms.map((room) => roomToCollisionNode(room));
+      const createdLayout = getRoomingGeneratedLayoutSummary(roomCount);
+      const createdLayoutOrigin = {
+        x: Number(roomCreatePosition.x ?? ROOMING_LAYOUT_START_X),
+        y: Number(roomCreatePosition.y ?? ROOMING_LAYOUT_START_Y),
+      };
       for (let index = 0; index < roomCount; index += 1) {
         const draftRoom = {
           id: createRoomId(),
@@ -4062,15 +4217,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
           createdAt: now,
           updatedAt: now,
         };
-        const preferredPosition = {
-          x: Number(roomCreatePosition.x || 0) + ((index % 3) * (ROOMING_NODE_WIDTH + ROOMING_NODE_MIN_GAP)),
-          y: Number(roomCreatePosition.y || 0) + (Math.floor(index / 3) * (ROOMING_NODE_MIN_HEIGHT + ROOMING_NODE_MIN_GAP)),
-        };
+        const preferredPosition = getRoomingGeneratedGridPosition(index, createdLayout.columns, createdLayoutOrigin);
         const node = { ...roomToCollisionNode(draftRoom), position: preferredPosition };
         const collisionNodes = [...baseCollisionNodes, ...createdRooms.map((room) => roomToCollisionNode(room))];
         const position = findNearestFreeRoomingPosition(node, collisionNodes, preferredPosition);
         createdRooms.push({ ...draftRoom, x: position.x, y: position.y });
       }
+      if (roomCount > 1) generatedRoomFitPendingRef.current = getRoomingGeneratedLayoutSummary(rooms.length + createdRooms.length);
       setRooms((prev) => [...prev, ...createdRooms]);
       setSelectedRoomId(createdRooms[createdRooms.length - 1]?.id || null);
       setRoomModal({ open: false, mode: "edit", roomId: null });
@@ -4108,6 +4261,23 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     setRoomModal({ open: false, mode: "edit", roomId: null });
     markDirty();
   }, [rooms, roomModal.mode, roomModal.roomId, roomDraft, hotelOptions, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast, roomToCollisionNode, t]);
+
+  const cancelLargeRoomGeneration = React.useCallback(() => {
+    setLargeRoomGenerationConfirm(null);
+  }, []);
+
+  const confirmLargeRoomGeneration = React.useCallback(() => {
+    const pending = largeRoomGenerationConfirm;
+    if (!pending) return;
+    setLargeRoomGenerationConfirm(null);
+    if (pending.mode === "generate") {
+      generateRooms({ skipLargeConfirm: true, skipReplaceConfirm: true });
+      return;
+    }
+    if (pending.mode === "create") {
+      saveRoomEdit({ skipLargeConfirm: true });
+    }
+  }, [generateRooms, largeRoomGenerationConfirm, saveRoomEdit]);
 
   const deleteRoom = React.useCallback((roomId) => {
     const room = rooms.find((item) => item.id === roomId);
@@ -4602,6 +4772,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
 
   React.useEffect(() => {
     flowNodesRef.current = flowNodes;
+  }, [flowNodes]);
+
+  React.useEffect(() => {
+    const pending = generatedRoomFitPendingRef.current;
+    if (!pending || !flowNodes.length || roomDragActiveRef.current) return undefined;
+    generatedRoomFitPendingRef.current = null;
+
+    let cancelled = false;
+    let frameId = 0;
+    const fitGeneratedRooms = (attempt = 0) => {
+      if (cancelled) return;
+      const flow = flowRef.current;
+      if (flow?.fitView) {
+        flow.fitView({ padding: 0.16, duration: 450 });
+        return;
+      }
+      if (attempt < 6) {
+        frameId = window.requestAnimationFrame(() => fitGeneratedRooms(attempt + 1));
+      }
+    };
+
+    frameId = window.requestAnimationFrame(() => fitGeneratedRooms());
+    return () => {
+      cancelled = true;
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
   }, [flowNodes]);
 
   React.useEffect(() => {
@@ -6577,6 +6773,55 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
                   </Button>
                 )}
                 <Button onClick={confirmPendingDrop}>{pendingDropCopy.primary}</Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+
+        <Modal
+          open={Boolean(largeRoomGenerationConfirm)}
+          onClose={cancelLargeRoomGeneration}
+          title={largeRoomGenerationCopy.title}
+          width={500}
+          portalContainer={roomingModalPortalContainer}
+        >
+          {largeRoomGenerationConfirm && (
+            <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{
+                display: "grid",
+                gap: 8,
+                padding: 14,
+                border: "1px solid rgba(212,175,55,.28)",
+                background: "var(--rukn-gold-dim)",
+                borderRadius: 14,
+              }}>
+                <p style={{ color: "var(--rooming-text)", fontSize: 13, fontWeight: 800, lineHeight: 1.8, margin: 0 }}>
+                  {largeRoomGenerationCopy.message}
+                </p>
+                <div style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  alignSelf: "flex-start",
+                  gap: 8,
+                  border: "1px solid rgba(212,175,55,.34)",
+                  background: "var(--rooming-button-bg)",
+                  color: "var(--rooming-text)",
+                  borderRadius: 999,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}>
+                  <LayoutGrid size={14} />
+                  <span>{largeRoomGenerationCopy.countLabel}: {largeRoomGenerationConfirm.roomCount}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                <Button variant="ghost" onClick={cancelLargeRoomGeneration}>
+                  {largeRoomGenerationCopy.cancel}
+                </Button>
+                <Button onClick={confirmLargeRoomGeneration}>
+                  {largeRoomGenerationCopy.confirm}
+                </Button>
               </div>
             </div>
           )}

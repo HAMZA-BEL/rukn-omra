@@ -55,6 +55,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [previewNotification, setPreviewNotification] = React.useState(null);
+  const [notificationFocus, setNotificationFocus] = React.useState(null);
   const [themeMode, setThemeMode] = React.useState(getInitialThemeMode);
   const backupExportSuccessText = (
     lang === "fr"
@@ -145,23 +146,87 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
     setPreviewNotification({ ...notification, resolvedMessage });
   }, [store.programs, store.activeClients, store.getClientStatus, tr]);
 
+  const openNotificationDetails = React.useCallback((notification) => {
+    if (!notification?.id) return;
+    store.markNotificationRead?.(notification.id);
+    setPreviewNotification(null);
+    setNotificationFocus({
+      type: "notification",
+      targetId: notification.id,
+      notificationId: notification.id,
+      token: Date.now(),
+    });
+    navigate("notifications");
+  }, [navigate, store]);
+
+  const targetUnavailableMessage = React.useCallback((targetType) => {
+    if (targetType === "program") {
+      if (lang === "fr") return "Le programme lié est indisponible. Les détails de la notification ont été ouverts.";
+      if (lang === "en") return "The linked program is unavailable. Notification details were opened instead.";
+      return "البرنامج المرتبط غير متاح. تم فتح تفاصيل الإشعار بدلًا من ذلك.";
+    }
+    if (lang === "fr") return "Le client lié est indisponible. Les détails de la notification ont été ouverts.";
+    if (lang === "en") return "The linked client is unavailable. Notification details were opened instead.";
+    return "ملف العميل المرتبط غير متاح. تم فتح تفاصيل الإشعار بدلًا من ذلك.";
+  }, [lang]);
+
   const handleNotificationAction = React.useCallback((notification) => {
     if (!notification) return;
+    store.markNotificationRead?.(notification.id);
     const target = resolveNotificationTarget(notification);
     if (target?.type === "client" && target.targetId) {
-      const client = store.clients.find((c) => c.id === target.targetId);
+      const client = store.clients.find((c) => String(c.id) === String(target.targetId));
       if (client) {
-        navigate("clients");
+        setNotificationFocus({
+          type: "client",
+          targetId: target.targetId,
+          notificationId: notification.id,
+          token: Date.now(),
+        });
         setSelectedClient(client);
+        navigate("clients");
         return;
       }
+      showToast(targetUnavailableMessage("client"), "info");
+      openNotificationDetails(notification);
+      return;
     }
-    if (target?.route) {
+    if (target?.type === "program" && target.targetId) {
+      const program = store.programs.find((p) => String(p.id) === String(target.targetId));
+      if (program) {
+        setNotificationFocus({
+          type: "program",
+          targetId: target.targetId,
+          notificationId: notification.id,
+          token: Date.now(),
+        });
+        navigate("programs");
+        return;
+      }
+      showToast(targetUnavailableMessage("program"), "info");
+      openNotificationDetails(notification);
+      return;
+    }
+    if (target?.type === "client" || target?.type === "program") {
+      openNotificationDetails(notification);
+      return;
+    }
+    if (target?.route === "notifications") {
+      openNotificationDetails(target.targetId ? { ...notification, id: target.targetId } : notification);
+      return;
+    }
+    if (target?.route && VALID_PAGES.includes(target.route)) {
       navigate(target.route);
       return;
     }
-    openNotificationPreview(notification);
-  }, [navigate, openNotificationPreview, store.clients]);
+    openNotificationDetails(notification);
+  }, [navigate, openNotificationDetails, showToast, store, targetUnavailableMessage]);
+
+  React.useEffect(() => {
+    if (!notificationFocus) return undefined;
+    const timer = window.setTimeout(() => setNotificationFocus(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notificationFocus]);
 
   return (
     <>
@@ -280,12 +345,13 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
             </ErrorBoundary>
           )}
           {page==="clients"    && <ErrorBoundary><ClientsPage store={store} onToast={showToast} /></ErrorBoundary>}
-          {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} /></ErrorBoundary>}
+          {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} notificationFocus={notificationFocus?.type === "program" ? notificationFocus : null} /></ErrorBoundary>}
           {page==="notifications" && (
             <ErrorBoundary>
               <NotificationsPage
                 store={store}
                 onNotificationAction={handleNotificationAction}
+                notificationFocus={notificationFocus?.type === "notification" ? notificationFocus : null}
               />
             </ErrorBoundary>
           )}
@@ -310,6 +376,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
         {selectedClient && <ClientDetail client={selectedClient} store={store}
           onClose={()=>setSelectedClient(null)}
           onEdit={c=>{ setSelectedClient(null); setEditingClient(c); }}
+          highlightFromNotification={notificationFocus?.type === "client" && String(notificationFocus.targetId) === String(selectedClient.id)}
+          notificationHighlightToken={notificationFocus?.token}
           onToast={showToast} />}
       </Modal>
 
