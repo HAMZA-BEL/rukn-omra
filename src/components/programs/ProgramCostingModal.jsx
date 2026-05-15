@@ -35,6 +35,15 @@ const updateLevelAt = (levels, index, updater) => (
   levels.map((level, levelIndex) => levelIndex === index ? updater(level) : level)
 );
 
+const serializeCostingDraft = (draft) => {
+  const prepared = prepareCostingDraftForSave(draft);
+  return JSON.stringify({
+    ...prepared,
+    createdAt: "",
+    updatedAt: "",
+  });
+};
+
 function NumberField({ label, value, onChange, step = "0.01" }) {
   return (
     <Input
@@ -107,6 +116,7 @@ export default function ProgramCostingModal({
   const [draft, setDraft] = React.useState(() => createInitialCostingDraft({ program, lang }));
   const [error, setError] = React.useState("");
   const programRef = React.useRef(program);
+  const savedDraftSnapshotRef = React.useRef(serializeCostingDraft(createInitialCostingDraft({ program, lang })));
   const programId = program?.id;
   const results = React.useMemo(() => calculateCostingResults(draft), [draft]);
   const sharedTotal = React.useMemo(() => getSharedCostTotal(draft), [draft]);
@@ -121,10 +131,21 @@ export default function ProgramCostingModal({
 
   React.useEffect(() => {
     if (!open) return;
-    setDraft(createInitialCostingDraft({ program: programRef.current || {}, lang }));
+    const initialDraft = createInitialCostingDraft({ program: programRef.current || {}, lang });
+    setDraft(initialDraft);
+    savedDraftSnapshotRef.current = serializeCostingDraft(initialDraft);
     setStep(0);
     setError("");
   }, [open, programId, lang]);
+
+  const hasUnsavedChanges = React.useCallback(() => (
+    serializeCostingDraft(draft) !== savedDraftSnapshotRef.current
+  ), [draft]);
+
+  const handleRequestClose = React.useCallback(() => {
+    if (hasUnsavedChanges() && !window.confirm(labels.unsavedCloseConfirm)) return;
+    onClose?.();
+  }, [hasUnsavedChanges, labels.unsavedCloseConfirm, onClose]);
 
   const setSharedCost = React.useCallback((key, value) => {
     setDraft((prev) => ({
@@ -143,12 +164,12 @@ export default function ProgramCostingModal({
     }));
   }, []);
 
-  const setProfitAmount = React.useCallback((index, roomKey, value) => {
+  const setSellingPrice = React.useCallback((index, roomKey, value) => {
     setDraft((prev) => ({
       ...prev,
       levels: updateLevelAt(prev.levels || [], index, (level) => ({
         ...level,
-        profitAmounts: { ...(level.profitAmounts || {}), [roomKey]: value },
+        sellingPrices: { ...(level.sellingPrices || {}), [roomKey]: value },
       })),
     }));
   }, []);
@@ -172,7 +193,7 @@ export default function ProgramCostingModal({
     const nextProgram = attachProgramCostingDraft(programRef.current || program, draft);
     programRef.current = nextProgram;
     onUpdateProgram?.(nextProgram);
-    setDraft(prepareCostingDraftForSave(draft));
+    savedDraftSnapshotRef.current = serializeCostingDraft(draft);
     onToast?.(labels.saved, "success");
   };
 
@@ -186,7 +207,7 @@ export default function ProgramCostingModal({
     }
     programRef.current = nextProgram;
     onUpdateProgram?.(nextProgram);
-    setDraft(prepareCostingDraftForSave(draft));
+    savedDraftSnapshotRef.current = serializeCostingDraft(draft);
     onToast?.(labels.applied, "success");
   };
 
@@ -354,15 +375,20 @@ export default function ProgramCostingModal({
                   <span style={{ display:"flex", justifyContent:"space-between", gap:8 }}><span>{labels.costPerPerson}</span><strong style={{ color:tc.gold }}>{money(room.costPerPerson)}</strong></span>
                 </div>
                 <NumberField
-                  label={labels.profit}
-                  value={draft.levels?.[levelIndex]?.profitAmounts?.[room.key] ?? room.profitAmount}
-                  onChange={(value) => setProfitAmount(levelIndex, room.key, value)}
+                  label={labels.sellingPrice}
+                  value={
+                    draft.levels?.[levelIndex]?.sellingPrices?.[room.key] !== undefined
+                      && draft.levels?.[levelIndex]?.sellingPrices?.[room.key] !== ""
+                      ? draft.levels?.[levelIndex]?.sellingPrices?.[room.key]
+                      : room.sellingPrice > 0 ? room.sellingPrice : ""
+                  }
+                  onChange={(value) => setSellingPrice(levelIndex, room.key, value)}
                 />
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                   <div style={{ color:tc.grey, fontSize:11 }}>
-                    <span>{labels.sellingPrice}</span>
-                    <p style={{ margin:"3px 0 0", color:tc.greenLight, fontWeight:900 }}>
-                      {money(room.sellingPrice)}
+                    <span>{labels.profit}</span>
+                    <p style={{ margin:"3px 0 0", color:room.profitAmount < 0 ? tc.danger : tc.greenLight, fontWeight:900 }}>
+                      {room.sellingPrice > 0 ? money(room.profitAmount) : "—"}
                     </p>
                   </div>
                   <div style={{ color:tc.grey, fontSize:11 }}>
@@ -381,7 +407,14 @@ export default function ProgramCostingModal({
   );
 
   return (
-    <Modal open={open} onClose={onClose} title={labels.title} width={1080}>
+    <Modal
+      open={open}
+      onClose={handleRequestClose}
+      title={labels.title}
+      width={1080}
+      closeOnBackdrop={false}
+      closeOnEscape={false}
+    >
       <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
         {renderStepIndicator()}
         {hasNightsWarning && (
@@ -432,7 +465,7 @@ export default function ProgramCostingModal({
           flexWrap:"wrap",
         }}>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Button variant="ghost" onClick={onClose}>{labels.close}</Button>
+            <Button variant="ghost" onClick={handleRequestClose}>{labels.close}</Button>
             <Button variant="ghost" disabled={step === 0} onClick={() => setStep((current) => Math.max(0, current - 1))}>
               {labels.back}
             </Button>

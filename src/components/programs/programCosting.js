@@ -45,7 +45,7 @@ const TEXT = {
     shared: "المصاريف المشتركة",
     costPerPerson: "تكلفة الفرد",
     sellingPrice: "سعر البيع",
-    profit: "هامش الربح",
+    profit: "الربح",
     margin: "نسبة الربح",
     sellingAtLoss: "بيع بخسارة",
     neutralPrice: "لم يتم تحديد سعر البيع",
@@ -57,6 +57,7 @@ const TEXT = {
     back: "رجوع",
     next: "التالي",
     close: "إغلاق",
+    unsavedCloseConfirm: "لديك تغييرات غير محفوظة. هل تريد الخروج بدون حفظ؟",
     exchangeError: "يرجى إدخال سعر صرف صحيح.",
     nightsWarning: "لا يمكن حساب الليالي تلقائيًا. يرجى إكمال مدة البرنامج وعدد ليالي المدينة في تعديل البرنامج.",
     notSpecified: "غير محدد",
@@ -105,7 +106,7 @@ const TEXT = {
     shared: "Frais communs",
     costPerPerson: "Coût par personne",
     sellingPrice: "Prix de vente",
-    profit: "Bénéfice souhaité",
+    profit: "Bénéfice",
     margin: "Taux de bénéfice",
     sellingAtLoss: "Vente à perte",
     neutralPrice: "Prix de vente non défini",
@@ -117,6 +118,7 @@ const TEXT = {
     back: "Retour",
     next: "Suivant",
     close: "Fermer",
+    unsavedCloseConfirm: "Vous avez des modifications non enregistrées. Voulez-vous quitter sans enregistrer ?",
     exchangeError: "Veuillez saisir un taux de change valide.",
     nightsWarning: "Impossible de calculer les nuits automatiquement. Veuillez compléter la durée du programme et les nuits à Médine dans la modification du programme.",
     notSpecified: "Non défini",
@@ -165,7 +167,7 @@ const TEXT = {
     shared: "Shared costs",
     costPerPerson: "Cost per person",
     sellingPrice: "Selling price",
-    profit: "Profit amount",
+    profit: "Profit",
     margin: "Profit rate",
     sellingAtLoss: "Selling at a loss",
     neutralPrice: "Selling price not set",
@@ -177,6 +179,7 @@ const TEXT = {
     back: "Back",
     next: "Next",
     close: "Close",
+    unsavedCloseConfirm: "You have unsaved changes. Do you want to exit without saving?",
     exchangeError: "Please enter a valid exchange rate.",
     nightsWarning: "Unable to calculate nights automatically. Please complete the program duration and Madinah nights in the program edit form.",
     notSpecified: "Not specified",
@@ -196,14 +199,45 @@ const TEXT = {
 
 const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);
 
+const parseCostingNumber = (value) => {
+  if (value === "" || value === null || value === undefined) return Number.NaN;
+  if (typeof value === "number") return value;
+  const raw = String(value).trim();
+  if (!raw) return Number.NaN;
+  let numeric = raw
+    .replace(/[^\d.,-]/g, "")
+    .replace(/\s+/g, "");
+  if (!numeric) return Number.NaN;
+
+  const hasComma = numeric.includes(",");
+  const hasDot = numeric.includes(".");
+  if (hasComma && hasDot) {
+    const lastComma = numeric.lastIndexOf(",");
+    const lastDot = numeric.lastIndexOf(".");
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const groupSeparator = decimalSeparator === "," ? "." : ",";
+    numeric = numeric
+      .replaceAll(groupSeparator, "")
+      .replace(decimalSeparator, ".");
+  } else if (hasComma) {
+    numeric = /^\d{1,3}(,\d{3})+$/.test(numeric)
+      ? numeric.replaceAll(",", "")
+      : numeric.replace(",", ".");
+  } else if (hasDot && /^\d{1,3}(\.\d{3})+$/.test(numeric)) {
+    numeric = numeric.replaceAll(".", "");
+  }
+
+  return Number(numeric);
+};
+
 const asNumber = (value, fallback = 0) => {
   if (value === "" || value === null || value === undefined) return fallback;
-  const next = Number(value);
+  const next = parseCostingNumber(value);
   return Number.isFinite(next) && next >= 0 ? next : fallback;
 };
 
 const asPositiveNumber = (value, fallback = DEFAULT_EXCHANGE_RATE) => {
-  const next = Number(value);
+  const next = parseCostingNumber(value);
   return Number.isFinite(next) && next > 0 ? next : fallback;
 };
 
@@ -224,7 +258,7 @@ const hasSourceValue = (value) => value !== "" && value !== null && value !== un
 
 const sourceNumber = (value) => {
   if (!hasSourceValue(value)) return null;
-  const next = Number(value);
+  const next = parseCostingNumber(value);
   return Number.isFinite(next) && next >= 0 ? next : null;
 };
 
@@ -297,6 +331,14 @@ const normalizeProfitAmounts = (source = {}) => (
   }, {})
 );
 
+const hasAnyCostingNumber = (source = {}) => (
+  isPlainObject(source)
+  && COSTING_ROOM_TYPES.some((roomType) => {
+    const raw = source[roomType.key] ?? source[getPriceKey(roomType)];
+    return raw !== "" && raw !== null && raw !== undefined;
+  })
+);
+
 const normalizeCostingHotelBlock = (source = {}) => ({
   roomPriceSar: asNumber(source.roomPriceSar, 0),
 });
@@ -318,6 +360,8 @@ export function createInitialCostingDraft({ program = {}, lang = "ar" } = {}) {
   const levels = sourcePackages.map((pkg, index) => {
     const existingLevel = findExistingLevel(existingLevels, pkg, index);
     const nights = deriveLevelNights(program, pkg);
+    const hasStoredSellingPrices = hasAnyCostingNumber(existingLevel?.sellingPrices);
+    const hasStoredProfitAmounts = hasAnyCostingNumber(existingLevel?.profitAmounts);
     return {
       levelId: text(storedPackages.length ? pkg.id : existingLevel?.levelId, pkg.id || `level-${index + 1}`),
       levelName: storedPackages.length ? text(pkg.level || pkg.name || "") : labels.defaultLevel,
@@ -333,7 +377,10 @@ export function createInitialCostingDraft({ program = {}, lang = "ar" } = {}) {
       },
       nightsMissingSource: nights.missingSource,
       profitAmounts: normalizeProfitAmounts(existingLevel?.profitAmounts),
-      sellingPrices: normalizeSellingPrices(existingLevel?.sellingPrices, pkg.prices || {}),
+      sellingPrices: normalizeSellingPrices(
+        hasStoredSellingPrices ? existingLevel?.sellingPrices : {},
+        hasStoredProfitAmounts ? {} : (pkg.prices || {}),
+      ),
     };
   });
 
@@ -415,13 +462,16 @@ export function calculateCostingResults(draft = {}) {
         ? ((makkahSar + madinahSar) * exchangeRate) / roomType.occupancy
         : 0;
       const costPerPerson = accommodation + sharedCost;
+      const rawSellingPrice = level.sellingPrices?.[roomType.key] ?? level.sellingPrices?.[getPriceKey(roomType)];
+      const hasSellingPrice = rawSellingPrice !== "" && rawSellingPrice !== null && rawSellingPrice !== undefined;
       const rawProfitAmount = level.profitAmounts?.[roomType.key];
       const hasProfitAmount = rawProfitAmount !== "" && rawProfitAmount !== null && rawProfitAmount !== undefined;
-      const legacySellingPrice = asNumber(level.sellingPrices?.[roomType.key], 0);
-      const profitAmount = hasProfitAmount
-        ? asNumber(rawProfitAmount, 0)
-        : Math.max(legacySellingPrice - costPerPerson, 0);
-      const sellingPrice = costPerPerson + profitAmount;
+      const sellingPrice = hasSellingPrice
+        ? asNumber(rawSellingPrice, 0)
+        : hasProfitAmount
+          ? costPerPerson + asNumber(rawProfitAmount, 0)
+          : 0;
+      const profitAmount = sellingPrice > 0 ? sellingPrice - costPerPerson : 0;
       const profitRate = sellingPrice > 0 ? (profitAmount / sellingPrice) * 100 : null;
       return {
         key: roomType.key,
@@ -435,7 +485,7 @@ export function calculateCostingResults(draft = {}) {
         sellingPrice: roundMoney(sellingPrice),
         profit: roundMoney(profitAmount),
         margin: profitRate === null ? null : Math.round(profitRate * 10) / 10,
-        isLoss: false,
+        isLoss: sellingPrice > 0 && profitAmount < 0,
       };
     }),
   }));

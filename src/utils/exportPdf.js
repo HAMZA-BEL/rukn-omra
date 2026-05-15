@@ -40,7 +40,6 @@ export function printProgramPDF({
     num:          lang === "fr" ? "N°"         : lang === "en" ? "No."       : "م",
     fullName:     t.fullName     || (lang === "fr" ? "Nom complet"     : "الاسم الكامل"),
     passportNo:   t.passportNo   || (lang === "fr" ? "N° Passeport"    : "رقم الجواز"),
-    birthDate:    t.birthDate    || (lang === "fr" ? "Date naissance"   : "تاريخ الميلاد"),
     roomType:     t.roomType     || (lang === "fr" ? "Chambre"          : "نوع الغرفة"),
     serviceType:  t.serviceType  || (lang === "fr" ? "Type de service"  : lang === "en" ? "Service type" : "نوع الخدمة"),
     officialPrice: lang === "fr" ? "Prix officiel" : lang === "en" ? "Official price" : "السعر الرسمي",
@@ -63,7 +62,8 @@ export function printProgramPDF({
     totalClients: lang === "ar"
       ? `إجمالي ${terms.plural}`
       : t.totalClients || (lang === "fr" ? "Total pèlerins" : "Total Pilgrims"),
-    collected:    t.collected      || (lang === "fr" ? "Encaissé"       : "المحصَّل"),
+    totalSellingPrice: lang === "fr" ? "Total prix de vente" : lang === "en" ? "Total selling price" : "إجمالي سعر البيع",
+    collected:    t.collected      || (lang === "fr" ? "Total encaissé" : lang === "en" ? "Collected" : "المحصَّل"),
     currency:     "MAD",
   };
 
@@ -92,6 +92,7 @@ export function printProgramPDF({
   const getClientPaidTotal = (client = {}) => (
     typeof getClientTotalPaid === "function" ? Number(getClientTotalPaid(client.id)) || 0 : 0
   );
+  const totalSellingPrice = clients.reduce((s, c) => s + resolveSalePrice(c), 0);
   const totalPaid     = clients.reduce((s, c) => s + getClientPaidTotal(c), 0);
   const totalRem      = clients.reduce((s, c) => s + resolveRemaining(c, getClientPaidTotal(c)), 0);
   const getPaymentSortTime = (payment = {}) => {
@@ -158,7 +159,6 @@ export function printProgramPDF({
         <td style="text-align:center;font-weight:700">${i + 1}</td>
         <td style="font-weight:600">${escapeHtml(name)}</td>
         <td style="font-family:monospace;font-size:10px">${escapeHtml(c.passport?.number || "—")}</td>
-        <td style="text-align:center">${escapeHtml(c.passport?.birthDate || "—")}</td>
         <td>${escapeHtml(roomLabel)}</td>
         <td>${escapeHtml(serviceTypeLabel)}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600">${officialPrice > 0 ? escapeHtml(fmt(officialPrice)) : "—"}</td>
@@ -167,7 +167,7 @@ export function printProgramPDF({
         <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 1)}</td>
         <td style="text-align:${isRTL ? "left" : "right"}">${paymentAmountCell(sortedPayments, 2)}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#15803d">${escapeHtml(fmt(paid))}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "OK"}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:${rem > 0 ? "#b91c1c" : "#16a34a"}">${rem > 0 ? escapeHtml(fmt(rem)) : "—"}</td>
         <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
         <td>${paymentsCell}</td>
       </tr>`;
@@ -178,7 +178,6 @@ export function printProgramPDF({
     L.num,
     L.fullName,
     L.passportNo,
-    L.birthDate,
     L.roomType,
     L.serviceType,
     L.officialPrice,
@@ -192,7 +191,7 @@ export function printProgramPDF({
     L.receiptsPayments,
   ]
     .map(h => `<th>${escapeHtml(h)}</th>`).join("");
-  const columnWidths = [3, 12, 7, 6, 6, 7, 7, 7, 5, 5, 5, 6, 6, 5, 13];
+  const columnWidths = [3, 14, 8, 7, 8, 8, 8, 5, 5, 5, 7, 7, 5, 12];
   const colgroup = columnWidths.map((width) => `<col style="width:${width}%">`).join("");
 
   // ── Full HTML ─────────────────────────────────────────────────────────────
@@ -341,10 +340,10 @@ export function printProgramPDF({
     .footer-card {
       border: 1px solid #c8e6c8;
       border-radius: 6px;
-      padding: 8px 20px;
+      padding: 8px 14px;
       text-align: center;
       background: #f0fbf3;
-      min-width: 160px;
+      min-width: 145px;
     }
     .footer-card .fc-val {
       font-size: 15px;
@@ -411,8 +410,8 @@ export function printProgramPDF({
   <!-- Footer totals -->
   <div class="footer">
     <div class="footer-card">
-      <div class="fc-val">${clients.length}</div>
-      <div class="fc-lbl">${escapeHtml(L.totalClients)}</div>
+      <div class="fc-val">${escapeHtml(fmt(totalSellingPrice))}</div>
+      <div class="fc-lbl">${escapeHtml(L.totalSellingPrice)}</div>
     </div>
     <div class="footer-card">
       <div class="fc-val">${escapeHtml(fmt(totalPaid))}</div>
@@ -421,6 +420,10 @@ export function printProgramPDF({
     <div class="footer-card">
       <div class="fc-val" style="color:${totalRem > 0 ? "#b91c1c" : "#15803d"}">${escapeHtml(fmt(totalRem))}</div>
       <div class="fc-lbl">⏳ ${escapeHtml(L.remaining)}</div>
+    </div>
+    <div class="footer-card">
+      <div class="fc-val">${clients.length}</div>
+      <div class="fc-lbl">${escapeHtml(L.totalClients)}</div>
     </div>
   </div>
 

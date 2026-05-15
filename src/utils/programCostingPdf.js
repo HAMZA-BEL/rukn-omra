@@ -51,8 +51,8 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
         <td>${escapeHtml(fmt(room.accommodationCost))}</td>
         <td>${escapeHtml(fmt(room.sharedCost))}</td>
         <td>${escapeHtml(fmt(room.costPerPerson))}</td>
-        <td>${escapeHtml(fmt(room.profitAmount))}</td>
         <td>${escapeHtml(fmt(room.sellingPrice))}</td>
+        <td>${escapeHtml(room.sellingPrice > 0 ? fmt(room.profitAmount) : "—")}</td>
         <td>${escapeHtml(fmtPercent(room.margin))}</td>
       </tr>
     `).join("");
@@ -73,8 +73,8 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
               <th>${escapeHtml(labels.accommodation)}</th>
               <th>${escapeHtml(labels.shared)}</th>
               <th>${escapeHtml(labels.costPerPerson)}</th>
-              <th>${escapeHtml(labels.profit)}</th>
               <th>${escapeHtml(labels.sellingPrice)}</th>
+              <th>${escapeHtml(labels.profit)}</th>
               <th>${escapeHtml(labels.margin)}</th>
             </tr>
           </thead>

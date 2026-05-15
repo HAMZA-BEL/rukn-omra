@@ -336,19 +336,32 @@ export function StatCard({ label, value, icon, color = t.gold, sub, delay = 0 })
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-export function Modal({ open, onClose, title, children, width = 560, portalContainer = null }) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  width = 560,
+  portalContainer = null,
+  closeOnBackdrop = true,
+  closeOnEscape = true,
+}) {
   React.useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    const handler = (e) => {
+      if (e.key === "Escape" && closeOnEscape) onClose?.();
+    };
     if (open) window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [closeOnEscape, open, onClose]);
 
   if (!open) return null;
 
   const modalContent = (
     <div
       className="animate-fadeIn"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (closeOnBackdrop && e.target === e.currentTarget) onClose?.();
+      }}
       style={{
         position: "fixed", inset: 0, zIndex: 12000,
         background: v.overlay,

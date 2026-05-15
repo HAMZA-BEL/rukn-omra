@@ -2,7 +2,7 @@ export const DEFAULT_CLIENT_SERVICE_TYPE = "full_package";
 
 export const CLIENT_SERVICE_TYPES = [
   { value: "full_package", labels: { ar: "كاملة", fr: "Complète", en: "Full package" } },
-  { value: "without_visa", labels: { ar: "بدون فيزا", fr: "Sans visa", en: "Without visa" } },
+  { value: "without_visa", labels: { ar: "بدون تأشيرة", fr: "Sans visa", en: "Without visa" } },
   { value: "ticket_only", labels: { ar: "تذكرة فقط", fr: "Billet uniquement", en: "Ticket only" } },
   { value: "accommodation_only", labels: { ar: "سكن فقط", fr: "Hébergement uniquement", en: "Accommodation only" } },
   { value: "visa_only", labels: { ar: "تأشيرة فقط", fr: "Visa uniquement", en: "Visa only" } },

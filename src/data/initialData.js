@@ -174,7 +174,7 @@ export const TRANSLATIONS = {
     serviceType: "نوع الخدمة",
     serviceTypeAll: "نوع الخدمة: الكل",
     serviceType_full_package: "كاملة",
-    serviceType_without_visa: "بدون فيزا",
+    serviceType_without_visa: "بدون تأشيرة",
     serviceType_ticket_only: "تذكرة فقط",
     serviceType_accommodation_only: "سكن فقط",
     serviceType_visa_only: "تأشيرة فقط",
