@@ -107,8 +107,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
         ? "Suppression définitive irréversible"
         : "Suppression définitive groupée irréversible",
       body: singleClient
-        ? "Ce pèlerin sera supprimé définitivement avec tous les enregistrements liés, y compris les paiements et les factures s’ils existent.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?"
-        : "Les éléments sélectionnés seront supprimés définitivement avec tous leurs enregistrements liés, y compris les paiements et les factures s’ils existent.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?",
+        ? "Ce pèlerin sera supprimé définitivement avec nettoyage des enregistrements liés autorisés, s’il y en a. Les paiements actifs et les factures finales bloquent la suppression définitive.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?"
+        : "Les éléments sélectionnés autorisés seront supprimés définitivement avec nettoyage des enregistrements liés autorisés, s’il y en a. Les éléments liés à des paiements actifs ou à des factures finales ne seront pas supprimés.\nCette opération ne peut pas être annulée.\nVoulez-vous continuer ?",
     };
   }
   if (lang === "en") {
@@ -117,8 +117,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
         ? "Irreversible Permanent Delete"
         : "Irreversible Bulk Permanent Delete",
       body: singleClient
-        ? "This pilgrim will be permanently deleted with all linked records, including payments and invoices if present.\nThis action cannot be undone.\nDo you want to continue?"
-        : "The selected items will be permanently deleted with all linked records, including payments and invoices if present.\nThis action cannot be undone.\nDo you want to continue?",
+        ? "This pilgrim will be permanently deleted with any allowed linked cleanup records. Active payments and final invoices block permanent deletion.\nThis action cannot be undone.\nDo you want to continue?"
+        : "The selected allowed items will be permanently deleted with any allowed linked cleanup records. Items linked to active payments or final invoices will not be deleted.\nThis action cannot be undone.\nDo you want to continue?",
     };
   }
   return {
@@ -126,8 +126,8 @@ const trashPermanentConfirmMessages = (lang, singleClient) => {
       ? "حذف نهائي لا يمكن التراجع عنه"
       : "حذف نهائي جماعي لا يمكن التراجع عنه",
     body: singleClient
-      ? "سيتم حذف هذا الحاج/المعتمر نهائيًا مع جميع السجلات المرتبطة به، بما في ذلك الدفعات والفواتير إن وجدت.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟"
-      : "سيتم حذف العناصر المحددة نهائيًا مع جميع السجلات المرتبطة بها، بما في ذلك الدفعات والفواتير إن وجدت.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟",
+      ? "سيتم حذف هذا الحاج/المعتمر نهائيًا مع تنظيف السجلات المرتبطة المسموح بتنظيفها إن وجدت. وجود دفعات نشطة أو فواتير نهائية يمنع الحذف النهائي.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟"
+      : "سيتم حذف العناصر المسموح بها نهائيًا مع تنظيف السجلات المرتبطة المسموح بتنظيفها إن وجدت. العناصر المرتبطة بدفعات نشطة أو فواتير نهائية لن يتم حذفها.\nلا يمكن التراجع عن هذه العملية.\nهل تريد المتابعة؟",
   };
 };
 

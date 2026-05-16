@@ -1450,6 +1450,36 @@ export function useStore(agencyId, onToast) {
     return { data: payload, error: null };
   }, [agencyId, isSupabaseEnabled]);
 
+  const callPermanentDeleteClientsFunction = useCallback(async (clientIds = [], extraPayload = {}) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    if (!isSupabaseEnabled || !agencyId || !ids.length) return { data: null, error: null };
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) return { error: sessionError };
+    const token = sessionData?.session?.access_token;
+    if (!token) return { error: { message: "Missing auth session", status: 401 } };
+
+    const response = await fetch("/.netlify/functions/permanent-delete-clients", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ clientIds: ids, agencyId, type: "client", ...extraPayload }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      return {
+        error: {
+          message: payload?.error || payload?.message || "Permanent delete failed",
+          code: payload?.code || response.status,
+          status: response.status,
+          details: payload,
+        },
+      };
+    }
+    return { data: payload, error: null };
+  }, [agencyId, isSupabaseEnabled]);
+
   const inspectClientPermanentDeleteRemote = useCallback((clientId) => (
     callPermanentDeleteClientFunction(clientId, { dryRun: true })
   ), [callPermanentDeleteClientFunction]);
@@ -1626,6 +1656,13 @@ export function useStore(agencyId, onToast) {
       confirmLinkedRecords: true,
     });
   }, [callPermanentDeleteClientFunction]);
+
+  const permanentlyDeleteClientsRemote = useCallback(async (clientIds = []) => {
+    return callPermanentDeleteClientsFunction(clientIds, {
+      confirmPermanentDelete: true,
+      confirmLinkedRecords: true,
+    });
+  }, [callPermanentDeleteClientsFunction]);
 
   // ── Stats (operational clients only) ──────────────────────────────────────
   const localStats = useMemo(() => {
@@ -2423,66 +2460,102 @@ export function useStore(agencyId, onToast) {
       const clientBlocks = Object.fromEntries(
         preflightBlockedClientIds.map((id) => [id, clientBlockMap.get(id)])
       );
+      const applyRemoteClientDeleteResult = (clientId, response) => {
+        if (response?.error) {
+          const code = String(response.error.code || "");
+          if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
+            blockedClientIds.push(clientId);
+            clientBlocks[clientId] = {
+              clientId,
+              blocked: true,
+              code: response.error.code || "LINKED_RECORDS",
+              message: response.error.message || "",
+              details: response.error.details || null,
+            };
+            return;
+          }
+          failedClientIds.push(clientId);
+          clientBlocks[clientId] = {
+            clientId,
+            blocked: true,
+            code: response.error.code || "DELETE_FAILED",
+            message: response.error.message || "",
+            details: response.error.details || null,
+          };
+          return;
+        }
+        const cleanup = response.data?.cleanup || {};
+        cleanedPaymentsCount += Number(cleanup.deletedPaymentsCount || 0);
+        cleanedInvoicesCount += Number(cleanup.deletedInvoicesCount || 0);
+        cleanedRoomingAssignmentsCount += Number(cleanup.cleanedRoomingAssignmentsCount || 0);
+        cleanedNotificationsCount += Number(cleanup.deletedNotificationsCount || 0);
+        cleanedRepresentationLinksCount += Number(cleanup.clearedRepresentationLinksCount || 0);
+        cleanedBadgePhotosCount += Number(cleanup.deletedBadgePhotosCount || 0);
+        deletedClientIds.push(clientId);
+      };
+      const batchResultToClientResponse = (result = {}) => {
+        const status = String(result.status || "").trim().toLowerCase();
+        if (status === "deleted") {
+          return { data: { cleanup: result.cleanup || {} }, error: null };
+        }
+        return {
+          data: null,
+          error: {
+            code: result.code || (status === "blocked" ? "LINKED_RECORDS" : "DELETE_FAILED"),
+            message: result.message || "",
+            details: result,
+          },
+        };
+      };
+      const runSingleClientDeletes = async () => {
+        let completedClientDeletes = 0;
+        onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
+        const clientDeleteResults = await runWithConcurrencyLimit(preflightEligibleClientIds, 3, async (clientId) => {
+          try {
+            const response = await permanentlyDeleteClientRemote(clientId);
+            return { clientId, response };
+          } catch (error) {
+            return {
+              clientId,
+              response: {
+                error: {
+                  code: "DELETE_FAILED",
+                  message: error?.message || "Permanent delete failed",
+                  details: error,
+                },
+              },
+            };
+          } finally {
+            completedClientDeletes += 1;
+            onProgress?.({
+              done: completedClientDeletes,
+              total: preflightEligibleClientIds.length,
+              clientId,
+            });
+          }
+        });
+        clientDeleteResults.forEach(({ clientId, response }) => {
+          applyRemoteClientDeleteResult(clientId, response);
+        });
+      };
       if (preflightEligibleClientIds.length) {
         if (isSupabaseEnabled && agencyId) {
-          let completedClientDeletes = 0;
-          onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
-          const clientDeleteResults = await runWithConcurrencyLimit(preflightEligibleClientIds, 3, async (clientId) => {
-            try {
-              const response = await permanentlyDeleteClientRemote(clientId);
-              return { clientId, response };
-            } catch (error) {
-              return {
-                clientId,
-                response: {
-                  error: {
-                    code: "DELETE_FAILED",
-                    message: error?.message || "Permanent delete failed",
-                    details: error,
-                  },
-                },
-              };
-            } finally {
-              completedClientDeletes += 1;
-              onProgress?.({
-                done: completedClientDeletes,
-                total: preflightEligibleClientIds.length,
-                clientId,
+          if (preflightEligibleClientIds.length > 1) {
+            onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
+            const batchResponse = await permanentlyDeleteClientsRemote(preflightEligibleClientIds);
+            if (!batchResponse?.error && Array.isArray(batchResponse?.data?.results)) {
+              batchResponse.data.results.forEach((result) => {
+                const clientId = String(result.clientId || result.client_id || "").trim();
+                if (!clientId) return;
+                applyRemoteClientDeleteResult(clientId, batchResultToClientResponse(result));
               });
+              onProgress?.({ done: preflightEligibleClientIds.length, total: preflightEligibleClientIds.length });
+            } else {
+              console.error("[Store] Batch permanent delete failed; falling back to single-client deletes:", batchResponse?.error);
+              await runSingleClientDeletes();
             }
-          });
-          for (const { clientId, response } of clientDeleteResults) {
-            if (response?.error) {
-              const code = String(response.error.code || "");
-              if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
-                blockedClientIds.push(clientId);
-                clientBlocks[clientId] = {
-                  clientId,
-                  blocked: true,
-                  code: response.error.code || "LINKED_RECORDS",
-                  message: response.error.message || "",
-                  details: response.error.details || null,
-                };
-                continue;
-              }
-              failedClientIds.push(clientId);
-              clientBlocks[clientId] = {
-                clientId,
-                blocked: true,
-                code: response.error.code || "DELETE_FAILED",
-                message: response.error.message || "",
-                details: response.error.details || null,
-              };
-              continue;
-            }
-            const cleanup = response.data?.cleanup || {};
-            cleanedPaymentsCount += Number(cleanup.deletedPaymentsCount || 0);
-            cleanedInvoicesCount += Number(cleanup.deletedInvoicesCount || 0);
-            cleanedRoomingAssignmentsCount += Number(cleanup.cleanedRoomingAssignmentsCount || 0);
-            cleanedNotificationsCount += Number(cleanup.deletedNotificationsCount || 0);
-            cleanedRepresentationLinksCount += Number(cleanup.clearedRepresentationLinksCount || 0);
-            cleanedBadgePhotosCount += Number(cleanup.deletedBadgePhotosCount || 0);
-            deletedClientIds.push(clientId);
+          } else {
+            await runSingleClientDeletes();
           }
         } else {
           const response = await deleteClientsPermanent(preflightEligibleClientIds, agencyId);
@@ -2534,7 +2607,7 @@ export function useStore(agencyId, onToast) {
       clientBlocks: Object.fromEntries(preflightBlockedClientIds.map((id) => [id, clientBlockMap.get(id)])),
       cleanup: {},
     };
-  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getClientPermanentDeleteBlockMap, isSupabaseEnabled, permanentlyDeleteClientRemote, purgePaymentLocal, saveClient, sync]);
+  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getClientPermanentDeleteBlockMap, isSupabaseEnabled, permanentlyDeleteClientRemote, permanentlyDeleteClientsRemote, purgePaymentLocal, saveClient, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));
