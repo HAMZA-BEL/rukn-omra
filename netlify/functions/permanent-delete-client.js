@@ -176,10 +176,18 @@ function buildCleanupPreview({ linkedPayments = [], linkedInvoices = [], represe
   };
 }
 
-function buildLinkedRecordBlock({ hiddenPayments = [], hiddenInvoices = [] } = {}) {
+function buildLinkedRecordBlock({ activePayments = [], activeInvoices = [], hiddenPayments = [], hiddenInvoices = [] } = {}) {
   const activeHiddenInvoices = hiddenInvoices.filter(isActiveInvoice);
+  const activePaymentCount = activePayments.length;
+  const activeInvoiceCount = activeInvoices.length;
   const reasons = [];
 
+  if (activePaymentCount) {
+    reasons.push({ code: "ACTIVE_LINKED_PAYMENTS", count: activePaymentCount });
+  }
+  if (activeInvoiceCount) {
+    reasons.push({ code: "ACTIVE_LINKED_INVOICES", count: activeInvoiceCount });
+  }
   if (hiddenPayments.length) {
     reasons.push({ code: "LINKED_EXTERNAL_PAYMENTS", count: hiddenPayments.length });
   }
@@ -188,22 +196,43 @@ function buildLinkedRecordBlock({ hiddenPayments = [], hiddenInvoices = [] } = {
   }
   if (!reasons.length) return null;
 
+  const hasActivePayments = activePaymentCount > 0;
+  const hasActiveInvoices = activeInvoiceCount > 0;
   const hasHiddenPayments = hiddenPayments.length > 0;
   const hasHiddenInvoices = activeHiddenInvoices.length > 0;
-  const reasonCode = hasHiddenPayments && !hasHiddenInvoices
-    ? "LINKED_EXTERNAL_PAYMENTS"
-    : hasHiddenInvoices && !hasHiddenPayments
-      ? "LINKED_EXTERNAL_INVOICES"
-      : "UNKNOWN_LINKED_RECORDS";
+  let reasonCode = "UNKNOWN_LINKED_RECORDS";
+  let error = LINKED_RECORDS_MESSAGE;
+  if (hasActivePayments && hasActiveInvoices) {
+    reasonCode = "ACTIVE_LINKED_FINANCIAL_RECORDS";
+    error = ACTIVE_FINANCIAL_RECORDS_MESSAGE;
+  } else if (hasActivePayments) {
+    reasonCode = "ACTIVE_LINKED_PAYMENTS";
+    error = ACTIVE_PAYMENT_BLOCK_MESSAGE;
+  } else if (hasActiveInvoices) {
+    reasonCode = "ACTIVE_LINKED_INVOICES";
+    error = ACTIVE_INVOICE_BLOCK_MESSAGE;
+  } else if (hasHiddenPayments && !hasHiddenInvoices) {
+    reasonCode = "LINKED_EXTERNAL_PAYMENTS";
+    error = HIDDEN_PAYMENTS_BLOCK_MESSAGE;
+  } else if (hasHiddenInvoices && !hasHiddenPayments) {
+    reasonCode = "LINKED_EXTERNAL_INVOICES";
+    error = HIDDEN_INVOICES_BLOCK_MESSAGE;
+  }
   return {
     code: reasonCode,
-    error: reasonCode === "LINKED_EXTERNAL_PAYMENTS"
-      ? HIDDEN_PAYMENTS_BLOCK_MESSAGE
-      : reasonCode === "LINKED_EXTERNAL_INVOICES"
-        ? HIDDEN_INVOICES_BLOCK_MESSAGE
-        : LINKED_RECORDS_MESSAGE,
+    error,
     reasons,
     linkedRecords: {
+      payments: {
+        total: activePaymentCount,
+        active: activePaymentCount,
+        inactive: 0,
+      },
+      invoices: {
+        total: activeInvoiceCount,
+        active: activeInvoiceCount,
+        inactive: 0,
+      },
       hiddenPayments: {
         total: hiddenPayments.length,
       },
@@ -563,6 +592,8 @@ exports.handler = async (event) => {
     const payments = Array.isArray(allPayments) ? allPayments : [];
     const linkedPayments = payments.filter((payment) => String(payment.agency_id || "") === agencyId);
     const hiddenPayments = payments.filter((payment) => String(payment.agency_id || "") !== agencyId);
+    const activeLinkedPayments = linkedPayments.filter((payment) => !isInactivePayment(payment));
+    const inactiveLinkedPayments = linkedPayments.filter(isInactivePayment);
 
     if (invoiceResult.error) {
       return json(500, { code: "FETCH_FAILED", success: false, deleted: false, error: invoiceResult.error.message });
@@ -570,8 +601,12 @@ exports.handler = async (event) => {
     const invoices = invoiceResult.data;
     const linkedInvoices = invoices.filter((invoice) => String(invoice.agency_id || "") === agencyId);
     const hiddenInvoices = invoices.filter((invoice) => String(invoice.agency_id || "") !== agencyId);
+    const activeLinkedInvoices = linkedInvoices.filter(isActiveInvoice);
+    const inactiveLinkedInvoices = linkedInvoices.filter((invoice) => !isActiveInvoice(invoice));
 
     const linkedRecordBlock = buildLinkedRecordBlock({
+      activePayments: activeLinkedPayments,
+      activeInvoices: activeLinkedInvoices,
       hiddenPayments,
       hiddenInvoices,
     });
@@ -603,8 +638,8 @@ exports.handler = async (event) => {
       agencyId,
       clientId,
       client,
-      linkedPayments,
-      linkedInvoices,
+      linkedPayments: inactiveLinkedPayments,
+      linkedInvoices: inactiveLinkedInvoices,
       roomingAssignments: affectedRoomingAssignments,
     });
     if (cleanupPreview.error) {
@@ -653,8 +688,8 @@ exports.handler = async (event) => {
       agencyId,
       clientId,
       client,
-      linkedPayments,
-      linkedInvoices,
+      linkedPayments: inactiveLinkedPayments,
+      linkedInvoices: inactiveLinkedInvoices,
       roomingAssignments: affectedRoomingAssignments,
     });
     if (cleanupResult.error) {

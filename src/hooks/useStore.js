@@ -190,6 +190,10 @@ const localizedPaymentRestoreMessage = () => {
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
 
 const CLIENT_PERMANENT_DELETE_BLOCK_CODES = new Set([
+  "ACTIVE_LINKED_PAYMENTS",
+  "ACTIVE_PAYMENTS",
+  "ACTIVE_LINKED_INVOICES",
+  "ACTIVE_LINKED_FINANCIAL_RECORDS",
   "LINKED_EXTERNAL_PAYMENTS",
   "LINKED_EXTERNAL_INVOICES",
   "LINKED_PAYMENT_RECORDS",
@@ -273,6 +277,82 @@ const normalizeRemoteClientDeleteCheck = (clientId, payload = {}) => {
     inactivePaymentIds: Array.isArray(cleanupPreview.deletedPaymentIds) ? cleanupPreview.deletedPaymentIds : [],
     message: payload.error || payload.message || "",
     details: payload.details || null,
+  };
+};
+
+const normalizeBatchedClientDeleteCheck = (clientId, row = null) => {
+  const base = {
+    clientId,
+    blocked: false,
+    code: "",
+    activePaymentCount: 0,
+    inactivePaymentCount: 0,
+    paymentCount: 0,
+    activeInvoiceCount: 0,
+    inactiveInvoiceCount: 0,
+    invoiceCount: 0,
+    finalInvoiceCount: 0,
+    hiddenPaymentCount: 0,
+    hiddenInvoiceCount: 0,
+    representationLinkCount: 0,
+    notificationCount: 0,
+    roomingAssignmentCount: 0,
+    badgePhotoCount: 0,
+    hasSafeCleanup: false,
+    reasons: [],
+    cleanupReasons: [],
+    inactivePaymentIds: [],
+  };
+
+  if (!row) {
+    return {
+      ...base,
+      code: "CHECK_UNAVAILABLE",
+      precheckUnavailable: true,
+    };
+  }
+
+  const paymentCount = Number(row.paymentsCount ?? row.payments_count ?? 0);
+  const activePaymentCount = Number(row.activePaymentsCount ?? row.active_payments_count ?? 0);
+  const inactivePaymentCount = Number(row.inactivePaymentsCount ?? row.inactive_payments_count ?? 0);
+  const invoiceCount = Number(row.invoicesCount ?? row.invoices_count ?? 0);
+  const activeInvoiceCount = Number(row.activeInvoicesCount ?? row.active_invoices_count ?? 0);
+  const inactiveInvoiceCount = Number(row.inactiveInvoicesCount ?? row.inactive_invoices_count ?? 0);
+  const finalInvoiceCount = Number(row.finalInvoicesCount ?? row.final_invoices_count ?? 0);
+  const representationLinkCount = Number(row.representationLinksCount ?? row.representation_links_count ?? 0);
+  const notificationCount = Number(row.notificationsCount ?? row.notifications_count ?? 0);
+  const roomingAssignmentCount = Number(row.roomingReferencesCount ?? row.rooming_references_count ?? 0);
+  const badgePhotoCount = row.hasBadgePhoto || row.has_badge_photo ? 1 : 0;
+  const cleanupReasons = [];
+
+  if (paymentCount > 0) cleanupReasons.push({ code: "DELETE_LINKED_PAYMENTS", count: paymentCount });
+  if (invoiceCount > 0) cleanupReasons.push({ code: "DELETE_LINKED_INVOICES", count: invoiceCount });
+  if (representationLinkCount > 0) cleanupReasons.push({ code: "CLEANUP_REPRESENTATION_LINKS", count: representationLinkCount });
+  if (roomingAssignmentCount > 0) cleanupReasons.push({ code: "CLEANUP_ROOMING_ASSIGNMENTS", count: roomingAssignmentCount });
+  if (notificationCount > 0) cleanupReasons.push({ code: "CLEANUP_NOTIFICATIONS", count: notificationCount });
+  if (badgePhotoCount > 0) cleanupReasons.push({ code: "DELETE_BADGE_PHOTO", count: badgePhotoCount });
+
+  const blocked = row.canPermanentDelete === false || row.can_permanent_delete === false;
+  const code = String(row.blockReason || row.block_reason || (cleanupReasons.length ? "DELETE_LINKED_RECORDS_AFTER_CONFIRMATION" : ""));
+
+  return {
+    ...base,
+    blocked,
+    code,
+    activePaymentCount,
+    inactivePaymentCount,
+    paymentCount,
+    activeInvoiceCount,
+    inactiveInvoiceCount,
+    invoiceCount,
+    finalInvoiceCount,
+    representationLinkCount,
+    notificationCount,
+    roomingAssignmentCount,
+    badgePhotoCount,
+    hasSafeCleanup: cleanupReasons.length > 0,
+    reasons: blocked && code ? [{ code, count: 1 }] : [],
+    cleanupReasons,
   };
 };
 
@@ -565,6 +645,7 @@ export function useStore(agencyId, onToast) {
   const usersLoadPromiseRef = useRef(null);
   const backgroundHydrationStartedRef = useRef(false);
   const dashboardStatsPromiseRef = useRef(null);
+  const clientPermanentDeletePreflightCacheRef = useRef(new Map());
 
   useEffect(() => { clientsRef.current = clients; }, [clients]);
   useEffect(() => { paymentsRef.current = payments; }, [payments]);
@@ -574,6 +655,7 @@ export function useStore(agencyId, onToast) {
   useEffect(() => { paymentsLoadedRef.current = paymentsLoaded; }, [paymentsLoaded]);
   useEffect(() => { notificationsLoadedRef.current = notificationsLoaded; }, [notificationsLoaded]);
   useEffect(() => { usersLoadedRef.current = usersLoaded; }, [usersLoaded]);
+  useEffect(() => { clientPermanentDeletePreflightCacheRef.current.clear(); }, [agencyId]);
 
   const notify = useCallback((msg, type = "error") => {
     if (onToast) onToast(msg, type);
@@ -1397,30 +1479,61 @@ export function useStore(agencyId, onToast) {
     if (!ids.length) return summaries;
 
     if (isSupabaseEnabled && agencyId) {
-      const checks = await Promise.all(ids.map(async (clientId) => {
-        const response = await inspectClientPermanentDeleteRemote(clientId);
-        if (response?.error) {
-          const code = String(response.error.code || "");
-          if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
-            return [clientId, normalizeRemoteClientDeleteCheck(clientId, {
-              ...(response.error.details || {}),
-              blocked: true,
-              canDelete: false,
-              code,
-              error: response.error.message || "",
-            })];
-          }
-          return [clientId, {
-            ...summaries.get(clientId),
-            blocked: false,
-            code: "CHECK_UNAVAILABLE",
-            precheckUnavailable: true,
-            message: response.error.message || "",
-          }];
+      const cacheEntries = [];
+      const missingIds = [];
+      ids.forEach((clientId) => {
+        const cacheKey = `${agencyId}:${clientId}`;
+        if (clientPermanentDeletePreflightCacheRef.current.has(cacheKey)) {
+          cacheEntries.push([clientId, clientPermanentDeletePreflightCacheRef.current.get(cacheKey)]);
+        } else {
+          missingIds.push(clientId);
         }
-        return [clientId, normalizeRemoteClientDeleteCheck(clientId, response.data || {})];
-      }));
-      return new Map(checks);
+      });
+
+      if (!missingIds.length) return new Map(cacheEntries);
+
+      try {
+        const { data, error } = await db.clients.fetchDeletedRelatedCounts(agencyId, missingIds);
+        if (error) throw error;
+        const rowsByClientId = new Map((data || []).map((row) => [String(row.clientId || row.client_id || ""), row]));
+        const rpcEntries = missingIds.map((clientId) => {
+          const block = normalizeBatchedClientDeleteCheck(clientId, rowsByClientId.get(String(clientId)) || null);
+          clientPermanentDeletePreflightCacheRef.current.set(`${agencyId}:${clientId}`, block);
+          return [clientId, block];
+        });
+        return new Map([...cacheEntries, ...rpcEntries]);
+      } catch (error) {
+        console.error("[Store] Batched permanent delete preflight failed; falling back to per-client dry-run:", error);
+        const checks = await Promise.all(missingIds.map(async (clientId) => {
+          const response = await inspectClientPermanentDeleteRemote(clientId);
+          let block;
+          if (response?.error) {
+            const code = String(response.error.code || "");
+            if (CLIENT_PERMANENT_DELETE_BLOCK_CODES.has(code)) {
+              block = normalizeRemoteClientDeleteCheck(clientId, {
+                ...(response.error.details || {}),
+                blocked: true,
+                canDelete: false,
+                code,
+                error: response.error.message || "",
+              });
+            } else {
+              block = {
+                ...summaries.get(clientId),
+                blocked: false,
+                code: "CHECK_UNAVAILABLE",
+                precheckUnavailable: true,
+                message: response.error.message || "",
+              };
+            }
+          } else {
+            block = normalizeRemoteClientDeleteCheck(clientId, response.data || {});
+          }
+          clientPermanentDeletePreflightCacheRef.current.set(`${agencyId}:${clientId}`, block);
+          return [clientId, block];
+        }));
+        return new Map([...cacheEntries, ...checks]);
+      }
     }
 
     const [linkedPayments, linkedInvoices, representationLinks, notifications, roomingAssignments] = await Promise.all([
@@ -2189,6 +2302,9 @@ export function useStore(agencyId, onToast) {
         ? translateActivityDescription("تمت استعادة معتمر من السلة")
         : translateActivityDescription(`تمت استعادة ${combinedClientIds.length} معتمرين من السلة`);
       logActivity("client_restore", label, "");
+      combinedClientIds.forEach((id) => {
+        if (agencyId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
+      });
     }
 
     sync(async () => {
@@ -2267,6 +2383,9 @@ export function useStore(agencyId, onToast) {
     const applyLocalPurge = (clientIdsToPurge = preflightEligibleClientIds) => {
       const purgeClientIdSet = new Set(clientIdsToPurge);
       const cleanupPaymentIds = clientIdsToPurge.flatMap((id) => clientBlockMap.get(id)?.inactivePaymentIds || []);
+      clientIdsToPurge.forEach((id) => {
+        if (agencyId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
+      });
       setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       if (clientsToPreserve.length) {

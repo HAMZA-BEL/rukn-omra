@@ -368,6 +368,24 @@ const fromInvoice = (row) => ({
   deletedAt: row.deleted_at || "",
 });
 
+const fromDeletedClientRelatedCounts = (row = {}) => ({
+  clientId: row.client_id || "",
+  paymentsCount: toFiniteNumber(row.payments_count),
+  activePaymentsCount: toFiniteNumber(row.active_payments_count),
+  inactivePaymentsCount: toFiniteNumber(row.inactive_payments_count),
+  invoicesCount: toFiniteNumber(row.invoices_count),
+  activeInvoicesCount: toFiniteNumber(row.active_invoices_count),
+  inactiveInvoicesCount: toFiniteNumber(row.inactive_invoices_count),
+  finalInvoicesCount: toFiniteNumber(row.final_invoices_count),
+  notificationsCount: toFiniteNumber(row.notifications_count),
+  representationLinksCount: toFiniteNumber(row.representation_links_count),
+  roomingReferencesCount: toFiniteNumber(row.rooming_references_count),
+  hasBadgePhoto: Boolean(row.has_badge_photo),
+  canPermanentDelete: row.can_permanent_delete !== false,
+  blockReason: row.block_reason || "",
+  reasonKey: row.reason_key || "",
+});
+
 const toBadgeTemplate = (template, agencyId) => ({
   id: template.id,
   agency_id: agencyId,
@@ -859,6 +877,26 @@ export const db = {
         .in("id", ids)
         .eq("agency_id", agencyId);
       return { error };
+    },
+    async fetchDeletedRelatedCounts(agencyId, ids = []) {
+      const clientIds = Array.from(new Set((ids || []).filter(Boolean)));
+      if (!agencyId || !clientIds.length) return { data: [], error: null };
+      const rpcName = "get_deleted_client_related_counts";
+      const { data, error } = await supabase.rpc(rpcName, {
+        p_agency_id: agencyId,
+        p_client_ids: clientIds,
+      });
+      if (isMissingRpcError(error, rpcName)) {
+        return {
+          data: [],
+          error: {
+            ...error,
+            isMissingMigration: true,
+            missingRpc: rpcName,
+          },
+        };
+      }
+      return { data: data?.map(fromDeletedClientRelatedCounts) ?? [], error };
     },
   },
 
