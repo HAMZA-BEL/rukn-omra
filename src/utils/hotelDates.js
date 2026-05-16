@@ -1,4 +1,5 @@
 const VISIT_ORDER_OPTIONS = ["madinah_first", "makkah_first"];
+const HOTEL_CHECKIN_DAY_OPTIONS = ["same_day", "next_day"];
 const DAY_MS = 86400000;
 
 const blankStayDates = () => ({
@@ -41,6 +42,10 @@ export const normalizeVisitOrder = (value) => (
   VISIT_ORDER_OPTIONS.includes(value) ? value : "madinah_first"
 );
 
+export const normalizeHotelCheckinDay = (value) => (
+  HOTEL_CHECKIN_DAY_OPTIONS.includes(value) ? value : "next_day"
+);
+
 export const normalizeMadinahNights = (value) => {
   if (value === "" || value === null || value === undefined) return 0;
   const number = Number(value);
@@ -57,6 +62,8 @@ export function calculateHotelStayDates({
   returnDate,
   visitOrder,
   madinahNights,
+  hotelCheckinDay,
+  hotel_checkin_day,
 } = {}) {
   const departure = parseDateParts(departureDate);
   const returnDay = parseDateParts(returnDate);
@@ -66,7 +73,8 @@ export function calculateHotelStayDates({
 
   const nights = normalizeMadinahNights(madinahNights);
   const order = normalizeVisitOrder(visitOrder);
-  const firstHotelCheckIn = addDaysSafe(departure, 1);
+  const checkinDay = normalizeHotelCheckinDay(hotelCheckinDay || hotel_checkin_day);
+  const firstHotelCheckIn = addDaysSafe(departure, checkinDay === "same_day" ? 0 : 1);
   if (!firstHotelCheckIn || returnDay.getTime() < firstHotelCheckIn.getTime()) {
     return blankStayDates();
   }

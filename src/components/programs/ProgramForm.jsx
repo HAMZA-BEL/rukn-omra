@@ -5,7 +5,7 @@ import { theme } from "../styles";
 import { useLang } from "../../hooks/useLang";
 import { formatCurrency } from "../../utils/currency";
 import { formatAirlineLabel, getProgramAirline } from "../../utils/airlines";
-import { normalizeMadinahNights, normalizeVisitOrder } from "../../utils/hotelDates";
+import { normalizeHotelCheckinDay, normalizeMadinahNights, normalizeVisitOrder } from "../../utils/hotelDates";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
   getLegacyFieldsFromPackages,
@@ -63,6 +63,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
     departure: program?.departure || "",
     returnDate:program?.returnDate|| "",
     visitOrder: normalizeVisitOrder(program?.visitOrder || program?.visit_order),
+    hotelCheckinDay: normalizeHotelCheckinDay(program?.hotelCheckinDay || program?.hotel_checkin_day),
     price:     program?.price     || "",
     seats:     program?.seats     || "",
     transport: formatAirlineLabel(initialAirline) || program?.transport || "",
@@ -192,6 +193,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
       ...phoneFields,
       type: normalizeProgramType(form.type),
       visitOrder: normalizeVisitOrder(form.visitOrder),
+      hotelCheckinDay: normalizeHotelCheckinDay(form.hotelCheckinDay),
       price: Number(legacyFields.price || 0),
       seats: Number(form.seats),
       transport: formatAirlineLabel(selectedAirline),
@@ -249,7 +251,15 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
               { value: "makkah_first", label: t.visitOrderMakkahFirst || "مكة ثم المدينة" },
             ]}
           />
-          <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
+          <Select
+            label={t.hotelCheckin || "الدخول للفندق"}
+            value={form.hotelCheckinDay}
+            onChange={set("hotelCheckinDay")}
+            options={[
+              { value: "same_day", label: t.sameDayAsDeparture || "نفس يوم الذهاب" },
+              { value: "next_day", label: t.nextDayAfterDeparture || "اليوم الموالي للذهاب" },
+            ]}
+          />
           <AirlineSelector
             label={t.transport}
             value={form.transport}
@@ -265,6 +275,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
             required
             error={errors.transport}
           />
+          <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
           <div style={{ gridColumn:"1/-1" }}>
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:6 }}>{t.notes}</label>
             <textarea value={form.notes} onChange={set("notes")} rows={2}

@@ -9,6 +9,7 @@ import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
 import { getClientServiceType } from "../utils/clientServiceTypes";
+import { normalizeHotelCheckinDay } from "../utils/hotelDates";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -133,6 +134,7 @@ const toProgram = (p, agencyId) => ({
   duration:     p.duration     ?? null,
   departure:    p.departure    ?? null,
   return_date:  p.returnDate   ?? null,
+  hotel_checkin_day: normalizeHotelCheckinDay(p.hotelCheckinDay ?? p.hotel_checkin_day),
   transport:    p.transport    ?? null,
   meal_plan:    p.mealPlan     ?? null,
   seats:        p.seats        ?? 40,
@@ -160,6 +162,7 @@ const fromProgram = (row) => ({
   duration:    row.duration,
   departure:   row.departure,
   returnDate:  row.return_date,
+  hotelCheckinDay: normalizeHotelCheckinDay(row.hotel_checkin_day),
   transport:   row.transport,
   mealPlan:    row.meal_plan,
   seats:       row.seats,

@@ -69,6 +69,7 @@ create table if not exists public.programs (
   duration     text,
   departure    text,
   return_date  text,
+  hotel_checkin_day text not null default 'next_day' check (hotel_checkin_day in ('same_day', 'next_day')),
   transport    text,
   meal_plan    text,
   seats        integer not null default 40,
@@ -128,6 +129,12 @@ alter table public.programs add column if not exists badge_saudi_phone_1 text;
 alter table public.programs add column if not exists badge_saudi_phone_2 text;
 alter table public.programs add column if not exists badge_note text;
 alter table public.programs add column if not exists badge_template_id text;
+alter table public.programs add column if not exists hotel_checkin_day text not null default 'next_day';
+alter table public.programs alter column hotel_checkin_day set default 'next_day';
+alter table public.programs alter column hotel_checkin_day set not null;
+alter table public.programs drop constraint if exists programs_hotel_checkin_day_check;
+alter table public.programs add constraint programs_hotel_checkin_day_check
+  check (hotel_checkin_day in ('same_day', 'next_day'));
 alter table public.clients add column if not exists registration_source text;
 alter table public.clients add column if not exists represented_by_client_id uuid references public.clients(id) on delete set null;
 alter table public.clients add column if not exists represented_by_relationship text;

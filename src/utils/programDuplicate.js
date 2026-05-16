@@ -1,4 +1,4 @@
-import { normalizeVisitOrder } from "./hotelDates";
+import { normalizeHotelCheckinDay, normalizeVisitOrder } from "./hotelDates";
 
 export const getProgramDepartureYear = (program) => {
   const departure = String(program?.departure || "").trim();
@@ -60,6 +60,7 @@ export const createDuplicateProgramPayload = (program = {}, newName = "") => {
     departure: source.departure || "",
     returnDate: source.returnDate || "",
     visitOrder: normalizeVisitOrder(source.visitOrder || source.visit_order),
+    hotelCheckinDay: normalizeHotelCheckinDay(source.hotelCheckinDay || source.hotel_checkin_day),
     price: Number(source.price || 0),
     seats: Number(source.seats || 0),
     transport: source.transport || "",

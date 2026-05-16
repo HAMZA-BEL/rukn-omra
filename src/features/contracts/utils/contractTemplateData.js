@@ -89,6 +89,7 @@ const getProgramHotelStayDates = (program = {}, client = {}) => {
     departureDate: firstValue(program.departure, program.departureDate, program.departure_date),
     returnDate: firstValue(program.returnDate, program.return_date),
     visitOrder: firstValue(program.visitOrder, program.visit_order),
+    hotelCheckinDay: firstValue(program.hotelCheckinDay, program.hotel_checkin_day),
     madinahNights: firstValue(pkg?.madinahNights, pkg?.madinah_nights, program.madinahNights, program.madinah_nights),
   });
 };

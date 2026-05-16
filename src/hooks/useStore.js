@@ -52,6 +52,7 @@ import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
 import { buildSystemNotificationCandidates, getDaysUntil, getProgramDepartureDate } from "../utils/notificationRules";
+import { normalizeHotelCheckinDay } from "../utils/hotelDates";
 import {
   canUseBadgePhotoStorage,
   getPilgrimPhotoUrl,
@@ -374,6 +375,7 @@ const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new 
   transport: program.transport || "",
   departure: program.departure || "",
   returnDate: program.returnDate || "",
+  hotelCheckinDay: normalizeHotelCheckinDay(program.hotelCheckinDay || program.hotel_checkin_day),
   packageLevel: client.packageLevel || client.hotelLevel || "",
   hotelLevel: client.hotelLevel || client.packageLevel || "",
   hotelMecca: client.hotelMecca || program.hotelMecca || "",
@@ -1179,6 +1181,7 @@ export function useStore(agencyId, onToast) {
       duration: row.duration,
       departure: row.departure,
       returnDate: row.return_date,
+      hotelCheckinDay: normalizeHotelCheckinDay(row.hotel_checkin_day),
       transport: row.transport,
       mealPlan: row.meal_plan,
       seats: row.seats,

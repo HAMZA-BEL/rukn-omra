@@ -2633,6 +2633,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           departureDate: program.departure,
           returnDate: program.returnDate,
           visitOrder: program.visitOrder || program.visit_order,
+          hotelCheckinDay: program.hotelCheckinDay || program.hotel_checkin_day,
           madinahNights: pkg?.madinahNights,
         });
         const roomType = safeCellValue(client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "");
@@ -5132,6 +5133,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       departureDate: program.departure,
       returnDate: program.returnDate,
       visitOrder: program.visitOrder || program.visit_order,
+      hotelCheckinDay: program.hotelCheckinDay || program.hotel_checkin_day,
       madinahNights: pkg?.madinahNights ?? program.madinahNights ?? program.madinah_nights,
     });
     return targetCity === "makkah"
