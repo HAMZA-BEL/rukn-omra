@@ -2840,6 +2840,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
           clients={progClients}
           packages={packages}
           agency={agency}
+          agencyLogoApi={store.agencyLogoApi}
           agencyId={store.agencyId}
           supabaseRoomingEnabled={store.isSupabaseEnabled}
           syncRoomingClientFields={store.syncRoomingClientFields}
@@ -3205,7 +3206,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   );
 }
 
-function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = null, supabaseRoomingEnabled = false, syncRoomingClientFields, onToast }) {
+function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoApi, agencyId = null, supabaseRoomingEnabled = false, syncRoomingClientFields, onToast }) {
   const { t, tr, lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
@@ -5068,11 +5069,24 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     XLSX.writeFile(wb, `rooming-canvas-${city}-${slugifyFilePart(program.name)}.xlsx`);
   }, [rooms, clientsById, city, program.name, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel, t]);
 
-  const printCanvas = React.useCallback(() => {
+  const resolveAgencyLogoUrlForRooming = React.useCallback(async () => {
+    const directUrl = agency?.logoUrl || agency?.logo_url || "";
+    if (directUrl) return directUrl;
+    const logoPath = agency?.logoPath || agency?.logo_path || "";
+    if (!logoPath || !agencyLogoApi?.isAvailable || !agencyLogoApi.getLogoUrl) return "";
+    try {
+      return await agencyLogoApi.getLogoUrl(logoPath) || "";
+    } catch {
+      return "";
+    }
+  }, [agency?.logoPath, agency?.logoUrl, agency?.logo_path, agency?.logo_url, agencyLogoApi]);
+
+  const printCanvas = React.useCallback(async () => {
     const cityLabel = city === "makkah" ? (t.makkah || "مكة") : (t.madinah || "المدينة");
     const win = window.open("", "_blank");
     if (!win) return;
     const agencyName = agency?.nameAr || agency?.nameFr || t.agencyName || "";
+    const agencyLogoUrl = await resolveAgencyLogoUrlForRooming();
     const printRooms = rooms.map((room, index) => {
       const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
       const pilgrims = occupantIds
@@ -5106,7 +5120,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       lang,
       programName: program.name || "",
       agencyName,
-      agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
+      agencyLogoUrl,
       printSettings: roomingPrintSettings,
       labels: {
         rooming: t.roomingPrintTitle || "ورقة التسكين",
@@ -5119,7 +5133,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       },
     }));
     win.document.close();
-  }, [rooms, roomLinks, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings]);
+  }, [rooms, roomLinks, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings, resolveAgencyLogoUrlForRooming]);
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
@@ -5225,6 +5239,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
       const madinahHotel = getRoomingHotelForCity("madinah", madinahRooms);
       const makkahDates = getRoomingStayDates("makkah", { occupantIds: makkahRooms[0]?.occupantIds || [] });
       const madinahDates = getRoomingStayDates("madinah", { occupantIds: madinahRooms[0]?.occupantIds || [] });
+      const agencyLogoUrl = await resolveAgencyLogoUrlForRooming();
       const sharedLabels = {
         checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
         checkOut: t.checkOut || (lang === "fr" ? "Départ" : lang === "en" ? "Check-out" : "الخروج"),
@@ -5241,7 +5256,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
         lang,
         programName: program.name || "program",
         agencyName: agency?.nameAr || agency?.nameFr || agency?.name || "",
-        agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
+        agencyLogoUrl,
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
         labels: sharedLabels,
         printSettings: roomingPrintSettings,
@@ -5262,7 +5277,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyId = 
     } finally {
       setRoomingPdfBusy("");
     }
-  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasLinks, getStoredCanvasRooms, lang, onToast, program.name, roomingPdfBusy, roomingPrintSettings, t]);
+  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasLinks, getStoredCanvasRooms, lang, onToast, program.name, resolveAgencyLogoUrlForRooming, roomingPdfBusy, roomingPrintSettings, t]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullWorkspace ? "100%" : "min(72vh, 720px)";

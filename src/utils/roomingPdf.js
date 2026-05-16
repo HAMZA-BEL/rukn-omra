@@ -11,7 +11,7 @@ const ROOM_TYPE_CAPACITY = {
 };
 const CITY_ORDER = ["makkah", "madinah"];
 const FLOW_LAYOUT = {
-  contentTop: 72,
+  contentTop: 90,
   contentBottom: 576,
   columns: 6,
   gapX: 7,
@@ -27,6 +27,9 @@ const SINGLE_LINE_NAME_MIN_PX = 5.2;
 const SINGLE_LINE_SOURCE_MIN_PT = 4.2;
 const SINGLE_LINE_SOURCE_MIN_PX = 4.8;
 const SOURCE_MAX_WIDTH_RATIO = 0.28;
+const OCCUPANT_NAME_FONT_SCALE = 0.68;
+const OCCUPANT_NAME_MAX_PT = 7.5;
+const OCCUPANT_NAME_MAX_PX = 10;
 const DENSITY_CONFIGS = {
   comfortable: {
     columns: 5,
@@ -381,9 +384,9 @@ const getAdaptiveNameFontMetrics = ({
 }) => {
   const html = unit === "px";
   const htmlConfig = density?.html || {};
-  const base = html
+  const base = (html
     ? Number.parseFloat(String(htmlConfig.nameFont || "10px")) || 10
-    : Number(density?.fontNormal) || 8;
+    : Number(density?.fontNormal) || 8) * OCCUPANT_NAME_FONT_SCALE;
   const configuredMin = html
     ? Number.parseFloat(String(htmlConfig.nameFontMin || "")) || Math.max(8.8, base - 1.8)
     : Number(density?.nameFontMin) || Math.max(6.8, base - 1.4);
@@ -391,16 +394,15 @@ const getAdaptiveNameFontMetrics = ({
   const densityMax = html
     ? Number.parseFloat(String(htmlConfig.nameFontMax || "")) || base + 1.6
     : Number(density?.nameFontMax) || base + 1.1;
-  const max = Math.max(min, Math.min(densityMax, chipHeight * 0.74));
+  const hardMax = html ? OCCUPANT_NAME_MAX_PX : OCCUPANT_NAME_MAX_PT;
+  const max = Math.max(min, Math.min(densityMax, chipHeight * 0.74, hardMax));
   const length = String(name || "").trim().length;
   let fontSize = base;
 
-  if (rowCount <= 2) fontSize += html ? 0.9 : 0.7;
-  else if (rowCount === 3) fontSize += html ? 0.45 : 0.35;
-  else if (rowCount === 4) fontSize += html ? 0.15 : 0.1;
-  else fontSize -= html ? 0.1 : 0.05;
+  if (rowCount <= 2) fontSize += html ? 0.25 : 0.18;
+  else if (rowCount === 3) fontSize += html ? 0.12 : 0.08;
+  else if (rowCount >= 5) fontSize -= html ? 0.1 : 0.05;
 
-  if (occupiedCount <= 2 && rowCount <= 3) fontSize += html ? 0.25 : 0.2;
   if (occupiedCount >= rowCount && rowCount >= 4) fontSize -= html ? 0.18 : 0.12;
 
   if (length > 64) fontSize -= html ? 1.3 : 1.05;
@@ -416,7 +418,7 @@ const getAdaptiveNameFontMetrics = ({
     fontSize,
     minSize: min,
     maxWidth: Math.max(1, contentWidth * (html ? 0.9 : 0.98)),
-    weight: 800,
+    weight: 600,
     unit,
   });
 
@@ -424,7 +426,7 @@ const getAdaptiveNameFontMetrics = ({
   const lineHeight = getNameLineHeight(fontSize, density);
   return {
     fontSize,
-    lineHeight,
+    lineHeight: Math.max(lineHeight, fontSize * 1.2),
     sourceFontSize,
     maxLines: 1,
   };
@@ -490,18 +492,50 @@ const drawFitText = (ctx, value, x, y, {
   drawText(ctx, value, x, y, { size: nextSize, weight, color, align, baseline, maxWidth, direction });
 };
 
-const loadImage = async (url) => {
-  if (!url) return null;
+const isInlineImageUrl = (url) => /^(data|blob):/i.test(String(url || ""));
+
+const loadImageElement = async (url) => {
+  const image = new Image();
+  if (!isInlineImageUrl(url)) image.crossOrigin = "anonymous";
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = reject;
+    image.src = url;
+  });
+  return image;
+};
+
+const fetchImageObjectUrl = async (url) => {
+  if (!url || isInlineImageUrl(url) || typeof fetch !== "function" || typeof URL === "undefined") return "";
   try {
-    const image = new Image();
-    image.crossOrigin = "anonymous";
-    await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = reject;
-      image.src = url;
-    });
+    const response = await fetch(url, { mode: "cors", cache: "force-cache" });
+    if (!response.ok) return "";
+    const blob = await response.blob();
+    if (!blob) return "";
+    return URL.createObjectURL(blob);
+  } catch {
+    return "";
+  }
+};
+
+const revokeLoadedImageObjectUrl = (image) => {
+  const objectUrl = image?.__roomingObjectUrl;
+  if (objectUrl && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
+const loadImage = async (url) => {
+  const sourceUrl = String(url || "").trim();
+  if (!sourceUrl) return null;
+  let objectUrl = "";
+  try {
+    objectUrl = await fetchImageObjectUrl(sourceUrl);
+    const image = await loadImageElement(objectUrl || sourceUrl);
+    if (objectUrl) image.__roomingObjectUrl = objectUrl;
     return image;
   } catch {
+    if (objectUrl) revokeLoadedImageObjectUrl({ __roomingObjectUrl: objectUrl });
     return null;
   }
 };
@@ -589,9 +623,16 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
   const direction = getDirection(lang);
   const right = page.width - page.margin;
   const left = page.margin;
-  const center = page.width / 2;
-  const titleMaxWidth = 390;
   const logoSize = 30;
+  const metricWidth = 88;
+  const metricsCount = 3;
+  const metricsLeft = right - metricWidth * metricsCount;
+  const brandRight = left + logoSize + 7 + 150;
+  const titleLeft = brandRight + 12;
+  const titleRight = metricsLeft - 12;
+  const titleCenter = (titleLeft + titleRight) / 2;
+  const titleMaxWidth = Math.max(1, titleRight - titleLeft);
+  const headerRuleY = 80;
   if (logoImage) {
     drawContainImage(ctx, logoImage, left, 12, logoSize, logoSize);
   } else {
@@ -616,8 +657,12 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
     maxWidth: 150,
   });
   const hotelTitle = section.combined ? (section.cityLabel || "") : (section.hotel || "");
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(titleLeft, 8, titleMaxWidth, headerRuleY - 14);
+  ctx.clip();
   if (!section.combined) {
-    drawText(ctx, section.cityLabel || "", center, 10, {
+    drawText(ctx, section.cityLabel || "", titleCenter, 9, {
       size: 10.4,
       weight: 900,
       color: "#64748b",
@@ -626,35 +671,45 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
       maxWidth: titleMaxWidth,
     });
   }
-  drawFitText(ctx, hotelTitle, center, section.combined ? 15 : 25, {
-    size: section.combined ? 13.8 : 16.2,
-    minSize: section.combined ? 9.2 : 10.2,
-    weight: 900,
-    color: "#0f172a",
-    align: "center",
-    direction,
-    maxWidth: titleMaxWidth,
+  const hotelFontSize = 11.4;
+  ctx.save();
+  ctx.font = `900 ${hotelFontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+  const hotelLines = wrapText(ctx, hotelTitle, titleMaxWidth, 2, { ellipsis: true });
+  ctx.restore();
+  const hotelStartY = section.combined ? 16 : 24;
+  const hotelLineHeight = hotelFontSize * 1.25;
+  hotelLines.forEach((line, index) => {
+    drawFitText(ctx, line, titleCenter, hotelStartY + index * hotelLineHeight, {
+      size: hotelFontSize,
+      minSize: 8.2,
+      weight: 900,
+      color: "#0f172a",
+      align: "center",
+      direction,
+      maxWidth: titleMaxWidth,
+    });
   });
   if (section.combined && Array.isArray(section.dateRanges)) {
+    const dateStartY = Math.max(47, hotelStartY + hotelLines.length * hotelLineHeight + 6);
     section.dateRanges.slice(0, 2).forEach((range, index) => {
       const line = `${range.label}: ${labels.checkIn} ${formatDate(range.checkIn)} / ${labels.checkOut} ${formatDate(range.checkOut)}`;
-      drawText(ctx, line, center, 31 + index * 12, {
-        size: 7.4,
+      drawText(ctx, line, titleCenter, dateStartY + index * 9.8, {
+        size: 7.2,
         weight: 800,
         color: index === 0 ? "#7c641f" : "#475569",
         align: "center",
         direction,
-        maxWidth: 390,
+        maxWidth: titleMaxWidth,
       });
     });
   }
+  ctx.restore();
 
   const metrics = [
     { label: labels.roomsCount, value: String(section.rooms.length) },
     { label: labels.checkIn, value: formatDate(section.checkIn) },
     { label: labels.checkOut, value: formatDate(section.checkOut) },
   ];
-  const metricWidth = 88;
   metrics.forEach((item, index) => {
     const x = right - metricWidth * (index + 1);
     if (index > 0) {
@@ -662,7 +717,7 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
       ctx.lineWidth = 0.8;
       ctx.beginPath();
       ctx.moveTo(x + metricWidth, 13);
-      ctx.lineTo(x + metricWidth, 45);
+      ctx.lineTo(x + metricWidth, 62);
       ctx.stroke();
     }
     drawText(ctx, item.label, x + metricWidth / 2, 13, {
@@ -681,7 +736,7 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
     });
   });
   if (programName) {
-    drawFitText(ctx, programName, right - metricWidth * metrics.length / 2, 47, {
+    drawFitText(ctx, programName, right - metricWidth * metrics.length / 2, 66, {
       size: 6.9,
       minSize: 5.8,
       weight: 800,
@@ -694,8 +749,8 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
   ctx.strokeStyle = "#b99235";
   ctx.lineWidth = 1.05;
   ctx.beginPath();
-  ctx.moveTo(left, 60);
-  ctx.lineTo(right, 60);
+  ctx.moveTo(left, headerRuleY);
+  ctx.lineTo(right, headerRuleY);
   ctx.stroke();
 };
 
@@ -811,13 +866,13 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
       contentWidth: nameContentWidth,
       density,
     });
-    ctx.font = `800 ${nameMetrics.fontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+    ctx.font = `600 ${nameMetrics.fontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
     const textBlockHeight = nameMetrics.lineHeight;
     let lineY = rowY + Math.max(1.4, (rowHeight - textBlockHeight) / 2);
     const nameX = direction === "rtl" ? nameRight : nameTextLeft;
     drawText(ctx, pilgrim.name, nameX, lineY, {
       size: nameMetrics.fontSize,
-      weight: 800,
+      weight: 600,
       color: "#111827",
       align: direction === "rtl" ? "right" : "left",
       direction,
@@ -1193,6 +1248,7 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
       direction: getDirection(lang),
     });
     await pushPage();
+    revokeLoadedImageObjectUrl(logoImage);
     return pages;
   }
 
@@ -1247,6 +1303,7 @@ const buildPages = async ({ rooms, labels, lang, agencyName, agencyLogoUrl, sect
     await pushPage();
     current = null;
   }
+  revokeLoadedImageObjectUrl(logoImage);
   return pages;
 };
 
@@ -1367,9 +1424,10 @@ export const createRoomingPrintHtml = ({
     ? Math.max(...sections.map((section) => section.rooms.length))
     : rooms.length;
   const layout = getFlowLayout(normalizedPrintSettings, layoutRoomCount);
+  const fallbackLogoInitial = escapeHtml((agencyName || "R").trim().slice(0, 1));
   const logoHtml = agencyLogoUrl
-    ? `<img class="agency-logo" src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName || "Rukn")}" onerror="this.style.display='none'"/>`
-    : `<span class="agency-logo-fallback">${escapeHtml((agencyName || "R").trim().slice(0, 1))}</span>`;
+    ? `<span class="agency-logo-wrap"><img class="agency-logo" src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName || "Rukn")}" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'"/><span class="agency-logo-fallback is-hidden">${fallbackLogoInitial}</span></span>`
+    : `<span class="agency-logo-fallback">${fallbackLogoInitial}</span>`;
   const roomCardHtml = (room) => {
     const { pilgrims, rowCount, rows } = getRoomPrintRows(room, normalizedPrintSettings);
     const occupiedCount = getOccupiedNameCount(pilgrims);
@@ -1458,11 +1516,11 @@ export const createRoomingPrintHtml = ({
           </div>
           <div class="title-block">
             ${section.combined ? "" : `<h1>${escapeHtml(section.cityLabel || labels.rooming || "Rooming")}</h1>`}
-            <p class="hotel-title" style="font-size:${hotelTitleSize}">${escapeHtml(hotelTitle)}</p>
+            <p class="hotel-title" style="--hotel-title-font:${hotelTitleSize}">${escapeHtml(hotelTitle)}</p>
             ${section.combined && Array.isArray(section.dateRanges)
-              ? section.dateRanges.slice(0, 2).map((range) => (
+              ? `<div class="date-lines">${section.dateRanges.slice(0, 2).map((range) => (
                 `<p class="date-line">${escapeHtml(range.label)}: ${escapeHtml(labels.checkIn || "Check-in")} ${escapeHtml(formatDate(range.checkIn))} / ${escapeHtml(labels.checkOut || "Check-out")} ${escapeHtml(formatDate(range.checkOut))}</p>`
-              )).join("")
+              )).join("")}</div>`
               : ""}
           </div>
           <div class="metric-strip">
@@ -1526,16 +1584,19 @@ export const createRoomingPrintHtml = ({
     body{font-family:${ROOMING_PRINT_FONT_FAMILY};font-size:9px;line-height:1.25}
     .rooming-section{break-after:page;page-break-after:always}
     .rooming-section:last-child{break-after:auto;page-break-after:auto}
-	    .print-header{position:relative;display:grid;grid-template-columns:48mm minmax(0,1fr) 86mm;align-items:start;gap:8mm;height:16mm;min-height:16mm;overflow:hidden;padding:0 0 2.5mm}
+    .print-header{position:relative;display:grid;grid-template-columns:46mm minmax(0,1fr) 86mm;align-items:start;gap:6mm;height:24mm;min-height:24mm;overflow:hidden;padding:2mm 0 2mm}
     .agency-brand{display:flex;align-items:center;gap:2.5mm;min-width:0}
+    .agency-logo-wrap{position:relative;width:10mm;height:10mm;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center}
     .agency-logo,.agency-logo-fallback{width:10mm;height:10mm;flex:0 0 auto;object-fit:contain;border-radius:2mm}
     .agency-logo-fallback{border:1px solid #d7dbe2;display:inline-flex;align-items:center;justify-content:center;color:#9a7418;font-size:12px;font-weight:900}
+    .agency-logo-fallback.is-hidden{display:none}
     .agency-brand strong{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;color:#0f172a}
-    .title-block{text-align:center;min-width:0}
+    .title-block{text-align:center;min-width:0;overflow:hidden;padding:0 1mm;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start}
     .title-block h1{margin:0;color:#64748b;font-size:10.5px;line-height:1;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .title-block .hotel-title{margin:2px 0 0;color:#0f172a;line-height:1.08;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .title-block .date-line{margin:2px 0 0;color:#9a7418;font-size:7.4px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .metric-strip{display:flex;flex-direction:column;height:12mm;border-inline-start:1px solid #d9c491;min-width:0}
+    .title-block .hotel-title{margin:1px 0 0;color:#0f172a;font-size:min(var(--hotel-title-font,15px),16px) !important;line-height:1.25;font-weight:900;white-space:normal;overflow:hidden;text-overflow:clip;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:break-word}
+    .title-block .date-lines{margin-top:5px;display:flex;flex-direction:column;gap:1px;min-width:0}
+    .title-block .date-line{margin:0;color:#9a7418;font-size:9.5px;font-weight:800;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .metric-strip{display:flex;flex-direction:column;height:17mm;border-inline-start:1px solid #d9c491;min-width:86mm;width:86mm}
     .metric-row{display:grid;grid-template-columns:repeat(3,1fr);min-height:0;flex:1 1 auto}
     .metric-row div{display:flex;flex-direction:column;align-items:center;justify-content:center;border-inline-end:1px solid #d9c491;padding:0 2mm;text-align:center;min-width:0}
     .metric-program{display:block;height:3.2mm;line-height:3.2mm;padding:0 2mm;border-inline-end:1px solid #d9c491;border-top:1px solid #eadfca;color:#64748b;font-size:7px;font-weight:800;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1557,7 +1618,7 @@ export const createRoomingPrintHtml = ({
     .bed-number{display:flex;align-items:center;justify-content:center;height:100%;min-width:0;background:#fef3c7;border-inline-end:1px solid #b99235;color:#111827;font-size:8px;font-weight:900;line-height:1;direction:ltr;text-align:center}
     .bed-name-cell{display:flex;flex-direction:column;justify-content:center;min-width:0;overflow:hidden;padding:var(--item-padding);direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
     .occupant-line{display:flex;align-items:center;gap:1.1mm;width:100%;min-width:0;overflow:hidden;white-space:nowrap;direction:ltr;text-align:left}
-    .pilgrim-name{display:block;flex:1 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#111827;font-size:var(--smart-name-font,var(--name-font));line-height:var(--smart-name-line,var(--name-line));font-weight:800;direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
+    .rooming-section .room-card .pilgrim-name{display:block;flex:1 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#111827;font-size:min(var(--smart-name-font,var(--name-font)),10px) !important;line-height:1.2 !important;font-weight:600;direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
     .source-label{display:block;flex:0 1 var(--source-max,28%);max-width:var(--source-max,28%);min-width:0;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#64748b;font-size:var(--smart-source-font,var(--source-font));font-weight:500;line-height:1;margin:0;text-align:left;direction:${direction}}
     li.empty{background:#fff}
     .empty-state{margin:18mm 0 0;text-align:center;color:#64748b;font-size:12px;font-weight:800}
