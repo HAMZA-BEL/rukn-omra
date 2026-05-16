@@ -101,6 +101,7 @@ import {
 import {
   exportProgramWordContractsZip,
 } from "../features/contracts";
+import { downloadPassportListWord } from "../features/programs/exports/passportListWordExport";
 import {
   AlignCenter,
   AlignLeft,
@@ -2547,6 +2548,21 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       );
     }
   }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program]);
+  const handlePassportListWordExport = React.useCallback(() => {
+    closeHeaderActions();
+    const exportClients = getCurrentExportClients();
+    try {
+      const result = downloadPassportListWord({ program, clients: exportClients });
+      if (!result.ok) {
+        onToast(t.noPilgrimsToExport || (lang === "fr" ? "Aucun pèlerin à exporter" : lang === "en" ? "No pilgrims to export" : "لا يوجد معتمرون لتصديرهم"), "info");
+        return;
+      }
+      onToast(t.passportListWordExported || (lang === "fr" ? "Liste passeports Word exportée avec succès" : lang === "en" ? "Passport list Word exported successfully" : "تم تصدير لائحة الجوازات بنجاح"), "success");
+    } catch (error) {
+      console.error("[Programs] Passport list Word export failed:", error);
+      onToast(t.error || (lang === "fr" ? "Erreur inattendue" : lang === "en" ? "Unexpected error" : "خطأ غير متوقع"), "error");
+    }
+  }, [closeHeaderActions, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported]);
   const handleBadgePdfExport = React.useCallback(async () => {
     closeHeaderActions();
     const exportClients = getCurrentExportClients();
@@ -2748,6 +2764,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       onClick: handleAmadeusExport,
     },
     {
+      key: "passport-list-word",
+      icon: "file",
+      label: t.exportPassportListWord || (lang === "fr" ? "Exporter la liste passeports Word" : lang === "en" ? "Export passport list Word" : "تصدير لائحة الجوازات Word"),
+      onClick: handlePassportListWordExport,
+    },
+    {
       key: "badges",
       icon: "download",
       label: badgeExportBusy ? "جاري تجهيز الشارات..." : "تحميل شارات البرنامج PDF",
@@ -2765,7 +2787,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
