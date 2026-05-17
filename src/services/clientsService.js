@@ -28,6 +28,14 @@ export function restoreClients(ids, agencyId) {
   return db.clients.restore(ids, agencyId);
 }
 
+export function archiveClientRecord(clientId, agencyId, archivedAt) {
+  return db.clients.archiveRecord(clientId, agencyId, archivedAt);
+}
+
+export function restoreClientRecord(clientId, agencyId) {
+  return db.clients.restoreRecord(clientId, agencyId);
+}
+
 export function deleteClientsPermanent(ids, agencyId) {
   return db.clients.deleteMany(ids, agencyId);
 }

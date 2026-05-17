@@ -315,6 +315,7 @@ export function sanitizeCostingNumberInput(value, { allowBlank = true, fallback 
 }
 
 export function getStoredProgramCosting(program = {}) {
+  if (!isPlainObject(program)) return null;
   if (isPlainObject(program.programCosting)) return program.programCosting;
   const raw = Array.isArray(program.priceTable) ? program.priceTable : [];
   const source = raw.find((pkg) => isPlainObject(pkg?.[COSTING_META_KEY]));
@@ -322,7 +323,7 @@ export function getStoredProgramCosting(program = {}) {
 }
 
 const getStoredPackages = (program = {}) => (
-  Array.isArray(program.priceTable) ? program.priceTable.filter(isPlainObject) : []
+  isPlainObject(program) && Array.isArray(program.priceTable) ? program.priceTable.filter(isPlainObject) : []
 );
 
 const findExistingLevel = (existingLevels = [], pkg = {}, index = 0) => (

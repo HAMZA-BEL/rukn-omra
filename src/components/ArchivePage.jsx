@@ -260,13 +260,15 @@ export default function ArchivePage({ store, onToast }) {
     [archivedClients, getClientKind]
   );
 
-  const handleConfirmRestore = React.useCallback(() => {
+  const handleConfirmRestore = React.useCallback(async () => {
     if (!restorePrompt?.item) return;
     if (restorePrompt.type === "client") {
-      store.restoreClient?.(restorePrompt.item.id);
+      const result = await store.restoreClient?.(restorePrompt.item.id);
+      if (result?.error) return;
       onToast?.(t.clientRestoreSuccess, "success");
     } else {
-      store.restoreProgramRecord?.(restorePrompt.item.id);
+      const result = await store.restoreProgramRecord?.(restorePrompt.item.id);
+      if (result?.error) return;
       onToast?.(t.programRestoreSuccess, "success");
     }
     setRestorePrompt(null);

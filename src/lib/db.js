@@ -602,18 +602,22 @@ export const db = {
           .eq("agency_id", agencyId)
           .or("status.is.null,status.eq.active")
           .order("id", { ascending: true })),
-	        supabase
-	          .from("programs")
-	          .select("id", { count: "exact", head: true })
-	          .eq("agency_id", agencyId)
-	          .or("deleted.is.null,deleted.eq.false")
-	          .or("status.is.null,status.neq.archived"),
+        fetchPagedRows(() => supabase
+          .from("programs")
+          .select("id")
+          .eq("agency_id", agencyId)
+          .or("deleted.is.null,deleted.eq.false")
+          .or("status.is.null,status.neq.archived")
+          .order("id", { ascending: true })),
       ]);
 
       const error = clientsResult.error || paymentsResult.error || programsResult.error;
       if (error) return { data: null, error };
 
-      const activeClients = clientsResult.data || [];
+      const activeProgramIds = new Set((programsResult.data || []).map((program) => program.id));
+      const activeClients = (clientsResult.data || []).filter((client) => (
+        !client.program_id || activeProgramIds.has(client.program_id)
+      ));
       const activeClientIds = new Set(activeClients.map((client) => client.id));
       const paidMap = new Map();
 
@@ -657,7 +661,7 @@ export const db = {
         data: {
           totalClients: activeClients.length,
           archivedCount: 0,
-          totalPrograms: programsResult.count ?? 0,
+          totalPrograms: activeProgramIds.size,
           cleared,
           partial,
           unpaid,
@@ -886,6 +890,24 @@ export const db = {
         .from("clients")
         .update({ deleted: false, deleted_at: null, deleted_batch_id: null })
         .in("id", ids)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async archiveRecord(id, agencyId, archivedAt = new Date().toISOString()) {
+      if (!id || !agencyId) return { error: null };
+      const { error } = await supabase
+        .from("clients")
+        .update({ archived: true, archived_at: archivedAt })
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async restoreRecord(id, agencyId) {
+      if (!id || !agencyId) return { error: null };
+      const { error } = await supabase
+        .from("clients")
+        .update({ archived: false, archived_at: null })
+        .eq("id", id)
         .eq("agency_id", agencyId);
       return { error };
     },

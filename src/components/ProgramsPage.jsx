@@ -1553,9 +1553,10 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     setDeletePrompt(null);
     onToast(t.deleteSuccess, "info");
   }, [deletePrompt, deleteProgram, activeProgram, setActiveProgram, onToast, t.deleteSuccess]);
-  const handleConfirmArchiveProgram = React.useCallback(() => {
+  const handleConfirmArchiveProgram = React.useCallback(async () => {
     if (!archivePrompt?.program) return;
-    archiveProgramRecord?.(archivePrompt.program.id);
+    const result = await archiveProgramRecord?.(archivePrompt.program.id);
+    if (result?.error) return;
     setArchivePrompt(null);
     onToast(t.programArchiveSuccess, "success");
   }, [archivePrompt, archiveProgramRecord, onToast, t.programArchiveSuccess]);

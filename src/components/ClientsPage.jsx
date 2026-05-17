@@ -281,11 +281,12 @@ export default function ClientsPage({ store, onToast }) {
     exitSelectMode();
   }, [selectedPageIds, deleteClientsBulk, exitSelectMode, onToast, removeFromRemotePage, tr, t.bulkDeleteFailure, t.bulkDeletePartial]);
 
-  const handleBulkArchive = () => {
+  const handleBulkArchive = async () => {
     if (!selectedPageIds.length) return;
     if (!window.confirm(tr("confirmBulkArchive", { count: selectedPageIds.length }))) return;
     const ids = selectedPageIds;
-    archiveClients(ids);
+    const result = await archiveClients(ids);
+    if (result?.error) return;
     removeFromRemotePage(ids);
     onToast(tr("bulkArchiveSuccess", { count: ids.length }), "success");
     exitSelectMode();
@@ -307,16 +308,18 @@ export default function ClientsPage({ store, onToast }) {
     onToast(t.deleteSuccess, "info");
   };
 
-  const handleSingleArchive = (client) => {
+  const handleSingleArchive = async (client) => {
     if (!window.confirm(tr("confirmArchive", { name: client.name }))) return;
-    archiveClient(client.id);
+    const result = await archiveClient(client.id);
+    if (result?.error) return;
     removeFromRemotePage(client.id);
     setSelected(null);
     onToast(t.archiveSuccess, "success");
   };
 
-  const handleSingleRestore = (client) => {
-    restoreClient(client.id);
+  const handleSingleRestore = async (client) => {
+    const result = await restoreClient(client.id);
+    if (result?.error) return;
     removeFromRemotePage(client.id);
     setSelected(null);
     onToast(t.restoreSuccess, "success");

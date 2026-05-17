@@ -218,6 +218,13 @@ const createGroupPerson = (index = 0) => ({
   gender: index === 0 ? "male" : "",
 });
 
+const isActiveProgramChoice = (program = {}) => (
+  program
+  && !program.deleted
+  && !program.deletedAt
+  && String(program.status || "active").toLowerCase() !== "archived"
+);
+
 const splitArabicName = (value) => {
   const normalized = pickString(value);
   if (!normalized) return { first: "", last: "" };
@@ -376,7 +383,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
 
 export default function ClientForm({ client, store, onSave, onCancel, defaultProgramId, lockProgramId = "" }) {
   const { t, tr, dir, lang } = useLang();
-  const { programs, clients = [], addClient, updateClient } = store;
+  const { programs = [], clients = [], addClient, updateClient } = store;
   const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
@@ -398,6 +405,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const previousOfficialPriceRef = React.useRef(0);
 
   const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs));
+  const selectablePrograms = React.useMemo(() => {
+    const base = lockProgramId
+      ? programs.filter((p) => p.id === lockProgramId)
+      : programs.filter(isActiveProgramChoice);
+    if (!form.programId || base.some((program) => program.id === form.programId)) return base;
+    const currentProgram = programs.find((program) => program.id === form.programId);
+    return currentProgram ? [currentProgram, ...base] : base;
+  }, [form.programId, lockProgramId, programs]);
   const [entryMode, setEntryMode] = React.useState(isEdit ? ROOM_ENTRY_MODES.SINGLE : ROOM_ENTRY_MODES.SINGLE);
   const [groupPeople, setGroupPeople] = React.useState([createGroupPerson(0)]);
   const [badgePhotoFile, setBadgePhotoFile] = React.useState(null);
@@ -1032,7 +1047,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             onChange={set("programId")}
             options={[
               ...(lockProgramId ? [] : [{ value: "", label: programPlaceholder }]),
-              ...(lockProgramId ? programs.filter((p) => p.id === lockProgramId) : programs).map((p) => ({ value: p.id, label: p.name })),
+              ...selectablePrograms.map((p) => ({ value: p.id, label: p.name })),
             ]}
             disabled={Boolean(lockProgramId)}
             style={{ gridColumn:"1/-1" }}

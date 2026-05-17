@@ -131,7 +131,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
     { id: "clients",   icon: Users,         label: t.clients },
     { id: "programs",  icon: FolderKanban,  label: t.programs },
     { id: "activity",  icon: ClipboardList, label: t.activityLog || t.recentActivity },
-    { id: "clearance", icon: BarChart3,     label: t.clearance },
+    { id: "clearance", icon: BarChart3,     label: t.clearanceNav || t.clearance },
     { id: "archive",   icon: FolderArchive, label: t.archiveNav },
     { id: "trash",     icon: Trash2,        label: t.trash },
     { id: "settings",  icon: SettingsIcon,  label: t.settings },

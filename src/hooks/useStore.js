@@ -20,6 +20,8 @@ import {
   saveClient,
   markClientsDeleted,
   restoreClients,
+  archiveClientRecord as archiveClientRecordRemote,
+  restoreClientRecord as restoreClientRecordRemote,
   deleteClientsPermanent,
 } from "../services/clientsService";
 import {
@@ -48,6 +50,7 @@ import {
 } from "../services/agencyBackupArchiveService";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
+import { getClientProgramId } from "../utils/clientCompletionStatus";
 import { getClientServiceType } from "../utils/clientServiceTypes";
 import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
 import { formatCurrency } from "../utils/currency";
@@ -189,6 +192,10 @@ const localizedPaymentRestoreMessage = () => {
   if (lang === "en") return "Payment restored";
   return "تم استرجاع الدفعة";
 };
+
+const archivePersistenceErrorMessage = (key) => (
+  [trKey(key), trKey("archivePleaseTryAgain")].filter(Boolean).join(". ")
+);
 
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
 
@@ -839,7 +846,7 @@ export function useStore(agencyId, onToast) {
 
   // ── Silent background sync: local-first, Supabase async ──────────────────
   const sync = useCallback(async (fn) => {
-    if (!isSupabaseEnabled || !agencyId) return;
+    if (!isSupabaseEnabled || !agencyId) return { error: null, skipped: true };
     setSyncStatus("syncing");
     try {
       const result = await fn();
@@ -852,11 +859,13 @@ export function useStore(agencyId, onToast) {
       setLastSynced(now);
       try { localStorage.setItem(`umrah_last_synced_${ns}`, now.toISOString()); } catch {}
       setSyncStatus("synced");
+      return result || { error: null };
     } catch (err) {
       console.error("[Store] Sync request failed:", err);
       setSyncStatus("offline");
+      return { error: err };
     }
-  }, [agencyId, ns]);
+  }, [agencyId, isSupabaseEnabled, ns]);
 
   const loadClients = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) {
@@ -1678,13 +1687,17 @@ export function useStore(agencyId, onToast) {
   }, [callPermanentDeleteClientsFunction]);
 
   // ── Stats (operational clients only) ──────────────────────────────────────
+  const localClientStatsReady = !isSupabaseEnabled || clientsLoaded;
+  const localPaymentStatsReady = !isSupabaseEnabled || paymentsLoaded;
   const localStats = useMemo(() => {
-    if (isSupabaseEnabled && dashboardStats) return null;
+    if (!localClientStatsReady) return null;
     // Build paid lookup map once — O(n) over payments instead of O(n²)
     const paidMap = new Map();
-    payments.forEach(p => {
-      paidMap.set(p.clientId, (paidMap.get(p.clientId) || 0) + p.amount);
-    });
+    if (localPaymentStatsReady) {
+      payments.forEach(p => {
+        paidMap.set(p.clientId, (paidMap.get(p.clientId) || 0) + p.amount);
+      });
+    }
     const getPaid = (clientId) => paidMap.get(clientId) || 0;
     const getStatus = (client) => {
       const paid  = getPaid(client.id);
@@ -1693,11 +1706,26 @@ export function useStore(agencyId, onToast) {
       if (paid >= price) return "cleared";
       return "partial";
     };
-    const operationalClients = activeClients.filter(c => !c.deleted);
-    return {
+    const activeProgramIds = new Set(activeProgramRecords.map((program) => String(program.id || "")));
+    const operationalClients = activeClients.filter((client) => (
+      !client.deleted
+      && (!getClientProgramId(client) || activeProgramIds.has(getClientProgramId(client)))
+    ));
+    const programClientCounts = operationalClients.reduce((acc, client) => {
+      const programId = getClientProgramId(client);
+      if (programId) acc[programId] = (acc[programId] || 0) + 1;
+      return acc;
+    }, {});
+    const clientStats = {
       totalClients:   operationalClients.length,
       archivedCount:  0,
       totalPrograms:  activeProgramRecords.length,
+      docsIncomplete: operationalClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
+      programClientCounts,
+    };
+    if (!localPaymentStatsReady) return clientStats;
+    return {
+      ...clientStats,
       cleared:        operationalClients.filter(c => getStatus(c) === "cleared").length,
       partial:        operationalClients.filter(c => getStatus(c) === "partial").length,
       unpaid:         operationalClients.filter(c => getStatus(c) === "unpaid").length,
@@ -1705,20 +1733,40 @@ export function useStore(agencyId, onToast) {
       totalCollected: operationalClients.reduce((s,c) => s+getPaid(c.id), 0),
       totalRemaining: operationalClients.reduce((s,c) => s + getClientRemainingAmount(c, getPaid(c.id)), 0),
       totalDiscount:  operationalClients.reduce((s,c) => s + Math.max(0, getClientEffectiveOfficialPrice(c) - getClientEffectiveSalePrice(c)), 0),
-      docsIncomplete: operationalClients.filter(c => c.docs && Object.values(c.docs).some(v => !v)).length,
-      programClientCounts: operationalClients.reduce((acc, client) => {
-        if (client.programId) acc[client.programId] = (acc[client.programId] || 0) + 1;
-        return acc;
-      }, {}),
     };
-  }, [activeClients, activeProgramRecords.length, payments, isSupabaseEnabled, dashboardStats]);
+  }, [activeClients, activeProgramRecords, localClientStatsReady, localPaymentStatsReady, payments]);
 
   const stats = useMemo(() => {
-    const base = isSupabaseEnabled && dashboardStats
+    const remoteStats = isSupabaseEnabled && dashboardStats
       ? { ...EMPTY_DASHBOARD_STATS, ...dashboardStats }
-      : (localStats || EMPTY_DASHBOARD_STATS);
+      : EMPTY_DASHBOARD_STATS;
+    let base = localStats ? { ...remoteStats, ...localStats } : remoteStats;
+    if (!localStats && isSupabaseEnabled && dashboardStats?.programClientCounts) {
+      const programClientCounts = { ...base.programClientCounts };
+      const archivedProgramClientCount = programs.reduce((sum, program) => {
+        const programId = String(program?.id || "");
+        if (
+          !programId
+          || program.deleted
+          || program.deletedAt
+          || String(program.status || "active").toLowerCase() !== "archived"
+        ) {
+          return sum;
+        }
+        const count = Number(programClientCounts[programId] || 0);
+        delete programClientCounts[programId];
+        return sum + count;
+      }, 0);
+      if (archivedProgramClientCount > 0) {
+        base = {
+          ...base,
+          totalClients: Math.max(0, Number(base.totalClients || 0) - archivedProgramClientCount),
+          programClientCounts,
+        };
+      }
+    }
     return { ...base, totalPrograms: activeProgramRecords.length };
-  }, [activeProgramRecords.length, dashboardStats, isSupabaseEnabled, localStats]);
+  }, [activeProgramRecords.length, dashboardStats, isSupabaseEnabled, localStats, programs]);
 
   // ── Archive suggestions ───────────────────────────────────────────────────
   const getArchiveSuggestions = useCallback(() => {
@@ -2099,29 +2147,81 @@ export function useStore(agencyId, onToast) {
   // ── Archive / Restore ─────────────────────────────────────────────────────
   const archiveClient = useCallback((id) => {
     const now = new Date().toISOString();
-    archiveClientLocal([id], now);
     const c = clients.find((x) => x.id === id);
+    const previousArchived = c?.archived ?? false;
+    const previousArchivedAt = c?.archivedAt ?? c?.archived_at ?? null;
+    archiveClientLocal([id], now);
     logActivity("client_archive", translateActivityDescription("تم أرشفة المعتمر"), getClientDisplayName(c, id));
-    if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
-  }, [clients, archiveClientLocal, logActivity, sync, agencyId]);
+    if (c) {
+      return sync(() => archiveClientRecordRemote(id, agencyId, now)).then((result) => {
+        if (!result?.error) return result || { error: null };
+        setClients((prev) => prev.map((item) => (
+          item.id === id
+            ? { ...item, archived: previousArchived, archivedAt: previousArchivedAt, archived_at: previousArchivedAt }
+            : item
+        )));
+        notify(archivePersistenceErrorMessage("archiveClientSaveError"), "error");
+        return result;
+      });
+    }
+    return Promise.resolve({ error: null });
+  }, [clients, archiveClientLocal, logActivity, notify, setClients, sync, agencyId]);
 
   const archiveClients = useCallback((ids) => {
-    if (!ids?.length) return;
+    if (!ids?.length) return Promise.resolve({ error: null });
     const now = new Date().toISOString();
+    const previousById = new Map(ids.map((id) => {
+      const client = clients.find((x) => x.id === id);
+      return [id, {
+        archived: client?.archived ?? false,
+        archivedAt: client?.archivedAt ?? client?.archived_at ?? null,
+      }];
+    }));
     archiveClientLocal(ids, now);
-    ids.forEach((id) => {
+    const attempts = ids.map((id) => {
       const c = clients.find((x) => x.id === id);
-      if (c) sync(() => saveClient({ ...c, archived: true, archivedAt: now }, agencyId));
+      if (!c) return Promise.resolve(true);
+      return sync(() => archiveClientRecordRemote(id, agencyId, now)).then((result) => {
+        if (!result?.error) return true;
+        const previous = previousById.get(id) || {};
+        setClients((prev) => prev.map((item) => (
+          item.id === id
+            ? { ...item, archived: previous.archived ?? false, archivedAt: previous.archivedAt ?? null, archived_at: previous.archivedAt ?? null }
+            : item
+        )));
+        return false;
+      });
     });
     logActivity("client_bulk_archive", translateActivityDescription(`تمت أرشفة ${ids.length} معتمر`), "");
-  }, [clients, archiveClientLocal, sync, agencyId, logActivity]);
+    return Promise.all(attempts).then((results) => {
+      if (results.some((saved) => saved === false)) {
+        notify(archivePersistenceErrorMessage("archiveClientSaveError"), "error");
+        return { error: new Error("archive-clients-failed") };
+      }
+      return { error: null };
+    });
+  }, [clients, archiveClientLocal, notify, setClients, sync, agencyId, logActivity]);
 
   const restoreClient = useCallback((id) => {
-    restoreArchivedClientLocal(id);
     const c = clients.find((x) => x.id === id);
+    const previousArchived = c?.archived ?? true;
+    const previousArchivedAt = c?.archivedAt ?? c?.archived_at ?? null;
+    restoreArchivedClientLocal(id);
     logActivity("client_restore", translateActivityDescription("تمت استعادة المعتمر من الأرشيف"), getClientDisplayName(c, id));
-    if (c) sync(() => saveClient({ ...c, archived: false, archivedAt: null }, agencyId));
-  }, [clients, restoreArchivedClientLocal, logActivity, sync, agencyId]);
+    if (c) {
+      return sync(() => restoreClientRecordRemote(id, agencyId)).then((result) => {
+        if (!result?.error) return result || { error: null };
+        setClients((prev) => prev.map((item) => (
+          item.id === id
+            ? { ...item, archived: previousArchived, archivedAt: previousArchivedAt, archived_at: previousArchivedAt }
+            : item
+        )));
+        notify(archivePersistenceErrorMessage("restoreClientSaveError"), "error");
+        return result;
+      });
+    }
+    return Promise.resolve({ error: null });
+  }, [clients, restoreArchivedClientLocal, logActivity, notify, setClients, sync, agencyId]);
 
   const archiveProgram = useCallback((programId) => {
     const now        = new Date().toISOString();
@@ -2272,19 +2372,31 @@ export function useStore(agencyId, onToast) {
 
   const archiveProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
-    if (!prog || prog.deleted || prog.deletedAt || prog.status === "archived") return;
+    if (!prog || prog.deleted || prog.deletedAt || prog.status === "archived") return Promise.resolve({ error: null });
+    const previousStatus = prog.status;
     setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "archived" } : p));
     logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${prog?.name || programId}`), "");
-    sync(() => archiveProgramRecordRemote(programId, agencyId));
-  }, [programs, setPrograms, logActivity, sync, agencyId]);
+    return sync(() => archiveProgramRecordRemote(programId, agencyId)).then((result) => {
+      if (!result?.error) return result || { error: null };
+      setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: previousStatus } : p));
+      notify(archivePersistenceErrorMessage("archiveProgramSaveError"), "error");
+      return result;
+    });
+  }, [programs, setPrograms, logActivity, notify, sync, agencyId]);
 
   const restoreProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
-    if (!prog || prog.deleted || prog.deletedAt || prog.status !== "archived") return;
+    if (!prog || prog.deleted || prog.deletedAt || prog.status !== "archived") return Promise.resolve({ error: null });
+    const previousStatus = prog.status;
     setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "active" } : p));
     logActivity("program_restore", translateActivityDescription(`تمت استعادة برنامج ${prog?.name || programId}`), "");
-    sync(() => restoreProgramRecordRemote(programId, agencyId));
-  }, [programs, setPrograms, logActivity, sync, agencyId]);
+    return sync(() => restoreProgramRecordRemote(programId, agencyId)).then((result) => {
+      if (!result?.error) return result || { error: null };
+      setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: previousStatus } : p));
+      notify(archivePersistenceErrorMessage("restoreProgramSaveError"), "error");
+      return result;
+    });
+  }, [programs, setPrograms, logActivity, notify, sync, agencyId]);
 
   const deleteProgram = useCallback((id) => {
     const prog = programs.find(p => p.id === id);

@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Filter } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { StatusBadge, GlassCard, SearchBar, Button, Modal } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
@@ -133,29 +133,159 @@ const getPaymentContextSearchPlaceholder = (method, lang = "ar", t = {}) => {
   return "";
 };
 
-const getPaymentMethodOptions = (lang = "ar") => {
-  if (lang === "fr") return [
-    { key: "all", label: "Tous" },
-    { key: "cash", label: "Espèces" },
-    { key: "bank_transfer", label: "Virement bancaire" },
-    { key: "cheque", label: "Chèque" },
-    { key: "bank_deposit", label: "Dépôt bancaire" },
-  ];
-  if (lang === "en") return [
-    { key: "all", label: "All" },
-    { key: "cash", label: "Cash" },
-    { key: "bank_transfer", label: "Bank transfer" },
-    { key: "cheque", label: "Cheque" },
-    { key: "bank_deposit", label: "Bank deposit" },
-  ];
+const joinFilterLabel = (label, value) => `${label}: ${value}`;
+const shortFilterLabel = (fullLabel, fallbackLabel) => {
+  const parts = String(fullLabel || "").split(":");
+  const value = parts.length > 1 ? parts.slice(1).join(":").trim() : "";
+  return value || fallbackLabel || fullLabel || "";
+};
+
+const getStatusFilterOptions = (t = {}) => {
+  const statusLabel = t.statusFilterLabel || t.status;
+  const allLabel = t.statusFilterAll || joinFilterLabel(statusLabel, t.all);
+  const paidLabel = t.statusFilterPaid || joinFilterLabel(statusLabel, t.clearedFilter);
+  const partialLabel = t.statusFilterPartial || joinFilterLabel(statusLabel, t.partialFilter);
+  const unpaidLabel = t.statusFilterUnpaid || joinFilterLabel(statusLabel, t.unpaidFilter);
   return [
-    { key: "all", label: "الكل" },
-    { key: "cash", label: "نقد" },
-    { key: "bank_transfer", label: "تحويل بنكي" },
-    { key: "cheque", label: "شيك" },
-    { key: "bank_deposit", label: "إيداع بنكي" },
+    { key: "all", buttonLabel: allLabel, label: shortFilterLabel(allLabel, t.all) },
+    { key: "cleared", buttonLabel: paidLabel, label: shortFilterLabel(paidLabel, t.clearedFilter) },
+    { key: "partial", buttonLabel: partialLabel, label: shortFilterLabel(partialLabel, t.partialFilter) },
+    { key: "unpaid", buttonLabel: unpaidLabel, label: shortFilterLabel(unpaidLabel, t.unpaidFilter) },
   ];
 };
+
+const getPaymentMethodOptions = (t = {}) => {
+  const paymentLabel = t.paymentFilterLabel || t.paymentMethodFilter || t.paymentMethodLabel;
+  const methods = Array.isArray(t.paymentMethods) ? t.paymentMethods : [];
+  const allLabel = t.paymentFilterAll || joinFilterLabel(paymentLabel, t.all);
+  const cashLabel = t.paymentFilterCash || joinFilterLabel(paymentLabel, methods[0]);
+  const bankTransferLabel = t.paymentFilterBankTransfer || joinFilterLabel(paymentLabel, methods[1]);
+  const chequeLabel = t.paymentFilterCheque || joinFilterLabel(paymentLabel, methods[2]);
+  const bankDepositLabel = t.paymentFilterBankDeposit || joinFilterLabel(paymentLabel, methods[3]);
+  return [
+    { key: "all", buttonLabel: allLabel, label: shortFilterLabel(allLabel, t.all) },
+    { key: "cash", buttonLabel: cashLabel, label: shortFilterLabel(cashLabel, methods[0]) },
+    { key: "bank_transfer", buttonLabel: bankTransferLabel, label: shortFilterLabel(bankTransferLabel, methods[1]) },
+    { key: "cheque", buttonLabel: chequeLabel, label: shortFilterLabel(chequeLabel, methods[2]) },
+    { key: "bank_deposit", buttonLabel: bankDepositLabel, label: shortFilterLabel(bankDepositLabel, methods[3]) },
+  ];
+};
+
+function CompactFilterDropdown({
+  options,
+  value,
+  onChange,
+  open,
+  setOpen,
+  containerRef,
+  title,
+  basis = 180,
+}) {
+  const activeOption = options.find((option) => option.key === value) || options[0];
+  const buttonLabel = activeOption.buttonLabel || activeOption.label;
+  const isActive = value !== "all";
+  return (
+    <div
+      ref={containerRef}
+      className="clearance-filter-dropdown"
+      style={{
+        position: "relative",
+        flex: `0 1 ${basis}px`,
+        width: "auto",
+        maxWidth: "100%",
+        zIndex: open ? 80 : 1,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={title || buttonLabel}
+        style={{
+          width: "100%",
+          height: 42,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          border: "1px solid var(--rukn-border-soft)",
+          borderRadius: 12,
+          background: isActive ? "var(--rukn-gold-dim)" : "var(--rukn-bg-input)",
+          color: isActive ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+          padding: "0 11px",
+          fontSize: 12,
+          fontWeight: 800,
+          fontFamily: "'Cairo',sans-serif",
+          cursor: "pointer",
+          boxSizing: "border-box",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+          <AppIcon name="filter" size={14} color="currentColor" style={{ flexShrink: 0 }} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {buttonLabel}
+          </span>
+        </span>
+        <ChevronDown
+          size={14}
+          style={{ flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform .18s ease" }}
+        />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 7px)",
+            insetInlineStart: 0,
+            width: "max-content",
+            minWidth: "100%",
+            maxWidth: "min(260px, calc(100vw - 32px))",
+            zIndex: 80,
+            padding: 6,
+            borderRadius: 12,
+            border: "1px solid var(--rukn-menu-border, var(--rukn-border-soft))",
+            background: "var(--rukn-menu-bg, var(--rukn-bg-card))",
+            boxShadow: "var(--rukn-menu-shadow, 0 18px 40px rgba(0,0,0,.28))",
+          }}
+        >
+          {options.map((option) => {
+            const active = value === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(option.key);
+                  setOpen(false);
+                }}
+                style={{
+                  width: "100%",
+                  border: 0,
+                  borderRadius: 9,
+                  background: active ? "var(--rukn-gold-dim)" : "transparent",
+                  color: active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                  padding: "8px 9px",
+                  fontSize: 12,
+                  fontWeight: active ? 800 : 600,
+                  cursor: "pointer",
+                  fontFamily: "'Cairo',sans-serif",
+                  textAlign: "start",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const getProgramDateValue = (program = {}) => {
   const raw = program.departure || program.startDate || program.date || program.departureDate || "";
@@ -470,6 +600,7 @@ export default function ClearancePage({ store }) {
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const clearanceDataReady = clientsReady && paymentsReady;
   const [filter, setFilter] = React.useState("all");
+  const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [paymentMethodFilter, setPaymentMethodFilter] = React.useState("all");
   const [paymentMethodOpen, setPaymentMethodOpen] = React.useState(false);
@@ -486,6 +617,7 @@ export default function ClearancePage({ store }) {
   const [savedInvoices, setSavedInvoices] = React.useState(() => (
     invoicesAreRemote ? [] : readSavedInvoices()
   ));
+  const statusFilterRef = React.useRef(null);
   const paymentMethodRef = React.useRef(null);
   const clearanceHydrationRequestedRef = React.useRef(false);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
@@ -566,13 +698,16 @@ export default function ClearancePage({ store }) {
   }, [paymentMethodFilter]);
 
   React.useEffect(() => {
-    if (!paymentMethodOpen) return undefined;
+    if (!statusFilterOpen && !paymentMethodOpen) return undefined;
     const handlePointerDown = (event) => {
-      if (paymentMethodRef.current?.contains(event.target)) return;
-      setPaymentMethodOpen(false);
+      if (statusFilterOpen && !statusFilterRef.current?.contains(event.target)) setStatusFilterOpen(false);
+      if (paymentMethodOpen && !paymentMethodRef.current?.contains(event.target)) setPaymentMethodOpen(false);
     };
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") setPaymentMethodOpen(false);
+      if (event.key === "Escape") {
+        setStatusFilterOpen(false);
+        setPaymentMethodOpen(false);
+      }
     };
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -580,7 +715,7 @@ export default function ClearancePage({ store }) {
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [paymentMethodOpen]);
+  }, [paymentMethodOpen, statusFilterOpen]);
 
   const selectedProgram = React.useMemo(
     () => programs.find((program) => program.id === selectedProgramId) || null,
@@ -591,7 +726,9 @@ export default function ClearancePage({ store }) {
     () => selectedProgramId ? clients.filter((client) => client.programId === selectedProgramId) : [],
     [clients, selectedProgramId]
   );
-  const paymentMethodOptions = React.useMemo(() => getPaymentMethodOptions(lang), [lang]);
+  const statusFilterOptions = React.useMemo(() => getStatusFilterOptions(t), [t]);
+  const activeStatusFilterOption = statusFilterOptions.find((option) => option.key === filter) || statusFilterOptions[0];
+  const paymentMethodOptions = React.useMemo(() => getPaymentMethodOptions(t), [t]);
   const activePaymentMethodOption = paymentMethodOptions.find((option) => option.key === paymentMethodFilter) || paymentMethodOptions[0];
 
   const programData = React.useMemo(() => selectedProgramClients.map(c => {
@@ -982,110 +1119,33 @@ export default function ClearancePage({ store }) {
       </div>
 
       {/* Filters */}
-      <div className="page-filters filters-chips">
-        {[
-          { key:"all",     label:t.all },
-          { key:"cleared", label:t.clearedFilter },
-          { key:"partial", label:t.partialFilter },
-          { key:"unpaid",  label:t.unpaidFilter },
-        ].map(f => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setFilter(f.key)}
-            className={`filter-chip${filter===f.key ? " is-active" : ""}`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="clearance-search" style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+      <div className="clearance-search" style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-start", direction:dir }}>
+        <CompactFilterDropdown
+          options={statusFilterOptions}
+          value={filter}
+          onChange={setFilter}
+          open={statusFilterOpen}
+          setOpen={setStatusFilterOpen}
+          containerRef={statusFilterRef}
+          title={activeStatusFilterOption.buttonLabel}
+          basis={170}
+        />
         <SearchBar
           value={search}
           onChange={e=>setSearch(e.target.value)}
           placeholder={t.searchGeneral}
           style={{ width:"100%", maxWidth:360, flex:"1 1 260px" }}
         />
-        <div ref={paymentMethodRef} style={{ position:"relative", flex:"0 0 auto" }}>
-          <button
-            type="button"
-            onClick={() => setPaymentMethodOpen((open) => !open)}
-            aria-expanded={paymentMethodOpen}
-            title={t.paymentMethodFilter || t.paymentMethodLabel || activePaymentMethodOption.label}
-            style={{
-              height:38,
-              minWidth:170,
-              display:"inline-flex",
-              alignItems:"center",
-              justifyContent:"space-between",
-              gap:10,
-              border:"1px solid var(--rukn-border-soft)",
-              borderRadius:12,
-              background:paymentMethodFilter === "all" ? "var(--rukn-bg-input)" : "var(--rukn-gold-dim)",
-              color:paymentMethodFilter === "all" ? "var(--rukn-text-muted)" : "var(--rukn-gold)",
-              padding:"0 11px",
-              fontSize:12,
-              fontWeight:800,
-              fontFamily:"'Cairo',sans-serif",
-              cursor:"pointer",
-            }}
-          >
-            <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
-              <Filter size={14} />
-              <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {activePaymentMethodOption.label}
-              </span>
-            </span>
-            <ChevronDown
-              size={14}
-              style={{ flexShrink:0, transform:paymentMethodOpen ? "rotate(180deg)" : "none", transition:"transform .18s ease" }}
-            />
-          </button>
-          {paymentMethodOpen && (
-            <div style={{
-              position:"absolute",
-              top:"calc(100% + 7px)",
-              insetInlineStart:0,
-              width:210,
-              zIndex:40,
-              padding:6,
-              borderRadius:12,
-              border:"1px solid var(--rukn-menu-border, var(--rukn-border-soft))",
-              background:"var(--rukn-menu-bg, var(--rukn-bg-card))",
-              boxShadow:"var(--rukn-menu-shadow, 0 18px 40px rgba(0,0,0,.28))",
-            }}>
-              {paymentMethodOptions.map((option) => {
-                const active = paymentMethodFilter === option.key;
-                return (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => {
-                      setPaymentMethodFilter(option.key);
-                      setPaymentMethodOpen(false);
-                    }}
-                    style={{
-                      width:"100%",
-                      border:0,
-                      borderRadius:9,
-                      background:active ? "var(--rukn-gold-dim)" : "transparent",
-                      color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
-                      padding:"8px 9px",
-                      fontSize:12,
-                      fontWeight:active ? 800 : 600,
-                      cursor:"pointer",
-                      fontFamily:"'Cairo',sans-serif",
-                      textAlign:"start",
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <CompactFilterDropdown
+          options={paymentMethodOptions}
+          value={paymentMethodFilter}
+          onChange={setPaymentMethodFilter}
+          open={paymentMethodOpen}
+          setOpen={setPaymentMethodOpen}
+          containerRef={paymentMethodRef}
+          title={activePaymentMethodOption.buttonLabel}
+          basis={220}
+        />
         {["cheque", "bank_transfer", "bank_deposit"].includes(paymentMethodFilter) && (
           <SearchBar
             value={paymentContextSearch}
