@@ -59,6 +59,12 @@ const toFiniteNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const toNullableFiniteNumber = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 const parseRpcJson = (value) => {
   if (typeof value !== "string") return value;
   try {
@@ -97,6 +103,40 @@ const normalizeDashboardSummary = (summary = {}) => {
   };
 };
 
+const fromTrashPageItem = (row = {}) => ({
+  itemType: row.item_type || row.itemType || "",
+  itemId: row.item_id || row.itemId || "",
+  clientId: row.client_id || row.clientId || "",
+  title: row.title || "",
+  clientName: row.client_name || row.clientName || "",
+  phone: row.phone || "",
+  city: row.city || "",
+  amount: toNullableFiniteNumber(row.amount),
+  method: row.method || "",
+  receiptNo: row.receipt_no || row.receiptNo || "",
+  invoiceDisplayNumber: row.invoice_display_number || row.invoiceDisplayNumber || "",
+  programName: row.program_name || row.programName || "",
+  departure: row.departure || "",
+  duration: row.duration || "",
+  deletedAt: row.deleted_at || row.deletedAt || "",
+  createdAt: row.created_at || row.createdAt || "",
+  deletedBatchId: row.deleted_batch_id || row.deletedBatchId || "",
+  linkedCount: toFiniteNumber(row.linked_count ?? row.linkedCount),
+  status: row.status || "",
+});
+
+const normalizeTrashPage = (payload = {}, { page = 1, pageSize = 25, filter = "all" } = {}) => {
+  const source = parseRpcJson(payload) || {};
+  const items = Array.isArray(source.items) ? source.items.map(fromTrashPageItem) : [];
+  return {
+    items,
+    totalCount: toFiniteNumber(source.total_count ?? source.totalCount),
+    page,
+    pageSize,
+    filter: source.item_type || filter,
+  };
+};
+
 const composeClientName = (row) => {
   const first = typeof row.first_name === "string" ? row.first_name.trim() : "";
   const last  = typeof row.last_name === "string" ? row.last_name.trim() : "";
@@ -122,6 +162,106 @@ const toPassportGender = (gender) => {
   if (gender === "female") return "F";
   return "";
 };
+
+const PROGRAM_SELECT_COLUMNS = [
+  "id",
+  "name",
+  "name_fr",
+  "type",
+  "duration",
+  "departure",
+  "return_date",
+  "hotel_checkin_day",
+  "transport",
+  "meal_plan",
+  "seats",
+  "hotel_mecca",
+  "hotel_madina",
+  "badge_guide_phone",
+  "badge_saudi_phone_1",
+  "badge_saudi_phone_2",
+  "badge_note",
+  "badge_template_id",
+  "price_table",
+  "notes",
+  "deleted",
+  "deleted_at",
+  "deleted_batch_id",
+  "status",
+  "created_at",
+].join(", ");
+
+const CLIENT_SELECT_COLUMNS = [
+  "id",
+  "program_id",
+  "name",
+  "first_name",
+  "last_name",
+  "nom",
+  "prenom",
+  "phone",
+  "registration_source",
+  "city",
+  "hotel_level",
+  "hotel_mecca",
+  "hotel_madina",
+  "room_type",
+  "official_price",
+  "sale_price",
+  "ticket_no",
+  "represented_by_client_id",
+  "represented_by_relationship",
+  "passport",
+  "docs",
+  "notes",
+  "registration_date",
+  "last_modified",
+  "archived",
+  "archived_at",
+  "deleted",
+  "deleted_at",
+  "deleted_batch_id",
+  "created_at",
+].join(", ");
+
+const PAYMENT_SELECT_COLUMNS = [
+  "id",
+  "client_id",
+  "amount",
+  "date",
+  "method",
+  "receipt_no",
+  "receipt_sequence",
+  "cheque_number",
+  "paid_by",
+  "note",
+  "payment_type",
+  "legacy_receipt_number",
+  "status",
+  "trashed_at",
+  "deleted_at",
+  "created_at",
+].join(", ");
+
+const INVOICE_SELECT_COLUMNS = [
+  "id",
+  "invoice_key",
+  "invoice_number",
+  "invoice_display_number",
+  "invoice_year",
+  "issue_date",
+  "status",
+  "client_id",
+  "program_id",
+  "recipient_type",
+  "recipient_snapshot",
+  "program_snapshot",
+  "amount_snapshot",
+  "payment_references",
+  "created_at",
+  "trashed_at",
+  "deleted_at",
+].join(", ");
 
 // ─── Mappers: app (camelCase) ↔ Supabase (snake_case) ────────────────────────
 
@@ -730,7 +870,7 @@ export const db = {
     async fetchDeleted(agencyId) {
       const { data, error } = await supabase
         .from("programs")
-        .select("*")
+        .select(PROGRAM_SELECT_COLUMNS)
         .eq("agency_id", agencyId)
         .eq("deleted", true)
         .order("deleted_at", { ascending: false });
@@ -870,7 +1010,7 @@ export const db = {
     async fetchDeleted(agencyId) {
       const { data, error } = await supabase
         .from("clients")
-        .select("*")
+        .select(CLIENT_SELECT_COLUMNS)
         .eq("agency_id", agencyId)
         .eq("deleted", true)
         .order("deleted_at", { ascending: false });
@@ -965,7 +1105,7 @@ export const db = {
 
       const clientsResult = await supabase
         .from("clients")
-        .select("*")
+        .select(CLIENT_SELECT_COLUMNS)
         .eq("agency_id", agencyId)
         .eq("deleted", true)
         .in("id", clientIds);
@@ -980,14 +1120,14 @@ export const db = {
       const [paymentsResult, invoicesResult] = await Promise.all([
         supabase
           .from("payments")
-          .select("*")
+          .select(PAYMENT_SELECT_COLUMNS)
           .eq("agency_id", agencyId)
           .in("client_id", eligibleClientIds)
           .order("date", { ascending: false, nullsFirst: false })
           .order("created_at", { ascending: false }),
         supabase
           .from("invoices")
-          .select("*")
+          .select(INVOICE_SELECT_COLUMNS)
           .eq("agency_id", agencyId)
           .in("client_id", eligibleClientIds.map(String))
           .order("issue_date", { ascending: false, nullsFirst: false })
@@ -1007,7 +1147,7 @@ export const db = {
       if (programIds.length) {
         const programsResult = await supabase
           .from("programs")
-          .select("*")
+          .select(PROGRAM_SELECT_COLUMNS)
           .eq("agency_id", agencyId)
           .in("id", programIds);
         if (programsResult.error) return { data: null, error: programsResult.error };
@@ -1038,7 +1178,7 @@ export const db = {
     async fetchTrashed(agencyId) {
       if (!agencyId) return { data: [], error: null };
       const { data, error } = await supabase
-        .from("payments").select("*")
+        .from("payments").select(PAYMENT_SELECT_COLUMNS)
         .eq("agency_id", agencyId)
         .eq("status", "trashed")
         .order("trashed_at", { ascending: false, nullsFirst: false })
@@ -1127,7 +1267,7 @@ export const db = {
       if (!agencyId) return { data: [], error: null };
       const { data, error } = await supabase
         .from("invoices")
-        .select("*")
+        .select(INVOICE_SELECT_COLUMNS)
         .eq("agency_id", agencyId)
         .eq("status", "trashed")
         .order("trashed_at", { ascending: false, nullsFirst: false })
@@ -1163,7 +1303,7 @@ export const db = {
         .update({ status: "trashed", trashed_at: new Date().toISOString() })
         .eq("agency_id", agencyId)
         .eq("id", id)
-        .select("*")
+        .select(INVOICE_SELECT_COLUMNS)
         .single();
       return { data: data ? fromInvoice(data) : null, error };
     },
@@ -1174,7 +1314,7 @@ export const db = {
         .update({ status: "issued", trashed_at: null, deleted_at: null })
         .eq("agency_id", agencyId)
         .eq("id", id)
-        .select("*")
+        .select(INVOICE_SELECT_COLUMNS)
         .single();
       return { data: data ? fromInvoice(data) : null, error };
     },
@@ -1185,9 +1325,95 @@ export const db = {
         .update({ status: "deleted", deleted_at: new Date().toISOString() })
         .eq("agency_id", agencyId)
         .eq("id", id)
-        .select("*")
+        .select(INVOICE_SELECT_COLUMNS)
         .single();
       return { data: data ? fromInvoice(data) : null, error };
+    },
+  },
+
+  trash: {
+    async fetchPage({ filter = "all", page = 1, pageSize = 25 } = {}) {
+      const safePage = Math.max(1, Number(page) || 1);
+      const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 25));
+      const offset = (safePage - 1) * safePageSize;
+      const rpcName = "get_trash_page";
+      const { data, error } = await supabase.rpc(rpcName, {
+        p_item_type: filter || "all",
+        p_limit: safePageSize,
+        p_offset: offset,
+      });
+      if (isMissingRpcError(error, rpcName)) {
+        return {
+          data: null,
+          error: {
+            ...error,
+            isMissingMigration: true,
+            missingRpc: rpcName,
+          },
+        };
+      }
+      return {
+        data: error ? null : normalizeTrashPage(data, { page: safePage, pageSize: safePageSize, filter }),
+        error,
+      };
+    },
+
+    async fetchProgramContext(agencyId, programIds = []) {
+      const ids = Array.from(new Set((programIds || []).filter(Boolean)));
+      if (!agencyId || !ids.length) {
+        return { data: { deletedPrograms: [], deletedClients: [], activeClients: [] }, error: null };
+      }
+
+      const programsResult = await supabase
+        .from("programs")
+        .select(PROGRAM_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .eq("deleted", true)
+        .in("id", ids);
+      if (programsResult.error) return { data: null, error: programsResult.error };
+
+      const programRows = Array.isArray(programsResult.data) ? programsResult.data : [];
+      const batchIds = Array.from(new Set(programRows.map((program) => program.deleted_batch_id).filter(Boolean)));
+
+      const [activeClientsResult, deletedClientsByProgramResult, deletedClientsByBatchResult] = await Promise.all([
+        supabase
+          .from("clients")
+          .select(CLIENT_SELECT_COLUMNS)
+          .eq("agency_id", agencyId)
+          .eq("deleted", false)
+          .in("program_id", ids),
+        supabase
+          .from("clients")
+          .select(CLIENT_SELECT_COLUMNS)
+          .eq("agency_id", agencyId)
+          .eq("deleted", true)
+          .in("program_id", ids),
+        batchIds.length
+          ? supabase
+              .from("clients")
+              .select(CLIENT_SELECT_COLUMNS)
+              .eq("agency_id", agencyId)
+              .eq("deleted", true)
+              .in("deleted_batch_id", batchIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      const error = activeClientsResult.error || deletedClientsByProgramResult.error || deletedClientsByBatchResult.error;
+      if (error) return { data: null, error };
+
+      const deletedClientRowsById = new Map();
+      [...(deletedClientsByProgramResult.data || []), ...(deletedClientsByBatchResult.data || [])].forEach((client) => {
+        if (client?.id) deletedClientRowsById.set(client.id, client);
+      });
+
+      return {
+        data: {
+          deletedPrograms: programRows.map(fromProgram),
+          deletedClients: Array.from(deletedClientRowsById.values()).map(fromClient),
+          activeClients: (activeClientsResult.data || []).map(fromClient),
+        },
+        error: null,
+      };
     },
   },
 

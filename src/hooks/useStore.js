@@ -374,6 +374,14 @@ const filterPaymentsForClients = (paymentData = [], clientData = []) => {
   return safePayments.filter((payment) => clientIds.has(getPaymentClientId(payment)));
 };
 
+const mergeRecordsById = (...groups) => {
+  const map = new Map();
+  groups.flat().forEach((record) => {
+    if (record?.id) map.set(record.id, record);
+  });
+  return Array.from(map.values());
+};
+
 const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new Date().toISOString()) => ({
   snapshotVersion: 1,
   kind: "deleted_program",
@@ -668,6 +676,16 @@ export function useStore(agencyId, onToast) {
   useEffect(() => { usersLoadedRef.current = usersLoaded; }, [usersLoaded]);
   useEffect(() => { clientPermanentDeletePreflightCacheRef.current.clear(); }, [agencyId]);
 
+  const invalidateClientPermanentDeletePreflight = useCallback((clientIds = []) => {
+    if (!agencyId) return;
+    const ids = Array.from(new Set((Array.isArray(clientIds) ? clientIds : [clientIds])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)));
+    ids.forEach((id) => {
+      clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
+    });
+  }, [agencyId]);
+
   const notify = useCallback((msg, type = "error") => {
     if (onToast) onToast(msg, type);
     else console.warn("[Store]", msg);
@@ -775,10 +793,14 @@ export function useStore(agencyId, onToast) {
     return result;
   }, [agencyId, isSupabaseEnabled, trashedInvoicesCache, trashedInvoicesLoaded]);
 
-  const issueFinalInvoiceSnapshot = useCallback((draft) => {
+  const issueFinalInvoiceSnapshot = useCallback(async (draft) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
-    return db.invoices.issueFinal(agencyId, draft);
-  }, [agencyId, isSupabaseEnabled]);
+    const result = await db.invoices.issueFinal(agencyId, draft);
+    if (!result.error && result.data?.clientId) {
+      invalidateClientPermanentDeletePreflight(result.data.clientId);
+    }
+    return result;
+  }, [agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
 
   const getInvoiceActivityName = useCallback((invoice) => {
     const recipient = invoice?.recipientSnapshot || {};
@@ -791,6 +813,7 @@ export function useStore(agencyId, onToast) {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     const result = await db.invoices.trash(agencyId, id);
     if (!result.error && result.data) {
+      invalidateClientPermanentDeletePreflight(result.data.clientId);
       setTrashedInvoicesLoaded(false);
       logActivity(
         "invoice_trash",
@@ -799,12 +822,13 @@ export function useStore(agencyId, onToast) {
       );
     }
     return result;
-  }, [agencyId, getInvoiceActivityName, logActivity]);
+  }, [agencyId, getInvoiceActivityName, invalidateClientPermanentDeletePreflight, logActivity]);
 
   const restoreFinalInvoice = useCallback(async (id) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     const result = await db.invoices.restore(agencyId, id);
     if (!result.error && result.data) {
+      invalidateClientPermanentDeletePreflight(result.data.clientId);
       setTrashedInvoicesLoaded(false);
       logActivity(
         "invoice_restore",
@@ -813,13 +837,23 @@ export function useStore(agencyId, onToast) {
       );
     }
     return result;
-  }, [agencyId, getInvoiceActivityName, logActivity]);
+  }, [agencyId, getInvoiceActivityName, invalidateClientPermanentDeletePreflight, logActivity]);
 
   const deleteFinalInvoice = useCallback(async (id) => {
     if (!isSupabaseEnabled || !agencyId) return Promise.resolve({ data: null, error: null });
     const result = await db.invoices.markDeleted(agencyId, id);
-    if (!result.error) setTrashedInvoicesLoaded(false);
+    if (!result.error) {
+      invalidateClientPermanentDeletePreflight(result.data?.clientId);
+      setTrashedInvoicesLoaded(false);
+    }
     return result;
+  }, [agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
+
+  const fetchTrashPage = useCallback((options = {}) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      return Promise.resolve({ data: null, error: null });
+    }
+    return db.trash.fetchPage(options);
   }, [agencyId, isSupabaseEnabled]);
 
   const invoiceApi = useMemo(() => (
@@ -843,6 +877,15 @@ export function useStore(agencyId, onToast) {
     restoreFinalInvoice,
     trashFinalInvoice,
   ]);
+
+  const trashApi = useMemo(() => (
+    isSupabaseEnabled && agencyId
+      ? {
+          isRemote: true,
+          fetchTrashPage,
+        }
+      : null
+  ), [agencyId, fetchTrashPage, isSupabaseEnabled]);
 
   // ── Silent background sync: local-first, Supabase async ──────────────────
   const sync = useCallback(async (fn) => {
@@ -1093,6 +1136,18 @@ export function useStore(agencyId, onToast) {
     trashLoading,
   ]);
 
+  const fetchProgramTrashContext = useCallback(async (programIds = []) => {
+    const ids = Array.from(new Set((programIds || []).filter(Boolean)));
+    if (!ids.length || !isSupabaseEnabled || !agencyId) {
+      return { data: { deletedPrograms: [], deletedClients: [], activeClients: [] }, error: null };
+    }
+    const result = await db.trash.fetchProgramContext(agencyId, ids);
+    if (result?.error) {
+      console.error("[Store] Failed to load Trash program context:", result.error);
+    }
+    return result;
+  }, [agencyId, isSupabaseEnabled]);
+
   // ── Legacy ID migration (ensures Supabase-compatible UUIDs) ───────────────
   useEffect(() => {
     const {
@@ -1310,6 +1365,7 @@ export function useStore(agencyId, onToast) {
       },
       onPayment: ({ eventType, new: row, old }) => {
         if (row?.agency_id && row.agency_id !== agencyId) return;
+        invalidateClientPermanentDeletePreflight(row?.client_id || row?.clientId || old?.client_id || old?.clientId);
         if (eventType === "INSERT" || eventType === "UPDATE")
           handlePaymentRealtimeUpsert(row);
         else if (eventType === "DELETE")
@@ -1327,7 +1383,7 @@ export function useStore(agencyId, onToast) {
     });
 
     return () => { supabase.removeChannel(channel); };
-  }, [agencyId]); 
+  }, [agencyId, invalidateClientPermanentDeletePreflight]);
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getClientStatus = useCallback((client) => {
     const paid  = getClientTotalPaid(client.id);
@@ -2382,6 +2438,7 @@ export function useStore(agencyId, onToast) {
           savedPayment = result.data;
         }
         addPaymentLocal(savedPayment);
+        invalidateClientPermanentDeletePreflight(savedPayment.clientId || savedPayment.client_id || data.clientId);
         setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
         logActivity(
           "payment_add",
@@ -2403,6 +2460,7 @@ export function useStore(agencyId, onToast) {
     }
 
     addPaymentLocal(pmt);
+    invalidateClientPermanentDeletePreflight(pmt.clientId || pmt.client_id || data.clientId);
     setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
     logActivity(
       "payment_add",
@@ -2412,12 +2470,12 @@ export function useStore(agencyId, onToast) {
     );
     sync(() => savePayment(pmt, agencyId));
     return pmt;
-  }, [clients, addPaymentLocal, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
+  }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
   const deletePayment = useCallback((id, options = {}) => {
     const p = payments.find(x => x.id === id);
     const clientId = p?.clientId || p?.client_id || options.clientId || options.client_id || "";
-    if (agencyId && clientId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${clientId}`);
+    invalidateClientPermanentDeletePreflight(clientId);
     trashPaymentLocal(id);
     logActivity(
       "payment_trash",
@@ -2427,10 +2485,11 @@ export function useStore(agencyId, onToast) {
     );
     notify(localizedPaymentTrashMessage(), "success");
     sync(() => deletePaymentRemote(id, agencyId));
-  }, [payments, trashPaymentLocal, logActivity, notify, sync, agencyId, isSupabaseEnabled]);
+  }, [payments, trashPaymentLocal, logActivity, notify, sync, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
 
   const restorePaymentFromTrash = useCallback(async (id) => {
     const p = deletedPayments.find(x => x.id === id);
+    invalidateClientPermanentDeletePreflight(p?.clientId || p?.client_id);
     restorePaymentLocal(id);
     logActivity(
       "payment_restore",
@@ -2439,11 +2498,17 @@ export function useStore(agencyId, onToast) {
       { skipRemote: isSupabaseEnabled }
     );
     notify(localizedPaymentRestoreMessage(), "success");
-    await sync(() => restorePaymentRemote(id, agencyId));
-  }, [agencyId, deletedPayments, isSupabaseEnabled, logActivity, notify, restorePaymentLocal, sync]);
+    const result = await sync(() => restorePaymentRemote(id, agencyId));
+    if (!result?.error && result?.data) {
+      handlePaymentRealtimeUpsert(result.data);
+      invalidateClientPermanentDeletePreflight(result.data.clientId || result.data.client_id);
+    }
+    return result;
+  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, restorePaymentLocal, sync]);
 
   const deletePaymentFromTrash = useCallback(async (id) => {
     const p = deletedPayments.find(x => x.id === id);
+    invalidateClientPermanentDeletePreflight(p?.clientId || p?.client_id);
     purgePaymentLocal(id);
     logActivity(
       "payment_delete",
@@ -2451,8 +2516,13 @@ export function useStore(agencyId, onToast) {
       "",
       { skipRemote: isSupabaseEnabled }
     );
-    await sync(() => deleteTrashedPaymentRemote(id, agencyId));
-  }, [agencyId, deletedPayments, isSupabaseEnabled, logActivity, purgePaymentLocal, sync]);
+    const result = await sync(() => deleteTrashedPaymentRemote(id, agencyId));
+    if (!result?.error && result?.data) {
+      handlePaymentRealtimeUpsert(result.data);
+      invalidateClientPermanentDeletePreflight(result.data.clientId || result.data.client_id);
+    }
+    return result;
+  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, purgePaymentLocal, sync]);
 
   const addProgram = useCallback((data) => {
     const id  = genId("PRG");
@@ -2530,15 +2600,22 @@ export function useStore(agencyId, onToast) {
     });
   }, [programs, clients, setPrograms, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
 
-  const restoreTrashItems = useCallback(({ programIds = [], clientIds = [] }) => {
-    if (!programIds.length && !clientIds.length) return;
-    const programsToRestore = deletedPrograms.filter(p => programIds.includes(p.id));
+  const restoreTrashItems = useCallback(async ({ programIds = [], clientIds = [] }) => {
+    if (!programIds.length && !clientIds.length) return { error: null };
+    const contextResult = programIds.length ? await fetchProgramTrashContext(programIds) : { data: null, error: null };
+    const context = contextResult?.data || {};
+    const sourceDeletedPrograms = mergeRecordsById(deletedPrograms, context.deletedPrograms || []);
+    const sourceDeletedClients = mergeRecordsById(deletedClients, context.deletedClients || []);
+    const programsToRestore = sourceDeletedPrograms.filter(p => programIds.includes(p.id));
+    if (programIds.length && isSupabaseEnabled && programsToRestore.length < programIds.length && contextResult?.error) {
+      return { error: contextResult.error };
+    }
     const batchIdsFromPrograms = new Set(
       programsToRestore
         .map(p => p.deletedBatchId)
         .filter(Boolean)
     );
-    const clientsFromPrograms = deletedClients
+    const clientsFromPrograms = sourceDeletedClients
       .filter(c => c.deletedBatchId && batchIdsFromPrograms.has(c.deletedBatchId))
       .map(c => c.id);
     const combinedClientIds = Array.from(new Set([...clientIds, ...clientsFromPrograms]));
@@ -2562,7 +2639,7 @@ export function useStore(agencyId, onToast) {
     }
 
     if (combinedClientIds.length) {
-      const restoredClients = deletedClients
+      const restoredClients = sourceDeletedClients
         .filter(c => combinedClientIds.includes(c.id))
         .map(c => ({
           ...c,
@@ -2579,12 +2656,10 @@ export function useStore(agencyId, onToast) {
         ? translateActivityDescription("تمت استعادة معتمر من السلة")
         : translateActivityDescription(`تمت استعادة ${combinedClientIds.length} معتمرين من السلة`);
       logActivity("client_restore", label, "");
-      combinedClientIds.forEach((id) => {
-        if (agencyId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
-      });
+      invalidateClientPermanentDeletePreflight(combinedClientIds);
     }
 
-    sync(async () => {
+    return sync(async () => {
       const responses = [];
       for (const programId of programIds) {
         responses.push(await restoreProgram(programId, agencyId));
@@ -2595,11 +2670,19 @@ export function useStore(agencyId, onToast) {
       const error = responses.find(r => r?.error)?.error ?? null;
       return { error };
     });
-  }, [agencyId, deletedPrograms, deletedClients, logActivity, restoreClients, restoreProgram, sync]);
+  }, [agencyId, deletedPrograms, deletedClients, fetchProgramTrashContext, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, restoreClients, restoreProgram, sync]);
 
   const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [], clientPreflightBlocks = null, onProgress = null } = {}) => {
     if (!programIds.length && !clientIds.length) return { purged: false };
-    const programsToPurge = deletedPrograms.filter(p => programIds.includes(p.id));
+    const contextResult = programIds.length ? await fetchProgramTrashContext(programIds) : { data: null, error: null };
+    const context = contextResult?.data || {};
+    const sourceDeletedPrograms = mergeRecordsById(deletedPrograms, context.deletedPrograms || []);
+    const sourceDeletedClients = mergeRecordsById(deletedClients, context.deletedClients || []);
+    const sourceActiveClients = mergeRecordsById(clients, context.activeClients || []);
+    const programsToPurge = sourceDeletedPrograms.filter(p => programIds.includes(p.id));
+    if (programIds.length && isSupabaseEnabled && programsToPurge.length < programIds.length && contextResult?.error) {
+      return { purged: false, error: contextResult.error };
+    }
     const batchIds = new Set(
       programsToPurge
         .map(p => p.deletedBatchId)
@@ -2611,11 +2694,11 @@ export function useStore(agencyId, onToast) {
         .filter((program) => program.deletedBatchId)
         .map((program) => [program.deletedBatchId, program])
     );
-    const linkedDeletedClients = deletedClients.filter((client) => (
+    const linkedDeletedClients = sourceDeletedClients.filter((client) => (
       (client.deletedBatchId && batchIds.has(client.deletedBatchId))
       || programIds.includes(client.programId)
     ));
-    const linkedActiveClients = clients.filter((client) => programIds.includes(client.programId));
+    const linkedActiveClients = sourceActiveClients.filter((client) => programIds.includes(client.programId));
     const linkedClientsById = new Map();
     [...linkedDeletedClients, ...linkedActiveClients].forEach((client) => {
       if (client?.id) linkedClientsById.set(client.id, client);
@@ -2660,9 +2743,7 @@ export function useStore(agencyId, onToast) {
     const applyLocalPurge = (clientIdsToPurge = preflightEligibleClientIds) => {
       const purgeClientIdSet = new Set(clientIdsToPurge);
       const cleanupPaymentIds = clientIdsToPurge.flatMap((id) => clientBlockMap.get(id)?.inactivePaymentIds || []);
-      clientIdsToPurge.forEach((id) => {
-        if (agencyId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
-      });
+      invalidateClientPermanentDeletePreflight(clientIdsToPurge);
       setPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       setDeletedPrograms(prev => prev.filter(p => !programIds.includes(p.id)));
       if (clientsToPreserve.length) {
@@ -2847,7 +2928,7 @@ export function useStore(agencyId, onToast) {
       clientBlocks: Object.fromEntries(preflightBlockedClientIds.map((id) => [id, clientBlockMap.get(id)])),
       cleanup: {},
     };
-  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, getClientPermanentDeleteBlockMap, isSupabaseEnabled, permanentlyDeleteClientRemote, permanentlyDeleteClientsRemote, purgePaymentLocal, saveClient, sync]);
+  }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, fetchProgramTrashContext, getClientPermanentDeleteBlockMap, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, permanentlyDeleteClientRemote, permanentlyDeleteClientsRemote, purgePaymentLocal, saveClient, sync]);
 
   const updateAgency = useCallback((data) => {
     setAgency(prev => ({ ...prev, ...data }));
@@ -2980,6 +3061,7 @@ export function useStore(agencyId, onToast) {
     deletedPrograms, deletedClients, deletedPayments,
     activeClients, archivedClients,
     invoiceApi,
+    trashApi,
     badgePhotoApi,
     agencyLogoApi,
     notifications,

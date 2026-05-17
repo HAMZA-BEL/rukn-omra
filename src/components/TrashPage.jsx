@@ -183,6 +183,23 @@ const formatTrashCountMessage = (template, values) => Object.entries(values).red
   template
 );
 
+const getTrashPaymentClientId = (payment = {}) => String(payment.clientId || payment.client_id || "").trim();
+
+const getTrashInvoiceClientId = (invoice = {}) => String(
+  invoice.clientId
+    || invoice.client_id
+    || invoice.recipientSnapshot?.clientId
+    || invoice.recipientSnapshot?.client_id
+    || ""
+).trim();
+
+const buildTrashRecordsSignature = (records = [], projectRecord) => (
+  records
+    .map((record) => projectRecord(record).map((value) => String(value ?? "")).join("\u001f"))
+    .sort()
+    .join("\u001e")
+);
+
 export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvoice }) {
   const { t, lang, dir } = useLang();
   const invoicesAreRemote = Boolean(store.invoiceApi?.isRemote);
@@ -198,6 +215,14 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
   ));
   const [invoicesLoading, setInvoicesLoading] = React.useState(false);
+  const [serverTrashPage, setServerTrashPage] = React.useState({
+    items: [],
+    totalCount: 0,
+    loading: false,
+    error: null,
+    fallback: false,
+  });
+  const [serverTrashRefreshKey, setServerTrashRefreshKey] = React.useState(0);
   const [linkedItemsModal, setLinkedItemsModal] = React.useState({
     open: false,
     item: null,
@@ -209,6 +234,8 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
   const clientPreflightCacheRef = React.useRef(new Map());
+  const linkedItemsDetailsCacheRef = React.useRef(new Map());
+  const previousRelevantCacheSignatureRef = React.useRef(null);
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
@@ -276,16 +303,26 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     program: t.trashLinkedProgramName || t.program || t.programs,
     invoiceNumber: t.trashLinkedInvoiceNumber || t.invoiceNumberTitle || (lang === "fr" ? "N° facture" : lang === "en" ? "Invoice no." : "رقم الفاتورة"),
   }), [lang, t]);
+  const trashListHeaderText = React.useMemo(() => ({
+    type: t.trashColumnType || (lang === "fr" ? "Type" : lang === "en" ? "Type" : "النوع"),
+    record: t.trashColumnRecord || (lang === "fr" ? "Enregistrement" : lang === "en" ? "Record" : "السجل"),
+    details: t.trashColumnDetails || (lang === "fr" ? "Détails" : lang === "en" ? "Details" : "التفاصيل"),
+    blockReason: t.trashColumnBlockReason || (lang === "fr" ? "Raison du blocage" : lang === "en" ? "Block reason" : "سبب المنع"),
+    deletedDate: t.trashColumnDeletedDate || t.trashDeletedOn || (lang === "fr" ? "Date de suppression" : lang === "en" ? "Deleted date" : "تاريخ الحذف"),
+  }), [lang, t]);
   const deletedPrograms = store.deletedPrograms || [];
   const deletedClients = store.deletedClients || [];
   const deletedPayments = store.deletedPayments || [];
   const getClientPermanentDeleteBlockMap = store.getClientPermanentDeleteBlockMap;
   const getClientPermanentDeleteLinkedDetails = store.getClientPermanentDeleteLinkedDetails;
+  const canUseServerTrashPage = Boolean(store.trashApi?.isRemote && store.trashApi?.fetchTrashPage);
+  const useServerTrashPage = canUseServerTrashPage && !serverTrashPage.fallback;
   const trashLoading = Boolean(store.trashLoading);
   const trashLoaded = Boolean(store.trashLoaded);
   const trashError = store.trashError;
   const loadTrashData = store.loadTrashData;
-  const trashDataLoading = trashLoading || invoicesLoading;
+  const trashDataLoading = useServerTrashPage ? serverTrashPage.loading : (trashLoading || invoicesLoading);
+  const activeTrashError = useServerTrashPage ? serverTrashPage.error : trashError;
   const [clientDeleteBlocksByClient, setClientDeleteBlocksByClient] = React.useState({});
   const [clientDeleteBlocksLoading, setClientDeleteBlocksLoading] = React.useState(false);
   const formatDate = React.useCallback((value) => {
@@ -298,6 +335,35 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     if (value === null || value === undefined || value === "") return "";
     return Number.isFinite(Number(value)) ? formatCurrency(Number(value), lang) : "";
   }, [lang]);
+  const invalidateClientCaches = React.useCallback((clientIds = []) => {
+    const ids = Array.from(new Set((Array.isArray(clientIds) ? clientIds : [clientIds])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)));
+    if (!ids.length) return;
+    ids.forEach((id) => {
+      clientPreflightCacheRef.current.delete(id);
+      linkedItemsDetailsCacheRef.current.delete(id);
+    });
+    setClientDeleteBlocksByClient((current) => {
+      let changed = false;
+      const next = { ...current };
+      ids.forEach((id) => {
+        if (Object.prototype.hasOwnProperty.call(next, id)) {
+          delete next[id];
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, []);
+  const clearClientCaches = React.useCallback(() => {
+    clientPreflightCacheRef.current.clear();
+    linkedItemsDetailsCacheRef.current.clear();
+    setClientDeleteBlocksByClient({});
+  }, []);
+  const refreshServerTrashPage = React.useCallback(() => {
+    setServerTrashRefreshKey((key) => key + 1);
+  }, []);
   const closeLinkedItemsModal = React.useCallback(() => {
     setLinkedItemsModal((current) => ({
       ...current,
@@ -307,13 +373,16 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
   }, []);
   const openLinkedItemsModal = React.useCallback(async (item) => {
     if (!item?.id) return;
+    const clientId = String(item.id);
+    const cachedDetails = linkedItemsDetailsCacheRef.current.get(clientId);
     setLinkedItemsModal({
       open: true,
       item,
-      loading: true,
+      loading: !cachedDetails,
       error: null,
-      details: null,
+      details: cachedDetails || null,
     });
+    if (cachedDetails) return;
     if (typeof getClientPermanentDeleteLinkedDetails !== "function") {
       setLinkedItemsModal({
         open: true,
@@ -327,14 +396,16 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     try {
       const detailsMap = await getClientPermanentDeleteLinkedDetails([item.id]);
       const details = detailsMap instanceof Map
-        ? detailsMap.get(String(item.id))
+        ? detailsMap.get(clientId)
         : detailsMap?.[item.id];
+      const normalizedDetails = details || { clientId: item.id, client: null, payments: [], invoices: [] };
+      linkedItemsDetailsCacheRef.current.set(clientId, normalizedDetails);
       setLinkedItemsModal({
         open: true,
         item,
         loading: false,
         error: null,
-        details: details || { clientId: item.id, client: null, payments: [], invoices: [] },
+        details: normalizedDetails,
       });
     } catch (error) {
       console.error("[Trash] Failed to fetch linked blocker details:", error);
@@ -349,6 +420,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
   }, [getClientPermanentDeleteLinkedDetails, linkedItemsText.noDetails]);
 
   React.useEffect(() => {
+    if (useServerTrashPage) return undefined;
     if (trashLoaded || trashLoading || typeof loadTrashData !== "function") return undefined;
     let cancelled = false;
     loadTrashData().then((result) => {
@@ -356,7 +428,45 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       onToast(result.error.message || t.activityError || "Failed to load Trash", "error");
     });
     return () => { cancelled = true; };
-  }, [loadTrashData, onToast, t.activityError, trashLoaded, trashLoading]);
+  }, [loadTrashData, onToast, t.activityError, trashLoaded, trashLoading, useServerTrashPage]);
+
+  React.useEffect(() => {
+    if (!useServerTrashPage || typeof store.trashApi?.fetchTrashPage !== "function") return undefined;
+    let cancelled = false;
+    setServerTrashPage((current) => ({ ...current, loading: true, error: null }));
+    store.trashApi.fetchTrashPage({ filter, page: currentPage, pageSize })
+      .then((result) => {
+        if (cancelled) return;
+        if (result?.error) {
+          console.warn("[Trash] Paginated Trash RPC unavailable; falling back to full Trash load:", result.error);
+          setServerTrashPage((current) => ({
+            ...current,
+            loading: false,
+            error: null,
+            fallback: true,
+          }));
+          return;
+        }
+        setServerTrashPage({
+          items: Array.isArray(result?.data?.items) ? result.data.items : [],
+          totalCount: Number(result?.data?.totalCount || 0),
+          loading: false,
+          error: null,
+          fallback: false,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn("[Trash] Paginated Trash fetch failed; falling back to full Trash load:", error);
+        setServerTrashPage((current) => ({
+          ...current,
+          loading: false,
+          error: null,
+          fallback: true,
+        }));
+      });
+    return () => { cancelled = true; };
+  }, [currentPage, filter, pageSize, serverTrashRefreshKey, store.trashApi, useServerTrashPage]);
 
   const refreshTrashedInvoices = React.useCallback(async ({ force = false } = {}) => {
     setInvoicesLoading(true);
@@ -378,8 +488,9 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
   }, [invoicesAreRemote, onToast, store.invoiceApi]);
 
   React.useEffect(() => {
+    if (useServerTrashPage) return;
     refreshTrashedInvoices();
-  }, [refreshTrashedInvoices]);
+  }, [refreshTrashedInvoices, useServerTrashPage]);
 
   React.useEffect(() => {
     if (!filterOpen) return undefined;
@@ -451,7 +562,73 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     return map;
   }, [deletedClients]);
 
-  const allItems = React.useMemo(() => {
+  const baseTrashItems = React.useMemo(() => {
+    if (useServerTrashPage) {
+      return (serverTrashPage.items || []).map((row) => {
+        const type = row.itemType;
+        if (type === "program") {
+          return {
+            key: `program-${row.itemId}`,
+            id: row.itemId,
+            type: "program",
+            name: row.title || t.programs,
+            subtitle: [
+              row.departure ? `${formatDate(row.departure)}` : null,
+              row.duration ? `${row.duration} ${lang === "fr" ? "jours" : lang === "en" ? "days" : "يوم"}` : null,
+            ].filter(Boolean).join(" • "),
+            deletedAt: row.deletedAt,
+            batchId: row.deletedBatchId,
+            linkedCount: Number(row.linkedCount || 0),
+            meta: t.programs,
+          };
+        }
+        if (type === "client") {
+          return {
+            key: `client-${row.itemId}`,
+            id: row.itemId,
+            clientId: row.clientId || row.itemId,
+            type: "client",
+            name: row.title || t.fullName,
+            subtitle: [row.phone, row.city].filter(Boolean).join(" • "),
+            deletedAt: row.deletedAt,
+            batchId: row.deletedBatchId,
+            programName: row.programName,
+            meta: t.clients,
+          };
+        }
+        if (type === "invoice") {
+          return {
+            key: `invoice-${row.itemId}`,
+            id: row.itemId,
+            clientId: row.clientId,
+            type: "invoice",
+            name: row.title || row.invoiceDisplayNumber || (t.trashFilter_invoices || "Invoices"),
+            subtitle: [
+              row.invoiceDisplayNumber,
+              row.programName,
+              row.amount !== null && row.amount !== undefined ? formatCurrency(row.amount, lang) : null,
+            ].filter(Boolean).join(" • "),
+            deletedAt: row.deletedAt,
+            meta: t.trashFilter_invoices || "Invoices",
+          };
+        }
+        return {
+          key: `payment-${row.itemId}`,
+          id: row.itemId,
+          clientId: row.clientId,
+          type: "payment",
+          name: row.receiptNo || row.title || paymentLabel,
+          subtitle: [
+            row.clientName,
+            row.amount !== null && row.amount !== undefined ? formatCurrency(row.amount, lang) : null,
+            row.method,
+          ].filter(Boolean).join(" • "),
+          deletedAt: row.deletedAt,
+          meta: paymentLabel,
+        };
+      });
+    }
+
     const programItems = deletedPrograms.map((program) => ({
       key: `program-${program.id}`,
       id: program.id,
@@ -466,25 +643,22 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       linkedCount: program.deletedBatchId ? (clientsByBatch.get(program.deletedBatchId) || 0) : 0,
       meta: t.programs,
     }));
-    const clientItems = deletedClients.map((client) => {
-      const permanentDeleteBlock = clientDeleteBlocksByClient[client.id] || null;
-      return {
-        permanentDeleteBlock,
-        permanentDeleteCheckPending: clientDeleteBlocksLoading && !permanentDeleteBlock,
-        key: `client-${client.id}`,
-        id: client.id,
-        type: "client",
-        name: client.name || t.fullName,
-        subtitle: [client.phone, client.city].filter(Boolean).join(" • "),
-        deletedAt: client.deletedAt,
-        batchId: client.deletedBatchId,
-        programName: programNameMap.get(client.programId),
-        meta: t.clients,
-      };
-    });
+    const clientItems = deletedClients.map((client) => ({
+      key: `client-${client.id}`,
+      id: client.id,
+      clientId: client.id,
+      type: "client",
+      name: client.name || t.fullName,
+      subtitle: [client.phone, client.city].filter(Boolean).join(" • "),
+      deletedAt: client.deletedAt,
+      batchId: client.deletedBatchId,
+      programName: programNameMap.get(client.programId),
+      meta: t.clients,
+    }));
     const invoiceItems = trashedInvoices.map((invoice) => ({
       key: `invoice-${invoice.id}`,
       id: invoice.id,
+      clientId: getTrashInvoiceClientId(invoice),
       type: "invoice",
       name: invoice.recipientType === "company"
         ? (invoice.recipientSnapshot?.companyName || invoice.invoiceDisplayNumber)
@@ -500,6 +674,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     const paymentItems = deletedPayments.map((payment) => ({
       key: `payment-${payment.id}`,
       id: payment.id,
+      clientId: getTrashPaymentClientId(payment),
       type: "payment",
       name: payment.receiptNo || payment.receipt_no || payment.receiptNumber || payment.receipt_number || paymentLabel,
       subtitle: [
@@ -517,17 +692,18 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       return bDate - aDate;
     });
     return merged;
-  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, clientDeleteBlocksByClient, clientDeleteBlocksLoading, formatDate, lang, paymentLabel, t.programs, t.clients, t.fullName, t.trashFilter_invoices]);
+  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, formatDate, lang, paymentLabel, serverTrashPage.items, t.programs, t.clients, t.fullName, t.trashFilter_invoices, useServerTrashPage]);
 
   const visibleItems = React.useMemo(() => {
-    if (filter === "programs") return allItems.filter((item) => item.type === "program");
-    if (filter === "clients") return allItems.filter((item) => item.type === "client");
-    if (filter === "invoices") return allItems.filter((item) => item.type === "invoice");
-    if (filter === "payments") return allItems.filter((item) => item.type === "payment");
-    return allItems;
-  }, [allItems, filter]);
+    if (useServerTrashPage) return baseTrashItems;
+    if (filter === "programs") return baseTrashItems.filter((item) => item.type === "program");
+    if (filter === "clients") return baseTrashItems.filter((item) => item.type === "client");
+    if (filter === "invoices") return baseTrashItems.filter((item) => item.type === "invoice");
+    if (filter === "payments") return baseTrashItems.filter((item) => item.type === "payment");
+    return baseTrashItems;
+  }, [baseTrashItems, filter, useServerTrashPage]);
 
-  const totalItems = visibleItems.length;
+  const totalItems = useServerTrashPage ? Number(serverTrashPage.totalCount || 0) : visibleItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const safePage = Math.min(currentPage, totalPages);
 
@@ -537,11 +713,22 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     setSelection({});
   }, [currentPage, totalPages]);
 
-  const paginatedItems = React.useMemo(() => {
+  const paginatedBaseItems = React.useMemo(() => {
+    if (useServerTrashPage) return visibleItems;
     const startIndex = (safePage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
     return visibleItems.slice(startIndex, endIndex);
-  }, [safePage, pageSize, visibleItems]);
+  }, [safePage, pageSize, useServerTrashPage, visibleItems]);
+
+  const paginatedItems = React.useMemo(() => paginatedBaseItems.map((item) => {
+    if (item.type !== "client") return item;
+    const permanentDeleteBlock = clientDeleteBlocksByClient[item.id] || null;
+    return {
+      ...item,
+      permanentDeleteBlock,
+      permanentDeleteCheckPending: clientDeleteBlocksLoading && !permanentDeleteBlock,
+    };
+  }), [clientDeleteBlocksByClient, clientDeleteBlocksLoading, paginatedBaseItems]);
 
   const selectedItems = React.useMemo(
     () => paginatedItems.filter((item) => selection[item.key]),
@@ -552,29 +739,80 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     () => selectedItems.filter((item) => item.type === "client" && item.permanentDeleteBlock?.blocked),
     [selectedItems]
   );
-  const selectedVisibleCount = paginatedItems.filter((item) => selection[item.key]).length;
-  const allVisibleSelected = paginatedItems.length > 0 && selectedVisibleCount === paginatedItems.length;
+  const selectedVisibleCount = paginatedBaseItems.filter((item) => selection[item.key]).length;
+  const allVisibleSelected = paginatedBaseItems.length > 0 && selectedVisibleCount === paginatedBaseItems.length;
 
   const clientDeleteGuardKey = React.useMemo(() => {
     const ids = new Set();
-    paginatedItems.forEach((item) => {
-      if (item.type === "client" && item.id) ids.add(item.id);
-    });
-    selectedItems.forEach((item) => {
+    paginatedBaseItems.forEach((item) => {
       if (item.type === "client" && item.id) ids.add(item.id);
     });
     return Array.from(ids).join("|");
-  }, [paginatedItems, selectedItems]);
-  const paymentPreflightInvalidationKey = [
-    store.payments?.length || 0,
-    deletedPayments.length,
-    store.lastSynced instanceof Date ? store.lastSynced.getTime() : String(store.lastSynced || ""),
-  ].join("|");
+  }, [paginatedBaseItems]);
+  const relevantLinkedRecordsSignature = React.useMemo(() => {
+    const activePaymentsSignature = buildTrashRecordsSignature(store.payments || [], (payment) => [
+      payment.id,
+      getTrashPaymentClientId(payment),
+      payment.status,
+      payment.trashedAt || payment.trashed_at,
+      payment.deletedAt || payment.deleted_at,
+      payment.amount,
+      payment.date,
+      payment.method || payment.paymentMethod || payment.payment_method,
+      payment.receiptNo || payment.receipt_no || payment.receiptNumber || payment.receipt_number,
+      payment.receiptSequence || payment.receipt_sequence,
+      payment.paymentType || payment.payment_type,
+      payment.legacyReceiptNumber || payment.legacy_receipt_number,
+    ]);
+    const trashedPaymentsSignature = buildTrashRecordsSignature(deletedPayments, (payment) => [
+      payment.id,
+      getTrashPaymentClientId(payment),
+      payment.status,
+      payment.trashedAt || payment.trashed_at,
+      payment.deletedAt || payment.deleted_at,
+    ]);
+    const trashedInvoicesSignature = buildTrashRecordsSignature(trashedInvoices, (invoice) => [
+      invoice.id,
+      getTrashInvoiceClientId(invoice),
+      invoice.status,
+      invoice.trashedAt || invoice.trashed_at,
+      invoice.deletedAt || invoice.deleted_at,
+      invoice.amountSnapshot?.total,
+    ]);
+    const deletedClientsSignature = buildTrashRecordsSignature(deletedClients, (client) => [
+      client.id,
+      client.programId || client.program_id,
+      client.deletedAt || client.deleted_at,
+      client.deletedBatchId || client.deleted_batch_id,
+    ]);
+    const serverTrashSignature = useServerTrashPage
+      ? buildTrashRecordsSignature(serverTrashPage.items || [], (item) => [
+          item.itemType,
+          item.itemId,
+          item.clientId,
+          item.deletedAt,
+          item.status,
+          item.amount,
+        ])
+      : "";
+    return [
+      activePaymentsSignature,
+      trashedPaymentsSignature,
+      trashedInvoicesSignature,
+      deletedClientsSignature,
+      serverTrashSignature,
+    ].join("\u001d");
+  }, [deletedClients, deletedPayments, serverTrashPage.items, store.payments, trashedInvoices, useServerTrashPage]);
 
   React.useEffect(() => {
-    clientPreflightCacheRef.current.clear();
-    setClientDeleteBlocksByClient({});
-  }, [paymentPreflightInvalidationKey]);
+    if (previousRelevantCacheSignatureRef.current === null) {
+      previousRelevantCacheSignatureRef.current = relevantLinkedRecordsSignature;
+      return;
+    }
+    if (previousRelevantCacheSignatureRef.current === relevantLinkedRecordsSignature) return;
+    previousRelevantCacheSignatureRef.current = relevantLinkedRecordsSignature;
+    clearClientCaches();
+  }, [clearClientCaches, relevantLinkedRecordsSignature]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -624,7 +862,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
         if (!cancelled) setClientDeleteBlocksLoading(false);
       });
     return () => { cancelled = true; };
-  }, [clientDeleteGuardKey, getClientPermanentDeleteBlockMap, paymentPreflightInvalidationKey]);
+  }, [clientDeleteGuardKey, getClientPermanentDeleteBlockMap, relevantLinkedRecordsSignature]);
 
   const toggleItem = React.useCallback((key) => {
     setSelection((prev) => {
@@ -639,13 +877,13 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     setSelection((prev) => {
       const next = { ...prev };
       if (allVisibleSelected) {
-        paginatedItems.forEach((item) => { delete next[item.key]; });
+        paginatedBaseItems.forEach((item) => { delete next[item.key]; });
       } else {
-        paginatedItems.forEach((item) => { next[item.key] = true; });
+        paginatedBaseItems.forEach((item) => { next[item.key] = true; });
       }
       return next;
     });
-  }, [allVisibleSelected, paginatedItems]);
+  }, [allVisibleSelected, paginatedBaseItems]);
 
   const selectionPayload = React.useMemo(() => ({
     programIds: selectedItems.filter((item) => item.type === "program").map((item) => item.id),
@@ -653,6 +891,30 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     invoiceIds: selectedItems.filter((item) => item.type === "invoice").map((item) => item.id),
     paymentIds: selectedItems.filter((item) => item.type === "payment").map((item) => item.id),
   }), [selectedItems]);
+  const selectedPaymentClientIds = React.useMemo(() => {
+    const idsFromItems = selectedItems
+      .filter((item) => item.type === "payment")
+      .map((item) => String(item.clientId || "").trim())
+      .filter(Boolean);
+    if (idsFromItems.length) return idsFromItems;
+    const selectedPaymentIds = new Set(selectionPayload.paymentIds.map(String));
+    return deletedPayments
+      .filter((payment) => selectedPaymentIds.has(String(payment.id)))
+      .map(getTrashPaymentClientId)
+      .filter(Boolean);
+  }, [deletedPayments, selectedItems, selectionPayload.paymentIds]);
+  const selectedInvoiceClientIds = React.useMemo(() => {
+    const idsFromItems = selectedItems
+      .filter((item) => item.type === "invoice")
+      .map((item) => String(item.clientId || "").trim())
+      .filter(Boolean);
+    if (idsFromItems.length) return idsFromItems;
+    const selectedInvoiceIds = new Set(selectionPayload.invoiceIds.map(String));
+    return trashedInvoices
+      .filter((invoice) => selectedInvoiceIds.has(String(invoice.id)))
+      .map(getTrashInvoiceClientId)
+      .filter(Boolean);
+  }, [selectedItems, selectionPayload.invoiceIds, trashedInvoices]);
   const selectedClientPreflightPending = React.useMemo(() => (
     selectionPayload.clientIds.some((id) => !clientDeleteBlocksByClient[id] && !clientPreflightCacheRef.current.has(id)) && clientDeleteBlocksLoading
   ), [clientDeleteBlocksByClient, clientDeleteBlocksLoading, selectionPayload.clientIds]);
@@ -665,7 +927,13 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
   const handleRestore = React.useCallback(async () => {
     if (!selectedCount) return;
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.restoreTrashItems === "function") {
-      store.restoreTrashItems(selectionPayload);
+      const result = await store.restoreTrashItems(selectionPayload);
+      if (result?.error) {
+        if (onToast) onToast(result.error.message || "Restore failed", "error");
+        return;
+      }
+      invalidateClientCaches(selectionPayload.clientIds);
+      if (useServerTrashPage) refreshServerTrashPage();
     }
     if (invoicesAreRemote && selectionPayload.invoiceIds.length && store.invoiceApi?.restoreFinalInvoice) {
       const responses = await Promise.all(selectionPayload.invoiceIds.map((id) => store.invoiceApi.restoreFinalInvoice(id)));
@@ -674,18 +942,23 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
         if (onToast) onToast(error.message || "Restore failed", "error");
         return;
       }
-      await refreshTrashedInvoices({ force: true });
+      if (useServerTrashPage) refreshServerTrashPage();
+      else await refreshTrashedInvoices({ force: true });
+      invalidateClientCaches(selectedInvoiceClientIds);
     }
     if (!invoicesAreRemote && selectionPayload.invoiceIds.length) {
       selectionPayload.invoiceIds.forEach((id) => restoreSavedInvoiceSnapshot(id));
       setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
+      invalidateClientCaches(selectedInvoiceClientIds);
     }
     if (selectionPayload.paymentIds.length && typeof store.restorePaymentFromTrash === "function") {
       await Promise.all(selectionPayload.paymentIds.map((id) => store.restorePaymentFromTrash(id)));
+      invalidateClientCaches(selectedPaymentClientIds);
+      if (useServerTrashPage) refreshServerTrashPage();
     }
     setSelection({});
     if (onToast) onToast(t.restoreSuccess || "Restored", "success");
-  }, [invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, t.restoreSuccess]);
+  }, [invoicesAreRemote, invalidateClientCaches, refreshServerTrashPage, refreshTrashedInvoices, selectedCount, selectedInvoiceClientIds, selectedPaymentClientIds, selectionPayload, store, onToast, t.restoreSuccess, useServerTrashPage]);
 
   const handleDelete = React.useCallback(() => {
     if (!selectedCount || deleteInProgress || selectedClientPreflightPending) return;
@@ -786,8 +1059,10 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
         blockedClientIds = Array.from(new Set([...blockedClientIds, ...(result?.blockedClientIds || [])]));
         failedClientIds = Array.from(new Set([...(result?.failedClientIds || [])]));
         if (invoicesAreRemote && Number(result?.cleanup?.cleanedInvoicesCount || 0) > 0) {
-          await refreshTrashedInvoices({ force: true });
+          if (useServerTrashPage) refreshServerTrashPage();
+          else await refreshTrashedInvoices({ force: true });
         }
+        if (useServerTrashPage) refreshServerTrashPage();
       }
       if (invoicesAreRemote && deletePayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
         const responses = await Promise.all(deletePayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
@@ -796,19 +1071,22 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
           if (onToast) onToast(error.message || "Delete failed", "error");
           return;
         }
-        await refreshTrashedInvoices({ force: true });
+        if (useServerTrashPage) refreshServerTrashPage();
+        else await refreshTrashedInvoices({ force: true });
+        invalidateClientCaches(selectedInvoiceClientIds);
       }
       if (!invoicesAreRemote && deletePayload.invoiceIds.length) {
         deletePayload.invoiceIds.forEach((id) => deleteSavedInvoiceSnapshot(id));
         setTrashedInvoices(readSavedInvoices().filter((invoice) => invoice.status === "trashed"));
+        invalidateClientCaches(selectedInvoiceClientIds);
       }
       if (deletePayload.paymentIds.length && typeof store.deletePaymentFromTrash === "function") {
         await Promise.all(deletePayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
+        invalidateClientCaches(selectedPaymentClientIds);
+        if (useServerTrashPage) refreshServerTrashPage();
       }
       const blockedOrFailedClientIds = Array.from(new Set([...blockedClientIds, ...failedClientIds]));
-      (purgeResult?.deletedClientIds || []).forEach((id) => {
-        clientPreflightCacheRef.current.delete(id);
-      });
+      invalidateClientCaches(purgeResult?.deletedClientIds || []);
       setSelection(Object.fromEntries(blockedOrFailedClientIds.map((id) => [`client-${id}`, true])));
       setConfirmOpen(false);
       if (onToast) {
@@ -842,7 +1120,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       setDeleteInProgress(false);
       setDeleteProgress({ done: 0, total: 0 });
     }
-  }, [clientDeleteBlocksByClient, deleteInProgress, getClientPermanentDeleteBlockMap, invoicesAreRemote, refreshTrashedInvoices, selectedCount, selectionPayload, store, onToast, paymentGuardText, permanentDeleteText, t.deleteSuccess]);
+  }, [clientDeleteBlocksByClient, deleteInProgress, getClientPermanentDeleteBlockMap, invalidateClientCaches, invoicesAreRemote, refreshServerTrashPage, refreshTrashedInvoices, selectedCount, selectedInvoiceClientIds, selectedPaymentClientIds, selectionPayload, store, onToast, paymentGuardText, permanentDeleteText, t.deleteSuccess, useServerTrashPage]);
 
   const handleFilterChange = (nextFilter) => {
     setFilter(nextFilter);
@@ -1176,7 +1454,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
                 onChange={toggleAllVisible}
                 style={{ width: 17, height: 17 }}
               />
-              {t.selectAllCount ? t.selectAllCount.replace("{count}", paginatedItems.length) : t.selectAll}
+              {t.selectAllCount ? t.selectAllCount.replace("{count}", paginatedBaseItems.length) : t.selectAll}
             </label>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
@@ -1211,99 +1489,155 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
           <GlassCard style={{ padding: 24, textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 13, fontWeight: 700 }}>
             {t.loading || "Loading..."}
           </GlassCard>
-        ) : trashError ? (
+        ) : activeTrashError ? (
           <GlassCard style={{ padding: 24, textAlign: "center", color: "var(--rukn-danger)", fontSize: 13, fontWeight: 700 }}>
-            {trashError.message || t.activityError || "Failed to load Trash"}
+            {activeTrashError.message || t.activityError || "Failed to load Trash"}
           </GlassCard>
         ) : totalItems === 0 ? (
           <GlassCard style={{ padding: 24 }}>
             <EmptyState icon="trash" title={t.trashEmptyTitle} sub={t.trashEmptySubtitle} />
           </GlassCard>
         ) : (
-          paginatedItems.map((item) => {
-            const checked = !!selection[item.key];
-            const isProgram = item.type === "program";
-            const isInvoice = item.type === "invoice";
-            const isPayment = item.type === "payment";
-            const badgeColor = isInvoice ? "#60a5fa" : isPayment ? "#f59e0b" : isProgram ? tc.gold : tc.greenLight;
-            const badgeBorder = isInvoice ? "rgba(96,165,250,.35)" : isPayment ? "rgba(245,158,11,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)";
-            const badgeBackground = isInvoice ? "rgba(96,165,250,.1)" : isPayment ? "rgba(245,158,11,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)";
-            const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
-            const clientDeleteBlock = item.permanentDeleteBlock;
-            const clientDeleteBlocked = Boolean(clientDeleteBlock?.blocked);
-            const showLinkedItemsAction = item.type === "client" && isLinkedFinancialBlock(clientDeleteBlock);
-            return (
-              <GlassCard
-                key={item.key}
-                style={{
-                  padding: "9px 12px",
-                  display: "grid",
-                  gap: 7,
-                  background: checked ? "linear-gradient(135deg, rgba(212,175,55,.1), rgba(212,175,55,.04))" : "var(--rukn-bg-card)",
-                  border: checked ? "1px solid rgba(212,175,55,.34)" : "1px solid var(--rukn-border-soft)",
-                  boxShadow: checked ? "0 10px 24px rgba(212,175,55,.07)" : "0 6px 18px rgba(15,23,42,.045)",
-                  borderRadius: 10,
-                }}
-              >
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "auto minmax(0,1fr) auto",
-                  alignItems: "center",
-                  gap: 10,
-                  flexWrap: "wrap",
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleItem(item.key)}
-                    style={{ width: 16, height: 16 }}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          <>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "22px minmax(0,1fr) minmax(92px,auto)",
+              alignItems: "center",
+              gap: 10,
+              padding: "0 12px 1px",
+              color: "var(--rukn-text-muted)",
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: 0,
+            }}>
+              <span aria-hidden="true" />
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
+                <span style={{ flex: "0 0 70px" }}>{trashListHeaderText.type}</span>
+                <span style={{ flex: "1 1 150px" }}>{trashListHeaderText.record}</span>
+                <span style={{ flex: "1.15 1 170px" }}>{trashListHeaderText.details}</span>
+                <span style={{ flex: "1.15 1 180px" }}>{trashListHeaderText.blockReason}</span>
+              </div>
+              <span style={{ textAlign: dir === "rtl" ? "left" : "right" }}>
+                {trashListHeaderText.deletedDate}
+              </span>
+            </div>
+            {paginatedItems.map((item) => {
+              const checked = !!selection[item.key];
+              const isProgram = item.type === "program";
+              const isInvoice = item.type === "invoice";
+              const isPayment = item.type === "payment";
+              const badgeColor = isInvoice ? "#60a5fa" : isPayment ? "#f59e0b" : isProgram ? tc.gold : tc.greenLight;
+              const badgeBorder = isInvoice ? "rgba(96,165,250,.35)" : isPayment ? "rgba(245,158,11,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)";
+              const badgeBackground = isInvoice ? "rgba(96,165,250,.1)" : isPayment ? "rgba(245,158,11,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)";
+              const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
+              const clientDeleteBlock = item.permanentDeleteBlock;
+              const clientDeleteBlocked = Boolean(clientDeleteBlock?.blocked);
+              const showLinkedItemsAction = item.type === "client" && isLinkedFinancialBlock(clientDeleteBlock);
+              const showClientStatus = item.type === "client" && (item.permanentDeleteCheckPending || clientDeleteBlocked);
+              const itemDetails = [
+                item.subtitle,
+                item.programName,
+                isProgram && item.linkedCount > 0 ? t.trashClientsLinked.replace("{count}", item.linkedCount) : null,
+              ].filter(Boolean).join(" · ");
+              return (
+                <GlassCard
+                  key={item.key}
+                  style={{
+                    padding: "7px 10px",
+                    display: "grid",
+                    gap: 0,
+                    background: checked ? "linear-gradient(135deg, rgba(212,175,55,.1), rgba(212,175,55,.04))" : "var(--rukn-bg-card)",
+                    border: checked ? "1px solid rgba(212,175,55,.34)" : "1px solid var(--rukn-border-soft)",
+                    boxShadow: checked ? "0 8px 18px rgba(212,175,55,.06)" : "0 4px 14px rgba(15,23,42,.04)",
+                    borderRadius: 9,
+                  }}
+                >
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto minmax(0,1fr) minmax(92px,auto)",
+                    alignItems: "center",
+                    gap: 10,
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleItem(item.key)}
+                      style={{ width: 16, height: 16 }}
+                    />
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      rowGap: 5,
+                      flexWrap: "wrap",
+                      minWidth: 0,
+                    }}>
                       <span style={{
-                        fontSize: 11,
+                        flex: "0 0 70px",
+                        minWidth: 0,
+                        fontSize: 10.5,
                         color: badgeColor,
                         border: `1px solid ${badgeBorder}`,
                         borderRadius: 999,
-                        padding: "1px 7px",
+                        padding: "1px 6px",
                         background: badgeBackground,
                         fontWeight: 800,
-                        lineHeight: 1.45,
+                        lineHeight: 1.35,
+                        textAlign: "center",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}>
                         {badgeText}
                       </span>
-                      <strong style={{ fontSize: 14.5, color: "var(--rukn-text)", lineHeight: 1.3 }}>{item.name}</strong>
-                    </div>
-                    {item.subtitle && (
-                      <p style={{ marginTop: 2, fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.45 }}>{item.subtitle}</p>
-                    )}
-                    {item.programName && (
-                      <p style={{ marginTop: 1, fontSize: 11.5, color: "var(--rukn-text-muted)" }}>
-                        {item.programName}
-                      </p>
-                    )}
-                    {item.type === "client" && (
+                      <strong style={{
+                        flex: "1 1 150px",
+                        minWidth: 0,
+                        fontSize: 13.5,
+                        color: "var(--rukn-text)",
+                        lineHeight: 1.25,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}>
+                        {item.name}
+                      </strong>
+                      <span style={{
+                        flex: "1.15 1 170px",
+                        minWidth: 0,
+                        fontSize: 11.5,
+                        color: "var(--rukn-text-muted)",
+                        lineHeight: 1.3,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}>
+                        {itemDetails}
+                      </span>
                       <div style={{
-                        marginTop: 2,
+                        flex: "1.15 1 180px",
+                        minWidth: 0,
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
+                        gap: 6,
+                        rowGap: 4,
                         flexWrap: "wrap",
-                        lineHeight: 1.35,
+                        lineHeight: 1.25,
                       }}>
-                        <span style={{
-                          minWidth: 180,
-                          flex: "1 1 260px",
-                          fontSize: 11.5,
-                          color: clientDeleteBlocked ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
-                          fontWeight: clientDeleteBlocked ? 800 : 700,
-                          lineHeight: 1.4,
-                        }}>
-                          {item.permanentDeleteCheckPending
-                            ? paymentGuardText.checking
-                            : getClientDeleteBlockLabel(clientDeleteBlock, paymentGuardText)}
-                        </span>
+                        {showClientStatus && (
+                          <span style={{
+                            flex: "0 1 auto",
+                            minWidth: 0,
+                            fontSize: 11,
+                            color: clientDeleteBlocked ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
+                            fontWeight: clientDeleteBlocked ? 800 : 700,
+                            lineHeight: 1.35,
+                          }}>
+                            {item.permanentDeleteCheckPending
+                              ? paymentGuardText.checking
+                              : getClientDeleteBlockLabel(clientDeleteBlock, paymentGuardText)}
+                          </span>
+                        )}
                         {showLinkedItemsAction && (
                           <Button
                             variant="ghost"
@@ -1312,15 +1646,15 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
                             onClick={() => openLinkedItemsModal(item)}
                             disabled={linkedItemsModal.loading && String(linkedItemsModal.item?.id) === String(item.id)}
                             style={{
-                              minHeight: 24,
-                              padding: "3px 8px",
+                              minHeight: 22,
+                              padding: "2px 7px",
                               fontSize: 10.5,
                               borderRadius: 999,
                               fontWeight: 800,
-                              lineHeight: 1.25,
+                              lineHeight: 1.2,
                               color: "var(--rukn-gold)",
                               background: "var(--rukn-gold-dim)",
-                              border: "1px solid rgba(212,175,55,.24)",
+                              border: "1px solid rgba(212,175,55,.22)",
                               boxShadow: "none",
                               flex: "0 0 auto",
                             }}
@@ -1329,30 +1663,28 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
                           </Button>
                         )}
                       </div>
-                    )}
-                    {isProgram && item.linkedCount > 0 && (
-                      <p style={{ marginTop: 1, fontSize: 11.5, color: "var(--rukn-text-muted)" }}>
-                        {t.trashClientsLinked.replace("{count}", item.linkedCount)}
-                      </p>
-                    )}
+                    </div>
+                    <div style={{
+                      textAlign: dir === "rtl" ? "left" : "right",
+                      minWidth: 92,
+                      color: "var(--rukn-text)",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      lineHeight: 1.25,
+                      whiteSpace: "nowrap",
+                    }}>
+                      {formatDate(item.deletedAt)}
+                      {item.batchId && (
+                        <span style={{ display: "block", marginTop: 1, fontSize: 10, color: "var(--rukn-text-muted)", fontWeight: 700 }}>
+                          #{item.batchId.slice(0, 8)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div style={{
-                    textAlign: dir === "rtl" ? "left" : "right",
-                    minWidth: 112,
-                    padding: "1px 0",
-                  }}>
-                    <p style={{ fontSize: 10.5, color: "var(--rukn-text-muted)", fontWeight: 700 }}>{t.trashDeletedOn}</p>
-                    <p style={{ fontSize: 12.5, fontWeight: 800, color: "var(--rukn-text)", marginTop: 2 }}>{formatDate(item.deletedAt)}</p>
-                    {item.batchId && (
-                      <p style={{ fontSize: 10.5, color: "var(--rukn-text-muted)" }}>
-                        #{item.batchId.slice(0, 8)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </GlassCard>
-            );
-          })
+                </GlassCard>
+              );
+            })}
+          </>
         )}
       </div>
 
