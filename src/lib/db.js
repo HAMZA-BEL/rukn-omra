@@ -602,11 +602,12 @@ export const db = {
           .eq("agency_id", agencyId)
           .or("status.is.null,status.eq.active")
           .order("id", { ascending: true })),
-        supabase
-          .from("programs")
-          .select("id", { count: "exact", head: true })
-          .eq("agency_id", agencyId)
-          .or("deleted.is.null,deleted.eq.false"),
+	        supabase
+	          .from("programs")
+	          .select("id", { count: "exact", head: true })
+	          .eq("agency_id", agencyId)
+	          .or("deleted.is.null,deleted.eq.false")
+	          .or("status.is.null,status.neq.archived"),
       ]);
 
       const error = clientsResult.error || paymentsResult.error || programsResult.error;
@@ -733,6 +734,22 @@ export const db = {
       const { error } = await supabase
         .from("programs")
         .update(payload)
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async archiveRecord(id, agencyId) {
+      const { error } = await supabase
+        .from("programs")
+        .update({ status: "archived", updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+    async restoreRecord(id, agencyId) {
+      const { error } = await supabase
+        .from("programs")
+        .update({ status: "active", updated_at: new Date().toISOString() })
         .eq("id", id)
         .eq("agency_id", agencyId);
       return { error };

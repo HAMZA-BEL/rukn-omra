@@ -1305,7 +1305,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 // PROGRAMS LIST PAGE
 // ═══════════════════════════════════════
 export default function ProgramsPage({ store, onToast, notificationFocus = null }) {
-  const { programs, clients, addProgram, updateProgram, deleteProgram,
+  const { programs, clients, addProgram, updateProgram, archiveProgramRecord, deleteProgram,
           getClientTotalPaid } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -1337,6 +1337,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
+  const [archivePrompt, setArchivePrompt] = React.useState(null);
   const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
@@ -1397,16 +1398,25 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     [yearOptions, selectedYear]
   );
 
+  const activePrograms = React.useMemo(() => (
+    programs.filter((program) => (
+      program
+      && !program.deleted
+      && !program.deletedAt
+      && String(program.status || "active").toLowerCase() !== "archived"
+    ))
+  ), [programs]);
+
   const baseFilteredPrograms = React.useMemo(() => {
     const q = search.trim().toLowerCase();
-    return programs.filter((program) => {
+    return activePrograms.filter((program) => {
       const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
       if (!matchesSearch) return false;
       if (selectedYear === "all") return true;
       const departureYear = getProgramDepartureYear(program);
       return departureYear === Number(selectedYear);
     });
-  }, [programs, search, selectedYear]);
+  }, [activePrograms, search, selectedYear]);
 
   const programTypeOptions = React.useMemo(() => ([
     { key: "all", label: programTypeLabels.all, count: baseFilteredPrograms.length },
@@ -1427,7 +1437,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   React.useEffect(() => {
     const targetId = notificationFocus?.targetId;
     if (!targetId) return undefined;
-    const program = programs.find((item) => String(item.id) === String(targetId));
+    const program = activePrograms.find((item) => String(item.id) === String(targetId));
     if (!program) {
       if (onToast) {
         const message = lang === "fr"
@@ -1453,7 +1463,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
       setHighlightProgramId((current) => current === String(targetId) ? "" : current);
     }, 3600);
     return () => window.clearTimeout(timer);
-  }, [notificationFocus?.targetId, notificationFocus?.token, programs, onToast, lang, currentYear, nextYear]);
+  }, [notificationFocus?.targetId, notificationFocus?.token, activePrograms, onToast, lang, currentYear, nextYear]);
 
   React.useEffect(() => {
     if (!highlightProgramId) return undefined;
@@ -1543,6 +1553,12 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     setDeletePrompt(null);
     onToast(t.deleteSuccess, "info");
   }, [deletePrompt, deleteProgram, activeProgram, setActiveProgram, onToast, t.deleteSuccess]);
+  const handleConfirmArchiveProgram = React.useCallback(() => {
+    if (!archivePrompt?.program) return;
+    archiveProgramRecord?.(archivePrompt.program.id);
+    setArchivePrompt(null);
+    onToast(t.programArchiveSuccess, "success");
+  }, [archivePrompt, archiveProgramRecord, onToast, t.programArchiveSuccess]);
   const openDuplicatePrompt = React.useCallback((program) => {
     if (!program || program.deleted || program.deletedAt || program.status === "archived") return;
     setDuplicatePrompt({
@@ -1618,7 +1634,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
           <div>
             <h1 style={{ fontSize:22, fontWeight:800, color:tc.white }}>{t.availablePrograms}</h1>
             <p style={{ fontSize:13, color:tc.grey, marginTop:4 }}>
-              {tr("programsSubtitle", { count: programs.length })}
+              {tr("programsSubtitle", { count: activePrograms.length })}
             </p>
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
@@ -1629,7 +1645,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
             onChange={e => setSearch(e.target.value)}
             placeholder={searchPlaceholder}
             style={{ flex:"1 1 360px", minWidth:280, maxWidth:420 }}
-            disabled={!programs.length}
+            disabled={!activePrograms.length}
           />
           <div style={{ position:"relative", flex:"0 0 168px", minWidth:150, maxWidth:190 }}>
             <button
@@ -1638,8 +1654,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               aria-label={t.programType || (lang === "fr" ? "Type de programme" : lang === "en" ? "Program type" : "نوع البرنامج")}
               aria-haspopup="listbox"
               aria-expanded={programTypeMenuOpen}
-              disabled={!programs.length}
-              onClick={() => programs.length && setProgramTypeMenuOpen((open) => !open)}
+              disabled={!activePrograms.length}
+              onClick={() => activePrograms.length && setProgramTypeMenuOpen((open) => !open)}
               style={{
                 width:"100%",
                 height:46,
@@ -1656,8 +1672,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                 fontWeight:800,
                 fontFamily:"'Cairo',sans-serif",
                 direction:dir,
-                opacity:programs.length ? 1 : 0.55,
-                cursor:programs.length ? "pointer" : "not-allowed",
+                opacity:activePrograms.length ? 1 : 0.55,
+                cursor:activePrograms.length ? "pointer" : "not-allowed",
                 transition:"border-color .2s, box-shadow .2s, background .2s",
               }}
             >
@@ -1752,8 +1768,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               aria-label={yearLabel}
               aria-haspopup="listbox"
               aria-expanded={yearMenuOpen}
-              disabled={!programs.length}
-              onClick={() => programs.length && setYearMenuOpen((open) => !open)}
+              disabled={!activePrograms.length}
+              onClick={() => activePrograms.length && setYearMenuOpen((open) => !open)}
               style={{
                 width:"100%",
                 height:46,
@@ -1768,8 +1784,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                 direction: dir,
                 outline:"none",
                 transition:"border-color .2s, box-shadow .2s",
-                opacity: programs.length ? 1 : 0.55,
-                cursor: programs.length ? "pointer" : "not-allowed",
+                opacity: activePrograms.length ? 1 : 0.55,
+                cursor: activePrograms.length ? "pointer" : "not-allowed",
                 display:"flex",
                 alignItems:"center",
                 justifyContent: isRTL ? "flex-end" : "flex-start",
@@ -1871,7 +1887,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         </div>
       </div>
 
-      {programs.length === 0 ? (
+      {activePrograms.length === 0 ? (
         <EmptyState icon="program" title={t.noProgramsTitle} sub={t.noProgramsSub} />
       ) : !programMetricsReady ? (
         <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
@@ -1909,6 +1925,10 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                     e.stopPropagation();
                     openDuplicatePrompt(p);
                   }}
+                  onArchive={e => {
+                    e.stopPropagation();
+                    setArchivePrompt({ program: p });
+                  }}
                   onDelete={e => {
                     e.stopPropagation();
                     setDeletePrompt({ program: p, clients: pc });
@@ -1939,6 +1959,47 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         lang={lang}
         t={t}
       />
+      <Modal
+        open={!!archivePrompt}
+        onClose={() => setArchivePrompt(null)}
+        title={t.programArchiveTitle}
+        width={560}
+      >
+        {archivePrompt && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <div>
+              <p style={{ fontSize:15, fontWeight:800, color:"var(--rukn-text-strong)", marginBottom:8 }}>
+                {tr("programArchiveQuestion", { name: archivePrompt.program.name })}
+              </p>
+              <p style={{ fontSize:13, color:"var(--rukn-text-muted)", lineHeight:1.7 }}>
+                {t.programArchiveHiddenFromPrograms}
+              </p>
+            </div>
+            <GlassCard style={{ padding:12, background:"var(--rukn-bg-soft)", borderColor:"var(--rukn-border-soft)" }}>
+              <div style={{ display:"grid", gap:9 }}>
+                {[
+                  ["shieldCheck", t.programArchiveNotDeletion],
+                  ["archive", t.programArchiveDataSafe],
+                  ["restore", t.programArchiveRestoreLater],
+                ].map(([icon, label]) => (
+                  <div key={icon} style={{ display:"flex", alignItems:"flex-start", gap:9, color:"var(--rukn-text)", fontSize:12.5, lineHeight:1.55 }}>
+                    <AppIcon name={icon} size={15} color={tc.gold} style={{ marginTop:2 }} />
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:12, flexWrap:"wrap" }}>
+              <Button variant="ghost" onClick={() => setArchivePrompt(null)}>
+                {t.cancel}
+              </Button>
+              <Button variant="secondary" icon="archive" onClick={handleConfirmArchiveProgram}>
+                {t.programArchiveConfirm}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
       <Modal
         open={!!deletePrompt}
         onClose={() => setDeletePrompt(null)}

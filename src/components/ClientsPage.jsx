@@ -57,23 +57,15 @@ const formatClientReference = (client = {}) => {
   return fallback;
 };
 
-const startsWithIcon = (text, icon) => {
-  if (typeof text !== "string" || typeof icon !== "string") return false;
-  const normalizedIcon = icon.trim();
-  if (!normalizedIcon) return false;
-  return text.trimStart().startsWith(normalizedIcon);
-};
-
 export default function ClientsPage({ store, onToast }) {
   const { t, tr, dir, lang } = useLang();
   const isRTL = dir === "rtl";
-  const { activeClients, archivedClients, programs,
+  const { activeClients, programs,
           getClientStatus, getClientTotalPaid, getClientPayments,
           deleteClient, deleteClientsBulk,
           archiveClient, archiveClients, restoreClient,
           updateClient, transferClients: transferClientsToProgram } = store;
 
-  const [tab,        setTab]        = React.useState("active");
   const [search,     setSearch]     = React.useState("");
   const [filter,     setFilter]     = React.useState("all");
   const [typeFilter, setTypeFilter] = React.useState(CLIENT_TYPE_FILTERS.ALL);
@@ -112,23 +104,7 @@ export default function ClientsPage({ store, onToast }) {
     setShowImport(false);
   }, [importSaving]);
 
-  // Reset tab-specific state when switching tabs
-  const switchTab = (newTab) => {
-    setTab(newTab);
-    setSearch("");
-    setFilter("all");
-    setTypeFilter(CLIENT_TYPE_FILTERS.ALL);
-    setFilterProg("all");
-    setStatusFilterOpen(false);
-    setTypeFilterOpen(false);
-    setImportMenuOpen(false);
-    setSearchOpen(false);
-    setTransferTargets([]);
-    setTransferSheetOpen(false);
-    exitSelectMode();
-  };
-
-  const fallbackClients = tab === "active" ? activeClients : archivedClients;
+  const fallbackClients = activeClients;
   const useRemotePaging = Boolean(store.isSupabaseEnabled && store.agencyId && filter === "all" && typeFilter === CLIENT_TYPE_FILTERS.ALL);
   const shouldUseFullFallback = !useRemotePaging || Boolean(remotePage.error);
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
@@ -151,9 +127,7 @@ export default function ClientsPage({ store, onToast }) {
     if (!shouldUseFullFallback) return [];
     return fallbackClients.filter(c => {
       const status = getDisplayStatusForClient(c);
-      const ok1 = tab === "archived"
-        || filter === "all"
-        || status === filter;
+      const ok1 = filter === "all" || status === filter;
       const clientType = getClientType(c);
       const okType = typeFilter === CLIENT_TYPE_FILTERS.ALL || clientType === typeFilter;
       const ok2 = typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED || filterProg === "all" || getClientProgramId(c) === filterProg;
@@ -164,10 +138,10 @@ export default function ClientsPage({ store, onToast }) {
         (c.ticketNo||"").toLowerCase().includes(q);
       return ok1 && okType && ok2 && ok3;
     });
-  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, tab, typeFilter, shouldUseFullFallback]);
+  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, typeFilter, shouldUseFullFallback]);
 
-  // Reset to page 1 whenever filters or tab change
-  React.useEffect(() => { setCurrentPage(1); }, [search, filter, typeFilter, filterProg, tab]);
+  // Reset to page 1 whenever filters change.
+  React.useEffect(() => { setCurrentPage(1); }, [search, filter, typeFilter, filterProg]);
 
   React.useEffect(() => {
     if (!useRemotePaging) {
@@ -190,7 +164,7 @@ export default function ClientsPage({ store, onToast }) {
     fetchClientsPage(store.agencyId, {
       page: currentPage,
       pageSize: CLIENTS_PAGE_SIZE,
-      archived: tab === "archived",
+      archived: false,
       programId: filterProg === "all" ? null : filterProg,
       search,
     }).then((result) => {
@@ -208,7 +182,7 @@ export default function ClientsPage({ store, onToast }) {
     });
 
     return () => { cancelled = true; };
-  }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, tab, filterProg, search]);
+  }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, filterProg, search]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled) return;
@@ -250,8 +224,8 @@ export default function ClientsPage({ store, onToast }) {
   });
   const clearSelection = React.useCallback(() => setCheckedIds(new Set()), [setCheckedIds]);
   const selectionScopeKey = React.useMemo(
-    () => [tab, search, filter, typeFilter, filterProg, currentPage].join("|"),
-    [tab, search, filter, typeFilter, filterProg, currentPage]
+    () => [search, filter, typeFilter, filterProg, currentPage].join("|"),
+    [search, filter, typeFilter, filterProg, currentPage]
   );
   const previousSelectionScopeKey = React.useRef(selectionScopeKey);
   React.useEffect(() => {
@@ -552,103 +526,76 @@ export default function ClientsPage({ store, onToast }) {
             })}
           </p>
         </div>
-        {tab === "active" && (
-          <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-            <Button variant="primary" icon="plus" onClick={() => setShowAdd(true)}>
-              {t.addClient}
+        <div className="page-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          <Button variant="primary" icon="plus" onClick={() => setShowAdd(true)}>
+            {t.addClient}
+          </Button>
+          <div ref={importMenuRef} style={{ position:"relative" }}>
+            <Button variant="ghost" icon="import" onClick={() => setImportMenuOpen(open => !open)}>
+              {t.importAction || completionLabels.importAction}
             </Button>
-            <div ref={importMenuRef} style={{ position:"relative" }}>
-              <Button variant="ghost" icon="import" onClick={() => setImportMenuOpen(open => !open)}>
-                {t.importAction || completionLabels.importAction}
-              </Button>
-              {importMenuOpen && (
-                <div style={{
-                  position:"absolute",
-                  top:"calc(100% + 6px)",
-                  insetInlineEnd:0,
-                  zIndex:35,
-                  width:210,
-                  padding:6,
-                  borderRadius:12,
-                  background:"var(--rukn-menu-bg)",
-                  border:"1px solid var(--rukn-menu-border)",
-                  boxShadow:"var(--rukn-menu-shadow)",
-                }}>
-                  {[
-                    {
-                      key:"excel",
-                      icon:"import",
-                      label:t.excelImport || t.importExcel || completionLabels.excelImport,
-                      onClick:() => {
-                        setImportMenuOpen(false);
-                        setShowImport(true);
-                      },
+            {importMenuOpen && (
+              <div style={{
+                position:"absolute",
+                top:"calc(100% + 6px)",
+                insetInlineEnd:0,
+                zIndex:35,
+                width:210,
+                padding:6,
+                borderRadius:12,
+                background:"var(--rukn-menu-bg)",
+                border:"1px solid var(--rukn-menu-border)",
+                boxShadow:"var(--rukn-menu-shadow)",
+              }}>
+                {[
+                  {
+                    key:"excel",
+                    icon:"import",
+                    label:t.excelImport || t.importExcel || completionLabels.excelImport,
+                    onClick:() => {
+                      setImportMenuOpen(false);
+                      setShowImport(true);
                     },
-                    {
-                      key:"passport",
-                      icon:"passport",
-                      label:t.passportImport || globalPassportImportLabel,
-                      onClick:() => {
-                        setImportMenuOpen(false);
-                        setShowPassportImport(true);
-                      },
+                  },
+                  {
+                    key:"passport",
+                    icon:"passport",
+                    label:t.passportImport || globalPassportImportLabel,
+                    onClick:() => {
+                      setImportMenuOpen(false);
+                      setShowPassportImport(true);
                     },
-                  ].map((action) => (
-                    <button
-                      key={action.key}
-                      type="button"
-                      onClick={action.onClick}
-                      style={{
-                        width:"100%",
-                        display:"flex",
-                        alignItems:"center",
-                        gap:8,
-                        padding:"8px 10px",
-                        border:0,
-                        borderRadius:9,
-                        background:"transparent",
-                        color:"var(--rukn-text-strong)",
-                        fontSize:12,
-                        fontWeight:800,
-                        cursor:"pointer",
-                        textAlign:"start",
-                        fontFamily:"'Cairo',sans-serif",
-                      }}
-                    >
-                      <AppIcon name={action.icon} size={14} color={tc.gold} />
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                  },
+                ].map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    onClick={action.onClick}
+                    style={{
+                      width:"100%",
+                      display:"flex",
+                      alignItems:"center",
+                      gap:8,
+                      padding:"8px 10px",
+                      border:0,
+                      borderRadius:9,
+                      background:"transparent",
+                      color:"var(--rukn-text-strong)",
+                      fontSize:12,
+                      fontWeight:800,
+                      cursor:"pointer",
+                      textAlign:"start",
+                      fontFamily:"'Cairo',sans-serif",
+                    }}
+                  >
+                    <AppIcon name={action.icon} size={14} color={tc.gold} />
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* Tabs */}
-      <div className="page-tabs" style={{ display:"flex", gap:4, marginBottom:18,
-        background:"var(--rukn-section-bg)", border:"1px solid var(--rukn-section-border)",
-        borderRadius:12, padding:4, width:"fit-content" }}>
-        {[
-          { key:"active",   icon:"users", label:useRemoteResults ? t.activeTab : `${t.activeTab} (${activeClients.length})` },
-          { key:"archived", icon:"archive", label:useRemoteResults ? t.archiveTab : `${t.archiveTab} (${archivedClients.length})` },
-        ].map(({ key, icon, label }) => {
-          const showIcon = icon && !startsWithIcon(label, icon);
-          return (
-            <button key={key} onClick={() => switchTab(key)} style={{
-              padding:"7px 18px", borderRadius:9, fontSize:13, fontWeight:tab===key?700:400,
-              background:tab===key?"rgba(212,175,55,.15)":"transparent",
-              border:tab===key?"1px solid rgba(212,175,55,.35)":"1px solid transparent",
-              color:tab===key?tc.gold:tc.grey, cursor:"pointer",
-              fontFamily:"'Cairo',sans-serif", transition:"all .2s",
-              display:"inline-flex", alignItems:"center", gap:6,
-            }}>
-              {showIcon && <AppIcon name={icon} size={15} color={tab===key?tc.gold:tc.grey} />}
-              <span>{label}</span>
-            </button>
-          );
-        })}
+        </div>
       </div>
 
       <div style={{
@@ -657,10 +604,9 @@ export default function ClientsPage({ store, onToast }) {
         gap:6,
         alignItems:"center",
         justifyContent:"flex-start",
-        marginBottom: tab === "active" ? (selectMode ? 8 : 18) : 18,
+        marginBottom: selectMode ? 8 : 18,
       }}>
-        {tab === "active" && (
-          <div ref={statusFilterRef} style={{ position:"relative", flex:"0 0 auto" }}>
+        <div ref={statusFilterRef} style={{ position:"relative", flex:"0 0 auto" }}>
             <button
               type="button"
               onClick={() => setStatusFilterOpen(open => !open)}
@@ -736,8 +682,7 @@ export default function ClientsPage({ store, onToast }) {
                 })}
               </div>
             )}
-          </div>
-        )}
+        </div>
         <div ref={typeFilterRef} style={{ position:"relative", flex:"0 0 auto" }}>
           <button
             type="button"
@@ -928,7 +873,7 @@ export default function ClientsPage({ store, onToast }) {
             </>
           )}
         </div>
-        {tab === "active" && filteredCount > 0 && (
+        {filteredCount > 0 && (
           <div style={{ marginInlineStart:"auto" }}>
             <Button
               variant={selectMode ? "warning" : "ghost"}
@@ -950,7 +895,7 @@ export default function ClientsPage({ store, onToast }) {
         )}
       </div>
 
-      {tab === "active" && selectMode && (
+      {selectMode && (
         <GlassCard style={{
           padding:"12px 16px",
           marginBottom:14,
@@ -1022,9 +967,7 @@ export default function ClientsPage({ store, onToast }) {
           {paginationLabels.loading}
         </GlassCard>
       ) : filteredCount === 0 ? (
-        tab === "archived"
-          ? <EmptyState title={t.archiveTabEmpty} sub={t.archiveTabEmptySub} />
-          : <EmptyState title={t.noResultsTitle} sub={t.noResultsSub} />
+        <EmptyState title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:5 }}>
           {paginatedClients.map((c,i) => {
@@ -1054,17 +997,17 @@ export default function ClientsPage({ store, onToast }) {
                 deleteLabel={t.deleteLabel}
                 archiveLabel={t.archiveClient}
                 restoreLabel={t.restoreClient}
-                isArchived={tab === "archived"}
-                selectMode={selectMode && tab === "active"}
-                showCheckbox={tab === "active" && selectMode}
+                isArchived={false}
+                selectMode={selectMode}
+                showCheckbox={selectMode}
                 isChecked={checkedIds.has(c.id)}
                 onCheck={() => toggleCheck(c.id)}
                 onClick={() => setSelected(c)}
                 onEdit={() => setEditing(c)}
-                onDelete={() => tab === "archived" ? handleSingleDelete(c) : handleSingleDelete(c)}
+                onDelete={() => handleSingleDelete(c)}
                 onArchive={() => handleSingleArchive(c)}
                 onRestore={() => handleSingleRestore(c)}
-                onTransfer={tab === "active" ? () => openTransferSheet([c.id]) : undefined}
+                onTransfer={() => openTransferSheet([c.id])}
               />
             );
           })}

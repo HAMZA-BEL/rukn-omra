@@ -27,6 +27,8 @@ import {
   fetchDeletedPrograms,
   saveProgram,
   markProgramDeleted,
+  archiveProgramRecord as archiveProgramRecordRemote,
+  restoreProgramRecord as restoreProgramRecordRemote,
   restoreProgram,
   deleteProgramsPermanent,
 } from "../services/programsService";
@@ -703,6 +705,14 @@ export function useStore(agencyId, onToast) {
   // ── Archived / Active split ───────────────────────────────────────────────
   const archivedClients      = useMemo(() => clients.filter(c => !!c.archived),  [clients]);
   const activeClients        = useMemo(() => clients.filter(c => !c.archived),   [clients]);
+  const activeProgramRecords = useMemo(() => (
+    programs.filter((program) => (
+      program
+      && !program.deleted
+      && !program.deletedAt
+      && String(program.status || "active").toLowerCase() !== "archived"
+    ))
+  ), [programs]);
   const clearActivityLogConfirmed = useCallback((days = 0) => clearActivityLog(days), [clearActivityLog]);
 
   const badgePhotoApi = useMemo(() => (
@@ -1687,7 +1697,7 @@ export function useStore(agencyId, onToast) {
     return {
       totalClients:   operationalClients.length,
       archivedCount:  0,
-      totalPrograms:  programs.length,
+      totalPrograms:  activeProgramRecords.length,
       cleared:        operationalClients.filter(c => getStatus(c) === "cleared").length,
       partial:        operationalClients.filter(c => getStatus(c) === "partial").length,
       unpaid:         operationalClients.filter(c => getStatus(c) === "unpaid").length,
@@ -1701,13 +1711,14 @@ export function useStore(agencyId, onToast) {
         return acc;
       }, {}),
     };
-  }, [activeClients, programs, payments, isSupabaseEnabled, dashboardStats]);
+  }, [activeClients, activeProgramRecords.length, payments, isSupabaseEnabled, dashboardStats]);
 
-  const stats = useMemo(() => (
-    isSupabaseEnabled && dashboardStats
+  const stats = useMemo(() => {
+    const base = isSupabaseEnabled && dashboardStats
       ? { ...EMPTY_DASHBOARD_STATS, ...dashboardStats }
-      : (localStats || EMPTY_DASHBOARD_STATS)
-  ), [dashboardStats, isSupabaseEnabled, localStats]);
+      : (localStats || EMPTY_DASHBOARD_STATS);
+    return { ...base, totalPrograms: activeProgramRecords.length };
+  }, [activeProgramRecords.length, dashboardStats, isSupabaseEnabled, localStats]);
 
   // ── Archive suggestions ───────────────────────────────────────────────────
   const getArchiveSuggestions = useCallback(() => {
@@ -2259,6 +2270,22 @@ export function useStore(agencyId, onToast) {
     sync(() => saveProgram({ id, ...data }, agencyId));
   }, [setPrograms, logActivity, sync, agencyId]);
 
+  const archiveProgramRecord = useCallback((programId) => {
+    const prog = programs.find(p => p.id === programId);
+    if (!prog || prog.deleted || prog.deletedAt || prog.status === "archived") return;
+    setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "archived" } : p));
+    logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${prog?.name || programId}`), "");
+    sync(() => archiveProgramRecordRemote(programId, agencyId));
+  }, [programs, setPrograms, logActivity, sync, agencyId]);
+
+  const restoreProgramRecord = useCallback((programId) => {
+    const prog = programs.find(p => p.id === programId);
+    if (!prog || prog.deleted || prog.deletedAt || prog.status !== "archived") return;
+    setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "active" } : p));
+    logActivity("program_restore", translateActivityDescription(`تمت استعادة برنامج ${prog?.name || programId}`), "");
+    sync(() => restoreProgramRecordRemote(programId, agencyId));
+  }, [programs, setPrograms, logActivity, sync, agencyId]);
+
   const deleteProgram = useCallback((id) => {
     const prog = programs.find(p => p.id === id);
     if (!prog) return;
@@ -2764,7 +2791,7 @@ export function useStore(agencyId, onToast) {
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
-    addProgram, updateProgram, deleteProgram,
+    addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
     ensureClientsLoaded: loadClients,

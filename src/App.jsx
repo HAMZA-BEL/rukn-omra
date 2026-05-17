@@ -4,11 +4,12 @@ import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
-import { Menu as MenuIcon, Home, Users, FolderKanban, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun } from "lucide-react";
+import { Menu as MenuIcon, Home, Users, FolderKanban, FolderArchive, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
 import ProgramsPage from "./components/ProgramsPage";
+import ArchivePage from "./components/ArchivePage";
 import ClearancePage from "./components/ClearancePage";
 import NotificationsPage from "./components/NotificationsPage";
 import SettingsPage from "./components/SettingsPage";
@@ -23,7 +24,7 @@ import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 
-const VALID_PAGES = ["dashboard","clients","programs","clearance","activity","trash","settings","notifications"];
+const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
 function getInitialPage() {
   const hash = window.location.hash.replace("#", "").trim();
   return VALID_PAGES.includes(hash) ? hash : "dashboard";
@@ -131,6 +132,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
     { id: "programs",  icon: FolderKanban,  label: t.programs },
     { id: "activity",  icon: ClipboardList, label: t.activityLog || t.recentActivity },
     { id: "clearance", icon: BarChart3,     label: t.clearance },
+    { id: "archive",   icon: FolderArchive, label: t.archiveNav },
     { id: "trash",     icon: Trash2,        label: t.trash },
     { id: "settings",  icon: SettingsIcon,  label: t.settings },
   ]), [t]);
@@ -346,6 +348,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
           )}
           {page==="clients"    && <ErrorBoundary><ClientsPage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} notificationFocus={notificationFocus?.type === "program" ? notificationFocus : null} /></ErrorBoundary>}
+          {page==="archive"    && <ErrorBoundary><ArchivePage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="notifications" && (
             <ErrorBoundary>
               <NotificationsPage
@@ -727,7 +730,7 @@ function MobileNav({ navItems, dir, active, onNavigate }) {
   }, [open, secondaryOpen]);
 
   const primaryIds = ["dashboard", "clients", "programs", "clearance"];
-  const secondaryIds = ["trash", "activity", "settings"];
+  const secondaryIds = ["activity", "archive", "trash", "settings"];
   const primaryItems = primaryIds
     .map((id) => navItems.find((item) => item.id === id))
     .filter(Boolean);

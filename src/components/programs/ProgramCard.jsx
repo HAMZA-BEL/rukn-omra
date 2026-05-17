@@ -12,8 +12,9 @@ import { translateProgramType } from "../../utils/i18nValues";
 
 const tc = theme.colors;
 
-function SmallBtn({ icon, onClick, color, title }) {
+function SmallBtn({ icon, onClick, color, title, active = false }) {
   const [hov, setHov] = React.useState(false);
+  const activeOrHover = hov || active;
   return (
     <button
       type="button"
@@ -21,22 +22,35 @@ function SmallBtn({ icon, onClick, color, title }) {
       aria-label={title}
       onClick={e=>{e.stopPropagation();onClick(e);}}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{ width:30, height:30, background:hov?`${color}22`:"rgba(255,255,255,.05)",
-        border:`1px solid ${hov?color:"rgba(255,255,255,.08)"}`,
+      style={{ width:30, height:30, background:activeOrHover ? `${color}18` : "transparent",
+        border:"1px solid transparent",
         borderRadius:8, cursor:"pointer",
         display:"flex", alignItems:"center", justifyContent:"center",
-        fontSize:13, transition:"all .2s" }}>
+        fontSize:13, transition:"background .16s ease, box-shadow .16s ease, color .16s ease",
+        outline:"none",
+        boxShadow:active ? `0 0 0 1px ${color}33` : "none" }}
+      onFocus={(event) => {
+        event.currentTarget.style.boxShadow = `0 0 0 2px ${color}33`;
+      }}
+      onBlur={(event) => {
+        event.currentTarget.style.boxShadow = active ? `0 0 0 1px ${color}33` : "none";
+      }}
+    >
       <AppIcon name={icon} size={15} color={color} />
     </button>
   );
 }
 
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
-  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onDelete, lang, formatCurrencyForLang,
+  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, lang, formatCurrencyForLang,
   highlighted = false }) {
   const [hov, setHov] = React.useState(false);
-  const { t } = useLang();
+  const [actionsOpen, setActionsOpen] = React.useState(false);
+  const [hoveredAction, setHoveredAction] = React.useState("");
+  const menuRef = React.useRef(null);
+  const { t, dir } = useLang();
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
+  const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
   const packages = normalizeProgramPackages(program);
   const packageCount = getProgramPackageCount(program);
   const startingPriceValue = getProgramStartingPrice(program);
@@ -55,12 +69,62 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
     { label: t.cleared, value: cleared, color: tc.greenLight },
     { label: t.unpaid, value: unpaid, color: tc.danger },
   ];
+  const menuActions = [
+    {
+      key: "edit",
+      icon: "edit",
+      label: t.edit,
+      onClick: onEdit,
+    },
+    canArchive ? {
+      key: "archive",
+      icon: "archive",
+      label: t.programArchiveAction,
+      onClick: onArchive,
+    } : null,
+    {
+      key: "delete",
+      icon: "trash",
+      label: t.delete,
+      danger: true,
+      onClick: onDelete,
+    },
+  ].filter(Boolean);
+
+  React.useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const handleOutside = (event) => {
+      if (menuRef.current?.contains(event.target)) return;
+      setActionsOpen(false);
+      setHoveredAction("");
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      setActionsOpen(false);
+      setHoveredAction("");
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionsOpen]);
+
+  const runMenuAction = React.useCallback((event, action) => {
+    event.stopPropagation();
+    setActionsOpen(false);
+    setHoveredAction("");
+    action.onClick?.(event);
+  }, []);
 
   return (
-    <div className="animate-fadeInUp" style={{ animationDelay:`${delay}s`, cursor:"pointer" }}
+    <div className="animate-fadeInUp" style={{ animationDelay:`${delay}s`, cursor:"pointer", position:"relative", zIndex:actionsOpen ? 60 : 1 }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} onClick={onClick}>
       <GlassCard gold style={{
         padding:22,
+        position:"relative",
+        overflow:"visible",
         transform: hov ? "translateY(-5px)" : "none",
         transition:"transform .3s ease, border-color .25s ease, box-shadow .35s ease",
         boxShadow: highlighted
@@ -78,8 +142,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
             </div>
           </div>
-          <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
-            <SmallBtn icon="edit" onClick={onEdit} color={tc.gold} title={t.edit} />
+          <div style={{ display:"flex", gap:6, alignItems:"center", position:"relative", direction:dir }} onClick={e=>e.stopPropagation()}>
             {canDuplicate && (
               <SmallBtn
                 icon="copy"
@@ -88,7 +151,76 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
                 title={t.programDuplicateAction || (lang === "fr" ? "Dupliquer le programme" : lang === "en" ? "Duplicate program" : "نسخ البرنامج")}
               />
             )}
-            <SmallBtn icon="trash" onClick={onDelete} color={tc.danger} title={t.delete} />
+            <div ref={menuRef} style={{ position:"relative" }}>
+              <SmallBtn
+                icon="moreHorizontal"
+                onClick={() => setActionsOpen(open => !open)}
+                color={tc.gold}
+                title={t.programActionsMenu}
+                active={actionsOpen}
+              />
+              {actionsOpen && (
+                <div
+                  role="menu"
+                  aria-label={t.programActionsMenu}
+                  style={{
+                    position:"absolute",
+                    top:"calc(100% + 8px)",
+                    insetInlineEnd:0,
+                    minWidth:178,
+                    zIndex:80,
+                    padding:6,
+                    borderRadius:12,
+                    border:"1px solid var(--rukn-menu-border)",
+                    background:"var(--rukn-menu-bg)",
+                    boxShadow:"var(--rukn-menu-shadow)",
+                    backdropFilter:"blur(14px)",
+                    direction:dir,
+                  }}
+                >
+                  {menuActions.map((action, index) => {
+                    const hovered = hoveredAction === action.key;
+                    const isDelete = action.danger;
+                    return (
+                      <React.Fragment key={action.key}>
+                        {isDelete && index > 0 && (
+                          <div style={{ height:1, background:"var(--rukn-menu-divider)", margin:"5px 2px" }} />
+                        )}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onMouseEnter={() => setHoveredAction(action.key)}
+                          onMouseLeave={() => setHoveredAction(current => current === action.key ? "" : current)}
+                          onClick={(event) => runMenuAction(event, action)}
+                          style={{
+                            width:"100%",
+                            border:0,
+                            borderRadius:8,
+                            background:hovered
+                              ? isDelete ? "var(--rukn-danger-dim)" : "var(--rukn-gold-dim)"
+                              : "transparent",
+                            color:isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-strong)",
+                            display:"flex",
+                            alignItems:"center",
+                            gap:9,
+                            padding:"9px 10px",
+                            fontSize:12,
+                            fontWeight:800,
+                            cursor:"pointer",
+                            textAlign:"start",
+                            fontFamily:"'Cairo',sans-serif",
+                            transition:"background .16s ease, color .16s ease",
+                          }}
+                        >
+                          <AppIcon name={action.icon} size={14} color={isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-muted)"} />
+                          <span style={{ flex:1 }}>{action.label}</span>
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

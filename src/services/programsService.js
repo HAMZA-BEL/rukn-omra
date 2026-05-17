@@ -20,6 +20,14 @@ export function markProgramDeleted(id, agencyId, batchId) {
   return db.programs.markDeleted(id, agencyId, batchId);
 }
 
+export function archiveProgramRecord(programId, agencyId) {
+  return db.programs.archiveRecord(programId, agencyId);
+}
+
+export function restoreProgramRecord(programId, agencyId) {
+  return db.programs.restoreRecord(programId, agencyId);
+}
+
 export function restoreProgram(id, agencyId) {
   return db.programs.restore(id, agencyId);
 }

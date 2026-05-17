@@ -36,6 +36,14 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
       .sort((a, b) => new Date(b.time || b.createdAt || 0) - new Date(a.time || a.createdAt || 0))
       .slice(0, 5)
   ), [activityLog]);
+  const activePrograms = React.useMemo(() => (
+    programs.filter((program) => (
+      program
+      && !program.deleted
+      && !program.deletedAt
+      && String(program.status || "active").toLowerCase() !== "archived"
+    ))
+  ), [programs]);
 
   const results = React.useMemo(() => {
     if (!search.trim()) return [];
@@ -46,10 +54,10 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
       c.id.toLowerCase().includes(q) || (c.ticketNo||"").toLowerCase().includes(q) ||
       (c.nameLatin||"").toLowerCase().includes(q) || (c.passport?.number||"").toLowerCase().includes(q)
     );
-    const progMatch = programs.find(p => p.name.toLowerCase().includes(q));
+    const progMatch = activePrograms.find(p => p.name.toLowerCase().includes(q));
     const byProg = progMatch ? clients.filter(c => c.programId === progMatch.id) : [];
     return [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
-  }, [search, clients, clientsReady, programs]);
+  }, [search, clients, clientsReady, activePrograms]);
 
   const programClientCounts = stats.programClientCounts || {};
 
@@ -188,7 +196,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
             {/* Programs */}
             <SectionHeader title={t.availablePrograms} onMore={()=>onNavigate("programs")} btnLabel={t.viewAll} />
             <div className="program-grid cards-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))", gap:12, marginBottom:26 }}>
-              {programs.map((p,i)=>{
+              {activePrograms.map((p,i)=>{
                 const registered = Object.prototype.hasOwnProperty.call(programClientCounts, p.id)
                   ? programClientCounts[p.id]
                   : getProgramClients(p.id).length;

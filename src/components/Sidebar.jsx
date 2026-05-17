@@ -31,6 +31,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
     { id:"programs",  icon:"program", label:t.programs },
     { id:"activity",  icon:"activity", label:t.activityLog || t.recentActivity },
     { id:"clearance", icon:"clearance", label:t.clearance },
+    { id:"archive",   icon:"archivedFolder", label:t.archiveNav },
     { id:"trash", icon:"trash", label:t.trash },
     { id:"settings",  icon:"settings", label:t.settings },
   ];
