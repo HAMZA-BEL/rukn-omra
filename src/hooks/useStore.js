@@ -1672,6 +1672,102 @@ export function useStore(agencyId, onToast) {
     return summaries;
   }, [agencyId, getClientTargetNotificationsForClientIds, getLinkedInvoicesForClientIds, getLinkedPaymentsForClientIds, getRepresentationLinksForClientIds, getRoomingAssignmentsForClientIds, inspectClientPermanentDeleteRemote, isSupabaseEnabled]);
 
+  const getClientPermanentDeleteLinkedDetails = useCallback(async (clientIds = []) => {
+    const ids = Array.from(new Set((clientIds || []).filter(Boolean)));
+    const emptyDetails = new Map(ids.map((id) => [id, {
+      clientId: id,
+      client: null,
+      payments: [],
+      invoices: [],
+    }]));
+    if (!ids.length) return emptyDetails;
+
+    const buildDetails = ({
+      clients: detailClients = [],
+      programs: detailPrograms = [],
+      payments: detailPayments = [],
+      invoices: detailInvoices = [],
+    } = {}) => {
+      const details = new Map(ids.map((id) => [id, {
+        clientId: id,
+        client: null,
+        payments: [],
+        invoices: [],
+      }]));
+      const clientMap = new Map();
+      [...clients, ...deletedClients, ...detailClients].forEach((client) => {
+        if (client?.id) clientMap.set(String(client.id), client);
+      });
+      const programMap = new Map();
+      [...programs, ...deletedPrograms, ...detailPrograms].forEach((program) => {
+        if (program?.id) programMap.set(String(program.id), program);
+      });
+
+      details.forEach((detail, clientId) => {
+        detail.client = clientMap.get(String(clientId)) || null;
+      });
+
+      detailPayments
+        .filter(isActiveLinkedPayment)
+        .forEach((payment) => {
+          const clientId = String(getPaymentClientId(payment));
+          const detail = details.get(clientId);
+          if (!detail) return;
+          const client = clientMap.get(clientId) || {};
+          const programId = getClientProgramId(client);
+          const program = programMap.get(String(programId)) || {};
+          detail.payments.push({
+            ...payment,
+            clientId,
+            clientName: getClientDisplayName(client, client.name || clientId),
+            programId,
+            programName: program.name || "",
+          });
+        });
+
+      detailInvoices
+        .filter(isActiveLinkedInvoice)
+        .forEach((invoice) => {
+          const clientId = String(invoice.clientId || invoice.client_id || "");
+          const detail = details.get(clientId);
+          if (!detail) return;
+          const client = clientMap.get(clientId) || {};
+          const recipient = invoice.recipientSnapshot || {};
+          const programSnapshot = invoice.programSnapshot || {};
+          const programId = invoice.programId || getClientProgramId(client);
+          const program = programMap.get(String(programId)) || {};
+          detail.invoices.push({
+            ...invoice,
+            clientId,
+            clientName: recipient.clientName || recipient.name || getClientDisplayName(client, client.name || clientId),
+            programId,
+            programName: programSnapshot.programName || program.name || "",
+          });
+        });
+
+      return details;
+    };
+
+    if (isSupabaseEnabled && agencyId) {
+      const { data, error } = await db.clients.fetchDeletedLinkedActiveRecords(agencyId, ids);
+      if (error) throw error;
+      return buildDetails(data || {});
+    }
+
+    const idSet = new Set(ids.map(String));
+    const localClients = deletedClients.filter((client) => idSet.has(String(client.id)));
+    const localPayments = [...payments, ...deletedPayments]
+      .filter((payment) => idSet.has(String(getPaymentClientId(payment))) && isActiveLinkedPayment(payment));
+    const localInvoices = readSavedInvoices()
+      .filter((invoice) => idSet.has(String(invoice.clientId || invoice.client_id || "")) && isActiveLinkedInvoice(invoice));
+    return buildDetails({
+      clients: localClients,
+      programs: [...programs, ...deletedPrograms],
+      payments: localPayments,
+      invoices: localInvoices,
+    });
+  }, [agencyId, clients, deletedClients, deletedPayments, deletedPrograms, isSupabaseEnabled, payments, programs]);
+
   const permanentlyDeleteClientRemote = useCallback(async (clientId) => {
     return callPermanentDeleteClientFunction(clientId, {
       confirmPermanentDelete: true,
@@ -2318,8 +2414,10 @@ export function useStore(agencyId, onToast) {
     return pmt;
   }, [clients, addPaymentLocal, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
-  const deletePayment = useCallback((id) => {
+  const deletePayment = useCallback((id, options = {}) => {
     const p = payments.find(x => x.id === id);
+    const clientId = p?.clientId || p?.client_id || options.clientId || options.client_id || "";
+    if (agencyId && clientId) clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${clientId}`);
     trashPaymentLocal(id);
     logActivity(
       "payment_trash",
@@ -2895,7 +2993,7 @@ export function useStore(agencyId, onToast) {
     backgroundHydrationLoading, backgroundHydrationDone,
     trashLoading, trashLoaded, trashError, loadTrashData,
     paymentsByClient, paidByClient, lastPaymentByClient,
-    getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds, getClientPermanentDeleteBlockMap,
+    getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds, getClientPermanentDeleteBlockMap, getClientPermanentDeleteLinkedDetails,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
     addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, syncRoomingClientFields, deleteClient, deleteClientsBulk,
     transferClients,

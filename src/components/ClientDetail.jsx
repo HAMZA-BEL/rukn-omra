@@ -42,6 +42,7 @@ const printActionButtonStyle = {
   whiteSpace: "nowrap",
   textAlign: "center",
 };
+const EMPTY_LINKED_PAYMENTS = [];
 const completionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
@@ -127,6 +128,7 @@ export default function ClientDetail({
   onToast,
   highlightFromNotification = false,
   notificationHighlightToken = null,
+  linkedPayments = EMPTY_LINKED_PAYMENTS,
 }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -141,6 +143,7 @@ export default function ClientDetail({
   const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
   const [notificationHighlightActive, setNotificationHighlightActive] = React.useState(false);
+  const [locallyHiddenPaymentIds, setLocallyHiddenPaymentIds] = React.useState(() => new Set());
   const paymentsHydrationRequestedRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -150,8 +153,20 @@ export default function ClientDetail({
     return () => window.clearTimeout(timer);
   }, [highlightFromNotification, notificationHighlightToken]);
 
+  React.useEffect(() => {
+    setLocallyHiddenPaymentIds(new Set());
+  }, [client.id, linkedPayments]);
+
   const clientProgramId = getClientProgramId(client);
   const program     = getProgramById(clientProgramId);
+  const programStatus = String(program?.status || "").trim().toLowerCase();
+  const isAssignedToActiveFinancialProgram = Boolean(
+    clientProgramId
+    && program?.id
+    && program.deleted !== true
+    && program.archived !== true
+    && !["archived", "deleted", "trashed"].includes(programStatus)
+  );
   const docs        = client.docs || {};
   const deletedProgramSnapshot = docs.deletedProgramSnapshot || null;
   const showDeletedProgramSnapshot = !program && deletedProgramSnapshot;
@@ -169,8 +184,24 @@ export default function ClientDetail({
     [program, serviceType],
   );
   const referenceCostLabel = getReferenceCostLabel(serviceType, t.officialPrice, lang);
-  const payments    = paymentsReady ? getClientPayments(client.id) : [];
-  const totalPaid   = paymentsReady ? getClientTotalPaid(client.id) : 0;
+  const storedPayments = paymentsReady ? getClientPayments(client.id) : [];
+  const payments = React.useMemo(() => {
+    if (!paymentsReady) return [];
+    const rows = [];
+    const seen = new Set();
+    [...storedPayments, ...(Array.isArray(linkedPayments) ? linkedPayments : [])].forEach((payment) => {
+      if (!payment) return;
+      if (payment.id && locallyHiddenPaymentIds.has(payment.id)) return;
+      const paymentClientId = String(payment.clientId || payment.client_id || "");
+      if (paymentClientId && paymentClientId !== String(client.id)) return;
+      const key = payment.id || `${paymentClientId}:${payment.date || ""}:${payment.amount || ""}:${payment.receiptNo || payment.receipt_no || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push(payment);
+    });
+    return rows;
+  }, [client.id, linkedPayments, locallyHiddenPaymentIds, paymentsReady, storedPayments]);
+  const totalPaid   = paymentsReady ? payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) : 0;
   const pricingOptions = React.useMemo(() => ({
     referencePrice: costingReferenceCost,
     standaloneSalePrice: standaloneServiceSalePrice,
@@ -189,16 +220,33 @@ export default function ClientDetail({
     ? getClientCompletionTooltip(client, lang, program, pricingOptions)
     : "";
   const pct         = paymentsReady && salePrice > 0 ? Math.min((totalPaid / salePrice) * 100, 100) : 0;
-  const lastPmt     = paymentsReady ? getClientLastPayment(client.id) : null;
   const sortedPayments = React.useMemo(
     () => [...payments].sort((a,b) => new Date(b.date)-new Date(a.date)),
     [payments]
   );
+  const lastPmt     = paymentsReady ? (sortedPayments[0] || getClientLastPayment(client.id)) : null;
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
   const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program, pricingOptions), [client, lang, program, pricingOptions]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
   const paymentEligibility = React.useMemo(() => getClientPaymentEligibility(client, program, pricingOptions), [client, program, pricingOptions]);
+  const financialActionsRestricted = !isAssignedToActiveFinancialProgram;
+  const canAddPayment = paymentEligibility.canAddPayment && !financialActionsRestricted;
+  const canPrintReceipts = !financialActionsRestricted;
+  const restrictedPaymentsNotice = t.unassignedClientPaymentsRestrictedNotice || (
+    lang === "fr"
+      ? "Ce client n’est rattaché à aucun programme actif. Vous ne pouvez donc pas ajouter de nouveaux paiements ni imprimer de reçus. Vous pouvez seulement consulter les paiements existants ou les supprimer si nécessaire."
+      : lang === "en"
+        ? "This client is not assigned to an active program, so you cannot add new payments or print receipts. You can only review existing payments or delete them if needed."
+        : "هذا الحاج/المعتمر غير مدرج في أي برنامج نشط، لذلك لا يمكن إضافة دفعات جديدة أو طباعة وصولات. يمكنك فقط مراجعة الدفعات السابقة أو حذفها إن لزم."
+  );
+  const addPaymentDisabledMessage = t.unassignedClientAddPaymentTooltip || (
+    lang === "fr"
+      ? "Le client doit être rattaché à un programme actif avant d’ajouter un paiement."
+      : lang === "en"
+        ? "The client must be assigned to an active program before adding a new payment."
+        : "يجب إدراج الحاج/المعتمر في برنامج نشط قبل إضافة دفعة جديدة."
+  );
   const missingCompletionItems = React.useMemo(
     () => getClientMissingCompletionItems(client, lang, program, pricingOptions),
     [client, lang, program, pricingOptions],
@@ -359,37 +407,59 @@ export default function ClientDetail({
   }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, loadingLabel, onToast, paymentsReady, program, store]);
 
   const openReceiptSelector = React.useCallback((payment) => {
+    if (!canPrintReceipts) {
+      onToast?.(addPaymentDisabledMessage, "error");
+      return;
+    }
     if (isPreviousPaymentRecord(payment)) return;
     if (payment) setReceiptPayment(payment);
-  }, []);
+  }, [addPaymentDisabledMessage, canPrintReceipts, onToast]);
 
   const closeReceiptSelector = React.useCallback(() => {
     setReceiptPayment(null);
   }, []);
 
   const handleReceiptTypeSelect = React.useCallback((receiptType) => {
-    if (!receiptPayment) return;
+    if (!receiptPayment || !canPrintReceipts) return;
     printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments });
     setReceiptPayment(null);
-  }, [agency, client, lang, payments, program, receiptPayment]);
+  }, [agency, canPrintReceipts, client, lang, payments, program, receiptPayment]);
 
-  const paymentBlockMessage = paymentEligibility.paymentEligibilityReason === "no_program"
-    ? (t.noProgramPaymentBlocked || completionLabels.noProgramPaymentBlocked)
-    : (t.incompleteProgramPaymentBlocked || completionLabels.incompleteProgramPaymentBlocked);
-  const paymentPanelMessage = paymentEligibility.paymentEligibilityReason === "no_program"
-    ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
-    : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel);
+  const paymentBlockMessage = financialActionsRestricted
+    ? addPaymentDisabledMessage
+    : (
+      paymentEligibility.paymentEligibilityReason === "no_program"
+        ? (t.noProgramPaymentBlocked || completionLabels.noProgramPaymentBlocked)
+        : (t.incompleteProgramPaymentBlocked || completionLabels.incompleteProgramPaymentBlocked)
+    );
+  const paymentPanelMessage = financialActionsRestricted
+    ? restrictedPaymentsNotice
+    : (
+      paymentEligibility.paymentEligibilityReason === "no_program"
+        ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
+        : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel)
+    );
   const handleAddPaymentClick = React.useCallback(() => {
     if (!paymentsReady) {
       onToast?.(loadingLabel, "info");
       return;
     }
-    if (!paymentEligibility.canAddPayment) {
+    if (!canAddPayment) {
       onToast?.(paymentBlockMessage, "error");
       return;
     }
     setShowPayForm(true);
-  }, [loadingLabel, onToast, paymentBlockMessage, paymentEligibility.canAddPayment, paymentsReady]);
+  }, [canAddPayment, loadingLabel, onToast, paymentBlockMessage, paymentsReady]);
+
+  React.useEffect(() => {
+    if (canAddPayment || !showPayForm) return;
+    setShowPayForm(false);
+  }, [canAddPayment, showPayForm]);
+
+  React.useEffect(() => {
+    if (canPrintReceipts || !receiptPayment) return;
+    setReceiptPayment(null);
+  }, [canPrintReceipts, receiptPayment]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled || paymentsReady || store.paymentsLoading) return;
@@ -599,11 +669,14 @@ export default function ClientDetail({
       {/* Print buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         {paymentsReady && payments.map && payments.length > 0 && lastPmt && !isPreviousPaymentRecord(lastPmt) && (
-          <Button variant="secondary" size="sm" icon="print"
-            style={printActionButtonStyle}
-            onClick={() => openReceiptSelector(lastPmt)}>
-            {t.printReceipt}
-          </Button>
+          <span title={!canPrintReceipts ? addPaymentDisabledMessage : undefined} style={{ display:"inline-flex" }}>
+            <Button variant="secondary" size="sm" icon="print"
+              style={printActionButtonStyle}
+              disabled={!canPrintReceipts}
+              onClick={() => openReceiptSelector(lastPmt)}>
+              {t.printReceipt}
+            </Button>
+          </span>
         )}
         <Button variant="secondary" size="sm" icon="passport"
           style={printActionButtonStyle}
@@ -780,7 +853,7 @@ export default function ClientDetail({
 
       <Divider label={t.paymentRecord} />
 
-      {!paymentEligibility.canAddPayment && (
+      {!canAddPayment && (
         <div style={{
           display:"flex",
           alignItems:"flex-start",
@@ -807,17 +880,21 @@ export default function ClientDetail({
         </div>
       )}
 
-      {paymentsReady && displayStatus !== "cleared" && !showPayForm && (
-        <Button
-          variant={paymentEligibility.canAddPayment ? "success" : "warning"}
-          icon={paymentEligibility.canAddPayment ? "plus" : "alert"}
-          onClick={handleAddPaymentClick}
-          style={{ marginBottom:12 }}
-        >
-          {paymentEligibility.canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
-        </Button>
+      {paymentsReady && (financialActionsRestricted || displayStatus !== "cleared") && !showPayForm && (
+        <span title={financialActionsRestricted ? addPaymentDisabledMessage : undefined} style={{ display:"inline-flex", marginBottom:12 }}>
+          <Button
+            variant={canAddPayment ? "success" : "warning"}
+            icon={canAddPayment ? "plus" : "alert"}
+            disabled={financialActionsRestricted}
+            onClick={handleAddPaymentClick}
+          >
+            {financialActionsRestricted
+              ? t.addPayment
+              : canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
+          </Button>
+        </span>
       )}
-      {paymentsReady && showPayForm && (
+      {paymentsReady && showPayForm && canAddPayment && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
           onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); }}
           onCancel={() => setShowPayForm(false)} />
@@ -837,9 +914,18 @@ export default function ClientDetail({
           {sortedPayments.map(pmt => (
             <PaymentRow key={pmt.id} payment={pmt}
               onPrint={() => openReceiptSelector(pmt)}
+              canPrint={canPrintReceipts}
+              showActionsAlways={financialActionsRestricted}
               onDelete={() => {
                 if (window.confirm(t.confirmDeletePayment)) {
-                  deletePayment(pmt.id);
+                  deletePayment(pmt.id, { clientId: pmt.clientId || pmt.client_id });
+                  if (pmt.id) {
+                    setLocallyHiddenPaymentIds((current) => {
+                      const next = new Set(current);
+                      next.add(pmt.id);
+                      return next;
+                    });
+                  }
                   onToast(t.deleteSuccess, "info");
                 }
               }} />
@@ -989,7 +1075,7 @@ function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerm
   );
 }
 
-function PaymentRow({ payment, onPrint, onDelete }) {
+function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAlways = false }) {
   const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","إيداع بنكي":"bank","بطاقة بنكية":"payment","وقفة بنك":"bank","وقفة بنكية":"bank"};
@@ -1059,9 +1145,9 @@ function PaymentRow({ payment, onPrint, onDelete }) {
           )}
         </div>
       </div>
-      {hov && (
+      {(hov || showActionsAlways) && (
         <div style={{ display:"flex", gap:5, flexShrink:0 }}>
-          {!isPrevious && (
+          {!isPrevious && canPrint && (
             <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
               border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
               borderRadius:8, padding:"3px 8px", fontSize:11,

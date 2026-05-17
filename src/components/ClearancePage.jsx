@@ -582,7 +582,7 @@ const invoiceTabText = (lang) => {
   };
 };
 
-export default function ClearancePage({ store }) {
+export default function ClearancePage({ store, focus = null }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const {
@@ -620,6 +620,7 @@ export default function ClearancePage({ store }) {
   const statusFilterRef = React.useRef(null);
   const paymentMethodRef = React.useRef(null);
   const clearanceHydrationRequestedRef = React.useRef(false);
+  const invoiceFocusTokenRef = React.useRef(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
@@ -667,6 +668,13 @@ export default function ClearancePage({ store }) {
   React.useEffect(() => {
     if (activeTab === "invoices") refreshSavedInvoices();
   }, [activeTab, refreshSavedInvoices]);
+
+  React.useEffect(() => {
+    if (focus?.type !== "invoice" || !focus.token || invoiceFocusTokenRef.current === focus.token) return;
+    invoiceFocusTokenRef.current = focus.token;
+    setActiveTab("invoices");
+    refreshSavedInvoices({ force: true });
+  }, [focus, refreshSavedInvoices]);
 
   React.useEffect(() => {
     if (!programs.length) {
@@ -1318,6 +1326,7 @@ export default function ClearancePage({ store }) {
           lang={lang}
           dir={dir}
           money={money}
+          focusInvoice={focus?.type === "invoice" ? focus : null}
           onPreview={(invoice) => previewInvoiceSnapshot({ snapshot: invoice, lang })}
           onReprint={(invoice) => printInvoiceSnapshot({ snapshot: invoice, lang })}
           onDownloadWord={(invoice) => downloadInvoiceWordSnapshot({ snapshot: invoice, lang })}
@@ -1342,11 +1351,26 @@ export default function ClearancePage({ store }) {
   );
 }
 
-function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, onPreview, onReprint, onDownloadWord, onTrash, onRestore, onDelete }) {
+function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, focusInvoice = null, onPreview, onReprint, onDownloadWord, onTrash, onRestore, onDelete }) {
   const [yearFilter, setYearFilter] = React.useState("all");
   const [programFilter, setProgramFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
   const [deleteTarget, setDeleteTarget] = React.useState(null);
+  const [highlightedInvoiceId, setHighlightedInvoiceId] = React.useState("");
+
+  React.useEffect(() => {
+    if (focusInvoice?.type !== "invoice" || !focusInvoice.token) return undefined;
+    const invoiceSearch = String(focusInvoice.invoiceNumber || focusInvoice.invoiceId || "").trim();
+    if (invoiceSearch) setSearch(invoiceSearch);
+    if (focusInvoice.programId && programs.some((program) => String(program.id) === String(focusInvoice.programId))) {
+      setProgramFilter(focusInvoice.programId);
+    } else {
+      setProgramFilter("all");
+    }
+    if (focusInvoice.invoiceId) setHighlightedInvoiceId(String(focusInvoice.invoiceId));
+    const timer = window.setTimeout(() => setHighlightedInvoiceId(""), 4200);
+    return () => window.clearTimeout(timer);
+  }, [focusInvoice, programs]);
 
   const invoiceYears = React.useMemo(() => (
     [...new Set(programs.map((program) => getProgramYear(program)).filter(Boolean))]
@@ -1381,6 +1405,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, o
         recipient.ice,
         invoice.invoiceDisplayNumber,
         invoice.invoiceNumber,
+        invoice.id,
       ].filter(Boolean).join(" ").toLowerCase();
       return okYear && okProgram && (!q || haystack.includes(q));
     });
@@ -1455,6 +1480,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, o
             const recipient = invoice.recipientSnapshot || {};
             const program = invoice.programSnapshot || {};
             const isTrashed = invoice.status === "trashed";
+            const isFocusedInvoice = highlightedInvoiceId && String(invoice.id) === String(highlightedInvoiceId);
             const menuItems = !isTrashed
               ? [
                 { key: "preview", label: labels.preview, icon: "eye", onClick: () => onPreview?.(invoice) },
@@ -1476,8 +1502,9 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, o
                   alignItems:"center",
                   padding:"10px 12px",
                   borderRadius:12,
-                  background:"var(--rukn-row-bg)",
-                  border:"1px solid var(--rukn-row-border)",
+                  background:isFocusedInvoice ? "var(--rukn-gold-dim)" : "var(--rukn-row-bg)",
+                  border:isFocusedInvoice ? "1px solid rgba(212,175,55,.45)" : "1px solid var(--rukn-row-border)",
+                  boxShadow:isFocusedInvoice ? "0 0 0 3px rgba(212,175,55,.12)" : "none",
                 }}
               >
                 <div style={{ minWidth:220, flex:"1 1 240px" }}>

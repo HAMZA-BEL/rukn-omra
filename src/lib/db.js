@@ -389,6 +389,23 @@ const fromDeletedClientRelatedCounts = (row = {}) => ({
   reasonKey: row.reason_key || "",
 });
 
+const isInactiveLinkedPaymentRecord = (payment = {}) => {
+  const status = cleanString(payment.status).toLowerCase();
+  if (["trashed", "deleted", "inactive", "archived", "void", "cancelled", "canceled"].includes(status)) return true;
+  if (payment.trashed_at || payment.trashedAt || payment.deleted_at || payment.deletedAt) return true;
+  if (payment.deleted === true || payment.trashed === true || payment.archived === true) return true;
+  return false;
+};
+
+const isActiveLinkedInvoiceRecord = (invoice = {}) => {
+  const status = cleanString(invoice.status || "issued").toLowerCase();
+  return !["trashed", "deleted", "void", "cancelled", "canceled"].includes(status)
+    && !invoice.trashed_at
+    && !invoice.trashedAt
+    && !invoice.deleted_at
+    && !invoice.deletedAt;
+};
+
 const toBadgeTemplate = (template, agencyId) => ({
   id: template.id,
   agency_id: agencyId,
@@ -939,6 +956,73 @@ export const db = {
         };
       }
       return { data: data?.map(fromDeletedClientRelatedCounts) ?? [], error };
+    },
+    async fetchDeletedLinkedActiveRecords(agencyId, ids = []) {
+      const clientIds = Array.from(new Set((ids || []).filter(Boolean)));
+      if (!agencyId || !clientIds.length) {
+        return { data: { clients: [], programs: [], payments: [], invoices: [] }, error: null };
+      }
+
+      const clientsResult = await supabase
+        .from("clients")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .eq("deleted", true)
+        .in("id", clientIds);
+      if (clientsResult.error) return { data: null, error: clientsResult.error };
+
+      const clientRows = Array.isArray(clientsResult.data) ? clientsResult.data : [];
+      const eligibleClientIds = clientRows.map((client) => client.id).filter(Boolean);
+      if (!eligibleClientIds.length) {
+        return { data: { clients: [], programs: [], payments: [], invoices: [] }, error: null };
+      }
+
+      const [paymentsResult, invoicesResult] = await Promise.all([
+        supabase
+          .from("payments")
+          .select("*")
+          .eq("agency_id", agencyId)
+          .in("client_id", eligibleClientIds)
+          .order("date", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("invoices")
+          .select("*")
+          .eq("agency_id", agencyId)
+          .in("client_id", eligibleClientIds.map(String))
+          .order("issue_date", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false }),
+      ]);
+      const recordsError = paymentsResult.error || invoicesResult.error;
+      if (recordsError) return { data: null, error: recordsError };
+
+      const activePaymentRows = (paymentsResult.data || []).filter((payment) => !isInactiveLinkedPaymentRecord(payment));
+      const activeInvoiceRows = (invoicesResult.data || []).filter(isActiveLinkedInvoiceRecord);
+      const programIds = Array.from(new Set([
+        ...clientRows.map((client) => client.program_id).filter(Boolean),
+        ...activeInvoiceRows.map((invoice) => invoice.program_id).filter(Boolean),
+      ]));
+
+      let programRows = [];
+      if (programIds.length) {
+        const programsResult = await supabase
+          .from("programs")
+          .select("*")
+          .eq("agency_id", agencyId)
+          .in("id", programIds);
+        if (programsResult.error) return { data: null, error: programsResult.error };
+        programRows = programsResult.data || [];
+      }
+
+      return {
+        data: {
+          clients: clientRows.map(fromClient),
+          programs: programRows.map(fromProgram),
+          payments: activePaymentRows.map(fromPayment),
+          invoices: activeInvoiceRows.map(fromInvoice),
+        },
+        error: null,
+      };
     },
   },
 

@@ -152,12 +152,38 @@ const getClientDeleteBlockLabel = (block, text) => {
   return text.blocked;
 };
 
+const isLinkedFinancialBlock = (block) => {
+  if (!block?.blocked) return false;
+  const code = String(block.code || "");
+  const reasonCodes = new Set((block.reasons || []).map((reason) => String(reason.code || "")));
+  return Number(block.activePaymentCount || 0) > 0
+    || Number(block.activeInvoiceCount || 0) > 0
+    || Number(block.finalInvoiceCount || 0) > 0
+    || Number(block.hiddenPaymentCount || 0) > 0
+    || Number(block.hiddenInvoiceCount || 0) > 0
+    || [
+      "ACTIVE_LINKED_PAYMENTS",
+      "ACTIVE_PAYMENTS",
+      "ACTIVE_LINKED_INVOICES",
+      "ACTIVE_LINKED_FINANCIAL_RECORDS",
+      "LINKED_EXTERNAL_PAYMENTS",
+      "LINKED_EXTERNAL_INVOICES",
+      "LINKED_PAYMENT_RECORDS",
+      "LINKED_FINANCIAL_RECORDS",
+      "UNKNOWN_LINKED_RECORDS",
+    ].includes(code)
+    || reasonCodes.has("ACTIVE_LINKED_PAYMENTS")
+    || reasonCodes.has("ACTIVE_LINKED_INVOICES")
+    || reasonCodes.has("LINKED_EXTERNAL_PAYMENTS")
+    || reasonCodes.has("LINKED_EXTERNAL_INVOICES");
+};
+
 const formatTrashCountMessage = (template, values) => Object.entries(values).reduce(
   (message, [key, value]) => message.replace(`{${key}}`, String(value)),
   template
 );
 
-export default function TrashPage({ store, onToast }) {
+export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvoice }) {
   const { t, lang, dir } = useLang();
   const invoicesAreRemote = Boolean(store.invoiceApi?.isRemote);
   const [filter, setFilter] = React.useState("all");
@@ -172,6 +198,13 @@ export default function TrashPage({ store, onToast }) {
     invoicesAreRemote ? [] : readSavedInvoices().filter((invoice) => invoice.status === "trashed")
   ));
   const [invoicesLoading, setInvoicesLoading] = React.useState(false);
+  const [linkedItemsModal, setLinkedItemsModal] = React.useState({
+    open: false,
+    item: null,
+    loading: false,
+    error: null,
+    details: null,
+  });
   const filterRef = React.useRef(null);
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
@@ -217,6 +250,42 @@ export default function TrashPage({ store, onToast }) {
       return `جاري حذف ${done} من ${total}`;
     },
   }), [lang, t]);
+  const linkedItemsText = React.useMemo(() => ({
+    review: t.trashReviewLinkedItems || (lang === "fr" ? "Consulter les éléments liés" : lang === "en" ? "Review linked items" : "مراجعة العناصر المرتبطة"),
+    title: t.trashLinkedItemsTitle || (lang === "fr" ? "Éléments liés à cet enregistrement" : lang === "en" ? "Linked items for this record" : "العناصر المرتبطة بهذا السجل"),
+    blocked: t.trashPermanentDeletionBlocked || (lang === "fr" ? "Suppression définitive bloquée" : lang === "en" ? "Permanent deletion blocked" : "الحذف النهائي محظور"),
+    explanation: t.trashLinkedItemsExplanation || (lang === "fr"
+      ? "La suppression définitive est bloquée car des paiements ou factures actifs sont encore liés à cet enregistrement. Vous pouvez ouvrir les éléments liés, les traiter, puis revenir à la corbeille pour réessayer."
+      : lang === "en"
+        ? "Permanent deletion is blocked because active payments or invoices are still linked to this record. You can open the linked items, resolve them, then return to Trash and try again."
+        : "لا يمكن الحذف النهائي لأن هذا السجل ما زالت لديه دفعات أو فواتير نشطة مرتبطة. يمكنك فتح العناصر المرتبطة ومعالجتها، ثم العودة إلى سلة المحذوفات والمحاولة مرة أخرى."),
+    activePayments: t.trashLinkedActivePayments || (lang === "fr" ? "Paiements actifs liés" : lang === "en" ? "Linked active payments" : "الدفعات النشطة المرتبطة"),
+    activeInvoices: t.trashLinkedActiveInvoices || (lang === "fr" ? "Factures actives liées" : lang === "en" ? "Linked active invoices" : "الفواتير النشطة المرتبطة"),
+    openClientFile: t.trashOpenClientFile || (lang === "fr" ? "Ouvrir le dossier client" : lang === "en" ? "Open client file" : "فتح ملف الحاج/المعتمر"),
+    openPayment: t.trashOpenPayment || (lang === "fr" ? "Ouvrir le paiement" : lang === "en" ? "Open payment" : "فتح الدفعة"),
+    openInvoice: t.trashOpenInvoice || (lang === "fr" ? "Ouvrir la facture" : lang === "en" ? "Open invoice" : "فتح الفاتورة"),
+    amount: t.trashLinkedAmount || t.amount || (lang === "fr" ? "Montant" : lang === "en" ? "Amount" : "المبلغ"),
+    date: t.trashLinkedDate || t.date || (lang === "fr" ? "Date" : lang === "en" ? "Date" : "التاريخ"),
+    paymentMethod: t.trashLinkedPaymentMethod || t.paymentMethod || (lang === "fr" ? "Mode de paiement" : lang === "en" ? "Payment method" : "طريقة الدفع"),
+    receiptNumber: t.trashLinkedReceiptNumber || t.receiptNo || (lang === "fr" ? "N° reçu" : lang === "en" ? "Receipt number" : "رقم الوصل"),
+    status: t.trashLinkedStatus || t.statusFilterLabel || (lang === "fr" ? "Statut" : lang === "en" ? "Status" : "الحالة"),
+    resolveFirst: t.trashResolveLinkedRecordsFirst || (lang === "fr" ? "Traitez d’abord les enregistrements liés" : lang === "en" ? "Resolve linked records first" : "عالج السجلات المرتبطة أولًا"),
+    returnToTrash: t.trashReturnToTrashTryAgain || (lang === "fr" ? "Retournez à la corbeille puis réessayez" : lang === "en" ? "Return to Trash and try again" : "عد إلى سلة المحذوفات وحاول مرة أخرى"),
+    noDetails: t.trashNoLinkedDetailsFound || (lang === "fr" ? "Aucun détail lié trouvé" : lang === "en" ? "No linked details found" : "لم يتم العثور على تفاصيل مرتبطة"),
+    client: t.trashLinkedClientName || (lang === "fr" ? "Client / pèlerin" : lang === "en" ? "Client / pilgrim" : "اسم الحاج/المعتمر"),
+    program: t.trashLinkedProgramName || t.program || t.programs,
+    invoiceNumber: t.trashLinkedInvoiceNumber || t.invoiceNumberTitle || (lang === "fr" ? "N° facture" : lang === "en" ? "Invoice no." : "رقم الفاتورة"),
+  }), [lang, t]);
+  const deletedPrograms = store.deletedPrograms || [];
+  const deletedClients = store.deletedClients || [];
+  const deletedPayments = store.deletedPayments || [];
+  const getClientPermanentDeleteBlockMap = store.getClientPermanentDeleteBlockMap;
+  const getClientPermanentDeleteLinkedDetails = store.getClientPermanentDeleteLinkedDetails;
+  const trashLoading = Boolean(store.trashLoading);
+  const trashLoaded = Boolean(store.trashLoaded);
+  const trashError = store.trashError;
+  const loadTrashData = store.loadTrashData;
+  const trashDataLoading = trashLoading || invoicesLoading;
   const [clientDeleteBlocksByClient, setClientDeleteBlocksByClient] = React.useState({});
   const [clientDeleteBlocksLoading, setClientDeleteBlocksLoading] = React.useState(false);
   const formatDate = React.useCallback((value) => {
@@ -225,16 +294,59 @@ export default function TrashPage({ store, onToast }) {
     if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
   }, [locale]);
-
-  const deletedPrograms = store.deletedPrograms || [];
-  const deletedClients = store.deletedClients || [];
-  const deletedPayments = store.deletedPayments || [];
-  const getClientPermanentDeleteBlockMap = store.getClientPermanentDeleteBlockMap;
-  const trashLoading = Boolean(store.trashLoading);
-  const trashLoaded = Boolean(store.trashLoaded);
-  const trashError = store.trashError;
-  const loadTrashData = store.loadTrashData;
-  const trashDataLoading = trashLoading || invoicesLoading;
+  const formatMoney = React.useCallback((value) => {
+    if (value === null || value === undefined || value === "") return "";
+    return Number.isFinite(Number(value)) ? formatCurrency(Number(value), lang) : "";
+  }, [lang]);
+  const closeLinkedItemsModal = React.useCallback(() => {
+    setLinkedItemsModal((current) => ({
+      ...current,
+      open: false,
+      loading: false,
+    }));
+  }, []);
+  const openLinkedItemsModal = React.useCallback(async (item) => {
+    if (!item?.id) return;
+    setLinkedItemsModal({
+      open: true,
+      item,
+      loading: true,
+      error: null,
+      details: null,
+    });
+    if (typeof getClientPermanentDeleteLinkedDetails !== "function") {
+      setLinkedItemsModal({
+        open: true,
+        item,
+        loading: false,
+        error: new Error(linkedItemsText.noDetails),
+        details: null,
+      });
+      return;
+    }
+    try {
+      const detailsMap = await getClientPermanentDeleteLinkedDetails([item.id]);
+      const details = detailsMap instanceof Map
+        ? detailsMap.get(String(item.id))
+        : detailsMap?.[item.id];
+      setLinkedItemsModal({
+        open: true,
+        item,
+        loading: false,
+        error: null,
+        details: details || { clientId: item.id, client: null, payments: [], invoices: [] },
+      });
+    } catch (error) {
+      console.error("[Trash] Failed to fetch linked blocker details:", error);
+      setLinkedItemsModal({
+        open: true,
+        item,
+        loading: false,
+        error,
+        details: null,
+      });
+    }
+  }, [getClientPermanentDeleteLinkedDetails, linkedItemsText.noDetails]);
 
   React.useEffect(() => {
     if (trashLoaded || trashLoading || typeof loadTrashData !== "function") return undefined;
@@ -453,6 +565,16 @@ export default function TrashPage({ store, onToast }) {
     });
     return Array.from(ids).join("|");
   }, [paginatedItems, selectedItems]);
+  const paymentPreflightInvalidationKey = [
+    store.payments?.length || 0,
+    deletedPayments.length,
+    store.lastSynced instanceof Date ? store.lastSynced.getTime() : String(store.lastSynced || ""),
+  ].join("|");
+
+  React.useEffect(() => {
+    clientPreflightCacheRef.current.clear();
+    setClientDeleteBlocksByClient({});
+  }, [paymentPreflightInvalidationKey]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -502,7 +624,7 @@ export default function TrashPage({ store, onToast }) {
         if (!cancelled) setClientDeleteBlocksLoading(false);
       });
     return () => { cancelled = true; };
-  }, [clientDeleteGuardKey, getClientPermanentDeleteBlockMap]);
+  }, [clientDeleteGuardKey, getClientPermanentDeleteBlockMap, paymentPreflightInvalidationKey]);
 
   const toggleItem = React.useCallback((key) => {
     setSelection((prev) => {
@@ -952,6 +1074,51 @@ export default function TrashPage({ store, onToast }) {
       </div>
     </div>
   ) : null;
+  const linkedDetails = linkedItemsModal.details || {};
+  const linkedPayments = Array.isArray(linkedDetails.payments) ? linkedDetails.payments : [];
+  const linkedInvoices = Array.isArray(linkedDetails.invoices) ? linkedDetails.invoices : [];
+  const hasLinkedDetails = linkedPayments.length > 0 || linkedInvoices.length > 0;
+  const linkedClient = linkedDetails.client || deletedClients.find((client) => String(client.id) === String(linkedItemsModal.item?.id)) || null;
+  const detailFallback = linkedItemsModal.error
+    ? (linkedItemsModal.error.message || linkedItemsText.noDetails)
+    : linkedItemsText.noDetails;
+  const linkedRecordField = (label, value) => {
+    const cleanValue = value === null || value === undefined ? "" : String(value).trim();
+    if (!cleanValue) return null;
+    return (
+      <div key={`${label}-${cleanValue}`} style={{ minWidth: 120 }}>
+        <p style={{ fontSize: 10.5, color: "var(--rukn-text-muted)", fontWeight: 800, lineHeight: 1.35 }}>{label}</p>
+        <p style={{ marginTop: 2, fontSize: 12.5, color: "var(--rukn-text)", fontWeight: 800, lineHeight: 1.45, overflowWrap: "anywhere" }}>{cleanValue}</p>
+      </div>
+    );
+  };
+  const linkedRecordCardStyle = {
+    padding: "11px 12px",
+    borderRadius: 10,
+    border: "1px solid var(--rukn-border-soft)",
+    background: "var(--rukn-bg-soft)",
+    display: "grid",
+    gap: 10,
+  };
+  const linkedItemsSectionTitleStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    color: "var(--rukn-text)",
+    fontSize: 14,
+    fontWeight: 900,
+  };
+  const handleOpenLinkedClientFile = (client) => {
+    if (typeof onOpenClientFile !== "function" || !client) return;
+    closeLinkedItemsModal();
+    onOpenClientFile(client, { payments: linkedPayments });
+  };
+  const handleOpenLinkedInvoice = (invoice) => {
+    if (typeof onOpenInvoice !== "function" || !invoice) return;
+    closeLinkedItemsModal();
+    onOpenInvoice(invoice);
+  };
 
   return (
     <div style={{ padding: "22px 24px 28px", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1064,6 +1231,7 @@ export default function TrashPage({ store, onToast }) {
             const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
             const clientDeleteBlock = item.permanentDeleteBlock;
             const clientDeleteBlocked = Boolean(clientDeleteBlock?.blocked);
+            const showLinkedItemsAction = item.type === "client" && isLinkedFinancialBlock(clientDeleteBlock);
             return (
               <GlassCard
                 key={item.key}
@@ -1115,17 +1283,52 @@ export default function TrashPage({ store, onToast }) {
                       </p>
                     )}
                     {item.type === "client" && (
-                      <p style={{
-                        marginTop: 1,
-                        fontSize: 11.5,
-                        color: clientDeleteBlocked ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
-                        fontWeight: clientDeleteBlocked ? 800 : 700,
-                        lineHeight: 1.4,
+                      <div style={{
+                        marginTop: 2,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        lineHeight: 1.35,
                       }}>
-                        {item.permanentDeleteCheckPending
-                          ? paymentGuardText.checking
-                          : getClientDeleteBlockLabel(clientDeleteBlock, paymentGuardText)}
-                      </p>
+                        <span style={{
+                          minWidth: 180,
+                          flex: "1 1 260px",
+                          fontSize: 11.5,
+                          color: clientDeleteBlocked ? "var(--rukn-danger)" : "var(--rukn-text-muted)",
+                          fontWeight: clientDeleteBlocked ? 800 : 700,
+                          lineHeight: 1.4,
+                        }}>
+                          {item.permanentDeleteCheckPending
+                            ? paymentGuardText.checking
+                            : getClientDeleteBlockLabel(clientDeleteBlock, paymentGuardText)}
+                        </span>
+                        {showLinkedItemsAction && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon="eye"
+                            onClick={() => openLinkedItemsModal(item)}
+                            disabled={linkedItemsModal.loading && String(linkedItemsModal.item?.id) === String(item.id)}
+                            style={{
+                              minHeight: 24,
+                              padding: "3px 8px",
+                              fontSize: 10.5,
+                              borderRadius: 999,
+                              fontWeight: 800,
+                              lineHeight: 1.25,
+                              color: "var(--rukn-gold)",
+                              background: "var(--rukn-gold-dim)",
+                              border: "1px solid rgba(212,175,55,.24)",
+                              boxShadow: "none",
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            {linkedItemsText.review}
+                          </Button>
+                        )}
+                      </div>
                     )}
                     {isProgram && item.linkedCount > 0 && (
                       <p style={{ marginTop: 1, fontSize: 11.5, color: "var(--rukn-text-muted)" }}>
@@ -1190,6 +1393,155 @@ export default function TrashPage({ store, onToast }) {
           <Button variant="danger" icon="trash" onClick={confirmDelete} disabled={deleteInProgress}>
             {deleteInProgress ? deleteProgressLabel : t.trashDeleteSelected}
           </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={linkedItemsModal.open}
+        onClose={closeLinkedItemsModal}
+        title={linkedItemsText.title}
+        width={720}
+      >
+        <div style={{ display: "grid", gap: 14 }}>
+          <div style={{
+            padding: "12px 13px",
+            borderRadius: 10,
+            border: "1px solid rgba(212,175,55,.28)",
+            background: "var(--rukn-gold-dim)",
+            color: "var(--rukn-text)",
+            display: "grid",
+            gap: 6,
+          }}>
+            <p style={{ margin: 0, fontSize: 13.5, fontWeight: 900, color: "var(--rukn-gold)", lineHeight: 1.45 }}>
+              {linkedItemsText.blocked}
+            </p>
+            <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, lineHeight: 1.75, color: "var(--rukn-text)" }}>
+              {linkedItemsText.explanation}
+            </p>
+          </div>
+
+          {linkedItemsModal.loading ? (
+            <div style={{ padding: 18, textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 13, fontWeight: 800 }}>
+              {t.loading || "Loading..."}
+            </div>
+          ) : !hasLinkedDetails ? (
+            <div style={{
+              padding: "15px 14px",
+              borderRadius: 10,
+              border: "1px dashed var(--rukn-border-soft)",
+              background: "var(--rukn-bg-soft)",
+              color: "var(--rukn-text-muted)",
+              fontSize: 13,
+              fontWeight: 800,
+              lineHeight: 1.7,
+            }}>
+              <p style={{ margin: 0 }}>{detailFallback}</p>
+              <p style={{ margin: "5px 0 0" }}>{linkedItemsText.resolveFirst}. {linkedItemsText.returnToTrash}.</p>
+            </div>
+          ) : (
+            <>
+              {linkedPayments.length > 0 && (
+                <section style={{ display: "grid", gap: 9 }}>
+                  <div style={linkedItemsSectionTitleStyle}>
+                    <span>{linkedItemsText.activePayments}</span>
+                    <span style={{ fontSize: 11, color: "var(--rukn-text-muted)", fontWeight: 900 }}>{linkedPayments.length}</span>
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {linkedPayments.map((payment) => {
+                      const paymentClient = linkedClient || linkedDetails.client || null;
+                      const receiptNumber = payment.receiptNo || payment.receipt_no || payment.receiptNumber || payment.receipt_number || payment.legacyReceiptNumber || payment.legacy_receipt_number;
+                      const paymentFields = [
+                        linkedRecordField(linkedItemsText.amount, formatMoney(payment.amount)),
+                        linkedRecordField(linkedItemsText.date, payment.date ? formatDate(payment.date) : ""),
+                        linkedRecordField(linkedItemsText.paymentMethod, payment.method || payment.paymentMethod || payment.payment_method),
+                        linkedRecordField(linkedItemsText.receiptNumber, receiptNumber),
+                        linkedRecordField(linkedItemsText.client, payment.clientName),
+                        linkedRecordField(linkedItemsText.program, payment.programName),
+                        linkedRecordField(linkedItemsText.status, payment.status || "active"),
+                      ].filter(Boolean);
+                      return (
+                        <div key={payment.id || receiptNumber || `${payment.clientId}-${payment.date}`} style={linkedRecordCardStyle}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
+                            {paymentFields}
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon="user"
+                              disabled={!paymentClient || typeof onOpenClientFile !== "function"}
+                              onClick={() => handleOpenLinkedClientFile(paymentClient)}
+                            >
+                              {linkedItemsText.openClientFile}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {linkedInvoices.length > 0 && (
+                <section style={{ display: "grid", gap: 9 }}>
+                  <div style={linkedItemsSectionTitleStyle}>
+                    <span>{linkedItemsText.activeInvoices}</span>
+                    <span style={{ fontSize: 11, color: "var(--rukn-text-muted)", fontWeight: 900 }}>{linkedInvoices.length}</span>
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {linkedInvoices.map((invoice) => {
+                      const invoiceAmount = invoice.amountSnapshot?.total
+                        ?? invoice.amountSnapshot?.grandTotal
+                        ?? invoice.total
+                        ?? invoice.amount;
+                      const invoiceNumber = invoice.invoiceDisplayNumber || invoice.invoiceNumber || invoice.invoice_number || invoice.id;
+                      const invoiceFields = [
+                        linkedRecordField(linkedItemsText.invoiceNumber, invoiceNumber),
+                        linkedRecordField(linkedItemsText.amount, formatMoney(invoiceAmount)),
+                        linkedRecordField(linkedItemsText.status, invoice.status || "issued"),
+                        linkedRecordField(linkedItemsText.client, invoice.clientName),
+                        linkedRecordField(linkedItemsText.program, invoice.programName),
+                      ].filter(Boolean);
+                      return (
+                        <div key={invoice.id || invoiceNumber} style={linkedRecordCardStyle}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
+                            {invoiceFields}
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon="file"
+                              disabled={typeof onOpenInvoice !== "function"}
+                              onClick={() => handleOpenLinkedInvoice(invoice)}
+                            >
+                              {linkedItemsText.openInvoice}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              <div style={{
+                paddingTop: 4,
+                color: "var(--rukn-text-muted)",
+                fontSize: 12,
+                fontWeight: 800,
+                lineHeight: 1.65,
+              }}>
+                {linkedItemsText.resolveFirst}. {linkedItemsText.returnToTrash}.
+              </div>
+            </>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Button variant="ghost" onClick={closeLinkedItemsModal}>
+              {t.close || t.trashCancel || t.cancel}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

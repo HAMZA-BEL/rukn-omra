@@ -54,9 +54,11 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [page,           setPage]           = React.useState(getInitialPage);
   const [pageHistory,    setPageHistory]    = React.useState([]);
   const [selectedClient, setSelectedClient] = React.useState(null);
+  const [selectedClientLinkedPayments, setSelectedClientLinkedPayments] = React.useState([]);
   const [editingClient,  setEditingClient]  = React.useState(null);
   const [previewNotification, setPreviewNotification] = React.useState(null);
   const [notificationFocus, setNotificationFocus] = React.useState(null);
+  const [clearanceFocus, setClearanceFocus] = React.useState(null);
   const [themeMode, setThemeMode] = React.useState(getInitialThemeMode);
   const backupExportSuccessText = (
     lang === "fr"
@@ -172,6 +174,11 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
     return "ملف العميل المرتبط غير متاح. تم فتح تفاصيل الإشعار بدلًا من ذلك.";
   }, [lang]);
 
+  const openClientFile = React.useCallback((client) => {
+    setSelectedClientLinkedPayments([]);
+    setSelectedClient(client);
+  }, []);
+
   const handleNotificationAction = React.useCallback((notification) => {
     if (!notification) return;
     store.markNotificationRead?.(notification.id);
@@ -185,7 +192,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
           notificationId: notification.id,
           token: Date.now(),
         });
-        setSelectedClient(client);
+        openClientFile(client);
         navigate("clients");
         return;
       }
@@ -222,7 +229,25 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
       return;
     }
     openNotificationDetails(notification);
-  }, [navigate, openNotificationDetails, showToast, store, targetUnavailableMessage]);
+  }, [navigate, openClientFile, openNotificationDetails, showToast, store, targetUnavailableMessage]);
+
+  const openTrashLinkedClientFile = React.useCallback((client, { payments = [] } = {}) => {
+    if (!client) return;
+    setSelectedClientLinkedPayments(Array.isArray(payments) ? payments : []);
+    setSelectedClient(client);
+  }, []);
+
+  const openTrashLinkedInvoice = React.useCallback((invoice) => {
+    if (!invoice) return;
+    setClearanceFocus({
+      type: "invoice",
+      invoiceId: invoice.id || "",
+      invoiceNumber: invoice.invoiceDisplayNumber || invoice.invoiceNumber || invoice.invoice_number || "",
+      programId: invoice.programId || invoice.program_id || "",
+      token: Date.now(),
+    });
+    navigate("clearance");
+  }, [navigate]);
 
   React.useEffect(() => {
     if (!notificationFocus) return undefined;
@@ -326,7 +351,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
               <Dashboard
                 store={store}
                 onNavigate={navigate}
-                onSelectClient={setSelectedClient}
+                onSelectClient={openClientFile}
                 headerActions={
                   <HeaderActions
                     lang={lang}
@@ -358,9 +383,18 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
               />
             </ErrorBoundary>
           )}
-          {page==="trash" && <ErrorBoundary><TrashPage store={store} onToast={showToast} /></ErrorBoundary>}
+          {page==="trash" && (
+            <ErrorBoundary>
+              <TrashPage
+                store={store}
+                onToast={showToast}
+                onOpenClientFile={openTrashLinkedClientFile}
+                onOpenInvoice={openTrashLinkedInvoice}
+              />
+            </ErrorBoundary>
+          )}
           {page==="activity" && <ErrorBoundary><ActivityLogPage store={store} onToast={showToast} /></ErrorBoundary>}
-          {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} /></ErrorBoundary>}
+          {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} focus={clearanceFocus} /></ErrorBoundary>}
           {page==="settings"   && (
             <ErrorBoundary>
               <SettingsPage
@@ -375,10 +409,26 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
       </div>
       <MobileNav navItems={navItems} dir={dir} active={page} onNavigate={navigate} />
 
-      <Modal open={!!selectedClient} onClose={()=>setSelectedClient(null)} title={t.clientFile} width={680}>
+      <Modal
+        open={!!selectedClient}
+        onClose={() => {
+          setSelectedClient(null);
+          setSelectedClientLinkedPayments([]);
+        }}
+        title={t.clientFile}
+        width={680}
+      >
         {selectedClient && <ClientDetail client={selectedClient} store={store}
-          onClose={()=>setSelectedClient(null)}
-          onEdit={c=>{ setSelectedClient(null); setEditingClient(c); }}
+          onClose={() => {
+            setSelectedClient(null);
+            setSelectedClientLinkedPayments([]);
+          }}
+          onEdit={c=>{
+            setSelectedClient(null);
+            setSelectedClientLinkedPayments([]);
+            setEditingClient(c);
+          }}
+          linkedPayments={selectedClientLinkedPayments}
           highlightFromNotification={notificationFocus?.type === "client" && String(notificationFocus.targetId) === String(selectedClient.id)}
           notificationHighlightToken={notificationFocus?.token}
           onToast={showToast} />}
