@@ -355,7 +355,7 @@ exports.handler = async (event) => {
 
     const { data: clients, error: clientsError } = await supabase
       .from("clients")
-      .select("*")
+      .select("id, agency_id, deleted, deleted_at, docs")
       .eq("agency_id", agencyId)
       .in("id", clientIds);
     if (clientsError) {
@@ -398,13 +398,13 @@ exports.handler = async (event) => {
     const [paymentResult, invoiceResult] = await Promise.all([
       supabase
         .from("payments")
-        .select("*")
+        .select("id, agency_id, client_id, status, trashed_at, deleted_at")
         .in("client_id", trashedClientIds),
       optionalSelect(
         "invoice inspection",
         supabase
           .from("invoices")
-          .select("*")
+          .select("id, agency_id, client_id, status, trashed_at, deleted_at")
           .in("client_id", trashedClientIds)
       ),
     ]);

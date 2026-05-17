@@ -544,7 +544,7 @@ exports.handler = async (event) => {
 
     const { data: client, error: clientError } = await supabase
       .from("clients")
-      .select("*")
+      .select("id, agency_id, deleted, deleted_at, docs")
       .eq("id", clientId)
       .eq("agency_id", agencyId)
       .maybeSingle();
@@ -574,13 +574,13 @@ exports.handler = async (event) => {
     const [paymentResult, invoiceResult] = await Promise.all([
       supabase
         .from("payments")
-        .select("*")
+        .select("id, agency_id, client_id, status, trashed_at, deleted_at")
         .eq("client_id", clientId),
       optionalSelect(
         "invoice inspection",
         supabase
           .from("invoices")
-          .select("*")
+          .select("id, agency_id, client_id, status, trashed_at, deleted_at")
           .eq("client_id", clientId)
       ),
     ]);

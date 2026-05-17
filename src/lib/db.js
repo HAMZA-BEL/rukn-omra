@@ -107,6 +107,7 @@ const fromTrashPageItem = (row = {}) => ({
   itemType: row.item_type || row.itemType || "",
   itemId: row.item_id || row.itemId || "",
   clientId: row.client_id || row.clientId || "",
+  clientKind: row.client_kind || row.clientKind || "",
   title: row.title || "",
   clientName: row.client_name || row.clientName || "",
   phone: row.phone || "",
@@ -1335,10 +1336,11 @@ export const db = {
     async fetchPage({ filter = "all", page = 1, pageSize = 25 } = {}) {
       const safePage = Math.max(1, Number(page) || 1);
       const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 25));
+      const safeFilter = String(filter || "all").trim().toLowerCase() || "all";
       const offset = (safePage - 1) * safePageSize;
       const rpcName = "get_trash_page";
       const { data, error } = await supabase.rpc(rpcName, {
-        p_item_type: filter || "all",
+        p_item_type: safeFilter,
         p_limit: safePageSize,
         p_offset: offset,
       });
@@ -1352,10 +1354,20 @@ export const db = {
           },
         };
       }
-      return {
-        data: error ? null : normalizeTrashPage(data, { page: safePage, pageSize: safePageSize, filter }),
-        error,
-      };
+      if (error) return { data: null, error };
+      const normalized = normalizeTrashPage(data, { page: safePage, pageSize: safePageSize, filter: safeFilter });
+      if ((safeFilter === "hajj" || safeFilter === "umrah" || safeFilter === "unassigned") && normalized.filter !== safeFilter) {
+        return {
+          data: null,
+          error: {
+            message: "Trash RPC does not support this client-kind filter yet",
+            code: "TRASH_RPC_FILTER_UNSUPPORTED",
+            isMissingMigration: true,
+            missingRpc: rpcName,
+          },
+        };
+      }
+      return { data: normalized, error: null };
     },
 
     async fetchProgramContext(agencyId, programIds = []) {

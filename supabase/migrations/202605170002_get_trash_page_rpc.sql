@@ -24,7 +24,7 @@ begin
   current_agency_id := public.get_agency_id();
 
   safe_item_type := lower(coalesce(nullif(trim(p_item_type), ''), 'all'));
-  if safe_item_type not in ('all', 'programs', 'clients', 'payments', 'invoices') then
+  if safe_item_type not in ('all', 'programs', 'clients', 'hajj', 'umrah', 'unassigned', 'payments', 'invoices') then
     safe_item_type := 'all';
   end if;
 
@@ -46,6 +46,7 @@ begin
       'program'::text as item_type,
       p.id as item_id,
       null::text as client_id,
+      null::text as client_kind,
       coalesce(nullif(trim(p.name), ''), p.id::text) as title,
       null::text as client_name,
       null::text as phone,
@@ -80,6 +81,19 @@ begin
       'client'::text as item_type,
       c.id as item_id,
       c.id::text as client_id,
+      case
+        when kind_source.program_type_text like '%عمرة%' or kind_source.program_type_text like '%عمره%' or kind_source.program_type_text like '%umrah%' or kind_source.program_type_text like '%omra%' or kind_source.program_type_text like '%omrah%' then 'umrah'
+        when kind_source.program_type_text like '%حج%' or kind_source.program_type_text like '%hajj%' or kind_source.program_type_text like '%hadj%' then 'hajj'
+        when kind_source.program_name_text like '%عمرة%' or kind_source.program_name_text like '%عمره%' or kind_source.program_name_text like '%umrah%' or kind_source.program_name_text like '%omra%' or kind_source.program_name_text like '%omrah%' then 'umrah'
+        when kind_source.program_name_text like '%حج%' or kind_source.program_name_text like '%hajj%' or kind_source.program_name_text like '%hadj%' then 'hajj'
+        when kind_source.snapshot_type_text like '%عمرة%' or kind_source.snapshot_type_text like '%عمره%' or kind_source.snapshot_type_text like '%umrah%' or kind_source.snapshot_type_text like '%omra%' or kind_source.snapshot_type_text like '%omrah%' then 'umrah'
+        when kind_source.snapshot_type_text like '%حج%' or kind_source.snapshot_type_text like '%hajj%' or kind_source.snapshot_type_text like '%hadj%' then 'hajj'
+        when kind_source.snapshot_name_text like '%عمرة%' or kind_source.snapshot_name_text like '%عمره%' or kind_source.snapshot_name_text like '%umrah%' or kind_source.snapshot_name_text like '%omra%' or kind_source.snapshot_name_text like '%omrah%' then 'umrah'
+        when kind_source.snapshot_name_text like '%حج%' or kind_source.snapshot_name_text like '%hajj%' or kind_source.snapshot_name_text like '%hadj%' then 'hajj'
+        when kind_source.client_field_text like '%عمرة%' or kind_source.client_field_text like '%عمره%' or kind_source.client_field_text like '%umrah%' or kind_source.client_field_text like '%omra%' or kind_source.client_field_text like '%omrah%' then 'umrah'
+        when kind_source.client_field_text like '%حج%' or kind_source.client_field_text like '%hajj%' or kind_source.client_field_text like '%hadj%' then 'hajj'
+        else 'unassigned'
+      end as client_kind,
       coalesce(
         nullif(trim(c.name), ''),
         nullif(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
@@ -112,6 +126,41 @@ begin
     left join public.programs pr
       on pr.agency_id = current_agency_id
      and pr.id = c.program_id
+    left join lateral (
+      select
+        lower(concat_ws(' ', pr.type)) as program_type_text,
+        lower(concat_ws(' ', pr.name)) as program_name_text,
+        lower(concat_ws(
+          ' ',
+          c.docs->'deletedProgramSnapshot'->>'type',
+          c.docs->'deletedProgramSnapshot'->>'programType',
+          c.docs->'deletedProgramSnapshot'->>'program_type',
+          c.docs->'deletedProgramSnapshot'->>'programKind',
+          c.docs->'deletedProgramSnapshot'->>'programCategory',
+          c.docs->'deletedProgramSnapshot'->>'program_category',
+          c.docs->'deletedProgramSnapshot'->>'category'
+        )) as snapshot_type_text,
+        lower(concat_ws(
+          ' ',
+          c.docs->'deletedProgramSnapshot'->>'name',
+          c.docs->'deletedProgramSnapshot'->>'programName',
+          c.docs->'deletedProgramSnapshot'->>'programNameFr',
+          c.docs->'deletedProgramSnapshot'->>'program_name'
+        )) as snapshot_name_text,
+        lower(concat_ws(
+          ' ',
+          c.docs->>'serviceType',
+          c.docs->>'service_type',
+          c.docs->>'type',
+          c.docs->>'programType',
+          c.docs->>'program_type',
+          c.docs->>'programKind',
+          c.docs->>'programName',
+          c.docs->>'program_name',
+          c.docs->'program'->>'type',
+          c.docs->'program'->>'name'
+        )) as client_field_text
+    ) kind_source on true
     where c.agency_id = current_agency_id
       and coalesce(c.deleted, false) = true
 
@@ -121,6 +170,7 @@ begin
       'payment'::text as item_type,
       p.id as item_id,
       p.client_id::text as client_id,
+      null::text as client_kind,
       coalesce(nullif(trim(p.receipt_no), ''), nullif(trim(p.legacy_receipt_number), ''), p.id::text) as title,
       coalesce(
         nullif(trim(c.name), ''),
@@ -160,6 +210,7 @@ begin
       'invoice'::text as item_type,
       i.id as item_id,
       i.client_id as client_id,
+      null::text as client_kind,
       case
         when i.recipient_type = 'company' then coalesce(nullif(trim(i.recipient_snapshot->>'companyName'), ''), nullif(trim(i.recipient_snapshot->>'name'), ''), i.invoice_display_number)
         else coalesce(nullif(trim(i.recipient_snapshot->>'clientName'), ''), nullif(trim(i.recipient_snapshot->>'name'), ''), i.invoice_display_number)
@@ -200,6 +251,9 @@ begin
     where safe_item_type = 'all'
       or (safe_item_type = 'programs' and item_type = 'program')
       or (safe_item_type = 'clients' and item_type = 'client')
+      or (safe_item_type = 'hajj' and item_type = 'client' and client_kind = 'hajj')
+      or (safe_item_type = 'umrah' and item_type = 'client' and client_kind = 'umrah')
+      or (safe_item_type = 'unassigned' and item_type = 'client' and client_kind = 'unassigned')
       or (safe_item_type = 'payments' and item_type = 'payment')
       or (safe_item_type = 'invoices' and item_type = 'invoice')
   ),
@@ -218,6 +272,7 @@ begin
           'item_type', p.item_type,
           'item_id', p.item_id,
           'client_id', p.client_id,
+          'client_kind', p.client_kind,
           'title', p.title,
           'client_name', p.client_name,
           'phone', p.phone,

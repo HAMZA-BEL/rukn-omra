@@ -624,6 +624,7 @@ export function useStore(agencyId, onToast) {
   const [trashLoading, setTrashLoading] = useState(false);
   const [trashLoaded, setTrashLoaded] = useState(false);
   const [trashError, setTrashError] = useState(null);
+  const [clientPermanentDeletePreflightVersion, setClientPermanentDeletePreflightVersion] = useState(0);
   // syncStatus: 'synced' | 'syncing' | 'offline'
   const [syncStatus,  setSyncStatus]  = useState("synced");
   const [storeHydrated, setStoreHydrated] = useState(false);
@@ -681,9 +682,11 @@ export function useStore(agencyId, onToast) {
     const ids = Array.from(new Set((Array.isArray(clientIds) ? clientIds : [clientIds])
       .map((id) => String(id || "").trim())
       .filter(Boolean)));
+    if (!ids.length) return;
     ids.forEach((id) => {
       clientPermanentDeletePreflightCacheRef.current.delete(`${agencyId}:${id}`);
     });
+    setClientPermanentDeletePreflightVersion((version) => version + 1);
   }, [agencyId]);
 
   const notify = useCallback((msg, type = "error") => {
@@ -2861,21 +2864,17 @@ export function useStore(agencyId, onToast) {
       };
       if (preflightEligibleClientIds.length) {
         if (isSupabaseEnabled && agencyId) {
-          if (preflightEligibleClientIds.length > 1) {
-            onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
-            const batchResponse = await permanentlyDeleteClientsRemote(preflightEligibleClientIds);
-            if (!batchResponse?.error && Array.isArray(batchResponse?.data?.results)) {
-              batchResponse.data.results.forEach((result) => {
-                const clientId = String(result.clientId || result.client_id || "").trim();
-                if (!clientId) return;
-                applyRemoteClientDeleteResult(clientId, batchResultToClientResponse(result));
-              });
-              onProgress?.({ done: preflightEligibleClientIds.length, total: preflightEligibleClientIds.length });
-            } else {
-              console.error("[Store] Batch permanent delete failed; falling back to single-client deletes:", batchResponse?.error);
-              await runSingleClientDeletes();
-            }
+          onProgress?.({ done: 0, total: preflightEligibleClientIds.length });
+          const batchResponse = await permanentlyDeleteClientsRemote(preflightEligibleClientIds);
+          if (!batchResponse?.error && Array.isArray(batchResponse?.data?.results)) {
+            batchResponse.data.results.forEach((result) => {
+              const clientId = String(result.clientId || result.client_id || "").trim();
+              if (!clientId) return;
+              applyRemoteClientDeleteResult(clientId, batchResultToClientResponse(result));
+            });
+            onProgress?.({ done: preflightEligibleClientIds.length, total: preflightEligibleClientIds.length });
           } else {
+            console.error("[Store] Batch permanent delete failed; falling back to single-client deletes:", batchResponse?.error);
             await runSingleClientDeletes();
           }
         } else {
@@ -3062,6 +3061,7 @@ export function useStore(agencyId, onToast) {
     activeClients, archivedClients,
     invoiceApi,
     trashApi,
+    clientPermanentDeletePreflightVersion,
     badgePhotoApi,
     agencyLogoApi,
     notifications,

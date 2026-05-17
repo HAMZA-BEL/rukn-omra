@@ -19,7 +19,9 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const FILTERS = [
   { id: "all", key: "trashFilter_all" },
   { id: "programs", key: "trashFilter_programs" },
-  { id: "clients", key: "trashFilter_clients" },
+  { id: "hajj", key: "trashFilter_hajj" },
+  { id: "umrah", key: "trashFilter_umrah" },
+  { id: "unassigned", key: "trashFilter_unassigned" },
   { id: "invoices", key: "trashFilter_invoices" },
   { id: "payments", key: "trashFilter_payments" },
 ];
@@ -199,6 +201,123 @@ const buildTrashRecordsSignature = (records = [], projectRecord) => (
     .sort()
     .join("\u001e")
 );
+
+const normalizeTrashClientKind = (kind) => (
+  kind === "hajj" || kind === "umrah" ? kind : "unassigned"
+);
+
+const normalizeTrashKindText = (value) => String(value || "")
+  .trim()
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[ـًٌٍَُِّْ]/g, "")
+  .replace(/[أإآ]/g, "ا")
+  .replace(/ى/g, "ي")
+  .replace(/ة/g, "ه");
+
+const inferTrashKindFromText = (value) => {
+  const text = normalizeTrashKindText(value);
+  if (!text) return "";
+  if (["hajj", "hadj", "حج", "الحج"].includes(text)) return "hajj";
+  if (["umrah", "omra", "omrah", "عمره", "العمره"].includes(text)) return "umrah";
+  if (text.includes("عمره") || text.includes("umrah") || text.includes("omra") || text.includes("omrah")) return "umrah";
+  if (text.includes("حج") || text.includes("hajj") || text.includes("hadj")) return "hajj";
+  return "";
+};
+
+const inferTrashKindFromValues = (values = []) => {
+  for (const value of values) {
+    const kind = inferTrashKindFromText(value);
+    if (kind) return kind;
+  }
+  return "";
+};
+
+const inferTrashClientKind = (client = {}, program = null, fallbackProgramName = "") => {
+  const snapshot = client?.docs?.deletedProgramSnapshot || {};
+  return normalizeTrashClientKind(
+    inferTrashKindFromValues([
+      program?.type,
+      program?.program_type,
+      program?.programType,
+      program?.programKind,
+    ])
+    || inferTrashKindFromValues([
+      program?.name,
+      program?.nameFr,
+      program?.name_fr,
+      fallbackProgramName,
+    ])
+    || inferTrashKindFromValues([
+      snapshot.type,
+      snapshot.program_type,
+      snapshot.programType,
+      snapshot.programKind,
+      snapshot.programCategory,
+      snapshot.program_category,
+      snapshot.category,
+    ])
+    || inferTrashKindFromValues([
+      snapshot.name,
+      snapshot.programName,
+      snapshot.programNameFr,
+      snapshot.program_name,
+    ])
+    || inferTrashKindFromValues([
+      client.serviceType,
+      client.service_type,
+      client.type,
+      client.programType,
+      client.program_type,
+      client.programKind,
+      client.programName,
+      client.program_name,
+      client.docs?.serviceType,
+      client.docs?.service_type,
+      client.docs?.type,
+      client.docs?.programType,
+      client.docs?.program_type,
+      client.docs?.programKind,
+      client.docs?.programName,
+      client.docs?.program_name,
+      client.docs?.program?.type,
+      client.docs?.program?.name,
+    ])
+  );
+};
+
+const getTrashClientKindLabel = (kind, lang) => {
+  const normalized = normalizeTrashClientKind(kind);
+  if (normalized === "hajj") {
+    if (lang === "fr" || lang === "en") return "Hajj";
+    return "حاج";
+  }
+  if (normalized === "umrah") {
+    if (lang === "fr") return "Omra";
+    if (lang === "en") return "Umrah";
+    return "معتمر";
+  }
+  if (lang === "fr") return "Non rattaché";
+  if (lang === "en") return "Unassigned";
+  return "غير مدرج";
+};
+
+const getTrashClientKindFilterLabel = (kind, lang) => {
+  const normalized = normalizeTrashClientKind(kind);
+  if (normalized === "hajj") {
+    if (lang === "fr" || lang === "en") return "Hajj";
+    return "الحجاج";
+  }
+  if (normalized === "umrah") {
+    if (lang === "fr") return "Omra";
+    if (lang === "en") return "Umrah";
+    return "المعتمرون";
+  }
+  if (lang === "fr") return "Non rattachés";
+  if (lang === "en") return "Unassigned";
+  return "غير المدرجين";
+};
 
 export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvoice }) {
   const { t, lang, dir } = useLang();
@@ -544,6 +663,14 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     return map;
   }, [store.programs, deletedPrograms]);
 
+  const programById = React.useMemo(() => {
+    const map = new Map();
+    [...(store.programs || []), ...deletedPrograms].forEach((program) => {
+      if (program?.id && !map.has(program.id)) map.set(program.id, program);
+    });
+    return map;
+  }, [store.programs, deletedPrograms]);
+
   const clientNameMap = React.useMemo(() => {
     const map = new Map();
     [...(store.clients || []), ...deletedClients].forEach((client) => {
@@ -583,17 +710,19 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
           };
         }
         if (type === "client") {
+          const clientKind = normalizeTrashClientKind(row.clientKind);
           return {
             key: `client-${row.itemId}`,
             id: row.itemId,
             clientId: row.clientId || row.itemId,
             type: "client",
+            clientKind,
             name: row.title || t.fullName,
             subtitle: [row.phone, row.city].filter(Boolean).join(" • "),
             deletedAt: row.deletedAt,
             batchId: row.deletedBatchId,
             programName: row.programName,
-            meta: t.clients,
+            meta: getTrashClientKindLabel(clientKind, lang),
           };
         }
         if (type === "invoice") {
@@ -643,18 +772,23 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       linkedCount: program.deletedBatchId ? (clientsByBatch.get(program.deletedBatchId) || 0) : 0,
       meta: t.programs,
     }));
-    const clientItems = deletedClients.map((client) => ({
-      key: `client-${client.id}`,
-      id: client.id,
-      clientId: client.id,
-      type: "client",
-      name: client.name || t.fullName,
-      subtitle: [client.phone, client.city].filter(Boolean).join(" • "),
-      deletedAt: client.deletedAt,
-      batchId: client.deletedBatchId,
-      programName: programNameMap.get(client.programId),
-      meta: t.clients,
-    }));
+    const clientItems = deletedClients.map((client) => {
+      const programName = programNameMap.get(client.programId);
+      const clientKind = inferTrashClientKind(client, programById.get(client.programId), programName);
+      return {
+        key: `client-${client.id}`,
+        id: client.id,
+        clientId: client.id,
+        type: "client",
+        clientKind,
+        name: client.name || t.fullName,
+        subtitle: [client.phone, client.city].filter(Boolean).join(" • "),
+        deletedAt: client.deletedAt,
+        batchId: client.deletedBatchId,
+        programName,
+        meta: getTrashClientKindLabel(clientKind, lang),
+      };
+    });
     const invoiceItems = trashedInvoices.map((invoice) => ({
       key: `invoice-${invoice.id}`,
       id: invoice.id,
@@ -692,12 +826,14 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       return bDate - aDate;
     });
     return merged;
-  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, clientNameMap, formatDate, lang, paymentLabel, serverTrashPage.items, t.programs, t.clients, t.fullName, t.trashFilter_invoices, useServerTrashPage]);
+  }, [deletedPrograms, deletedClients, deletedPayments, trashedInvoices, clientsByBatch, programNameMap, programById, clientNameMap, formatDate, lang, paymentLabel, serverTrashPage.items, t.programs, t.fullName, t.trashFilter_invoices, useServerTrashPage]);
 
   const visibleItems = React.useMemo(() => {
     if (useServerTrashPage) return baseTrashItems;
     if (filter === "programs") return baseTrashItems.filter((item) => item.type === "program");
-    if (filter === "clients") return baseTrashItems.filter((item) => item.type === "client");
+    if (filter === "hajj" || filter === "umrah" || filter === "unassigned") {
+      return baseTrashItems.filter((item) => item.type === "client" && item.clientKind === filter);
+    }
     if (filter === "invoices") return baseTrashItems.filter((item) => item.type === "invoice");
     if (filter === "payments") return baseTrashItems.filter((item) => item.type === "payment");
     return baseTrashItems;
@@ -790,6 +926,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
           item.itemType,
           item.itemId,
           item.clientId,
+          item.clientKind,
           item.deletedAt,
           item.status,
           item.amount,
@@ -801,8 +938,9 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       trashedInvoicesSignature,
       deletedClientsSignature,
       serverTrashSignature,
+      store.clientPermanentDeletePreflightVersion || 0,
     ].join("\u001d");
-  }, [deletedClients, deletedPayments, serverTrashPage.items, store.payments, trashedInvoices, useServerTrashPage]);
+  }, [deletedClients, deletedPayments, serverTrashPage.items, store.clientPermanentDeletePreflightVersion, store.payments, trashedInvoices, useServerTrashPage]);
 
   React.useEffect(() => {
     if (previousRelevantCacheSignatureRef.current === null) {
@@ -926,6 +1064,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
 
   const handleRestore = React.useCallback(async () => {
     if (!selectedCount) return;
+    let shouldRefreshServerTrash = false;
     if ((selectionPayload.programIds.length || selectionPayload.clientIds.length) && typeof store.restoreTrashItems === "function") {
       const result = await store.restoreTrashItems(selectionPayload);
       if (result?.error) {
@@ -933,16 +1072,17 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
         return;
       }
       invalidateClientCaches(selectionPayload.clientIds);
-      if (useServerTrashPage) refreshServerTrashPage();
+      shouldRefreshServerTrash = true;
     }
     if (invoicesAreRemote && selectionPayload.invoiceIds.length && store.invoiceApi?.restoreFinalInvoice) {
       const responses = await Promise.all(selectionPayload.invoiceIds.map((id) => store.invoiceApi.restoreFinalInvoice(id)));
       const error = responses.find((response) => response?.error)?.error;
       if (error) {
+        if (useServerTrashPage && shouldRefreshServerTrash) refreshServerTrashPage();
         if (onToast) onToast(error.message || "Restore failed", "error");
         return;
       }
-      if (useServerTrashPage) refreshServerTrashPage();
+      if (useServerTrashPage) shouldRefreshServerTrash = true;
       else await refreshTrashedInvoices({ force: true });
       invalidateClientCaches(selectedInvoiceClientIds);
     }
@@ -954,8 +1094,9 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     if (selectionPayload.paymentIds.length && typeof store.restorePaymentFromTrash === "function") {
       await Promise.all(selectionPayload.paymentIds.map((id) => store.restorePaymentFromTrash(id)));
       invalidateClientCaches(selectedPaymentClientIds);
-      if (useServerTrashPage) refreshServerTrashPage();
+      if (useServerTrashPage) shouldRefreshServerTrash = true;
     }
+    if (useServerTrashPage && shouldRefreshServerTrash) refreshServerTrashPage();
     setSelection({});
     if (onToast) onToast(t.restoreSuccess || "Restored", "success");
   }, [invoicesAreRemote, invalidateClientCaches, refreshServerTrashPage, refreshTrashedInvoices, selectedCount, selectedInvoiceClientIds, selectedPaymentClientIds, selectionPayload, store, onToast, t.restoreSuccess, useServerTrashPage]);
@@ -971,6 +1112,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     setDeleteProgress({ done: 0, total: selectionPayload.clientIds.length });
     try {
       let deletePayload = selectionPayload;
+      let shouldRefreshServerTrash = false;
       let blockedClientIds = [];
       let failedClientIds = [];
       let selectedClientBlockMap = new Map(
@@ -1059,19 +1201,20 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
         blockedClientIds = Array.from(new Set([...blockedClientIds, ...(result?.blockedClientIds || [])]));
         failedClientIds = Array.from(new Set([...(result?.failedClientIds || [])]));
         if (invoicesAreRemote && Number(result?.cleanup?.cleanedInvoicesCount || 0) > 0) {
-          if (useServerTrashPage) refreshServerTrashPage();
+          if (useServerTrashPage) shouldRefreshServerTrash = true;
           else await refreshTrashedInvoices({ force: true });
         }
-        if (useServerTrashPage) refreshServerTrashPage();
+        if (useServerTrashPage) shouldRefreshServerTrash = true;
       }
       if (invoicesAreRemote && deletePayload.invoiceIds.length && store.invoiceApi?.deleteFinalInvoice) {
         const responses = await Promise.all(deletePayload.invoiceIds.map((id) => store.invoiceApi.deleteFinalInvoice(id)));
         const error = responses.find((response) => response?.error)?.error;
         if (error) {
+          if (useServerTrashPage && shouldRefreshServerTrash) refreshServerTrashPage();
           if (onToast) onToast(error.message || "Delete failed", "error");
           return;
         }
-        if (useServerTrashPage) refreshServerTrashPage();
+        if (useServerTrashPage) shouldRefreshServerTrash = true;
         else await refreshTrashedInvoices({ force: true });
         invalidateClientCaches(selectedInvoiceClientIds);
       }
@@ -1083,8 +1226,9 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       if (deletePayload.paymentIds.length && typeof store.deletePaymentFromTrash === "function") {
         await Promise.all(deletePayload.paymentIds.map((id) => store.deletePaymentFromTrash(id)));
         invalidateClientCaches(selectedPaymentClientIds);
-        if (useServerTrashPage) refreshServerTrashPage();
+        if (useServerTrashPage) shouldRefreshServerTrash = true;
       }
+      if (useServerTrashPage && shouldRefreshServerTrash) refreshServerTrashPage();
       const blockedOrFailedClientIds = Array.from(new Set([...blockedClientIds, ...failedClientIds]));
       invalidateClientCaches(purgeResult?.deletedClientIds || []);
       setSelection(Object.fromEntries(blockedOrFailedClientIds.map((id) => [`client-${id}`, true])));
@@ -1191,9 +1335,11 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
       body,
     };
   }, [lang, selectedCount, selectionPayload.clientIds.length, t]);
-  const getFilterText = React.useCallback((item) => (
-    item.id === "payments" ? paymentLabel : (t[item.key] || item.id)
-  ), [paymentLabel, t]);
+  const getFilterText = React.useCallback((item) => {
+    if (item.id === "payments") return paymentLabel;
+    if (item.id === "hajj" || item.id === "umrah" || item.id === "unassigned") return getTrashClientKindFilterLabel(item.id, lang);
+    return t[item.key] || item.id;
+  }, [lang, paymentLabel, t]);
   const selectedFilterLabel = FILTERS.find((item) => item.id === filter)?.key;
   const selectedFilter = FILTERS.find((item) => item.id === filter) || FILTERS[0];
   const selectedFilterText = getFilterText(selectedFilter) || t[selectedFilterLabel] || t.trashFilter_all;
@@ -1512,7 +1658,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
             }}>
               <span aria-hidden="true" />
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", minWidth: 0 }}>
-                <span style={{ flex: "0 0 70px" }}>{trashListHeaderText.type}</span>
+                <span style={{ flex: "0 0 76px" }}>{trashListHeaderText.type}</span>
                 <span style={{ flex: "1 1 150px" }}>{trashListHeaderText.record}</span>
                 <span style={{ flex: "1.15 1 170px" }}>{trashListHeaderText.details}</span>
                 <span style={{ flex: "1.15 1 180px" }}>{trashListHeaderText.blockReason}</span>
@@ -1524,16 +1670,23 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
             {paginatedItems.map((item) => {
               const checked = !!selection[item.key];
               const isProgram = item.type === "program";
+              const isClient = item.type === "client";
               const isInvoice = item.type === "invoice";
               const isPayment = item.type === "payment";
               const badgeColor = isInvoice ? "#60a5fa" : isPayment ? "#f59e0b" : isProgram ? tc.gold : tc.greenLight;
               const badgeBorder = isInvoice ? "rgba(96,165,250,.35)" : isPayment ? "rgba(245,158,11,.35)" : isProgram ? "rgba(212,175,55,.4)" : "rgba(34,197,94,.4)";
               const badgeBackground = isInvoice ? "rgba(96,165,250,.1)" : isPayment ? "rgba(245,158,11,.1)" : isProgram ? "rgba(212,175,55,.12)" : "rgba(34,197,94,.1)";
-              const badgeText = isInvoice ? (t.trashFilter_invoices || "Invoices") : isPayment ? paymentLabel : isProgram ? t.programs : t.clients;
+              const badgeText = isInvoice
+                ? (t.trashFilter_invoices || "Invoices")
+                : isPayment
+                  ? paymentLabel
+                  : isProgram
+                    ? t.programs
+                    : getTrashClientKindLabel(item.clientKind, lang);
               const clientDeleteBlock = item.permanentDeleteBlock;
               const clientDeleteBlocked = Boolean(clientDeleteBlock?.blocked);
-              const showLinkedItemsAction = item.type === "client" && isLinkedFinancialBlock(clientDeleteBlock);
-              const showClientStatus = item.type === "client" && (item.permanentDeleteCheckPending || clientDeleteBlocked);
+              const showLinkedItemsAction = isClient && isLinkedFinancialBlock(clientDeleteBlock);
+              const showClientStatus = isClient && (item.permanentDeleteCheckPending || clientDeleteBlocked);
               const itemDetails = [
                 item.subtitle,
                 item.programName,
@@ -1573,7 +1726,7 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
                       minWidth: 0,
                     }}>
                       <span style={{
-                        flex: "0 0 70px",
+                        flex: "0 0 76px",
                         minWidth: 0,
                         fontSize: 10.5,
                         color: badgeColor,
