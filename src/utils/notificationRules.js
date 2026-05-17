@@ -2,6 +2,19 @@ const DAY_MS = 1000 * 60 * 60 * 24;
 
 const trimText = (value) => (typeof value === "string" ? value.trim() : "");
 
+export const PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION = "program_fully_cleared_archive_suggestion";
+export const PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE = `system:${PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION}`;
+
+const hashText = (value) => {
+  const text = String(value || "");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+};
+
 const parseLocalDate = (value) => {
   if (!value) return null;
   if (value instanceof Date) {
@@ -81,6 +94,19 @@ export const createPassportExpiryKey = (client = {}, program = {}) => {
   return client.id && expiryDate && departureDate
     ? `passport-expiry-7months-${client.id}-${program.id || client.programId || "program"}-${departureDate}-${expiryDate}`
     : "";
+};
+
+export const createProgramFullyClearedArchiveKey = (program = {}, clearedClients = []) => {
+  if (!program?.id || !Array.isArray(clearedClients) || clearedClients.length === 0) return "";
+  const clientSignature = clearedClients
+    .map((client) => {
+      const price = Number(client?.salePrice ?? client?.sale_price ?? 0) || 0;
+      return `${client?.id || ""}:${price}`;
+    })
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  return `program-fully-cleared-archive-${program.id}-${clearedClients.length}-${hashText(clientSignature)}`;
 };
 
 export const isUpcomingTrip = (program = {}) => {

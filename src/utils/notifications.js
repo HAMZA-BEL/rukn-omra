@@ -1,3 +1,5 @@
+import { PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE } from "./notificationRules";
+
 const stableStringify = (value) => {
   if (value === null || value === undefined) return "null";
   if (typeof value !== "object") return String(value);
@@ -164,6 +166,8 @@ export function formatNotificationMessage(notification, { programs = [], activeC
         return `${vars.program}: ${vars.count} clients unpaid, departure in ${vars.days} day(s)`;
       case "notificationsArchive":
         return `${vars.program}: ended ${vars.days} day(s) ago — please archive`;
+      case "notificationsProgramFullyClearedArchiveBody":
+        return `All participants in "${vars.programName}" are fully cleared. You can archive it to keep your workspace organized.`;
       case "notificationsDepartureSoon":
         return `Trip is approaching: ${vars.program}\nDeparture: ${vars.date}\nRemaining: ${vars.days} day(s)`;
       case "notificationsDepartureUrgent":
@@ -213,6 +217,12 @@ export function formatNotificationMessage(notification, { programs = [], activeC
         }
       }
       return translate("notificationsArchive", { program: programName, days: daysAgo });
+    }
+    case PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE: {
+      const meta = notification.meta || {};
+      return translate("notificationsProgramFullyClearedArchiveBody", {
+        programName: meta.programName || programName,
+      });
     }
     case "system:departure_11days": {
       const meta = notification.meta || {};

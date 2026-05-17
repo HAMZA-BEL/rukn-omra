@@ -48,10 +48,17 @@ const getProgramDepartureYear = (program = {}) => (
 const getProgramSearchText = (program = {}) => ([
   program.name,
   program.title,
-  program.hotelMecca,
-  program.hotelMadina,
-  program.hotel_mecca,
-  program.hotel_madina,
+].filter(Boolean).join(" ").toLowerCase());
+
+const getClientArchiveSearchText = (client = {}, program = {}) => ([
+  getClientDisplayName(client, ""),
+  client.phone,
+  client.serviceType,
+  client.service_type,
+  client.type,
+  client.programName,
+  client.program_name,
+  program?.name,
 ].filter(Boolean).join(" ").toLowerCase());
 
 const formatArchivedDate = (value, lang) => {
@@ -125,6 +132,73 @@ const countPillStyle = {
   fontWeight:900,
 };
 
+const archiveListStyle = {
+  display:"grid",
+  gap:8,
+};
+
+const archiveRowStyle = {
+  padding:"10px 12px",
+  border:"1px solid var(--rukn-border-soft)",
+  background:"var(--rukn-bg-card)",
+  boxShadow:"0 5px 16px rgba(15,23,42,.05)",
+  borderRadius:12,
+};
+
+const archiveRowContentStyle = {
+  display:"flex",
+  alignItems:"center",
+  justifyContent:"space-between",
+  gap:12,
+  flexWrap:"wrap",
+};
+
+const archiveRowMainStyle = {
+  minWidth:220,
+  flex:"1 1 420px",
+  display:"grid",
+  gap:6,
+};
+
+const archiveTitleLineStyle = {
+  display:"flex",
+  alignItems:"center",
+  gap:7,
+  flexWrap:"wrap",
+  minWidth:0,
+};
+
+const archiveMetaLineStyle = {
+  display:"flex",
+  alignItems:"center",
+  gap:12,
+  flexWrap:"wrap",
+  color:"var(--rukn-text-muted)",
+  fontSize:11.5,
+  lineHeight:1.5,
+};
+
+const archiveMetaItemStyle = {
+  display:"inline-flex",
+  alignItems:"center",
+  gap:5,
+  minWidth:0,
+};
+
+const archiveBadgeStyle = (tone = "muted") => ({
+  display:"inline-flex",
+  alignItems:"center",
+  maxWidth:"100%",
+  padding:"2px 8px",
+  borderRadius:999,
+  fontSize:10.5,
+  fontWeight:850,
+  lineHeight:1.45,
+  color:tone === "gold" ? tc.gold : "var(--rukn-text-muted)",
+  background:tone === "gold" ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
+  whiteSpace:"nowrap",
+});
+
 export default function ArchivePage({ store, onToast }) {
   const { t, lang, dir, tr } = useLang();
   const [typeFilter, setTypeFilter] = React.useState(ARCHIVE_FILTERS.ALL);
@@ -174,14 +248,24 @@ export default function ArchivePage({ store, onToast }) {
     programsById.get(getClientProgramId(client)) || client?.docs?.deletedProgramSnapshot || null
   ), [programsById]);
 
-  const getClientKind = React.useCallback((client) => (
-    getExplicitProgramKind(getProgramForClient(client), client)
-  ), [getProgramForClient]);
-
-  const getClientArchiveYear = React.useCallback((client) => (
-    parseYear(client.archivedAt || client.archived_at)
-    || getProgramDepartureYear(getProgramForClient(client))
-  ), [getProgramForClient]);
+  const archivedClientMeta = React.useMemo(() => {
+    const metaById = new Map();
+    const kindCounts = {
+      [ARCHIVE_FILTERS.HAJJ]: 0,
+      [ARCHIVE_FILTERS.UMRAH]: 0,
+    };
+    archivedClientsAll.forEach((client) => {
+      const program = getProgramForClient(client);
+      const kind = getExplicitProgramKind(program, client);
+      const archiveYear = parseYear(client.archivedAt || client.archived_at) || getProgramDepartureYear(program);
+      const searchText = getClientArchiveSearchText(client, program);
+      metaById.set(client.id, { program, kind, archiveYear, searchText });
+      if (kind === ARCHIVE_FILTERS.HAJJ || kind === ARCHIVE_FILTERS.UMRAH) {
+        kindCounts[kind] += 1;
+      }
+    });
+    return { metaById, kindCounts };
+  }, [archivedClientsAll, getProgramForClient]);
 
   const yearOptions = React.useMemo(() => {
     const years = new Set();
@@ -190,26 +274,24 @@ export default function ArchivePage({ store, onToast }) {
       if (year) years.add(year);
     });
     archivedClientsAll.forEach((client) => {
-      const year = getClientArchiveYear(client);
+      const year = archivedClientMeta.metaById.get(client.id)?.archiveYear;
       if (year) years.add(year);
     });
     return Array.from(years).sort((a, b) => Number(b) - Number(a));
-  }, [archivedClientsAll, archivedProgramsAll, getClientArchiveYear]);
+  }, [archivedClientMeta, archivedClientsAll, archivedProgramsAll]);
 
   React.useEffect(() => {
     if (yearFilter !== "all" && !yearOptions.includes(yearFilter)) setYearFilter("all");
   }, [yearFilter, yearOptions]);
 
   const archiveTypeOptions = React.useMemo(() => {
-    const hajjCount = archivedClientsAll.filter((client) => getClientKind(client) === ARCHIVE_FILTERS.HAJJ).length;
-    const umrahCount = archivedClientsAll.filter((client) => getClientKind(client) === ARCHIVE_FILTERS.UMRAH).length;
     return [
       { key: ARCHIVE_FILTERS.ALL, label: t.archiveTypeAll, icon: "archive", count: archivedProgramsAll.length + archivedClientsAll.length },
       { key: ARCHIVE_FILTERS.PROGRAMS, label: t.archiveTypePrograms, icon: "program", count: archivedProgramsAll.length },
-      { key: ARCHIVE_FILTERS.HAJJ, label: t.archiveTypeHajj, icon: "users", count: hajjCount },
-      { key: ARCHIVE_FILTERS.UMRAH, label: t.archiveTypeUmrah, icon: "users", count: umrahCount },
+      { key: ARCHIVE_FILTERS.HAJJ, label: t.archiveTypeHajj, icon: "users", count: archivedClientMeta.kindCounts[ARCHIVE_FILTERS.HAJJ] },
+      { key: ARCHIVE_FILTERS.UMRAH, label: t.archiveTypeUmrah, icon: "users", count: archivedClientMeta.kindCounts[ARCHIVE_FILTERS.UMRAH] },
     ];
-  }, [archivedClientsAll, archivedProgramsAll.length, getClientKind, t.archiveTypeAll, t.archiveTypeHajj, t.archiveTypePrograms, t.archiveTypeUmrah]);
+  }, [archivedClientMeta, archivedClientsAll.length, archivedProgramsAll.length, t.archiveTypeAll, t.archiveTypeHajj, t.archiveTypePrograms, t.archiveTypeUmrah]);
 
   const activeTypeOption = archiveTypeOptions.find((option) => option.key === typeFilter) || archiveTypeOptions[0];
   const selectedYearLabel = yearFilter === "all" ? t.archiveAllYears : yearFilter;
@@ -227,37 +309,30 @@ export default function ArchivePage({ store, onToast }) {
   const archivedClients = React.useMemo(() => {
     if (typeFilter === ARCHIVE_FILTERS.PROGRAMS) return [];
     return archivedClientsAll.filter((client) => {
-      const kind = getClientKind(client);
+      const meta = archivedClientMeta.metaById.get(client.id);
+      const kind = meta?.kind;
       if (typeFilter === ARCHIVE_FILTERS.HAJJ && kind !== ARCHIVE_FILTERS.HAJJ) return false;
       if (typeFilter === ARCHIVE_FILTERS.UMRAH && kind !== ARCHIVE_FILTERS.UMRAH) return false;
-      if (yearFilter !== "all" && getClientArchiveYear(client) !== yearFilter) return false;
+      if (yearFilter !== "all" && meta?.archiveYear !== yearFilter) return false;
       if (!query) return true;
-      const program = getProgramForClient(client);
-      const haystack = [
-        getClientDisplayName(client, ""),
-        client.phone,
-        client.passport?.number,
-        client.passportNumber,
-        program?.name,
-      ].filter(Boolean).join(" ").toLowerCase();
-      return haystack.includes(query);
+      return meta?.searchText?.includes(query);
     });
-  }, [archivedClientsAll, getClientArchiveYear, getClientKind, getProgramForClient, query, typeFilter, yearFilter]);
+  }, [archivedClientMeta, archivedClientsAll, query, typeFilter, yearFilter]);
 
   const archivedHajjClients = React.useMemo(
-    () => archivedClients.filter((client) => getClientKind(client) === ARCHIVE_FILTERS.HAJJ),
-    [archivedClients, getClientKind]
+    () => archivedClients.filter((client) => archivedClientMeta.metaById.get(client.id)?.kind === ARCHIVE_FILTERS.HAJJ),
+    [archivedClientMeta, archivedClients]
   );
   const archivedUmrahClients = React.useMemo(
-    () => archivedClients.filter((client) => getClientKind(client) === ARCHIVE_FILTERS.UMRAH),
-    [archivedClients, getClientKind]
+    () => archivedClients.filter((client) => archivedClientMeta.metaById.get(client.id)?.kind === ARCHIVE_FILTERS.UMRAH),
+    [archivedClientMeta, archivedClients]
   );
   const unclassifiedArchivedClients = React.useMemo(
     () => archivedClients.filter((client) => {
-      const kind = getClientKind(client);
+      const kind = archivedClientMeta.metaById.get(client.id)?.kind;
       return kind !== ARCHIVE_FILTERS.HAJJ && kind !== ARCHIVE_FILTERS.UMRAH;
     }),
-    [archivedClients, getClientKind]
+    [archivedClientMeta, archivedClients]
   );
 
   const handleConfirmRestore = React.useCallback(async () => {
@@ -276,29 +351,38 @@ export default function ArchivePage({ store, onToast }) {
 
   const renderProgramCard = (program, index) => {
     const registered = clientCountsByProgram.get(program.id) || 0;
+    const departureDate = formatArchivedDate(program.departure || program.departureDate || program.departure_date, lang);
+    const returnDate = formatArchivedDate(program.returnDate || program.return_date || program.return, lang);
     return (
       <GlassCard
         key={program.id}
-        gold
         className="animate-fadeInUp"
         style={{
+          ...archiveRowStyle,
           animationDelay:`${index * 0.04}s`,
-          padding:18,
-          border:"1px solid var(--rukn-border-soft)",
-          boxShadow:"var(--rukn-shadow-card)",
         }}
       >
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:12 }}>
-          <div style={{ minWidth:0 }}>
-            <p style={{ fontSize:15, fontWeight:900, color:"var(--rukn-text-strong)", lineHeight:1.35, marginBottom:7 }}>
-              {program.name || t.archivedPrograms}
-            </p>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"var(--rukn-gold-dim)", padding:"2px 9px", borderRadius:999 }}>
+        <div style={archiveRowContentStyle}>
+          <div style={archiveRowMainStyle}>
+            <div style={archiveTitleLineStyle}>
+              <p style={{ minWidth:0, maxWidth:"100%", fontSize:14, fontWeight:900, color:"var(--rukn-text-strong)", lineHeight:1.35, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {program.name || t.archivedPrograms}
+              </p>
+              <span style={archiveBadgeStyle("gold")}>
                 {translateProgramType(program.type, lang)}
               </span>
-              <span style={{ fontSize:11, color:tc.grey, background:"var(--rukn-bg-soft)", padding:"2px 9px", borderRadius:999 }}>
+              <span style={archiveBadgeStyle()}>
                 {tr("archiveRegisteredCount", { count: registered })}
+              </span>
+            </div>
+            <div style={archiveMetaLineStyle}>
+              <span style={archiveMetaItemStyle}>
+                <AppIcon name="plane" size={13} color={tc.gold} />
+                {t.departure}: <strong style={{ color:"var(--rukn-text)" }}>{departureDate || "-"}</strong>
+              </span>
+              <span style={archiveMetaItemStyle}>
+                <AppIcon name="planeLanding" size={13} color={tc.gold} />
+                {t.returnDate}: <strong style={{ color:"var(--rukn-text)" }}>{returnDate || "-"}</strong>
               </span>
             </div>
           </div>
@@ -307,59 +391,54 @@ export default function ArchivePage({ store, onToast }) {
             icon="restore"
             size="sm"
             onClick={() => setRestorePrompt({ type: "program", item: program })}
-            style={{ flexShrink:0 }}
+            style={{ flex:"0 0 auto", whiteSpace:"nowrap" }}
           >
             {t.restoreProgramAction}
           </Button>
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-          {[
-            ["plane", t.departure, program.departure],
-            ["planeLanding", t.returnDate, program.returnDate],
-            ["hotel", t.hotelMecca, program.hotelMecca],
-            ["building", t.hotelMadina, program.hotelMadina],
-          ].map(([icon, label, value]) => (
-            <div key={label} style={{ minWidth:0 }}>
-              <p style={{ fontSize:10.5, color:tc.grey, display:"inline-flex", alignItems:"center", gap:5, marginBottom:3 }}>
-                <AppIcon name={icon} size={13} color={tc.gold} /> {label}
-              </p>
-              <p style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {value || "-"}
-              </p>
-            </div>
-          ))}
         </div>
       </GlassCard>
     );
   };
 
   const renderClientCard = (client, index) => {
-    const program = getProgramForClient(client);
+    const meta = archivedClientMeta.metaById.get(client.id);
+    const program = meta?.program || getProgramForClient(client);
     const archivedDate = formatArchivedDate(client.archivedAt || client.archived_at, lang);
+    const serviceLabel = getClientServiceTypeLabel(client, t, lang);
     return (
       <GlassCard
         key={client.id}
         className="animate-fadeInUp"
         style={{
+          ...archiveRowStyle,
           animationDelay:`${index * 0.04}s`,
-          padding:18,
-          border:"1px solid var(--rukn-border-soft)",
-          boxShadow:"var(--rukn-shadow-card)",
         }}
       >
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:12 }}>
-          <div style={{ minWidth:0 }}>
-            <p style={{ fontSize:15, fontWeight:900, color:"var(--rukn-text-strong)", lineHeight:1.35, marginBottom:7 }}>
-              {getClientDisplayName(client, client.id)}
-            </p>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"var(--rukn-gold-dim)", padding:"2px 9px", borderRadius:999 }}>
-                {getClientServiceTypeLabel(client, t, lang)}
+        <div style={archiveRowContentStyle}>
+          <div style={archiveRowMainStyle}>
+            <div style={archiveTitleLineStyle}>
+              <p style={{ minWidth:0, maxWidth:"100%", fontSize:14, fontWeight:900, color:"var(--rukn-text-strong)", lineHeight:1.35, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {getClientDisplayName(client, client.id)}
+              </p>
+              <span style={archiveBadgeStyle("gold")}>
+                {serviceLabel}
               </span>
+            </div>
+            <div style={archiveMetaLineStyle}>
+              <span style={archiveMetaItemStyle}>
+                <AppIcon name="phone" size={13} color={tc.gold} />
+                <strong style={{ color:"var(--rukn-text)", fontWeight:800 }}>{client.phone || "-"}</strong>
+              </span>
+              {program?.name && (
+                <span style={{ ...archiveMetaItemStyle, maxWidth:260 }}>
+                  <AppIcon name="program" size={13} color={tc.gold} />
+                  <strong style={{ color:"var(--rukn-text)", fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{program.name}</strong>
+                </span>
+              )}
               {archivedDate && (
-                <span style={{ fontSize:11, color:tc.grey, background:"var(--rukn-bg-soft)", padding:"2px 9px", borderRadius:999 }}>
-                  {archivedDate}
+                <span style={archiveMetaItemStyle}>
+                  <AppIcon name="clock" size={13} color={tc.gold} />
+                  <strong style={{ color:"var(--rukn-text)", fontWeight:800 }}>{archivedDate}</strong>
                 </span>
               )}
             </div>
@@ -369,28 +448,10 @@ export default function ArchivePage({ store, onToast }) {
             icon="restore"
             size="sm"
             onClick={() => setRestorePrompt({ type: "client", item: client })}
-            style={{ flexShrink:0 }}
+            style={{ flex:"0 0 auto", whiteSpace:"nowrap" }}
           >
             {t.restoreClientAction}
           </Button>
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9 }}>
-          {[
-            ["phone", t.phone, client.phone],
-            ["program", t.program, program?.name],
-            ["import", t.registrationSource, client.registrationSource || client.registration_source],
-            ["passport", t.passportNo, client.passport?.number || client.passportNumber],
-          ].map(([icon, label, value]) => (
-            <div key={label} style={{ minWidth:0 }}>
-              <p style={{ fontSize:10.5, color:tc.grey, display:"inline-flex", alignItems:"center", gap:5, marginBottom:3 }}>
-                <AppIcon name={icon} size={13} color={tc.gold} /> {label}
-              </p>
-              <p style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {value || "-"}
-              </p>
-            </div>
-          ))}
         </div>
       </GlassCard>
     );
@@ -418,7 +479,7 @@ export default function ArchivePage({ store, onToast }) {
     return (
       <section style={{ display:"flex", flexDirection:"column", gap:12 }}>
         {renderSectionHeader(t.archivedPrograms)}
-        <div className="cards-grid archive-program-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))", gap:16, alignItems:"start" }}>
+        <div className="archive-program-list" style={archiveListStyle}>
           {items.map(renderProgramCard)}
         </div>
       </section>
@@ -442,7 +503,7 @@ export default function ArchivePage({ store, onToast }) {
     return (
       <section style={{ display:"flex", flexDirection:"column", gap:12 }}>
         {renderSectionHeader(title)}
-        <div className="cards-grid archive-client-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))", gap:16, alignItems:"start" }}>
+        <div className="archive-client-list" style={archiveListStyle}>
           {items.map(renderClientCard)}
         </div>
       </section>
@@ -483,7 +544,7 @@ export default function ArchivePage({ store, onToast }) {
       );
     }
     return (
-      <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
         {renderProgramSection(archivedPrograms)}
         {isSupabaseStore && !clientsLoaded && clientsLoading ? (
           <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>{t.loading || "Loading..."}</GlassCard>
@@ -499,8 +560,8 @@ export default function ArchivePage({ store, onToast }) {
   };
 
   return (
-    <div className="page-body archive-page" style={{ padding:"28px 32px" }}>
-      <div className="page-header" style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:18 }}>
+    <div className="page-body archive-page" style={{ padding:"24px 28px" }}>
+      <div className="page-header" style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16, flexWrap:"wrap" }}>
           <div>
             <h1 style={{ fontSize:22, fontWeight:800, color:tc.white }}>{t.archiveNav}</h1>

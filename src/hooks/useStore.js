@@ -56,7 +56,14 @@ import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClient
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
-import { buildSystemNotificationCandidates, getDaysUntil, getProgramDepartureDate } from "../utils/notificationRules";
+import {
+  PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION,
+  PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE,
+  buildSystemNotificationCandidates,
+  createProgramFullyClearedArchiveKey,
+  getDaysUntil,
+  getProgramDepartureDate,
+} from "../utils/notificationRules";
 import { normalizeHotelCheckinDay } from "../utils/hotelDates";
 import {
   canUseBadgePhotoStorage,
@@ -198,6 +205,31 @@ const archivePersistenceErrorMessage = (key) => (
 );
 
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
+
+const isActiveProgramForArchiveSuggestion = (program = {}) => (
+  program
+  && !program.deleted
+  && !program.deletedAt
+  && String(program.status || "active").toLowerCase() !== "archived"
+);
+
+const isActiveClientForArchiveSuggestion = (client = {}) => (
+  client
+  && !client.deleted
+  && !client.deletedAt
+  && client.archived !== true
+);
+
+const isFullyClearedArchiveSuggestionNotification = (notification = {}, programId = "") => (
+  notification
+  && notification.type === PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE
+  && (
+    notification.meta?.actionKey === PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION
+    || notification.meta?.action === PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION
+    || notification.meta?.actionType === PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION
+  )
+  && String(notification.targetId || notification.programId || "") === String(programId || "")
+);
 
 const CLIENT_PERMANENT_DELETE_BLOCK_CODES = new Set([
   "ACTIVE_LINKED_PAYMENTS",
@@ -648,6 +680,7 @@ export function useStore(agencyId, onToast) {
   const [backgroundHydrationDone, setBackgroundHydrationDone] = useState(!isSupabaseEnabled || !agencyId);
   const [trashedInvoicesCache, setTrashedInvoicesCache] = useState([]);
   const [trashedInvoicesLoaded, setTrashedInvoicesLoaded] = useState(false);
+  const [archiveSuggestionCheckVersion, setArchiveSuggestionCheckVersion] = useState(0);
 
   // Prevent double-fetch in React StrictMode
   const fetchedRef = useRef(false);
@@ -666,6 +699,8 @@ export function useStore(agencyId, onToast) {
   const backgroundHydrationStartedRef = useRef(false);
   const dashboardStatsPromiseRef = useRef(null);
   const clientPermanentDeletePreflightCacheRef = useRef(new Map());
+  const pendingArchiveSuggestionProgramIdsRef = useRef(new Set());
+  const archiveSuggestionInitialScanDoneRef = useRef(false);
 
   useEffect(() => { clientsRef.current = clients; }, [clients]);
   useEffect(() => { paymentsRef.current = payments; }, [payments]);
@@ -693,6 +728,23 @@ export function useStore(agencyId, onToast) {
     if (onToast) onToast(msg, type);
     else console.warn("[Store]", msg);
   }, [onToast]);
+
+  const queueProgramArchiveSuggestionCheck = useCallback((programIds = []) => {
+    const ids = Array.from(new Set((Array.isArray(programIds) ? programIds : [programIds])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)));
+    if (!ids.length) return;
+    ids.forEach((id) => pendingArchiveSuggestionProgramIdsRef.current.add(id));
+    setArchiveSuggestionCheckVersion((version) => version + 1);
+  }, []);
+
+  const queueClientProgramArchiveSuggestionCheck = useCallback((clientIdOrRecord) => {
+    if (!clientIdOrRecord) return;
+    const client = typeof clientIdOrRecord === "object"
+      ? clientIdOrRecord
+      : clientsRef.current.find((item) => String(item.id || "") === String(clientIdOrRecord || ""));
+    queueProgramArchiveSuggestionCheck(getClientProgramId(client));
+  }, [queueProgramArchiveSuggestionCheck]);
 
   const refreshDashboardStats = useCallback(async () => {
     if (!isSupabaseEnabled || !agencyId) {
@@ -742,6 +794,101 @@ export function useStore(agencyId, onToast) {
     ))
   ), [programs]);
   const clearActivityLogConfirmed = useCallback((days = 0) => clearActivityLog(days), [clearActivityLog]);
+
+  useEffect(() => {
+    if (!storeHydrated) return;
+    if (isSupabaseEnabled && (!clientsLoaded || !paymentsLoaded || !notificationsLoaded)) return;
+    if (archiveSuggestionInitialScanDoneRef.current) return;
+    archiveSuggestionInitialScanDoneRef.current = true;
+    queueProgramArchiveSuggestionCheck(activeProgramRecords.map((program) => program.id));
+  }, [
+    activeProgramRecords,
+    clientsLoaded,
+    isSupabaseEnabled,
+    notificationsLoaded,
+    paymentsLoaded,
+    queueProgramArchiveSuggestionCheck,
+    storeHydrated,
+  ]);
+
+  useEffect(() => {
+    if (!storeHydrated) return;
+    if (isSupabaseEnabled && (!clientsLoaded || !paymentsLoaded || !notificationsLoaded)) return;
+    const programIds = Array.from(pendingArchiveSuggestionProgramIdsRef.current);
+    if (!programIds.length) return;
+    pendingArchiveSuggestionProgramIdsRef.current.clear();
+
+    const activeProgramsById = new Map(activeProgramRecords.map((program) => [String(program.id || ""), program]));
+    const archiveProgramSuggestionNotifications = (programId, exceptPersistKey = "") => {
+      notifications
+        .filter((notification) => (
+          !notification.isArchived
+          && isFullyClearedArchiveSuggestionNotification(notification, programId)
+          && (!exceptPersistKey || getNotificationKey(notification) !== `persist:${exceptPersistKey}`)
+        ))
+        .forEach((notification) => archiveNotification(notification.id));
+    };
+
+    programIds.forEach((programId) => {
+      const program = activeProgramsById.get(String(programId || ""));
+      const programClients = activeClients.filter((client) => (
+        isActiveClientForArchiveSuggestion(client)
+        && String(getClientProgramId(client) || "") === String(programId || "")
+      ));
+      if (!isActiveProgramForArchiveSuggestion(program) || !programClients.length) {
+        archiveProgramSuggestionNotifications(programId);
+        return;
+      }
+      const allCleared = programClients.every((client) => (
+        getClientRemainingAmount(client, getClientTotalPaid(client.id)) <= 0
+      ));
+      if (!allCleared) {
+        archiveProgramSuggestionNotifications(programId);
+        return;
+      }
+
+      const persistKey = createProgramFullyClearedArchiveKey(
+        program,
+        programClients.map((client) => ({ ...client, salePrice: getClientEffectiveSalePrice(client) }))
+      );
+      if (!persistKey) return;
+      archiveProgramSuggestionNotifications(programId, persistKey);
+      ensureNotificationExists({
+        type: PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE,
+        title: trKey("notificationsProgramFullyClearedArchiveTitle", getUiLang()),
+        message: trKey("notificationsProgramFullyClearedArchiveBody", getUiLang(), { programName: program.name || "" }),
+        severity: "info",
+        persistKey,
+        programId: program.id,
+        targetType: "program",
+        targetId: program.id,
+        actionRoute: "programs",
+        stateHash: `program_fully_cleared_archive:${program.id}:${persistKey}`,
+        meta: {
+          persistKey,
+          actionKey: PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION,
+          action: PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION,
+          actionType: PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION,
+          programName: program.name || "",
+          clientCount: programClients.length,
+          stateHash: `program_fully_cleared_archive:${program.id}:${persistKey}`,
+        },
+      });
+    });
+  }, [
+    activeClients,
+    activeProgramRecords,
+    archiveNotification,
+    archiveSuggestionCheckVersion,
+    clientsLoaded,
+    ensureNotificationExists,
+    getClientTotalPaid,
+    isSupabaseEnabled,
+    notifications,
+    notificationsLoaded,
+    paymentsLoaded,
+    storeHydrated,
+  ]);
 
   const badgePhotoApi = useMemo(() => (
     isSupabaseEnabled && agencyId && canUseBadgePhotoStorage()
@@ -1316,6 +1463,7 @@ export function useStore(agencyId, onToast) {
       onProgram: ({ eventType, new: row, old }) => {
         // Extra check: ignore rows that don't belong to this agency
         if (row?.agency_id && row.agency_id !== agencyId) return;
+        queueProgramArchiveSuggestionCheck(row?.id || old?.id);
         if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
           const mapped = mapProgramRow(row);
           if (mapped.deleted) {
@@ -1342,6 +1490,10 @@ export function useStore(agencyId, onToast) {
       },
       onClient: ({ eventType, new: row, old }) => {
         if (row?.agency_id && row.agency_id !== agencyId) return;
+        queueProgramArchiveSuggestionCheck([
+          row?.program_id || row?.programId,
+          old?.program_id || old?.programId,
+        ]);
         if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
           const mapped = mapClientRow(row);
           if (mapped.deleted) {
@@ -1369,6 +1521,7 @@ export function useStore(agencyId, onToast) {
       onPayment: ({ eventType, new: row, old }) => {
         if (row?.agency_id && row.agency_id !== agencyId) return;
         invalidateClientPermanentDeletePreflight(row?.client_id || row?.clientId || old?.client_id || old?.clientId);
+        queueClientProgramArchiveSuggestionCheck(row?.client_id || row?.clientId || old?.client_id || old?.clientId);
         if (eventType === "INSERT" || eventType === "UPDATE")
           handlePaymentRealtimeUpsert(row);
         else if (eventType === "DELETE")
@@ -1386,7 +1539,7 @@ export function useStore(agencyId, onToast) {
     });
 
     return () => { supabase.removeChannel(channel); };
-  }, [agencyId, invalidateClientPermanentDeletePreflight]);
+  }, [agencyId, invalidateClientPermanentDeletePreflight, queueClientProgramArchiveSuggestionCheck, queueProgramArchiveSuggestionCheck]);
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getClientStatus = useCallback((client) => {
     const paid  = getClientTotalPaid(client.id);
@@ -2035,6 +2188,7 @@ export function useStore(agencyId, onToast) {
     notifications.forEach((notif) => {
       if (notif.isArchived) return;
       if (!notif.type || !notif.type.startsWith("system:")) return;
+      if (notif.type === PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE) return;
       const key = getNotificationKey(notif);
       if (!activeKeys.has(key)) {
         archiveNotification(notif.id, { silent: true });
@@ -2071,10 +2225,11 @@ export function useStore(agencyId, onToast) {
       archivedAt:       null,
     };
     addClientLocal(newClient);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(newClient));
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     sync(() => saveClient(newClient, agencyId));
     return id;
-  }, [addClientLocal, logActivity, sync, agencyId]);
+  }, [addClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const addClientFromPassportImport = useCallback(async (data) => {
     const id  = trimString(data.id) || genId("CL");
@@ -2093,10 +2248,11 @@ export function useStore(agencyId, onToast) {
       if (error) return { data: null, error };
     }
     addClientLocal(newClient);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(newClient));
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(newClient, agencyId));
     return { data: newClient, error: null };
-  }, [addClientLocal, agencyId, logActivity, sync]);
+  }, [addClientLocal, agencyId, logActivity, queueProgramArchiveSuggestionCheck, sync]);
 
   const updateClientFromPassportImport = useCallback(async (id, data) => {
     const now      = new Date().toISOString().split("T")[0];
@@ -2107,10 +2263,11 @@ export function useStore(agencyId, onToast) {
       if (error) return { data: null, error };
     }
     updateClientLocal(id, updated);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(updated));
     logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
     if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(updated, agencyId));
     return { data: updated, error: null };
-  }, [agencyId, logActivity, sync, updateClientLocal]);
+  }, [agencyId, logActivity, queueProgramArchiveSuggestionCheck, sync, updateClientLocal]);
 
   const updateClient = useCallback((id, data) => {
     const now      = new Date().toISOString().split("T")[0];
@@ -2122,6 +2279,10 @@ export function useStore(agencyId, onToast) {
       return;
     }
     updateClientLocal(id, updated);
+    queueProgramArchiveSuggestionCheck([
+      getClientProgramId(previous),
+      getClientProgramId(updated),
+    ]);
     if (previous && previous.programId !== updated.programId) {
       const programName = programs.find(p => p.id === updated.programId)?.name || updated.programId || "";
       logActivity("client_transfer", translateActivityDescription(`تم نقل المعتمر إلى ${programName}`), getClientDisplayName(updated, id));
@@ -2129,7 +2290,7 @@ export function useStore(agencyId, onToast) {
       logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
     }
     sync(() => saveClient({ id, ...updated }, agencyId));
-  }, [clients, programs, updateClientLocal, logActivity, sync, agencyId, notify]);
+  }, [clients, programs, updateClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify]);
 
   const syncRoomingClientFields = useCallback(async (programId, updates = []) => {
     if (!programId || !Array.isArray(updates) || !updates.length) {
@@ -2209,6 +2370,10 @@ export function useStore(agencyId, onToast) {
       return 0;
     }
     transferClientsLocal(ids, programId, now);
+    queueProgramArchiveSuggestionCheck([
+      programId,
+      ...affected.map((client) => getClientProgramId(client)),
+    ]);
     const programName = programs.find((p) => p.id === programId)?.name || programId;
     affected.forEach((client) => {
       logActivity("client_transfer", translateActivityDescription(`تم نقل المعتمر إلى ${programName}`), getClientDisplayName(client, client.id));
@@ -2221,7 +2386,7 @@ export function useStore(agencyId, onToast) {
       return { error };
     });
     return affected.length;
-  }, [clients, programs, transferClientsLocal, logActivity, sync, agencyId, notify]);
+  }, [clients, programs, transferClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify]);
 
   const deleteClient = useCallback((id) => {
     const client = clients.find((x) => x.id === id);
@@ -2229,10 +2394,11 @@ export function useStore(agencyId, onToast) {
     const batchId   = generateUUID();
     const deletedAt = new Date().toISOString();
     softDeleteClientsLocal([client], deletedAt, batchId);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(client));
     removePaymentsByClient(id);
     logActivity("client_delete", translateActivityDescription("تم حذف معتمر"), getClientDisplayName(client, id));
     sync(() => markClientsDeleted([id], agencyId, batchId));
-  }, [clients, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
+  }, [clients, softDeleteClientsLocal, queueProgramArchiveSuggestionCheck, removePaymentsByClient, logActivity, sync, agencyId]);
 
   const deleteClientsBulk = useCallback((ids) => {
     if (!Array.isArray(ids) || !ids.length) return 0;
@@ -2242,6 +2408,7 @@ export function useStore(agencyId, onToast) {
     const batchId   = generateUUID();
     const deletedAt = new Date().toISOString();
     softDeleteClientsLocal(entries, deletedAt, batchId);
+    queueProgramArchiveSuggestionCheck(entries.map((client) => getClientProgramId(client)));
     logActivity(
       "client_bulk_delete",
       translateActivityDescription(`تم نقل ${entries.length} معتمر إلى سلة المحذوفات`),
@@ -2249,7 +2416,7 @@ export function useStore(agencyId, onToast) {
     );
     sync(() => markClientsDeleted(ids, agencyId, batchId));
     return entries.length;
-  }, [clients, softDeleteClientsLocal, logActivity, sync, agencyId]);
+  }, [clients, softDeleteClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const createAgencyUser = useCallback(async ({ email, fullName, role = "staff", status = "invited" }) => {
     if (!isSupabaseEnabled || !agencyId) {
@@ -2306,6 +2473,7 @@ export function useStore(agencyId, onToast) {
     const previousArchived = c?.archived ?? false;
     const previousArchivedAt = c?.archivedAt ?? c?.archived_at ?? null;
     archiveClientLocal([id], now);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(c));
     logActivity("client_archive", translateActivityDescription("تم أرشفة المعتمر"), getClientDisplayName(c, id));
     if (c) {
       return sync(() => archiveClientRecordRemote(id, agencyId, now)).then((result) => {
@@ -2315,12 +2483,13 @@ export function useStore(agencyId, onToast) {
             ? { ...item, archived: previousArchived, archivedAt: previousArchivedAt, archived_at: previousArchivedAt }
             : item
         )));
+        queueProgramArchiveSuggestionCheck(getClientProgramId(c));
         notify(archivePersistenceErrorMessage("archiveClientSaveError"), "error");
         return result;
       });
     }
     return Promise.resolve({ error: null });
-  }, [clients, archiveClientLocal, logActivity, notify, setClients, sync, agencyId]);
+  }, [clients, archiveClientLocal, logActivity, notify, queueProgramArchiveSuggestionCheck, setClients, sync, agencyId]);
 
   const archiveClients = useCallback((ids) => {
     if (!ids?.length) return Promise.resolve({ error: null });
@@ -2333,6 +2502,10 @@ export function useStore(agencyId, onToast) {
       }];
     }));
     archiveClientLocal(ids, now);
+    queueProgramArchiveSuggestionCheck(Array.from(previousById.keys()).map((id) => {
+      const client = clients.find((x) => x.id === id);
+      return getClientProgramId(client);
+    }));
     const attempts = ids.map((id) => {
       const c = clients.find((x) => x.id === id);
       if (!c) return Promise.resolve(true);
@@ -2344,6 +2517,7 @@ export function useStore(agencyId, onToast) {
             ? { ...item, archived: previous.archived ?? false, archivedAt: previous.archivedAt ?? null, archived_at: previous.archivedAt ?? null }
             : item
         )));
+        queueProgramArchiveSuggestionCheck(getClientProgramId(c));
         return false;
       });
     });
@@ -2355,13 +2529,14 @@ export function useStore(agencyId, onToast) {
       }
       return { error: null };
     });
-  }, [clients, archiveClientLocal, notify, setClients, sync, agencyId, logActivity]);
+  }, [clients, archiveClientLocal, notify, queueProgramArchiveSuggestionCheck, setClients, sync, agencyId, logActivity]);
 
   const restoreClient = useCallback((id) => {
     const c = clients.find((x) => x.id === id);
     const previousArchived = c?.archived ?? true;
     const previousArchivedAt = c?.archivedAt ?? c?.archived_at ?? null;
     restoreArchivedClientLocal(id);
+    queueProgramArchiveSuggestionCheck(getClientProgramId(c));
     logActivity("client_restore", translateActivityDescription("تمت استعادة المعتمر من الأرشيف"), getClientDisplayName(c, id));
     if (c) {
       return sync(() => restoreClientRecordRemote(id, agencyId)).then((result) => {
@@ -2371,12 +2546,13 @@ export function useStore(agencyId, onToast) {
             ? { ...item, archived: previousArchived, archivedAt: previousArchivedAt, archived_at: previousArchivedAt }
             : item
         )));
+        queueProgramArchiveSuggestionCheck(getClientProgramId(c));
         notify(archivePersistenceErrorMessage("restoreClientSaveError"), "error");
         return result;
       });
     }
     return Promise.resolve({ error: null });
-  }, [clients, restoreArchivedClientLocal, logActivity, notify, setClients, sync, agencyId]);
+  }, [clients, restoreArchivedClientLocal, logActivity, notify, queueProgramArchiveSuggestionCheck, setClients, sync, agencyId]);
 
   const archiveProgram = useCallback((programId) => {
     const now        = new Date().toISOString();
@@ -2442,6 +2618,7 @@ export function useStore(agencyId, onToast) {
         }
         addPaymentLocal(savedPayment);
         invalidateClientPermanentDeletePreflight(savedPayment.clientId || savedPayment.client_id || data.clientId);
+        queueClientProgramArchiveSuggestionCheck(savedPayment.clientId || savedPayment.client_id || data.clientId);
         setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
         logActivity(
           "payment_add",
@@ -2464,6 +2641,7 @@ export function useStore(agencyId, onToast) {
 
     addPaymentLocal(pmt);
     invalidateClientPermanentDeletePreflight(pmt.clientId || pmt.client_id || data.clientId);
+    queueClientProgramArchiveSuggestionCheck(pmt.clientId || pmt.client_id || data.clientId);
     setClients(prev => prev.map(x => x.id === data.clientId ? { ...x, lastModified: now } : x));
     logActivity(
       "payment_add",
@@ -2473,13 +2651,14 @@ export function useStore(agencyId, onToast) {
     );
     sync(() => savePayment(pmt, agencyId));
     return pmt;
-  }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
+  }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, queueClientProgramArchiveSuggestionCheck, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
   const deletePayment = useCallback((id, options = {}) => {
     const p = payments.find(x => x.id === id);
     const clientId = p?.clientId || p?.client_id || options.clientId || options.client_id || "";
     invalidateClientPermanentDeletePreflight(clientId);
     trashPaymentLocal(id);
+    queueClientProgramArchiveSuggestionCheck(clientId);
     logActivity(
       "payment_trash",
       translateActivityDescription(`تم نقل دفعة ${p?.receiptNo || ""} إلى سلة المحذوفات`),
@@ -2488,12 +2667,13 @@ export function useStore(agencyId, onToast) {
     );
     notify(localizedPaymentTrashMessage(), "success");
     sync(() => deletePaymentRemote(id, agencyId));
-  }, [payments, trashPaymentLocal, logActivity, notify, sync, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
+  }, [payments, trashPaymentLocal, logActivity, notify, queueClientProgramArchiveSuggestionCheck, sync, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
 
   const restorePaymentFromTrash = useCallback(async (id) => {
     const p = deletedPayments.find(x => x.id === id);
     invalidateClientPermanentDeletePreflight(p?.clientId || p?.client_id);
     restorePaymentLocal(id);
+    queueClientProgramArchiveSuggestionCheck(p?.clientId || p?.client_id);
     logActivity(
       "payment_restore",
       translateActivityDescription(`تم استرجاع دفعة ${p?.receiptNo || ""}`),
@@ -2505,14 +2685,16 @@ export function useStore(agencyId, onToast) {
     if (!result?.error && result?.data) {
       handlePaymentRealtimeUpsert(result.data);
       invalidateClientPermanentDeletePreflight(result.data.clientId || result.data.client_id);
+      queueClientProgramArchiveSuggestionCheck(result.data.clientId || result.data.client_id);
     }
     return result;
-  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, restorePaymentLocal, sync]);
+  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, queueClientProgramArchiveSuggestionCheck, restorePaymentLocal, sync]);
 
   const deletePaymentFromTrash = useCallback(async (id) => {
     const p = deletedPayments.find(x => x.id === id);
     invalidateClientPermanentDeletePreflight(p?.clientId || p?.client_id);
     purgePaymentLocal(id);
+    queueClientProgramArchiveSuggestionCheck(p?.clientId || p?.client_id);
     logActivity(
       "payment_delete",
       translateActivityDescription(`تم حذف دفعة نهائيًا ${p?.receiptNo || ""}`),
@@ -2523,9 +2705,10 @@ export function useStore(agencyId, onToast) {
     if (!result?.error && result?.data) {
       handlePaymentRealtimeUpsert(result.data);
       invalidateClientPermanentDeletePreflight(result.data.clientId || result.data.client_id);
+      queueClientProgramArchiveSuggestionCheck(result.data.clientId || result.data.client_id);
     }
     return result;
-  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, purgePaymentLocal, sync]);
+  }, [agencyId, deletedPayments, handlePaymentRealtimeUpsert, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, purgePaymentLocal, queueClientProgramArchiveSuggestionCheck, sync]);
 
   const addProgram = useCallback((data) => {
     const id  = genId("PRG");
@@ -2537,9 +2720,10 @@ export function useStore(agencyId, onToast) {
 
   const updateProgram = useCallback((id, data) => {
     setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
+    queueProgramArchiveSuggestionCheck(id);
     logActivity("program_update", translateActivityDescription(`تم تعديل برنامج ${data.name || id}`), "");
     sync(() => saveProgram({ id, ...data }, agencyId));
-  }, [setPrograms, logActivity, sync, agencyId]);
+  }, [setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const archiveProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
@@ -2548,12 +2732,15 @@ export function useStore(agencyId, onToast) {
     setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "archived" } : p));
     logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${prog?.name || programId}`), "");
     return sync(() => archiveProgramRecordRemote(programId, agencyId)).then((result) => {
-      if (!result?.error) return result || { error: null };
+      if (!result?.error) {
+        queueProgramArchiveSuggestionCheck(programId);
+        return result || { error: null };
+      }
       setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: previousStatus } : p));
       notify(archivePersistenceErrorMessage("archiveProgramSaveError"), "error");
       return result;
     });
-  }, [programs, setPrograms, logActivity, notify, sync, agencyId]);
+  }, [programs, setPrograms, logActivity, notify, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const restoreProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
@@ -2562,12 +2749,15 @@ export function useStore(agencyId, onToast) {
     setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: "active" } : p));
     logActivity("program_restore", translateActivityDescription(`تمت استعادة برنامج ${prog?.name || programId}`), "");
     return sync(() => restoreProgramRecordRemote(programId, agencyId)).then((result) => {
-      if (!result?.error) return result || { error: null };
+      if (!result?.error) {
+        queueProgramArchiveSuggestionCheck(programId);
+        return result || { error: null };
+      }
       setPrograms(prev => prev.map(p => p.id === programId ? { ...p, status: previousStatus } : p));
       notify(archivePersistenceErrorMessage("restoreProgramSaveError"), "error");
       return result;
     });
-  }, [programs, setPrograms, logActivity, notify, sync, agencyId]);
+  }, [programs, setPrograms, logActivity, notify, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const deleteProgram = useCallback((id) => {
     const prog = programs.find(p => p.id === id);
@@ -2583,12 +2773,14 @@ export function useStore(agencyId, onToast) {
       deletedBatchId: batchId,
     };
     setPrograms(prev => prev.filter(p => p.id !== id));
+    queueProgramArchiveSuggestionCheck(id);
     setDeletedPrograms(prev => {
       const filtered = prev.filter(p => p.id !== id);
       return [deletedProgramEntry, ...filtered];
     });
     if (clientIds.length) {
       softDeleteClientsLocal(relatedClients, deletedAt, batchId);
+      queueProgramArchiveSuggestionCheck(id);
       removePaymentsByClient(clientIds);
     }
     logActivity("program_delete", translateActivityDescription(`تم حذف برنامج ${prog?.name || id}`), "");
@@ -2601,7 +2793,7 @@ export function useStore(agencyId, onToast) {
       const error = responses.find(r => r?.error)?.error ?? null;
       return { error };
     });
-  }, [programs, clients, setPrograms, softDeleteClientsLocal, removePaymentsByClient, logActivity, sync, agencyId]);
+  }, [programs, clients, setPrograms, softDeleteClientsLocal, queueProgramArchiveSuggestionCheck, removePaymentsByClient, logActivity, sync, agencyId]);
 
   const restoreTrashItems = useCallback(async ({ programIds = [], clientIds = [] }) => {
     if (!programIds.length && !clientIds.length) return { error: null };
@@ -2639,6 +2831,7 @@ export function useStore(agencyId, onToast) {
         ? translateActivityDescription(`تمت استعادة برنامج ${programsToRestore[0].name || programsToRestore[0].id}`)
         : translateActivityDescription(`تمت استعادة ${programsToRestore.length} برامج من سلة المحذوفات`);
       logActivity("program_restore", label, "");
+      queueProgramArchiveSuggestionCheck(programsToRestore.map((program) => program.id));
     }
 
     if (combinedClientIds.length) {
@@ -2660,6 +2853,7 @@ export function useStore(agencyId, onToast) {
         : translateActivityDescription(`تمت استعادة ${combinedClientIds.length} معتمرين من السلة`);
       logActivity("client_restore", label, "");
       invalidateClientPermanentDeletePreflight(combinedClientIds);
+      queueProgramArchiveSuggestionCheck(restoredClients.map((client) => getClientProgramId(client)));
     }
 
     return sync(async () => {
@@ -2673,7 +2867,7 @@ export function useStore(agencyId, onToast) {
       const error = responses.find(r => r?.error)?.error ?? null;
       return { error };
     });
-  }, [agencyId, deletedPrograms, deletedClients, fetchProgramTrashContext, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, restoreClients, restoreProgram, sync]);
+  }, [agencyId, deletedPrograms, deletedClients, fetchProgramTrashContext, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, queueProgramArchiveSuggestionCheck, restoreClients, restoreProgram, sync]);
 
   const purgeTrashItems = useCallback(async ({ programIds = [], clientIds = [], clientPreflightBlocks = null, onProgress = null } = {}) => {
     if (!programIds.length && !clientIds.length) return { purged: false };
