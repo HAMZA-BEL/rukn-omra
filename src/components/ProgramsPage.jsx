@@ -95,6 +95,7 @@ import {
   getClientDisplayStatus,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
+import { buildProgramListSummaryById } from "../utils/programListSummaries";
 import {
   downloadProgramBadgesPdf,
 } from "../features/badges";
@@ -1313,7 +1314,6 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const isRTL = dir === "rtl";
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
-  const programMetricsReady = clientsReady && paymentsReady;
   const tr = React.useCallback((key, vars = {}) => {
     const template = t?.[key] ?? key;
     if (typeof template === "function") return template(vars);
@@ -1349,6 +1349,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const [archivePrompt, setArchivePrompt] = React.useState(null);
   const [bulkTrashPrompt, setBulkTrashPrompt] = React.useState(null);
   const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
+  const [serverProgramPage, setServerProgramPage] = React.useState({ status: "idle", data: null });
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
   const programTypeMenuRef = React.useRef(null);
@@ -1358,6 +1359,61 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
+  const serverProgramPageData = store.isSupabaseEnabled && serverProgramPage.status === "ready" ? serverProgramPage.data : null;
+  const serverProgramPageReady = Boolean(serverProgramPageData);
+  const programMetricsReady = Boolean(serverProgramPageReady) || (clientsReady && paymentsReady);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) {
+      setServerProgramPage({ status: "idle", data: null });
+      return undefined;
+    }
+
+    let cancelled = false;
+    const requestedPage = Math.max(1, Number(programsCurrentPage) || 1);
+    const offset = (requestedPage - 1) * programsPageSize;
+    const year = selectedYear === "all" ? null : Number(selectedYear);
+
+    setServerProgramPage({ status: "loading", data: null });
+    db.programs.fetchPageSummary({
+      search,
+      year: Number.isFinite(year) ? year : null,
+      type: programTypeFilter,
+      status: programStatusFilter,
+      limit: programsPageSize,
+      offset,
+    }).then((result) => {
+      if (cancelled) return;
+      if (result?.error) {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[ProgramsPage] Program summary RPC failed; using frontend summary fallback.", result.error);
+        }
+        setServerProgramPage({ status: "failed", data: null, error: result.error });
+        return;
+      }
+      setServerProgramPage({ status: "ready", data: result.data });
+    }).catch((error) => {
+      if (cancelled) return;
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[ProgramsPage] Program summary RPC failed; using frontend summary fallback.", error);
+      }
+      setServerProgramPage({ status: "failed", data: null, error });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    store.isSupabaseEnabled,
+    search,
+    selectedYear,
+    programTypeFilter,
+    programStatusFilter,
+    programsPageSize,
+    programsCurrentPage,
+    programs,
+    store.lastSynced,
+  ]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled) return;
@@ -1434,16 +1490,9 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     ))
   ), [programs]);
 
-  const baseFilteredPrograms = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return activePrograms.filter((program) => {
-      const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
-      if (!matchesSearch) return false;
-      if (selectedYear === "all") return true;
-      const departureYear = getProgramDepartureYear(program);
-      return departureYear === Number(selectedYear);
-    });
-  }, [activePrograms, search, selectedYear]);
+  const activeProgramById = React.useMemo(() => (
+    new Map(activePrograms.map((program) => [String(program.id), program]))
+  ), [activePrograms]);
 
   const clientsByProgramId = React.useMemo(() => {
     const map = new Map();
@@ -1470,71 +1519,66 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     return map;
   }, [clients, store.activeClients]);
 
-  const programCardMetricsMap = React.useMemo(() => {
-    const map = new Map();
-    activePrograms.forEach((program) => {
-      const programClients = clientsByProgramId.get(String(program.id)) || [];
-      const registered = programClients.length;
-      const capacity = Number(program.seats);
-      let totalPaid = 0;
-      let totalRemaining = 0;
-      let cleared = 0;
-      let unpaid = 0;
-      programClients.forEach((client) => {
-        const paid = getClientTotalPaid(client.id);
-        totalPaid += paid;
-        totalRemaining += getProgramClientRemainingAmount(program, client, paid);
-        const paymentStatus = getProgramClientPaymentStatus(program, client, paid);
-        if (paymentStatus === "cleared") cleared += 1;
-        if (paymentStatus === "unpaid") unpaid += 1;
-      });
-      map.set(String(program.id), {
-        registered,
-        pct: Number.isFinite(capacity) && capacity > 0 ? Math.min((registered / capacity) * 100, 100) : 0,
-        totalPaid,
-        totalRemaining,
-        cleared,
-        unpaid,
-      });
-    });
-    return map;
-  }, [activePrograms, clientsByProgramId, getClientTotalPaid]);
+  const frontendProgramSummaryById = React.useMemo(() => (
+    buildProgramListSummaryById({
+      programs: activePrograms,
+      clientsByProgramId,
+      activeClientsByProgramId,
+      getClientTotalPaid,
+      getProgramClientRemainingAmount,
+      getProgramClientPaymentStatus,
+      getClientStatusRemainingAmount: getClientRemainingAmount,
+      getProgramKind,
+      getProgramDepartureYear,
+    })
+  ), [activePrograms, activeClientsByProgramId, clientsByProgramId, getClientTotalPaid]);
 
-  const programPaymentStatusMap = React.useMemo(() => {
+  const serverProgramSummaryById = React.useMemo(() => {
     const map = new Map();
-    activePrograms.forEach((program) => {
-      const programClients = activeClientsByProgramId.get(String(program.id)) || [];
-      if (!programClients.length) {
-        map.set(String(program.id), "empty");
-        return;
+    if (!serverProgramPageReady) return map;
+    (serverProgramPageData.items || []).forEach((program) => {
+      if (program?.id && program.programSummary) {
+        map.set(String(program.id), program.programSummary);
       }
-      const hasRemaining = programClients.some((client) => (
-        getClientRemainingAmount(client, getClientTotalPaid(client.id)) > 0
-      ));
-      map.set(String(program.id), hasRemaining ? "not_cleared" : "cleared");
     });
     return map;
-  }, [activePrograms, activeClientsByProgramId, getClientTotalPaid]);
+  }, [serverProgramPageData, serverProgramPageReady]);
 
-  const programCapacityStatusMap = React.useMemo(() => {
-    const map = new Map();
-    activePrograms.forEach((program) => {
-      const capacity = Number(program.seats);
-      if (!Number.isFinite(capacity) || capacity <= 0) {
-        map.set(String(program.id), "unknown");
-        return;
-      }
-      const registered = programCardMetricsMap.get(String(program.id))?.registered || 0;
-      map.set(String(program.id), registered >= capacity ? "full" : "not_full");
+  const programSummaryById = React.useMemo(() => {
+    if (!serverProgramPageReady) return frontendProgramSummaryById;
+    const map = new Map(frontendProgramSummaryById);
+    serverProgramSummaryById.forEach((summary, programId) => {
+      map.set(programId, summary);
     });
     return map;
-  }, [activePrograms, programCardMetricsMap]);
+  }, [frontendProgramSummaryById, serverProgramPageReady, serverProgramSummaryById]);
+
+  const serverVisiblePrograms = React.useMemo(() => {
+    if (!serverProgramPageReady) return [];
+    return (serverProgramPageData.items || []).map((program) => {
+      const fullProgram = activeProgramById.get(String(program.id));
+      return fullProgram
+        ? { ...program, ...fullProgram, programSummary: program.programSummary }
+        : program;
+    });
+  }, [activeProgramById, serverProgramPageData, serverProgramPageReady]);
+
+  const baseFilteredPrograms = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return activePrograms.filter((program) => {
+      const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+      if (selectedYear === "all") return true;
+      const departureYear = programSummaryById.get(String(program.id))?.year ?? getProgramDepartureYear(program);
+      return departureYear === Number(selectedYear);
+    });
+  }, [activePrograms, programSummaryById, search, selectedYear]);
 
   const programTypeOptions = React.useMemo(() => ([
     { key: "all", label: programTypeLabels.all, count: baseFilteredPrograms.length },
-    { key: "umrah", label: programTypeLabels.umrah, count: baseFilteredPrograms.filter((program) => getProgramKind(program) === "umrah").length },
-    { key: "hajj", label: programTypeLabels.hajj, count: baseFilteredPrograms.filter((program) => getProgramKind(program) === "hajj").length },
-  ]), [baseFilteredPrograms, programTypeLabels]);
+    { key: "umrah", label: programTypeLabels.umrah, count: baseFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.typeKind === "umrah").length },
+    { key: "hajj", label: programTypeLabels.hajj, count: baseFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.typeKind === "hajj").length },
+  ]), [baseFilteredPrograms, programSummaryById, programTypeLabels]);
 
   const selectedProgramTypeOption = React.useMemo(
     () => programTypeOptions.find((option) => option.key === programTypeFilter) || programTypeOptions[0],
@@ -1543,32 +1587,40 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
 
   const typeFilteredPrograms = React.useMemo(() => {
     if (programTypeFilter === "all") return baseFilteredPrograms;
-    return baseFilteredPrograms.filter((program) => getProgramKind(program) === programTypeFilter);
-  }, [baseFilteredPrograms, programTypeFilter]);
+    return baseFilteredPrograms.filter((program) => (
+      programSummaryById.get(String(program.id))?.typeKind === programTypeFilter
+    ));
+  }, [baseFilteredPrograms, programSummaryById, programTypeFilter]);
+
+  const getProgramStatusOptionCount = React.useCallback((key, fallbackCount) => (
+    serverProgramPageReady && key === programStatusFilter
+      ? serverProgramPageData.totalCount
+      : fallbackCount
+  ), [programStatusFilter, serverProgramPageData, serverProgramPageReady]);
 
   const programStatusOptions = React.useMemo(() => ([
-    { key: "all", label: programStatusLabels.all, count: typeFilteredPrograms.length },
+    { key: "all", label: programStatusLabels.all, count: getProgramStatusOptionCount("all", typeFilteredPrograms.length) },
     {
       key: "cleared",
       label: programStatusLabels.cleared,
-      count: typeFilteredPrograms.filter((program) => programPaymentStatusMap.get(String(program.id)) === "cleared").length,
+      count: getProgramStatusOptionCount("cleared", typeFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.isCleared).length),
     },
     {
       key: "not_cleared",
       label: programStatusLabels.not_cleared,
-      count: typeFilteredPrograms.filter((program) => programPaymentStatusMap.get(String(program.id)) === "not_cleared").length,
+      count: getProgramStatusOptionCount("not_cleared", typeFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.isNotCleared).length),
     },
     {
       key: "full",
       label: programStatusLabels.full,
-      count: typeFilteredPrograms.filter((program) => programCapacityStatusMap.get(String(program.id)) === "full").length,
+      count: getProgramStatusOptionCount("full", typeFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.isFull).length),
     },
     {
       key: "not_full",
       label: programStatusLabels.not_full,
-      count: typeFilteredPrograms.filter((program) => programCapacityStatusMap.get(String(program.id)) === "not_full").length,
+      count: getProgramStatusOptionCount("not_full", typeFilteredPrograms.filter((program) => programSummaryById.get(String(program.id))?.isNotFull).length),
     },
-  ]), [programCapacityStatusMap, programPaymentStatusMap, programStatusLabels, typeFilteredPrograms]);
+  ]), [getProgramStatusOptionCount, programStatusLabels, programSummaryById, typeFilteredPrograms]);
 
   const selectedProgramStatusOption = React.useMemo(
     () => programStatusOptions.find((option) => option.key === programStatusFilter) || programStatusOptions[0],
@@ -1579,20 +1631,24 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     if (programStatusFilter === "all") return typeFilteredPrograms;
     if (programStatusFilter === "cleared" || programStatusFilter === "not_cleared") {
       return typeFilteredPrograms.filter((program) => (
-        programPaymentStatusMap.get(String(program.id)) === programStatusFilter
+        programSummaryById.get(String(program.id))?.paymentStatus === programStatusFilter
       ));
     }
     return typeFilteredPrograms.filter((program) => (
-      programCapacityStatusMap.get(String(program.id)) === programStatusFilter
+      programSummaryById.get(String(program.id))?.capacityStatus === programStatusFilter
     ));
-  }, [programCapacityStatusMap, programPaymentStatusMap, programStatusFilter, typeFilteredPrograms]);
+  }, [programStatusFilter, programSummaryById, typeFilteredPrograms]);
 
-  const totalProgramsPages = Math.max(1, Math.ceil(filteredPrograms.length / programsPageSize));
+  const totalProgramsCount = serverProgramPageReady
+    ? serverProgramPageData.totalCount
+    : filteredPrograms.length;
+  const totalProgramsPages = Math.max(1, Math.ceil(totalProgramsCount / programsPageSize));
   const safeProgramsPage = Math.min(Math.max(1, programsCurrentPage), totalProgramsPages);
   const visiblePrograms = React.useMemo(() => {
+    if (serverProgramPageReady) return serverVisiblePrograms;
     const start = (safeProgramsPage - 1) * programsPageSize;
     return filteredPrograms.slice(start, start + programsPageSize);
-  }, [filteredPrograms, programsPageSize, safeProgramsPage]);
+  }, [filteredPrograms, programsPageSize, safeProgramsPage, serverProgramPageReady, serverVisiblePrograms]);
 
   const visibleProgramIds = React.useMemo(() => (
     new Set(visiblePrograms.map((program) => String(program.id)))
@@ -2476,7 +2532,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
           {t.loading || "Loading..."}
         </GlassCard>
-      ) : !filteredPrograms.length ? (
+      ) : totalProgramsCount === 0 ? (
         <EmptyState icon="search" title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div>
@@ -2529,7 +2585,10 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
           <div className="cards-grid program-card-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
             {visiblePrograms.map((p, i) => {
               const pc = clientsByProgramId.get(String(p.id)) || [];
-              const metrics = programCardMetricsMap.get(String(p.id)) || {};
+              const summary = programSummaryById.get(String(p.id)) || {};
+              const deletePromptClients = clientsReady
+                ? pc
+                : Array.from({ length: summary.registeredCount || 0 });
               const selected = selectedProgramIds.has(String(p.id));
               return (
                 <div
@@ -2540,9 +2599,10 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                   }}
                 >
                   <ProgramCard program={p}
-                    registered={metrics.registered || 0} pct={metrics.pct || 0}
-                    totalPaid={metrics.totalPaid || 0} totalRemaining={metrics.totalRemaining || 0}
-                    cleared={metrics.cleared || 0} unpaid={metrics.unpaid || 0} delay={i*.06}
+                    registered={summary.registeredCount || 0} pct={summary.capacityPct || 0}
+                    totalPaid={summary.totalPaid || 0} totalRemaining={summary.remainingTotal || 0}
+                    cleared={summary.clearedCount || 0} unpaid={summary.unpaidCount || 0} delay={i*.06}
+                    programSummary={summary}
                     highlighted={String(highlightProgramId) === String(p.id)}
                     selected={programSelectionMode && selected}
                     selectionLabel={t.programSelectVisible}
@@ -2562,7 +2622,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                     }}
                     onDelete={e => {
                       e.stopPropagation();
-                      setDeletePrompt({ program: p, clients: pc });
+                      setDeletePrompt({ program: p, clients: deletePromptClients });
                     }}
                     lang={lang}
                     formatCurrencyForLang={formatCurrencyForLang}

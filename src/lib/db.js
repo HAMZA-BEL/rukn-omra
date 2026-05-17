@@ -138,6 +138,78 @@ const normalizeTrashPage = (payload = {}, { page = 1, pageSize = 25, filter = "a
   };
 };
 
+const fromProgramPageSummaryItem = (row = {}) => {
+  const programId = row.program_id || row.programId || row.id || "";
+  const capacity = toFiniteNumber(row.capacity ?? row.seats);
+  const capacityStatus = row.capacity_status || row.capacityStatus || "unknown";
+  const paymentStatus = row.payment_status || row.paymentStatus || "empty";
+  const typeKind = row.type_kind || row.typeKind || "";
+  const summary = {
+    programId,
+    registeredCount: toFiniteNumber(row.registered_count ?? row.registeredCount),
+    clearedCount: toFiniteNumber(row.cleared_count ?? row.clearedCount),
+    unpaidCount: toFiniteNumber(row.unpaid_count ?? row.unpaidCount),
+    partialCount: toFiniteNumber(row.partial_count ?? row.partialCount),
+    totalPaid: toFiniteNumber(row.total_paid ?? row.totalPaid),
+    remainingTotal: toFiniteNumber(row.remaining_total ?? row.remainingTotal),
+    packageCount: toFiniteNumber(row.package_count ?? row.packageCount, 1),
+    startingPrice: toFiniteNumber(row.starting_price ?? row.startingPrice),
+    primaryHotelMecca: row.primary_hotel_mecca ?? row.primaryHotelMecca ?? "",
+    primaryHotelMadina: row.primary_hotel_madina ?? row.primaryHotelMadina ?? "",
+    hasMultiplePackages: Boolean(row.has_multiple_packages ?? row.hasMultiplePackages),
+    capacity,
+    hasValidCapacity: Boolean(row.has_valid_capacity ?? row.hasValidCapacity),
+    capacityPct: toFiniteNumber(row.capacity_pct ?? row.capacityPct),
+    isFull: capacityStatus === "full",
+    isNotFull: capacityStatus === "not_full",
+    capacityStatus,
+    isCleared: paymentStatus === "cleared",
+    isNotCleared: paymentStatus === "not_cleared",
+    paymentStatus,
+    typeKind,
+    year: toNullableFiniteNumber(row.year),
+  };
+
+  return {
+    id: programId,
+    name: row.name || "",
+    nameFr: row.name_fr || row.nameFr || "",
+    type: row.type || "",
+    duration: row.duration || "",
+    departure: row.departure || "",
+    returnDate: row.return_date || row.returnDate || "",
+    seats: toFiniteNumber(row.seats ?? row.capacity),
+    hotelMecca: row.hotel_mecca || row.hotelMecca || "",
+    hotelMadina: row.hotel_madina || row.hotelMadina || "",
+    deleted: false,
+    deletedAt: null,
+    status: row.status || "active",
+    programSummary: summary,
+  };
+};
+
+const normalizeProgramsPageSummary = (payload = {}, {
+  search = "",
+  year = null,
+  type = "all",
+  status = "all",
+  limit = 12,
+  offset = 0,
+} = {}) => {
+  const source = parseRpcJson(payload) || {};
+  const items = Array.isArray(source.items) ? source.items.map(fromProgramPageSummaryItem) : [];
+  return {
+    items,
+    totalCount: toFiniteNumber(source.total_count ?? source.totalCount),
+    limit: toFiniteNumber(source.limit, limit),
+    offset: toFiniteNumber(source.offset, offset),
+    search: source.search ?? search,
+    year: toNullableFiniteNumber(source.year ?? year),
+    type: source.type || type,
+    status: source.status || status,
+  };
+};
+
 const composeClientName = (row) => {
   const first = typeof row.first_name === "string" ? row.first_name.trim() : "";
   const last  = typeof row.last_name === "string" ? row.last_name.trim() : "";
@@ -859,6 +931,49 @@ export const db = {
   },
 
   programs: {
+    async fetchPageSummary({
+      search = "",
+      year = null,
+      type = "all",
+      status = "all",
+      limit = 12,
+      offset = 0,
+    } = {}) {
+      const rpcName = "get_programs_page";
+      const safeLimit = Math.min(100, Math.max(1, Number(limit) || 12));
+      const safeOffset = Math.max(0, Number(offset) || 0);
+      const yearNumber = toNullableFiniteNumber(year);
+      const { data, error } = await supabase.rpc(rpcName, {
+        p_search: typeof search === "string" ? search : "",
+        p_year: yearNumber,
+        p_type: String(type || "all").toLowerCase(),
+        p_status: String(status || "all").toLowerCase(),
+        p_limit: safeLimit,
+        p_offset: safeOffset,
+      });
+      if (isMissingRpcError(error, rpcName)) {
+        return {
+          data: null,
+          error: {
+            ...error,
+            isMissingMigration: true,
+            missingRpc: rpcName,
+          },
+        };
+      }
+      if (error) return { data: null, error };
+      return {
+        data: normalizeProgramsPageSummary(data, {
+          search,
+          year: yearNumber,
+          type,
+          status,
+          limit: safeLimit,
+          offset: safeOffset,
+        }),
+        error: null,
+      };
+    },
     async fetchAll(agencyId) {
       const { data, error } = await supabase
         .from("programs")

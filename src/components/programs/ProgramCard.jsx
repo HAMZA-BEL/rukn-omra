@@ -43,7 +43,7 @@ function SmallBtn({ icon, onClick, color, title, active = false }) {
 
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, lang, formatCurrencyForLang,
-  highlighted = false, selected = false, onSelectionChange, selectionLabel = "" }) {
+  highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null }) {
   const [hov, setHov] = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const [hoveredAction, setHoveredAction] = React.useState("");
@@ -52,16 +52,19 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const selectionMode = typeof onSelectionChange === "function";
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
-  const packages = normalizeProgramPackages(program);
-  const packageCount = getProgramPackageCount(program);
-  const startingPriceValue = getProgramStartingPrice(program);
+  const hasProgramSummary = programSummary && Number.isFinite(Number(programSummary.packageCount));
+  const packages = hasProgramSummary ? [] : normalizeProgramPackages(program);
+  const packageCount = hasProgramSummary ? Number(programSummary.packageCount) : getProgramPackageCount(program);
+  const startingPriceValue = hasProgramSummary ? Number(programSummary.startingPrice || 0) : getProgramStartingPrice(program);
   const startingPrice = startingPriceValue ? formatCurrencyForLang(startingPriceValue) : "—";
   const packageLabel = `${packageCount} ${packageCount === 1 ? (t.level || "مستوى") : (t.levels || "مستويات")}`;
   const hotelSummary = packageCount > 1 ? (t.multipleHotelsByLevel || "عدة فنادق حسب المستوى") : "";
+  const primaryHotelMecca = hasProgramSummary ? programSummary.primaryHotelMecca : packages[0]?.hotelMecca;
+  const primaryHotelMadina = hasProgramSummary ? programSummary.primaryHotelMadina : packages[0]?.hotelMadina;
   const remainingLabel = formatCurrencyForLang(totalRemaining);
   const infoRows = [
-    ["hotel", t.hotelMecca, hotelSummary || packages[0]?.hotelMecca || program.hotelMecca],
-    ["building", t.hotelMadina, hotelSummary || packages[0]?.hotelMadina || program.hotelMadina],
+    ["hotel", t.hotelMecca, hotelSummary || primaryHotelMecca || program.hotelMecca],
+    ["building", t.hotelMadina, hotelSummary || primaryHotelMadina || program.hotelMadina],
     ["plane", t.departure, program.departure],
     ["planeLanding", t.returnDate, program.returnDate],
   ];
