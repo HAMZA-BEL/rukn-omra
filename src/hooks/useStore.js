@@ -2759,6 +2759,33 @@ export function useStore(agencyId, onToast) {
     });
   }, [programs, setPrograms, logActivity, notify, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
+  const trashProgramRecord = useCallback((programId) => {
+    const prog = programs.find(p => p.id === programId);
+    if (!prog || prog.deleted || prog.deletedAt) return Promise.resolve({ error: null });
+    const batchId = generateUUID();
+    const deletedAt = new Date().toISOString();
+    const deletedProgramEntry = {
+      ...prog,
+      deleted: true,
+      deletedAt,
+      deletedBatchId: batchId,
+    };
+    setPrograms(prev => prev.filter(p => p.id !== programId));
+    setDeletedPrograms(prev => {
+      const filtered = prev.filter(p => p.id !== programId);
+      return [deletedProgramEntry, ...filtered];
+    });
+    queueProgramArchiveSuggestionCheck(programId);
+    logActivity("program_delete", translateActivityDescription(`تم حذف برنامج ${prog?.name || programId}`), "");
+    return sync(() => markProgramDeleted(programId, agencyId, batchId)).then((result) => {
+      if (!result?.error) return result || { error: null };
+      setDeletedPrograms(prev => prev.filter(p => p.id !== programId));
+      setPrograms(prev => (prev.some(p => p.id === programId) ? prev : [...prev, prog]));
+      notify(archivePersistenceErrorMessage("archiveProgramSaveError"), "error");
+      return result;
+    });
+  }, [programs, setPrograms, setDeletedPrograms, logActivity, notify, queueProgramArchiveSuggestionCheck, sync, agencyId]);
+
   const deleteProgram = useCallback((id) => {
     const prog = programs.find(p => p.id === id);
     if (!prog) return;
@@ -3277,7 +3304,7 @@ export function useStore(agencyId, onToast) {
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
-    addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, deleteProgram,
+    addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
     ensureClientsLoaded: loadClients,

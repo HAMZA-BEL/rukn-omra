@@ -17,7 +17,7 @@ import {
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, GlassCard, Modal, Input, Select, EmptyState, SearchBar, preventNumberInputWheelChange } from "./UI";
+import { Button, GlassCard, Modal, Input, Select, EmptyState, preventNumberInputWheelChange } from "./UI";
 import { theme } from "./styles";
 import ProgramCard from "./programs/ProgramCard";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
@@ -149,6 +149,8 @@ const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
 const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
 const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
+const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 
 const getProgramPricingReferenceCost = (program, client) => {
   if (!program || !client) return 0;
@@ -1305,7 +1307,7 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 // PROGRAMS LIST PAGE
 // ═══════════════════════════════════════
 export default function ProgramsPage({ store, onToast, notificationFocus = null }) {
-  const { programs, clients, addProgram, updateProgram, archiveProgramRecord, deleteProgram,
+  const { programs, clients, addProgram, updateProgram, archiveProgramRecord, trashProgramRecord, deleteProgram,
           getClientTotalPaid } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -1332,17 +1334,28 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const nextYear = currentYear + 1;
   const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
   const [programTypeFilter, setProgramTypeFilter] = React.useState("all");
+  const [programStatusFilter, setProgramStatusFilter] = React.useState("all");
+  const [programsPageSize, setProgramsPageSize] = React.useState(PROGRAMS_LIST_DEFAULT_PAGE_SIZE);
+  const [programsCurrentPage, setProgramsCurrentPage] = React.useState(1);
+  const [programSelectionMode, setProgramSelectionMode] = React.useState(false);
+  const [selectedProgramIds, setSelectedProgramIds] = React.useState(() => new Set());
+  const [programSearchOpen, setProgramSearchOpen] = React.useState(false);
   const [highlightProgramId, setHighlightProgramId] = React.useState("");
   const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
+  const [programStatusMenuOpen, setProgramStatusMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
   const [archivePrompt, setArchivePrompt] = React.useState(null);
+  const [bulkTrashPrompt, setBulkTrashPrompt] = React.useState(null);
   const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
   const programTypeMenuRef = React.useRef(null);
   const programTypeButtonRef = React.useRef(null);
+  const programStatusMenuRef = React.useRef(null);
+  const programStatusButtonRef = React.useRef(null);
+  const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
 
@@ -1381,11 +1394,25 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     return "كل السنوات";
   }, [lang]);
 
-  const programTypeLabels = React.useMemo(() => {
-    if (lang === "fr") return { all: "Tous", umrah: "Omra", hajj: "Hajj" };
-    if (lang === "en") return { all: "All", umrah: "Umrah", hajj: "Hajj" };
-    return { all: "الكل", umrah: "عمرة", hajj: "حج" };
-  }, [lang]);
+  const programTypeLabels = React.useMemo(() => ({
+    all: t.programTypeAll,
+    umrah: t.programTypeUmrah,
+    hajj: t.programTypeHajj,
+  }), [t.programTypeAll, t.programTypeUmrah, t.programTypeHajj]);
+
+  const programStatusLabels = React.useMemo(() => ({
+    all: t.programStatusAll,
+    cleared: t.programStatusCleared,
+    not_cleared: t.programStatusNotCleared,
+    full: t.programStatusFull,
+    not_full: t.programStatusNotFull,
+  }), [
+    t.programStatusAll,
+    t.programStatusCleared,
+    t.programStatusNotCleared,
+    t.programStatusFull,
+    t.programStatusNotFull,
+  ]);
 
   const yearOptions = React.useMemo(() => ([
     { value: "all", label: allYearsLabel },
@@ -1418,6 +1445,91 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     });
   }, [activePrograms, search, selectedYear]);
 
+  const clientsByProgramId = React.useMemo(() => {
+    const map = new Map();
+    clients.forEach((client) => {
+      if (!client?.programId) return;
+      const programId = String(client.programId);
+      const list = map.get(programId) || [];
+      list.push(client);
+      map.set(programId, list);
+    });
+    return map;
+  }, [clients]);
+
+  const activeClientsByProgramId = React.useMemo(() => {
+    const sourceClients = Array.isArray(store.activeClients) ? store.activeClients : clients;
+    const map = new Map();
+    sourceClients.forEach((client) => {
+      if (!client?.programId || client.deleted || client.deletedAt || client.archived) return;
+      const programId = String(client.programId);
+      const list = map.get(programId) || [];
+      list.push(client);
+      map.set(programId, list);
+    });
+    return map;
+  }, [clients, store.activeClients]);
+
+  const programCardMetricsMap = React.useMemo(() => {
+    const map = new Map();
+    activePrograms.forEach((program) => {
+      const programClients = clientsByProgramId.get(String(program.id)) || [];
+      const registered = programClients.length;
+      const capacity = Number(program.seats);
+      let totalPaid = 0;
+      let totalRemaining = 0;
+      let cleared = 0;
+      let unpaid = 0;
+      programClients.forEach((client) => {
+        const paid = getClientTotalPaid(client.id);
+        totalPaid += paid;
+        totalRemaining += getProgramClientRemainingAmount(program, client, paid);
+        const paymentStatus = getProgramClientPaymentStatus(program, client, paid);
+        if (paymentStatus === "cleared") cleared += 1;
+        if (paymentStatus === "unpaid") unpaid += 1;
+      });
+      map.set(String(program.id), {
+        registered,
+        pct: Number.isFinite(capacity) && capacity > 0 ? Math.min((registered / capacity) * 100, 100) : 0,
+        totalPaid,
+        totalRemaining,
+        cleared,
+        unpaid,
+      });
+    });
+    return map;
+  }, [activePrograms, clientsByProgramId, getClientTotalPaid]);
+
+  const programPaymentStatusMap = React.useMemo(() => {
+    const map = new Map();
+    activePrograms.forEach((program) => {
+      const programClients = activeClientsByProgramId.get(String(program.id)) || [];
+      if (!programClients.length) {
+        map.set(String(program.id), "empty");
+        return;
+      }
+      const hasRemaining = programClients.some((client) => (
+        getClientRemainingAmount(client, getClientTotalPaid(client.id)) > 0
+      ));
+      map.set(String(program.id), hasRemaining ? "not_cleared" : "cleared");
+    });
+    return map;
+  }, [activePrograms, activeClientsByProgramId, getClientTotalPaid]);
+
+  const programCapacityStatusMap = React.useMemo(() => {
+    const map = new Map();
+    activePrograms.forEach((program) => {
+      const capacity = Number(program.seats);
+      if (!Number.isFinite(capacity) || capacity <= 0) {
+        map.set(String(program.id), "unknown");
+        return;
+      }
+      const registered = programCardMetricsMap.get(String(program.id))?.registered || 0;
+      map.set(String(program.id), registered >= capacity ? "full" : "not_full");
+    });
+    return map;
+  }, [activePrograms, programCardMetricsMap]);
+
   const programTypeOptions = React.useMemo(() => ([
     { key: "all", label: programTypeLabels.all, count: baseFilteredPrograms.length },
     { key: "umrah", label: programTypeLabels.umrah, count: baseFilteredPrograms.filter((program) => getProgramKind(program) === "umrah").length },
@@ -1429,10 +1541,105 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     [programTypeOptions, programTypeFilter]
   );
 
-  const filteredPrograms = React.useMemo(() => {
+  const typeFilteredPrograms = React.useMemo(() => {
     if (programTypeFilter === "all") return baseFilteredPrograms;
     return baseFilteredPrograms.filter((program) => getProgramKind(program) === programTypeFilter);
   }, [baseFilteredPrograms, programTypeFilter]);
+
+  const programStatusOptions = React.useMemo(() => ([
+    { key: "all", label: programStatusLabels.all, count: typeFilteredPrograms.length },
+    {
+      key: "cleared",
+      label: programStatusLabels.cleared,
+      count: typeFilteredPrograms.filter((program) => programPaymentStatusMap.get(String(program.id)) === "cleared").length,
+    },
+    {
+      key: "not_cleared",
+      label: programStatusLabels.not_cleared,
+      count: typeFilteredPrograms.filter((program) => programPaymentStatusMap.get(String(program.id)) === "not_cleared").length,
+    },
+    {
+      key: "full",
+      label: programStatusLabels.full,
+      count: typeFilteredPrograms.filter((program) => programCapacityStatusMap.get(String(program.id)) === "full").length,
+    },
+    {
+      key: "not_full",
+      label: programStatusLabels.not_full,
+      count: typeFilteredPrograms.filter((program) => programCapacityStatusMap.get(String(program.id)) === "not_full").length,
+    },
+  ]), [programCapacityStatusMap, programPaymentStatusMap, programStatusLabels, typeFilteredPrograms]);
+
+  const selectedProgramStatusOption = React.useMemo(
+    () => programStatusOptions.find((option) => option.key === programStatusFilter) || programStatusOptions[0],
+    [programStatusOptions, programStatusFilter]
+  );
+
+  const filteredPrograms = React.useMemo(() => {
+    if (programStatusFilter === "all") return typeFilteredPrograms;
+    if (programStatusFilter === "cleared" || programStatusFilter === "not_cleared") {
+      return typeFilteredPrograms.filter((program) => (
+        programPaymentStatusMap.get(String(program.id)) === programStatusFilter
+      ));
+    }
+    return typeFilteredPrograms.filter((program) => (
+      programCapacityStatusMap.get(String(program.id)) === programStatusFilter
+    ));
+  }, [programCapacityStatusMap, programPaymentStatusMap, programStatusFilter, typeFilteredPrograms]);
+
+  const totalProgramsPages = Math.max(1, Math.ceil(filteredPrograms.length / programsPageSize));
+  const safeProgramsPage = Math.min(Math.max(1, programsCurrentPage), totalProgramsPages);
+  const visiblePrograms = React.useMemo(() => {
+    const start = (safeProgramsPage - 1) * programsPageSize;
+    return filteredPrograms.slice(start, start + programsPageSize);
+  }, [filteredPrograms, programsPageSize, safeProgramsPage]);
+
+  const visibleProgramIds = React.useMemo(() => (
+    new Set(visiblePrograms.map((program) => String(program.id)))
+  ), [visiblePrograms]);
+
+  const selectedVisiblePrograms = React.useMemo(() => (
+    visiblePrograms.filter((program) => selectedProgramIds.has(String(program.id)))
+  ), [selectedProgramIds, visiblePrograms]);
+
+  const selectedProgramsCount = selectedVisiblePrograms.length;
+  const allVisibleProgramsSelected = visiblePrograms.length > 0 && selectedProgramsCount === visiblePrograms.length;
+  const pageSizeSuffix = t.programPageSizeCompactLabel;
+  const yearControlParts = selectedYear === "all"
+    ? { label: selectedYearOption?.label, value: "" }
+    : { label: yearLabel, value: selectedYearOption?.label };
+  const programSearchExpanded = programSearchOpen || search.trim().length > 0;
+
+  const clearProgramSelection = React.useCallback(() => {
+    setSelectedProgramIds(new Set());
+  }, []);
+
+  const enterProgramSelectionMode = React.useCallback(() => {
+    setProgramSelectionMode(true);
+  }, []);
+
+  const exitProgramSelectionMode = React.useCallback(() => {
+    setProgramSelectionMode(false);
+    clearProgramSelection();
+  }, [clearProgramSelection]);
+
+  const openProgramSearch = React.useCallback(() => {
+    setProgramSearchOpen(true);
+  }, []);
+
+  const focusProgramSearch = React.useCallback(() => {
+    setProgramSearchOpen(true);
+    requestAnimationFrame(() => programSearchInputRef.current?.focus());
+  }, []);
+
+  const closeProgramSearchIfEmpty = React.useCallback(() => {
+    if (!search.trim()) setProgramSearchOpen(false);
+  }, [search]);
+
+  const clearProgramSearch = React.useCallback(() => {
+    setSearch("");
+    requestAnimationFrame(() => programSearchInputRef.current?.focus());
+  }, []);
 
   React.useEffect(() => {
     const targetId = notificationFocus?.targetId;
@@ -1451,6 +1658,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     }
     setSearch("");
     setProgramTypeFilter("all");
+    setProgramStatusFilter("all");
+    exitProgramSelectionMode();
     const departureYear = getProgramDepartureYear(program);
     setSelectedYear(
       departureYear === currentYear || departureYear === nextYear
@@ -1463,7 +1672,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
       setHighlightProgramId((current) => current === String(targetId) ? "" : current);
     }, 3600);
     return () => window.clearTimeout(timer);
-  }, [notificationFocus?.targetId, notificationFocus?.token, activePrograms, onToast, lang, currentYear, nextYear]);
+  }, [notificationFocus?.targetId, notificationFocus?.token, activePrograms, onToast, lang, currentYear, nextYear, exitProgramSelectionMode]);
 
   React.useEffect(() => {
     if (!highlightProgramId) return undefined;
@@ -1546,6 +1755,53 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     };
   }, [programTypeMenuOpen]);
 
+  React.useEffect(() => {
+    if (!programStatusMenuOpen) return;
+    const handlePointerDown = (event) => {
+      const menuNode = programStatusMenuRef.current;
+      const buttonNode = programStatusButtonRef.current;
+      if (menuNode?.contains(event.target) || buttonNode?.contains(event.target)) return;
+      setProgramStatusMenuOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setProgramStatusMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [programStatusMenuOpen]);
+
+  React.useEffect(() => {
+    setProgramsCurrentPage(1);
+  }, [search, selectedYear, programTypeFilter, programStatusFilter, programsPageSize]);
+
+  React.useEffect(() => {
+    if (programsCurrentPage > totalProgramsPages) setProgramsCurrentPage(totalProgramsPages);
+  }, [programsCurrentPage, totalProgramsPages]);
+
+  React.useEffect(() => {
+    setSelectedProgramIds((current) => {
+      let changed = false;
+      const next = new Set();
+      current.forEach((id) => {
+        if (visibleProgramIds.has(String(id))) next.add(String(id));
+        else changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [visibleProgramIds]);
+
+  React.useEffect(() => {
+    if (!highlightProgramId) return;
+    const index = filteredPrograms.findIndex((program) => String(program.id) === String(highlightProgramId));
+    if (index < 0) return;
+    const targetPage = Math.floor(index / programsPageSize) + 1;
+    setProgramsCurrentPage(targetPage);
+  }, [filteredPrograms, highlightProgramId, programsPageSize]);
+
   const handleConfirmDeleteProgram = React.useCallback(() => {
     if (!deletePrompt) return;
     deleteProgram(deletePrompt.program.id);
@@ -1560,6 +1816,64 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     setArchivePrompt(null);
     onToast(t.programArchiveSuccess, "success");
   }, [archivePrompt, archiveProgramRecord, onToast, t.programArchiveSuccess]);
+
+  const toggleProgramSelection = React.useCallback((programId, checked) => {
+    setSelectedProgramIds((current) => {
+      const next = new Set(current);
+      const id = String(programId);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectVisiblePrograms = React.useCallback((checked) => {
+    setSelectedProgramIds((current) => {
+      const next = new Set(current);
+      visiblePrograms.forEach((program) => {
+        const id = String(program.id);
+        if (checked) next.add(id);
+        else next.delete(id);
+      });
+      return next;
+    });
+  }, [visiblePrograms]);
+
+  const handleBulkArchivePrograms = React.useCallback(async () => {
+    if (!selectedVisiblePrograms.length) return;
+    if (!window.confirm(t.programBulkArchiveConfirm)) return;
+    const results = await Promise.all(selectedVisiblePrograms.map((program) => (
+      archiveProgramRecord?.(program.id)
+    )));
+    const failedCount = results.filter((result) => result?.error).length;
+    if (failedCount) {
+      onToast?.(tr("programBulkArchivePartial", { count: selectedVisiblePrograms.length - failedCount }), "warning");
+      return;
+    }
+    exitProgramSelectionMode();
+    onToast?.(tr("programBulkArchiveSuccess", { count: selectedVisiblePrograms.length }), "success");
+  }, [archiveProgramRecord, exitProgramSelectionMode, onToast, selectedVisiblePrograms, t.programBulkArchiveConfirm, tr]);
+
+  const openBulkTrashProgramsPrompt = React.useCallback(() => {
+    if (!selectedVisiblePrograms.length) return;
+    setBulkTrashPrompt({ programs: selectedVisiblePrograms });
+  }, [selectedVisiblePrograms]);
+
+  const handleConfirmBulkTrashPrograms = React.useCallback(async () => {
+    const programsToTrash = bulkTrashPrompt?.programs || [];
+    if (!programsToTrash.length) return;
+    const results = await Promise.all(programsToTrash.map((program) => (
+      trashProgramRecord?.(program.id)
+    )));
+    const failedCount = results.filter((result) => result?.error).length;
+    if (failedCount) {
+      onToast?.(tr("programBulkTrashPartial", { count: programsToTrash.length - failedCount }), "warning");
+      return;
+    }
+    setBulkTrashPrompt(null);
+    exitProgramSelectionMode();
+    onToast?.(tr("programBulkTrashSuccess", { count: programsToTrash.length }), "success");
+  }, [bulkTrashPrompt, exitProgramSelectionMode, onToast, trashProgramRecord, tr]);
   const openDuplicatePrompt = React.useCallback((program) => {
     if (!program || program.deleted || program.deletedAt || program.status === "archived") return;
     setDuplicatePrompt({
@@ -1640,15 +1954,99 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
           </div>
           <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
         </div>
-        <div style={{ display:"flex", gap:10, alignItems:"stretch", flexWrap:"wrap" }}>
-          <SearchBar
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={searchPlaceholder}
-            style={{ flex:"1 1 360px", minWidth:280, maxWidth:420 }}
-            disabled={!activePrograms.length}
-          />
-          <div style={{ position:"relative", flex:"0 0 168px", minWidth:150, maxWidth:190 }}>
+        <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", direction:dir }}>
+          <div
+            onMouseEnter={openProgramSearch}
+            onMouseLeave={() => {
+              if (document.activeElement !== programSearchInputRef.current) closeProgramSearchIfEmpty();
+            }}
+            style={{
+              order:4,
+              width:programSearchExpanded ? 286 : 42,
+              height:42,
+              maxWidth:"100%",
+              display:"flex",
+              alignItems:"center",
+              gap:6,
+              borderRadius:12,
+              background:"var(--rukn-bg-input)",
+              border:`1px solid ${programSearchExpanded ? "rgba(212,175,55,.32)" : "var(--rukn-border)"}`,
+              padding:programSearchExpanded ? "0 9px" : 0,
+              overflow:"hidden",
+              opacity:activePrograms.length ? 1 : .55,
+              transition:"width .22s ease, border-color .22s ease, padding .22s ease, box-shadow .22s ease",
+              boxShadow:programSearchExpanded ? "0 10px 26px rgba(15,23,42,.08)" : "none",
+              direction:dir,
+            }}
+          >
+            <button
+              type="button"
+              aria-label={searchPlaceholder}
+              disabled={!activePrograms.length}
+              onClick={focusProgramSearch}
+              onFocus={openProgramSearch}
+              style={{
+                width:40,
+                height:40,
+                flex:"0 0 40px",
+                border:0,
+                background:"transparent",
+                color:tc.gold,
+                display:"inline-flex",
+                alignItems:"center",
+                justifyContent:"center",
+                cursor:activePrograms.length ? "pointer" : "not-allowed",
+              }}
+            >
+              <Search size={17} />
+            </button>
+            {programSearchExpanded && (
+              <>
+                <input
+                  ref={programSearchInputRef}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  onFocus={openProgramSearch}
+                  onBlur={closeProgramSearchIfEmpty}
+                  placeholder={searchPlaceholder}
+                  disabled={!activePrograms.length}
+                  style={{
+                    flex:1,
+                    minWidth:0,
+                    border:0,
+                    outline:0,
+                    background:"transparent",
+                    color:"var(--rukn-text)",
+                    fontSize:13,
+                    fontFamily:"'Cairo',sans-serif",
+                    direction:dir,
+                  }}
+                />
+                {search.trim() && (
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={clearProgramSearch}
+                    style={{
+                      width:24,
+                      height:24,
+                      border:0,
+                      borderRadius:8,
+                      background:"var(--rukn-bg-soft)",
+                      display:"inline-flex",
+                      alignItems:"center",
+                      justifyContent:"center",
+                      cursor:"pointer",
+                    }}
+                    aria-label={t.clear || "Clear"}
+                  >
+                    <AppIcon name="x" size={13} color="var(--rukn-text-muted)" />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+          <div style={{ order:2, position:"relative", flex:"0 0 150px", minWidth:138, maxWidth:170 }}>
             <button
               ref={programTypeButtonRef}
               type="button"
@@ -1659,7 +2057,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               onClick={() => activePrograms.length && setProgramTypeMenuOpen((open) => !open)}
               style={{
                 width:"100%",
-                height:46,
+                height:42,
                 display:"flex",
                 alignItems:"center",
                 justifyContent:"space-between",
@@ -1762,7 +2160,121 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               </div>
             )}
           </div>
-          <div style={{ position:"relative", flex:"0 0 198px", minWidth:180, maxWidth:220 }}>
+          <div style={{ order:3, position:"relative", flex:"0 0 174px", minWidth:154, maxWidth:198 }}>
+            <button
+              ref={programStatusButtonRef}
+              type="button"
+              aria-label={t.programStatusFilter}
+              aria-haspopup="listbox"
+              aria-expanded={programStatusMenuOpen}
+              disabled={!activePrograms.length}
+              onClick={() => activePrograms.length && setProgramStatusMenuOpen((open) => !open)}
+              style={{
+                width:"100%",
+                height:42,
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:10,
+                background:programStatusFilter === "all" ? "var(--rukn-bg-input)" : "var(--rukn-gold-dim)",
+                border:"1px solid var(--rukn-border)",
+                borderRadius:12,
+                padding:"0 12px",
+                color:programStatusFilter === "all" ? "var(--rukn-text)" : "var(--rukn-gold)",
+                fontSize:13,
+                fontWeight:800,
+                fontFamily:"'Cairo',sans-serif",
+                direction:dir,
+                opacity:activePrograms.length ? 1 : 0.55,
+                cursor:activePrograms.length ? "pointer" : "not-allowed",
+                transition:"border-color .2s, box-shadow .2s, background .2s",
+              }}
+            >
+              <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+                <Filter size={14} />
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {selectedProgramStatusOption?.label}
+                  <span style={{ color:"var(--rukn-text-muted)", fontWeight:700 }}> ({selectedProgramStatusOption?.count ?? 0})</span>
+                </span>
+              </span>
+              <ChevronDown
+                size={15}
+                style={{ flexShrink:0, transform:programStatusMenuOpen ? "rotate(180deg)" : "none", transition:"transform .18s ease" }}
+              />
+            </button>
+            {programStatusMenuOpen && (
+              <div
+                ref={programStatusMenuRef}
+                role="listbox"
+                aria-label={t.programStatusFilter}
+                style={{
+                  position:"absolute",
+                  top:"calc(100% + 8px)",
+                  insetInlineStart:0,
+                  width:"100%",
+                  minWidth:190,
+                  zIndex:35,
+                  padding:6,
+                  borderRadius:14,
+                  border:"1px solid var(--rukn-border-soft)",
+                  background:"var(--rukn-bg-select)",
+                  boxShadow:"var(--rukn-shadow-card)",
+                  backdropFilter:"blur(12px)",
+                }}
+              >
+                {programStatusOptions.map((option) => {
+                  const active = option.key === programStatusFilter;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => {
+                        setProgramStatusFilter(option.key);
+                        setProgramStatusMenuOpen(false);
+                      }}
+                      style={{
+                        width:"100%",
+                        display:"flex",
+                        alignItems:"center",
+                        justifyContent:"space-between",
+                        gap:10,
+                        border:0,
+                        borderRadius:10,
+                        padding:"9px 10px",
+                        background:active ? "var(--rukn-gold-dim)" : "transparent",
+                        color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                        fontSize:12,
+                        fontWeight:active ? 900 : 700,
+                        fontFamily:"'Cairo',sans-serif",
+                        cursor:"pointer",
+                        textAlign:"start",
+                      }}
+                    >
+                      <span>{option.label}</span>
+                      <span style={{
+                        minWidth:22,
+                        height:20,
+                        borderRadius:999,
+                        display:"inline-flex",
+                        alignItems:"center",
+                        justifyContent:"center",
+                        padding:"0 7px",
+                        background:active ? "rgba(212,175,55,.16)" : "var(--rukn-bg-soft)",
+                        color:active ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                        fontSize:10,
+                        fontWeight:900,
+                      }}>
+                        {option.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div style={{ order:1, position:"relative", flex:"0 0 138px", minWidth:126, maxWidth:156 }}>
             <button
               ref={yearButtonRef}
               type="button"
@@ -1773,14 +2285,14 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               onClick={() => activePrograms.length && setYearMenuOpen((open) => !open)}
               style={{
                 width:"100%",
-                height:46,
+                height:42,
                 background:"var(--rukn-bg-input)",
                 border:"1px solid var(--rukn-border)",
                 borderRadius:12,
-                padding: isRTL ? "12px 20px 12px 88px" : "12px 88px 12px 20px",
+                padding: isRTL ? "12px 18px 12px 42px" : "12px 42px 12px 18px",
                 color:"var(--rukn-text)",
-                fontSize:14,
-                fontWeight:500,
+                fontSize:13,
+                fontWeight:800,
                 fontFamily:"'Cairo',sans-serif",
                 direction: dir,
                 outline:"none",
@@ -1789,25 +2301,17 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                 cursor: activePrograms.length ? "pointer" : "not-allowed",
                 display:"flex",
                 alignItems:"center",
-                justifyContent: isRTL ? "flex-end" : "flex-start",
+                justifyContent:"flex-start",
                 textAlign: isRTL ? "right" : "left",
               }}
             >
-              <span>{selectedYearOption?.label}</span>
+              <span style={{ display:"inline-flex", alignItems:"baseline", gap:6, minWidth:0 }}>
+                <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{yearControlParts.label}</span>
+                {yearControlParts.value && (
+                  <span style={{ color:"var(--rukn-gold)", fontWeight:900 }}>{yearControlParts.value}</span>
+                )}
+              </span>
             </button>
-            <span style={{
-              position:"absolute",
-              top:"50%",
-              transform:"translateY(-50%)",
-              insetInlineEnd:34,
-              color:"rgba(212,175,55,.72)",
-              fontSize:12,
-              fontWeight:700,
-              pointerEvents:"none",
-              whiteSpace:"nowrap",
-            }}>
-              {yearLabel}
-            </span>
             <span style={{
               position:"absolute",
               top:"50%",
@@ -1885,6 +2389,84 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               </div>
             ) : null}
           </div>
+          {activePrograms.length > 0 && (
+            <>
+              <div style={{ order:5, display:"flex", flexWrap:"wrap", alignItems:"center", gap:8 }}>
+                <Button
+                  variant={programSelectionMode ? "warning" : "ghost"}
+                  size="sm"
+                  icon="checked"
+                  disabled={!visiblePrograms.length}
+                  onClick={programSelectionMode ? exitProgramSelectionMode : enterProgramSelectionMode}
+                >
+                  {programSelectionMode ? t.programCancelSelection : t.programSelectPrograms}
+                </Button>
+                {programSelectionMode && (
+                  <label style={{
+                    display:"inline-flex",
+                    alignItems:"center",
+                    gap:8,
+                    height:34,
+                    padding:"0 10px",
+                    border:"1px solid var(--rukn-border-soft)",
+                    borderRadius:9,
+                    background:"var(--rukn-bg-soft)",
+                    color:"var(--rukn-text)",
+                    fontSize:12,
+                    fontWeight:800,
+                    cursor:visiblePrograms.length ? "pointer" : "not-allowed",
+                    opacity:visiblePrograms.length ? 1 : .55,
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleProgramsSelected}
+                      disabled={!visiblePrograms.length}
+                      onChange={(event) => toggleSelectVisiblePrograms(event.target.checked)}
+                      style={{ width:15, height:15, accentColor:tc.gold, cursor:"pointer" }}
+                    />
+                    {t.programSelectVisible}
+                  </label>
+                )}
+              </div>
+              <label style={{
+                order:7,
+                height:34,
+                display:"inline-flex",
+                alignItems:"center",
+                gap:6,
+                border:"1px solid var(--rukn-border-soft)",
+                borderRadius:9,
+                background:"var(--rukn-bg-soft)",
+                padding:"0 7px",
+                fontSize:12,
+                color:"var(--rukn-text-muted)",
+                fontWeight:800,
+                whiteSpace:"nowrap",
+              }}>
+                <span>{pageSizeSuffix}</span>
+                <select
+                  value={programsPageSize}
+                  onChange={(event) => setProgramsPageSize(Number(event.target.value) || PROGRAMS_LIST_DEFAULT_PAGE_SIZE)}
+                  style={{
+                    height:28,
+                    border:"1px solid transparent",
+                    borderRadius:7,
+                    background:"transparent",
+                    color:"var(--rukn-gold)",
+                    padding:"0 2px",
+                    fontFamily:"'Cairo',sans-serif",
+                    fontSize:12,
+                    fontWeight:900,
+                    outline:"none",
+                  }}
+                >
+                  {PROGRAMS_LIST_PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -1898,49 +2480,127 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         <EmptyState icon="search" title={t.noResultsTitle} sub={t.noResultsSub} />
       ) : (
         <div>
-          <div className="cards-grid program-card-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
-            {filteredPrograms.map((p, i) => {
-              const pc  = clients.filter(c => c.programId === p.id);
-              const reg = pc.length;
-            const pct = Math.min((reg / p.seats) * 100, 100);
-            const paid= pc.reduce((s,c) => s + getClientTotalPaid(c.id), 0);
-            const rem = pc.reduce((s,c) => s + getProgramClientRemainingAmount(p, c, getClientTotalPaid(c.id)), 0);
-            const cl  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "cleared").length;
-            const un  = pc.filter(c => getProgramClientPaymentStatus(p, c, getClientTotalPaid(c.id)) === "unpaid").length;
-            return (
-              <div
-                key={p.id}
-                ref={(node) => {
-                  if (node) programCardRefs.current.set(String(p.id), node);
-                  else programCardRefs.current.delete(String(p.id));
-                }}
-              >
-                <ProgramCard program={p}
-                  registered={reg} pct={pct}
-                  totalPaid={paid} totalRemaining={rem}
-                  cleared={cl} unpaid={un} delay={i*.06}
-                  highlighted={String(highlightProgramId) === String(p.id)}
-                  onClick={() => openProgramDetail(p.id)}
-                  onEdit={e => { e.stopPropagation(); setEditing(p); }}
-                  onDuplicate={e => {
-                    e.stopPropagation();
-                    openDuplicatePrompt(p);
-                  }}
-                  onArchive={e => {
-                    e.stopPropagation();
-                    setArchivePrompt({ program: p });
-                  }}
-                  onDelete={e => {
-                    e.stopPropagation();
-                    setDeletePrompt({ program: p, clients: pc });
-                  }}
-                  lang={lang}
-                  formatCurrencyForLang={formatCurrencyForLang}
-                />
+          {programSelectionMode && selectedProgramsCount > 0 && (
+            <GlassCard style={{ padding:"12px 16px", marginBottom:14 }}>
+              <div style={{
+                display:"flex",
+                flexWrap:"wrap",
+                gap:12,
+                alignItems:"center",
+                justifyContent:"space-between",
+                direction:dir,
+              }}>
+                <span style={{ fontSize:13, color:tc.gold, fontWeight:800 }}>
+                  {tr("programBulkSelectedCount", { count: selectedProgramsCount })}
+                </span>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="archive"
+                    onClick={handleBulkArchivePrograms}
+                  >
+                    {t.programArchiveSelected}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon="trash"
+                    onClick={openBulkTrashProgramsPrompt}
+                    style={{
+                      border:"1px solid rgba(239,68,68,.28)",
+                      color:tc.danger,
+                      background:"rgba(239,68,68,.06)",
+                    }}
+                  >
+                    {t.programTrashSelected}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearProgramSelection}
+                  >
+                    {t.programClearSelection}
+                  </Button>
+                </div>
               </div>
-            );
-          })}
+            </GlassCard>
+          )}
+          <div className="cards-grid program-card-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
+            {visiblePrograms.map((p, i) => {
+              const pc = clientsByProgramId.get(String(p.id)) || [];
+              const metrics = programCardMetricsMap.get(String(p.id)) || {};
+              const selected = selectedProgramIds.has(String(p.id));
+              return (
+                <div
+                  key={p.id}
+                  ref={(node) => {
+                    if (node) programCardRefs.current.set(String(p.id), node);
+                    else programCardRefs.current.delete(String(p.id));
+                  }}
+                >
+                  <ProgramCard program={p}
+                    registered={metrics.registered || 0} pct={metrics.pct || 0}
+                    totalPaid={metrics.totalPaid || 0} totalRemaining={metrics.totalRemaining || 0}
+                    cleared={metrics.cleared || 0} unpaid={metrics.unpaid || 0} delay={i*.06}
+                    highlighted={String(highlightProgramId) === String(p.id)}
+                    selected={programSelectionMode && selected}
+                    selectionLabel={t.programSelectVisible}
+                    onSelectionChange={programSelectionMode ? (checked) => toggleProgramSelection(p.id, checked) : undefined}
+                    onClick={() => {
+                      if (programSelectionMode) return;
+                      openProgramDetail(p.id);
+                    }}
+                    onEdit={e => { e.stopPropagation(); setEditing(p); }}
+                    onDuplicate={e => {
+                      e.stopPropagation();
+                      openDuplicatePrompt(p);
+                    }}
+                    onArchive={e => {
+                      e.stopPropagation();
+                      setArchivePrompt({ program: p });
+                    }}
+                    onDelete={e => {
+                      e.stopPropagation();
+                      setDeletePrompt({ program: p, clients: pc });
+                    }}
+                    lang={lang}
+                    formatCurrencyForLang={formatCurrencyForLang}
+                  />
+                </div>
+              );
+            })}
           </div>
+          {totalProgramsPages > 1 && (
+            <div style={{
+              display:"flex",
+              justifyContent:"center",
+              alignItems:"center",
+              gap:10,
+              marginTop:20,
+              flexWrap:"wrap",
+            }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={safeProgramsPage <= 1}
+                onClick={() => setProgramsCurrentPage((page) => Math.max(1, page - 1))}
+              >
+                {t.programPagePrevious}
+              </Button>
+              <span style={{ color:"var(--rukn-text-muted)", fontSize:12, fontWeight:800 }}>
+                {tr("programPageIndicator", { page: safeProgramsPage, total: totalProgramsPages })}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={safeProgramsPage >= totalProgramsPages}
+                onClick={() => setProgramsCurrentPage((page) => Math.min(totalProgramsPages, page + 1))}
+              >
+                {t.programPageNext}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1996,6 +2656,28 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
               </Button>
               <Button variant="secondary" icon="archive" onClick={handleConfirmArchiveProgram}>
                 {t.programArchiveConfirm}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <Modal
+        open={!!bulkTrashPrompt}
+        onClose={() => setBulkTrashPrompt(null)}
+        title={t.programBulkTrashTitle}
+        width={560}
+      >
+        {bulkTrashPrompt && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <p style={{ fontSize:14, color:"var(--rukn-text)", lineHeight:1.7 }}>
+              {t.programBulkTrashBody}
+            </p>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:12, flexWrap:"wrap" }}>
+              <Button variant="ghost" onClick={() => setBulkTrashPrompt(null)}>
+                {t.cancel}
+              </Button>
+              <Button variant="danger" icon="trash" onClick={handleConfirmBulkTrashPrograms}>
+                {t.programBulkTrashConfirmAction}
               </Button>
             </div>
           </div>

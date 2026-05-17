@@ -43,12 +43,13 @@ function SmallBtn({ icon, onClick, color, title, active = false }) {
 
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, lang, formatCurrencyForLang,
-  highlighted = false }) {
+  highlighted = false, selected = false, onSelectionChange, selectionLabel = "" }) {
   const [hov, setHov] = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const [hoveredAction, setHoveredAction] = React.useState("");
   const menuRef = React.useRef(null);
   const { t, dir } = useLang();
+  const selectionMode = typeof onSelectionChange === "function";
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
   const packages = normalizeProgramPackages(program);
@@ -117,10 +118,18 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
     setHoveredAction("");
     action.onClick?.(event);
   }, []);
+  const handleCardClick = React.useCallback((event) => {
+    if (selectionMode) {
+      event.preventDefault();
+      onSelectionChange(!selected);
+      return;
+    }
+    onClick?.(event);
+  }, [onClick, onSelectionChange, selected, selectionMode]);
 
   return (
-    <div className="animate-fadeInUp" style={{ animationDelay:`${delay}s`, cursor:"pointer", position:"relative", zIndex:actionsOpen ? 60 : 1 }}
-      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} onClick={onClick}>
+    <div className="animate-fadeInUp" style={{ animationDelay:`${delay}s`, cursor:selectionMode ? "copy" : "pointer", position:"relative", zIndex:actionsOpen ? 60 : 1 }}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)} onClick={handleCardClick}>
       <GlassCard gold style={{
         padding:22,
         position:"relative",
@@ -129,12 +138,45 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
         transition:"transform .3s ease, border-color .25s ease, box-shadow .35s ease",
         boxShadow: highlighted
           ? "0 0 0 3px rgba(59,130,246,.16), var(--rukn-shadow-card-hover)"
+          : selected
+            ? "0 0 0 2px rgba(212,175,55,.32), var(--rukn-shadow-card-hover)"
           : hov ? "var(--rukn-shadow-card-hover)" : "var(--rukn-shadow-card)",
-        border:`1px solid ${highlighted ? "rgba(59,130,246,.72)" : hov ? "rgba(212,175,55,.45)" : "rgba(212,175,55,.2)"}`,
+        border:`1px solid ${highlighted ? "rgba(59,130,246,.72)" : selected ? "rgba(212,175,55,.62)" : hov ? "rgba(212,175,55,.45)" : "rgba(212,175,55,.2)"}`,
+        background:selected ? "linear-gradient(180deg, rgba(212,175,55,.08), rgba(15,23,42,.02)), var(--rukn-card-bg)" : undefined,
       }}>
+        {selectionMode && (
+          <label
+            title={selectionLabel}
+            aria-label={selectionLabel}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              position:"absolute",
+              top:12,
+              insetInlineStart:12,
+              width:28,
+              height:28,
+              borderRadius:8,
+              display:"inline-flex",
+              alignItems:"center",
+              justifyContent:"center",
+              background:selected ? "var(--rukn-gold-dim)" : "rgba(15,23,42,.28)",
+              border:`1px solid ${selected ? "rgba(212,175,55,.62)" : "rgba(148,163,184,.22)"}`,
+              cursor:"pointer",
+              transition:"background .16s ease, border-color .16s ease",
+              zIndex:2,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={(event) => onSelectionChange(event.target.checked)}
+              style={{ width:15, height:15, accentColor:tc.gold, cursor:"pointer" }}
+            />
+          </label>
+        )}
         {/* header */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
-          <div style={{ flex:1 }}>
+          <div style={{ flex:1, paddingInlineStart: selectionMode ? 34 : 0 }}>
             <p style={{ fontSize:16, fontWeight:800, color:tc.white, marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{translateProgramType(program.type, lang)}</span>
