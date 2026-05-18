@@ -4154,7 +4154,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
                 program={program}
                 amount={amount} paid={paid} remaining={rem} overpaid={overpaid} status={stat}
                 completionTooltip={completionTooltip}
-                onClick={()=>runWithGlobalDetailData(() => setSelectedClient(c))}
+                onClick={()=>setSelectedClient(c)}
                 onEdit={()=>runWithGlobalDetailData(() => setEditingClient(c))}
                 selectMode={selectMode}
                 showCheckbox={selectMode}
@@ -4207,8 +4207,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         selectedClient={selectedClient}
         onCloseClientDetail={() => setSelectedClient(null)}
         onEditClientFromDetail={(client) => {
-          setSelectedClient(null);
-          setEditingClient(client);
+          runWithGlobalDetailData(() => {
+            setSelectedClient(null);
+            setEditingClient(client);
+          });
         }}
         isAddClientOpen={showAddClient}
         onCloseAddClient={() => setShowAddClient(false)}
@@ -4247,6 +4249,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
         onClientDataChanged={requestScopedProgramDetailReload}
+        programOverride={useScopedProgramDetail ? (scopedProgramDetail.program || program) : null}
+        programClientsOverride={useScopedProgramDetail ? progClients : null}
+        paymentsOverride={useScopedProgramDetail ? scopedProgramDetail.payments : null}
+        paymentsReadyOverride={useScopedProgramDetail ? true : undefined}
+        onRequireGlobalData={ensureGlobalDetailDataForCurrentAction}
         invoiceApi={store.invoiceApi}
         isBulkDeleteOpen={bulkDeleteOpen}
         onCloseBulkDelete={() => setBulkDeleteOpen(false)}

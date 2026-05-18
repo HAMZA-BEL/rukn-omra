@@ -43,6 +43,24 @@ const printActionButtonStyle = {
   textAlign: "center",
 };
 const EMPTY_LINKED_PAYMENTS = [];
+const collectClientPaymentRows = (clientId, paymentSources, locallyHiddenPaymentIds = new Set()) => {
+  const rows = [];
+  const seen = new Set();
+  const normalizedClientId = String(clientId || "");
+  paymentSources.forEach((source) => {
+    (Array.isArray(source) ? source : []).forEach((payment) => {
+      if (!payment) return;
+      if (payment.id && locallyHiddenPaymentIds.has(payment.id)) return;
+      const paymentClientId = String(payment.clientId || payment.client_id || "");
+      if (paymentClientId && paymentClientId !== normalizedClientId) return;
+      const key = payment.id || `${paymentClientId}:${payment.date || ""}:${payment.amount || ""}:${payment.receiptNo || payment.receipt_no || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push(payment);
+    });
+  });
+  return rows;
+};
 const completionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
@@ -130,12 +148,21 @@ export default function ClientDetail({
   highlightFromNotification = false,
   notificationHighlightToken = null,
   linkedPayments = EMPTY_LINKED_PAYMENTS,
+  programOverride = null,
+  programClientsOverride = null,
+  paymentsOverride = null,
+  paymentsReadyOverride = undefined,
+  onRequireGlobalData = null,
 }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
           getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi } = store;
-  const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const scopedPaymentsReady = paymentsReadyOverride === true && Array.isArray(paymentsOverride);
+  const globalPaymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
+  const globalClientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
+  const globalDetailReady = globalPaymentsReady && globalClientsReady;
+  const paymentsReady = scopedPaymentsReady || globalPaymentsReady;
   const paymentDataLoading = Boolean(store.isSupabaseEnabled && !paymentsReady);
   const loadingLabel = t.loading || "Loading...";
   const [showPayForm, setShowPayForm] = React.useState(false);
@@ -159,7 +186,7 @@ export default function ClientDetail({
   }, [client.id, linkedPayments]);
 
   const clientProgramId = getClientProgramId(client);
-  const program     = getProgramById(clientProgramId);
+  const program     = programOverride || getProgramById(clientProgramId);
   const programStatus = String(program?.status || "").trim().toLowerCase();
   const isAssignedToActiveFinancialProgram = Boolean(
     clientProgramId
@@ -185,23 +212,23 @@ export default function ClientDetail({
     [program, serviceType],
   );
   const referenceCostLabel = getReferenceCostLabel(serviceType, t.officialPrice, lang);
-  const storedPayments = paymentsReady ? getClientPayments(client.id) : [];
-  const payments = React.useMemo(() => {
-    if (!paymentsReady) return [];
-    const rows = [];
-    const seen = new Set();
-    [...storedPayments, ...(Array.isArray(linkedPayments) ? linkedPayments : [])].forEach((payment) => {
-      if (!payment) return;
-      if (payment.id && locallyHiddenPaymentIds.has(payment.id)) return;
-      const paymentClientId = String(payment.clientId || payment.client_id || "");
-      if (paymentClientId && paymentClientId !== String(client.id)) return;
-      const key = payment.id || `${paymentClientId}:${payment.date || ""}:${payment.amount || ""}:${payment.receiptNo || payment.receipt_no || ""}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      rows.push(payment);
-    });
-    return rows;
-  }, [client.id, linkedPayments, locallyHiddenPaymentIds, paymentsReady, storedPayments]);
+  const storedPayments = React.useMemo(
+    () => globalPaymentsReady ? getClientPayments(client.id) : [],
+    [client.id, getClientPayments, globalPaymentsReady],
+  );
+  const globalPaymentRows = React.useMemo(
+    () => globalPaymentsReady
+      ? collectClientPaymentRows(client.id, [storedPayments, linkedPayments], locallyHiddenPaymentIds)
+      : [],
+    [client.id, globalPaymentsReady, linkedPayments, locallyHiddenPaymentIds, storedPayments],
+  );
+  const scopedPaymentRows = React.useMemo(
+    () => scopedPaymentsReady
+      ? collectClientPaymentRows(client.id, [paymentsOverride, linkedPayments], locallyHiddenPaymentIds)
+      : [],
+    [client.id, linkedPayments, locallyHiddenPaymentIds, paymentsOverride, scopedPaymentsReady],
+  );
+  const payments = scopedPaymentsReady ? scopedPaymentRows : globalPaymentRows;
   const totalPaid   = paymentsReady ? payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) : 0;
   const pricingOptions = React.useMemo(() => ({
     referencePrice: costingReferenceCost,
@@ -225,7 +252,9 @@ export default function ClientDetail({
     () => [...payments].sort((a,b) => new Date(b.date)-new Date(a.date)),
     [payments]
   );
-  const lastPmt     = paymentsReady ? (sortedPayments[0] || getClientLastPayment(client.id)) : null;
+  const lastPmt     = paymentsReady
+    ? (sortedPayments[0] || (scopedPaymentsReady ? null : getClientLastPayment(client.id)))
+    : null;
   const p           = client.passport || {};
   const displayName = getClientDisplayName(client);
   const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program, pricingOptions), [client, lang, program, pricingOptions]);
@@ -263,9 +292,10 @@ export default function ClientDetail({
   const registrationSource = client.registrationSource || client.registration_source || "";
   const address = client.address || client.adress || client.addressLine || client.homeAddress || "";
   const badgePhotoPath = client.badgePhotoPath || docs.badgePhotoPath || "";
+  const programClientsSource = Array.isArray(programClientsOverride) ? programClientsOverride : null;
   const programClients = React.useMemo(
-    () => clients.filter((item) => getClientProgramId(item) === clientProgramId),
-    [clients, clientProgramId]
+    () => programClientsSource || clients.filter((item) => getClientProgramId(item) === clientProgramId),
+    [clients, clientProgramId, programClientsSource]
   );
   const badgeFileNumber = React.useMemo(() => {
     const index = programClients.findIndex((item) => item.id === client.id);
@@ -288,6 +318,17 @@ export default function ClientDetail({
     if (lang === "en") return "Historical program information";
     return "معلومات البرنامج المحفوظة";
   }, [lang]);
+
+  const requestGlobalDetailDataForAction = React.useCallback(async () => {
+    if (globalDetailReady) return true;
+    if (typeof onRequireGlobalData === "function") {
+      return Boolean(await onRequireGlobalData());
+    }
+    onToast?.(loadingLabel, "info");
+    store.ensureClientsLoaded?.();
+    store.ensurePaymentsLoaded?.();
+    return false;
+  }, [globalDetailReady, loadingLabel, onRequireGlobalData, onToast, store]);
 
   const handleDownloadBadge = React.useCallback(async () => {
     if (!program) {
@@ -342,8 +383,11 @@ export default function ClientDetail({
         : lang === "en" ? "Contract downloaded"
         : "تم تحميل العقد",
     };
-    if (!paymentsReady) {
-      onToast?.(loadingLabel, "info");
+    if (!globalDetailReady) {
+      const ready = await requestGlobalDetailDataForAction();
+      if (!ready) return null;
+    }
+    if (!globalDetailReady) {
       return null;
     }
     if (!program) {
@@ -405,26 +449,34 @@ export default function ClientDetail({
     } finally {
       setContractBusy(false);
     }
-  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, lang, loadingLabel, onToast, paymentsReady, program, store]);
+  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, store]);
 
-  const openReceiptSelector = React.useCallback((payment) => {
+  const openReceiptSelector = React.useCallback(async (payment) => {
     if (!canPrintReceipts) {
       onToast?.(addPaymentDisabledMessage, "error");
       return;
     }
+    if (!globalDetailReady) {
+      await requestGlobalDetailDataForAction();
+      return;
+    }
     if (isPreviousPaymentRecord(payment)) return;
     if (payment) setReceiptPayment(payment);
-  }, [addPaymentDisabledMessage, canPrintReceipts, onToast]);
+  }, [addPaymentDisabledMessage, canPrintReceipts, globalDetailReady, onToast, requestGlobalDetailDataForAction]);
 
   const closeReceiptSelector = React.useCallback(() => {
     setReceiptPayment(null);
   }, []);
 
-  const handleReceiptTypeSelect = React.useCallback((receiptType) => {
+  const handleReceiptTypeSelect = React.useCallback(async (receiptType) => {
     if (!receiptPayment || !canPrintReceipts) return;
-    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments });
+    if (!globalDetailReady) {
+      await requestGlobalDetailDataForAction();
+      return;
+    }
+    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments: globalPaymentRows });
     setReceiptPayment(null);
-  }, [agency, canPrintReceipts, client, lang, payments, program, receiptPayment]);
+  }, [agency, canPrintReceipts, client, globalDetailReady, globalPaymentRows, lang, program, receiptPayment, requestGlobalDetailDataForAction]);
 
   const paymentBlockMessage = financialActionsRestricted
     ? addPaymentDisabledMessage
@@ -440,7 +492,7 @@ export default function ClientDetail({
         ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
         : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel)
     );
-  const handleAddPaymentClick = React.useCallback(() => {
+  const handleAddPaymentClick = React.useCallback(async () => {
     if (!paymentsReady) {
       onToast?.(loadingLabel, "info");
       return;
@@ -449,8 +501,12 @@ export default function ClientDetail({
       onToast?.(paymentBlockMessage, "error");
       return;
     }
+    if (!globalDetailReady) {
+      await requestGlobalDetailDataForAction();
+      return;
+    }
     setShowPayForm(true);
-  }, [canAddPayment, loadingLabel, onToast, paymentBlockMessage, paymentsReady]);
+  }, [canAddPayment, globalDetailReady, loadingLabel, onToast, paymentBlockMessage, paymentsReady, requestGlobalDetailDataForAction]);
 
   React.useEffect(() => {
     if (canAddPayment || !showPayForm) return;
@@ -463,11 +519,12 @@ export default function ClientDetail({
   }, [canPrintReceipts, receiptPayment]);
 
   React.useEffect(() => {
+    if (scopedPaymentsReady) return;
     if (!store.isSupabaseEnabled || paymentsReady || store.paymentsLoading) return;
     if (paymentsHydrationRequestedRef.current) return;
     paymentsHydrationRequestedRef.current = true;
     store.ensurePaymentsLoaded?.();
-  }, [paymentsReady, store.ensurePaymentsLoaded, store.isSupabaseEnabled, store.paymentsLoading]);
+  }, [paymentsReady, scopedPaymentsReady, store.ensurePaymentsLoaded, store.isSupabaseEnabled, store.paymentsLoading]);
 
   const financialCards = React.useMemo(() => ([
     { label:referenceCostLabel, val:serviceHasAccommodation ? money(offPrice) : costingReferenceCost ? money(costingReferenceCost) : "—", color:tc.grey },
@@ -895,7 +952,7 @@ export default function ClientDetail({
           </Button>
         </span>
       )}
-      {paymentsReady && showPayForm && canAddPayment && (
+      {paymentsReady && globalDetailReady && showPayForm && canAddPayment && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
           onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); onDataChanged?.(); }}
           onCancel={() => setShowPayForm(false)} />
@@ -917,7 +974,9 @@ export default function ClientDetail({
               onPrint={() => openReceiptSelector(pmt)}
               canPrint={canPrintReceipts}
               showActionsAlways={financialActionsRestricted}
-              onDelete={() => {
+              onDelete={async () => {
+                const ready = await requestGlobalDetailDataForAction();
+                if (!ready) return;
                 if (window.confirm(t.confirmDeletePayment)) {
                   deletePayment(pmt.id, { clientId: pmt.clientId || pmt.client_id });
                   if (pmt.id) {

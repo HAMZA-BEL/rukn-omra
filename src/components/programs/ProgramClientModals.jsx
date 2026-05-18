@@ -37,6 +37,11 @@ export default function ProgramClientModals({
   onConfirmTransfer,
   getClientPayments,
   onClientDataChanged,
+  programOverride,
+  programClientsOverride,
+  paymentsOverride,
+  paymentsReadyOverride,
+  onRequireGlobalData,
   invoiceApi,
   isBulkDeleteOpen,
   onCloseBulkDelete,
@@ -64,6 +69,11 @@ export default function ProgramClientModals({
             onEdit={onEditClientFromDetail}
             onToast={onToast}
             onDataChanged={onClientDataChanged}
+            programOverride={programOverride}
+            programClientsOverride={programClientsOverride}
+            paymentsOverride={paymentsOverride}
+            paymentsReadyOverride={paymentsReadyOverride}
+            onRequireGlobalData={onRequireGlobalData}
           />
         )}
       </Modal>
