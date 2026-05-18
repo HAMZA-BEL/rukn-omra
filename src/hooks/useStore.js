@@ -1144,6 +1144,51 @@ export function useStore(agencyId, onToast) {
     return promise;
   }, [agencyId, isSupabaseEnabled, loadClients, setInitialPayments]);
 
+  const loadProgramDetailData = useCallback(async (programId) => {
+    const scopedProgramId = trimString(programId);
+    const empty = { program: null, clients: [], payments: [] };
+    if (!scopedProgramId) return { ...empty, error: null };
+
+    if (!isSupabaseEnabled || !agencyId) {
+      const program = programs.find((item) => String(item.id || "") === scopedProgramId) || null;
+      const scopedClients = clients.filter((client) => String(client.programId || "") === scopedProgramId);
+      return {
+        program,
+        clients: scopedClients,
+        payments: filterPaymentsForClients(payments, scopedClients),
+        error: null,
+      };
+    }
+
+    try {
+      const programResult = await db.programs.fetchById(agencyId, scopedProgramId);
+      if (programResult?.error) return { ...empty, error: programResult.error };
+
+      const program = programResult?.data || null;
+      if (!program) return { ...empty, error: null };
+
+      const clientsResult = await db.clients.fetchForProgram(agencyId, scopedProgramId);
+      if (clientsResult?.error) return { program, clients: [], payments: [], error: clientsResult.error };
+
+      const scopedClients = Array.isArray(clientsResult?.data) ? clientsResult.data : [];
+      const paymentsResult = await db.payments.fetchForClientIds(
+        agencyId,
+        scopedClients.map((client) => client.id).filter(Boolean)
+      );
+      if (paymentsResult?.error) return { program, clients: scopedClients, payments: [], error: paymentsResult.error };
+
+      return {
+        program,
+        clients: scopedClients,
+        payments: Array.isArray(paymentsResult?.data) ? paymentsResult.data : [],
+        error: null,
+      };
+    } catch (error) {
+      console.error("[Store] Program detail scoped fetch failed:", error);
+      return { ...empty, error };
+    }
+  }, [agencyId, clients, isSupabaseEnabled, payments, programs]);
+
   const loadNotifications = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) {
       setNotificationsLoading(false);
@@ -3307,6 +3352,7 @@ export function useStore(agencyId, onToast) {
     addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
+    loadProgramDetailData,
     ensureClientsLoaded: loadClients,
     ensurePaymentsLoaded: loadPayments,
     ensureNotificationsLoaded: loadNotifications,

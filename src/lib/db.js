@@ -54,6 +54,14 @@ const fetchPagedRows = async (buildQuery, pageSize = 1000) => {
   }
 };
 
+const chunkArray = (items = [], size = 500) => {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
 const toFiniteNumber = (value, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -931,6 +939,18 @@ export const db = {
   },
 
   programs: {
+    async fetchById(agencyId, programId) {
+      if (!agencyId || !programId) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("programs")
+        .select(PROGRAM_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .eq("id", programId)
+        .or("deleted.is.null,deleted.eq.false")
+        .or("status.is.null,status.neq.archived")
+        .maybeSingle();
+      return { data: data ? fromProgram(data) : null, error };
+    },
     async fetchPageSummary({
       search = "",
       year = null,
@@ -1065,6 +1085,19 @@ export const db = {
         .or("deleted.is.null,deleted.eq.false")
         .order("registration_date", { ascending: true });
       return { data: data?.map(fromClient) ?? null, error };
+    },
+    async fetchForProgram(agencyId, programId) {
+      if (!agencyId || !programId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("clients")
+        .select(CLIENT_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .eq("program_id", programId)
+        .or("deleted.is.null,deleted.eq.false")
+        .or("archived.is.null,archived.eq.false")
+        .order("registration_date", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true });
+      return { data: data?.map(fromClient) ?? [], error };
     },
     async fetchPage(agencyId, {
       page = 1,
@@ -1290,6 +1323,30 @@ export const db = {
         .or("status.is.null,status.eq.active")
         .order("created_at", { ascending: true });
       return { data: data?.map(fromPayment) ?? null, error };
+    },
+    async fetchForClientIds(agencyId, clientIds = []) {
+      const ids = Array.from(new Set((Array.isArray(clientIds) ? clientIds : [])
+        .map(normalizeForeignKey)
+        .filter(Boolean)));
+      if (!agencyId || !ids.length) return { data: [], error: null };
+
+      const results = await Promise.all(chunkArray(ids).map((chunk) => supabase
+        .from("payments")
+        .select(PAYMENT_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .in("client_id", chunk)
+        .or("status.is.null,status.eq.active")
+        .is("trashed_at", null)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true })));
+
+      const error = results.find((result) => result.error)?.error || null;
+      if (error) return { data: null, error };
+
+      const rows = results
+        .flatMap((result) => Array.isArray(result.data) ? result.data : [])
+        .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+      return { data: rows.map(fromPayment), error: null };
     },
     async fetchTrashed(agencyId) {
       if (!agencyId) return { data: [], error: null };
