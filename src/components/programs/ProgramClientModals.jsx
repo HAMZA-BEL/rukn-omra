@@ -36,6 +36,7 @@ export default function ProgramClientModals({
   programOccupancy,
   onConfirmTransfer,
   getClientPayments,
+  onClientDataChanged,
   invoiceApi,
   isBulkDeleteOpen,
   onCloseBulkDelete,
@@ -62,6 +63,7 @@ export default function ProgramClientModals({
             onClose={onCloseClientDetail}
             onEdit={onEditClientFromDetail}
             onToast={onToast}
+            onDataChanged={onClientDataChanged}
           />
         )}
       </Modal>

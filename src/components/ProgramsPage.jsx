@@ -2846,6 +2846,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const statusFilterRef = React.useRef(null);
   const serviceTypeFilterRef = React.useRef(null);
   const detailHydrationRequestedRef = React.useRef(false);
+  const [scopedProgramDetailReloadKey, setScopedProgramDetailReloadKey] = React.useState(0);
+  const [scopedProgramDetail, setScopedProgramDetail] = React.useState({
+    programId: "",
+    status: "idle",
+    program: null,
+    clients: [],
+    payments: [],
+    error: null,
+  });
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
   const participantExcelImportLabel = React.useMemo(() => {
@@ -2862,28 +2871,218 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     offset: MENU_OFFSET_PX,
   });
 
-  React.useEffect(() => {
-    if (!store.isSupabaseEnabled) return;
-    if (clientsReady && paymentsReady) return;
-    if (detailHydrationRequestedRef.current) return;
-    detailHydrationRequestedRef.current = true;
-    if (!clientsReady && !store.clientsLoading) store.ensureClientsLoaded?.();
-    if (!paymentsReady && !store.paymentsLoading) store.ensurePaymentsLoaded?.();
+  const ensureGlobalDetailData = React.useCallback(async ({ notify = false } = {}) => {
+    if (!store.isSupabaseEnabled) return true;
+    if (clientsReady && paymentsReady) return true;
+
+    const tasks = [];
+    if (!clientsReady) {
+      if (typeof store.ensureClientsLoaded !== "function") return false;
+      tasks.push(store.ensureClientsLoaded());
+    }
+    if (!paymentsReady) {
+      if (typeof store.ensurePaymentsLoaded !== "function") return false;
+      tasks.push(store.ensurePaymentsLoaded());
+    }
+
+    try {
+      const results = await Promise.all(tasks);
+      const error = results.find((result) => result?.error)?.error;
+      if (error) {
+        if (notify) onToast?.(t.loadingFailed || t.error || "تعذر تحميل البيانات", "error");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error("[Programs] Global detail hydration failed:", error);
+      if (notify) onToast?.(t.loadingFailed || t.error || "تعذر تحميل البيانات", "error");
+      return false;
+    }
   }, [
     clientsReady,
     paymentsReady,
     store.isSupabaseEnabled,
-    store.clientsLoading,
-    store.paymentsLoading,
     store.ensureClientsLoaded,
     store.ensurePaymentsLoaded,
+    onToast,
+    t.loadingFailed,
+    t.error,
   ]);
 
+  const runWithGlobalDetailData = React.useCallback(async (action) => {
+    const ready = await ensureGlobalDetailData({ notify: true });
+    if (!ready) return;
+    action?.();
+  }, [ensureGlobalDetailData]);
+
+  const ensureGlobalDetailDataForCurrentAction = React.useCallback(async () => {
+    if (detailDataReady) return true;
+    const ready = await ensureGlobalDetailData({ notify: true });
+    if (ready) onToast?.(t.loading || "Loading...", "info");
+    return false;
+  }, [detailDataReady, ensureGlobalDetailData, onToast, t.loading]);
+
+  const requestScopedProgramDetailReload = React.useCallback(() => {
+    const programId = String(program.id || "");
+    setScopedProgramDetail((current) => (
+      current.programId === programId
+        ? {
+            ...current,
+            status: "loading",
+            clients: [],
+            payments: [],
+            error: null,
+          }
+        : current
+    ));
+    setScopedProgramDetailReloadKey((key) => key + 1);
+  }, [program.id]);
+
+  React.useEffect(() => {
+    detailHydrationRequestedRef.current = false;
+  }, [program.id]);
+
+  React.useEffect(() => {
+    const programId = String(program.id || "");
+    if (!programId) return undefined;
+
+    let cancelled = false;
+    setScopedProgramDetail((current) => {
+      const keepCurrent = current.programId === programId && current.status === "ready";
+      return {
+        programId,
+        status: keepCurrent ? "refreshing" : "loading",
+        program: keepCurrent ? current.program : null,
+        clients: keepCurrent ? current.clients : [],
+        payments: keepCurrent ? current.payments : [],
+        error: null,
+      };
+    });
+
+    if (typeof store.loadProgramDetailData !== "function") {
+      setScopedProgramDetail({
+        programId,
+        status: "failed",
+        program: null,
+        clients: [],
+        payments: [],
+        error: new Error("Missing scoped program detail loader"),
+      });
+      return undefined;
+    }
+
+    store.loadProgramDetailData(programId)
+      .then((result) => {
+        if (cancelled) return;
+        if (result?.error) {
+          setScopedProgramDetail({
+            programId,
+            status: "failed",
+            program: null,
+            clients: [],
+            payments: [],
+            error: result.error,
+          });
+          return;
+        }
+        if (!result?.program) {
+          setScopedProgramDetail({
+            programId,
+            status: "failed",
+            program: null,
+            clients: [],
+            payments: [],
+            error: new Error("Scoped program detail not found"),
+          });
+          return;
+        }
+        setScopedProgramDetail({
+          programId,
+          status: "ready",
+          program: result.program,
+          clients: Array.isArray(result?.clients) ? result.clients : [],
+          payments: Array.isArray(result?.payments) ? result.payments : [],
+          error: null,
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("[Programs] Scoped program detail fetch failed:", error);
+        setScopedProgramDetail({
+          programId,
+          status: "failed",
+          program: null,
+          clients: [],
+          payments: [],
+          error,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    program.id,
+    scopedProgramDetailReloadKey,
+    store.loadProgramDetailData,
+    store.lastSynced,
+  ]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (clientsReady && paymentsReady) return;
+    if (!scopedProgramDetail.error) return;
+    if (detailHydrationRequestedRef.current) return;
+    detailHydrationRequestedRef.current = true;
+    ensureGlobalDetailData();
+  }, [
+    clientsReady,
+    paymentsReady,
+    store.isSupabaseEnabled,
+    scopedProgramDetail.error,
+    ensureGlobalDetailData,
+  ]);
+
+  const scopedProgramDetailMatches = scopedProgramDetail.programId === String(program.id || "");
+  const scopedProgramDetailReady = scopedProgramDetailMatches
+    && (scopedProgramDetail.status === "ready" || scopedProgramDetail.status === "refreshing")
+    && !scopedProgramDetail.error;
+  const useScopedProgramDetail = scopedProgramDetailReady;
+  const listDataReady = useScopedProgramDetail || detailDataReady;
+
+  const scopedPaymentsByClient = React.useMemo(() => {
+    const map = new Map();
+    (scopedProgramDetail.payments || []).forEach((payment) => {
+      const clientId = payment.clientId || payment.client_id;
+      if (!clientId) return;
+      const current = map.get(clientId);
+      if (current) current.push(payment);
+      else map.set(clientId, [payment]);
+    });
+    return map;
+  }, [scopedProgramDetail.payments]);
+
+  const getScopedClientPayments = React.useCallback((clientId) => {
+    const clientPayments = scopedPaymentsByClient.get(clientId);
+    return clientPayments ? clientPayments.slice() : [];
+  }, [scopedPaymentsByClient]);
+
+  const getScopedClientTotalPaid = React.useCallback((clientId) => (
+    getScopedClientPayments(clientId).reduce((sum, payment) => {
+      const amount = Number(payment.amount);
+      return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0)
+  ), [getScopedClientPayments]);
+
+  const getListClientTotalPaid = useScopedProgramDetail ? getScopedClientTotalPaid : getClientTotalPaid;
   const progClients = React.useMemo(() =>
-    clients.filter(c => c.programId === program.id), [clients, program.id]);
+    useScopedProgramDetail
+      ? scopedProgramDetail.clients
+      : clients.filter(c => c.programId === program.id),
+    [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
 
   const filtered = React.useMemo(() => progClients.filter(c => {
-    const status = getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id));
+    const status = getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id));
     const matchesFilter = filter === "all" || status === filter;
     const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
     const matchesPackage = packageFilter === "all"
@@ -2897,7 +3096,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
     return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
-  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getClientTotalPaid, program]);
+  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program]);
 
   const totalProgramClientItems = filtered.length;
   const totalProgramClientPages = Math.max(1, Math.ceil(totalProgramClientItems / programClientPageSize));
@@ -2910,13 +3109,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   );
   const filteredPaymentTotals = React.useMemo(() => (
     filtered.reduce((acc, client) => {
-      const paid = getClientTotalPaid(client.id);
+      const paid = getListClientTotalPaid(client.id);
       acc.amount += getProgramClientSalePrice(program, client);
       acc.paid += paid;
       acc.remaining += getProgramClientRemainingAmount(program, client, paid);
       return acc;
     }, { amount: 0, paid: 0, remaining: 0 })
-  ), [filtered, getClientTotalPaid, program]);
+  ), [filtered, getListClientTotalPaid, program]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
   const programClientPageSizeOptions = React.useMemo(() => (
@@ -3058,9 +3257,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
 
   const openTransferSheet = React.useCallback((ids) => {
     if (!ids.length) return;
-    setTransferTargets(ids);
-    setTransferSheetOpen(true);
-  }, [setTransferSheetOpen, setTransferTargets]);
+    runWithGlobalDetailData(() => {
+      setTransferTargets(ids);
+      setTransferSheetOpen(true);
+    });
+  }, [runWithGlobalDetailData, setTransferSheetOpen, setTransferTargets]);
 
   const closeTransferSheet = React.useCallback(() => {
     setTransferTargets([]);
@@ -3082,15 +3283,17 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       return;
     }
     setBulkActionsOpen(false);
-    setBulkDeleteOpen(true);
-  }, [checkedIds, onToast, t.noClientsSelected]);
+    runWithGlobalDetailData(() => setBulkDeleteOpen(true));
+  }, [checkedIds, onToast, runWithGlobalDetailData, t.noClientsSelected]);
 
-  const handleConfirmDeleteSelected = React.useCallback(() => {
+  const handleConfirmDeleteSelected = React.useCallback(async () => {
     const ids = Array.from(checkedIds);
     if (!ids.length) {
       setBulkDeleteOpen(false);
       return;
     }
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const deletedCount = typeof deleteClientsBulk === "function"
       ? deleteClientsBulk(ids)
       : ids.reduce((count, id) => {
@@ -3100,8 +3303,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         }, 0);
     setBulkDeleteOpen(false);
     exitSelectMode();
+    requestScopedProgramDetailReload();
     onToast(tr("bulkDeleteSuccess", { count: deletedCount || ids.length }), "info");
-  }, [checkedIds, deleteClientsBulk, deleteClient, exitSelectMode, onToast, tr]);
+  }, [checkedIds, deleteClientsBulk, deleteClient, ensureGlobalDetailDataForCurrentAction, exitSelectMode, onToast, requestScopedProgramDetailReload, tr]);
 
   const transferList = React.useMemo(
     () => transferTargets
@@ -3119,7 +3323,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     return map;
   }, [activeClients]);
 
-  const handleTransferConfirm = React.useCallback((programId) => {
+  const handleTransferConfirm = React.useCallback(async (programId) => {
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const destination = allPrograms.find(p => p.id === programId);
     if (!destination) {
       onToast(t.programNotFound || "البرنامج غير متاح", "error");
@@ -3146,7 +3352,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     onToast(tr("transferSuccess", { count: movedCount, program: destination.name }), "success");
     closeTransferSheet();
     exitSelectMode();
-  }, [allPrograms, transferTargets, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode]);
+    requestScopedProgramDetailReload();
+  }, [allPrograms, ensureGlobalDetailDataForCurrentAction, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode, requestScopedProgramDetailReload]);
 
   const selectedVisibleCount = React.useMemo(
     () => paginatedProgramClients.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
@@ -3169,15 +3376,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
 
   const totals = React.useMemo(() => ({
     revenue: progClients.reduce((s,c)=>s + getProgramClientSalePrice(program, c),0),
-    paid:    progClients.reduce((s,c)=>s+getClientTotalPaid(c.id),0),
-    remaining: progClients.reduce((s,c)=>s + getProgramClientRemainingAmount(program, c, getClientTotalPaid(c.id)),0),
-  }), [progClients, getClientTotalPaid, program]);
+    paid:    progClients.reduce((s,c)=>s+getListClientTotalPaid(c.id),0),
+    remaining: progClients.reduce((s,c)=>s + getProgramClientRemainingAmount(program, c, getListClientTotalPaid(c.id)),0),
+  }), [progClients, getListClientTotalPaid, program]);
   const totalRem  = totals.remaining;
   const statusCounts = React.useMemo(() => ({
-    cleared: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="cleared").length,
-    partial: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="partial").length,
-    unpaid:  progClients.filter(c=>getProgramClientDisplayStatus(program, c, getClientTotalPaid(c.id))==="unpaid").length,
-  }), [progClients, getClientTotalPaid, program]);
+    cleared: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="cleared").length,
+    partial: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="partial").length,
+    unpaid:  progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="unpaid").length,
+  }), [progClients, getListClientTotalPaid, program]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
 
   const filters = [
@@ -3297,8 +3504,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const notifyNoExportClients = React.useCallback(() => {
     onToast(participantTerms.noMatching, "info");
   }, [onToast, participantTerms.noMatching]);
-  const handleProgramPdfExport = React.useCallback(() => {
+  const handleProgramPdfExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     printProgramPDF({
@@ -3314,9 +3523,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       t,
       agency,
     });
-  }, [agency, closeHeaderActions, getClientPayments, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
+  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
   const handleAmadeusExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     try {
@@ -3351,9 +3562,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         "error"
       );
     }
-  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program]);
-  const handlePassportListWordExport = React.useCallback(() => {
+  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program]);
+  const handlePassportListWordExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     try {
       const result = downloadPassportListWord({ program, clients: exportClients });
@@ -3366,9 +3579,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       console.error("[Programs] Passport list Word export failed:", error);
       onToast(t.error || (lang === "fr" ? "Erreur inattendue" : lang === "en" ? "Unexpected error" : "خطأ غير متوقع"), "error");
     }
-  }, [closeHeaderActions, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported]);
+  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported]);
   const handleBadgePdfExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     setBadgeExportBusy(true);
@@ -3389,15 +3604,15 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     } finally {
       setBadgeExportBusy(false);
     }
-  }, [agency, closeHeaderActions, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId]);
+  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
-    setShowPassportImport(true);
-  }, [closeHeaderActions]);
+    runWithGlobalDetailData(() => setShowPassportImport(true));
+  }, [closeHeaderActions, runWithGlobalDetailData]);
   const handleExcelImportOpen = React.useCallback(() => {
     closeHeaderActions();
-    setShowExcelImport(true);
-  }, [closeHeaderActions]);
+    runWithGlobalDetailData(() => setShowExcelImport(true));
+  }, [closeHeaderActions, runWithGlobalDetailData]);
   const handleEditProgram = React.useCallback(() => {
     closeHeaderActions();
     onEditProgram?.();
@@ -3406,8 +3621,14 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     closeHeaderActions();
     setCostingOpen(true);
   }, [closeHeaderActions]);
+  const handleProgramTabChange = React.useCallback((nextTab) => {
+    setProgramTab(nextTab);
+    if (nextTab === "rooming") ensureGlobalDetailData({ notify: true });
+  }, [ensureGlobalDetailData]);
   const handlePilgrimsListExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const XLSX = await import("xlsx");
@@ -3430,9 +3651,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       { bookType: "xlsx", compression: true }
     );
     onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
-  }, [activePackageChip?.label, closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType]);
+  }, [activePackageChip?.label, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType]);
   const handleContractsExcelExport = React.useCallback(async () => {
     closeHeaderActions();
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const XLSX = await import("xlsx");
@@ -3487,10 +3710,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     XLSX.utils.book_append_sheet(wb, ws, "contracts");
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
-  }, [closeHeaderActions, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
+  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
   const handleWordContractsExport = React.useCallback(async () => {
     closeHeaderActions();
     if (wordContractExportBusy) return;
+    const ready = await ensureGlobalDetailDataForCurrentAction();
+    if (!ready) return;
     if (!paymentsReady) {
       onToast(wordContractsExportLabels.loading, "info");
       return;
@@ -3523,7 +3748,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     } finally {
       setWordContractExportBusy(false);
     }
-  }, [agency, closeHeaderActions, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
+  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
   const headerActions = React.useMemo(() => ([
     {
       key: "edit",
@@ -3609,18 +3834,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         headerActions={headerActions}
         hoveredHeaderAction={hoveredHeaderAction}
         setHoveredHeaderAction={setHoveredHeaderAction}
-        onAddClient={() => setShowAddClient(true)}
+        onAddClient={() => runWithGlobalDetailData(() => setShowAddClient(true))}
         addClientLabel={participantTerms.addAction || t.addClient}
       />
 
       <ProgramDetailOverview
         activeTab={programTab}
-        onTabChange={setProgramTab}
+        onTabChange={handleProgramTabChange}
         tabs={[
           { key:"clients", label:participantTerms.plural || t.clients, icon:"users" },
           { key:"rooming", label:"التسكين", icon:"hotel" },
         ]}
-        showSummary={detailDataReady && programTab !== "rooming"}
+        showSummary={listDataReady && programTab !== "rooming"}
         statCards={[
           { icon:"users", label:t.registered, value:progClients.length, color:tc.gold },
           { icon:"success", label:t.cleared, value:statusCounts.cleared, color:tc.greenLight },
@@ -3634,22 +3859,28 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         clearancePercent={pct}
       />
 
-      {!detailDataReady ? (
+      {!listDataReady ? (
         <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
           {t.loading || "Loading..."}
         </GlassCard>
       ) : programTab === "rooming" ? (
-        <RoomingWorkflowCanvas
-          program={program}
-          clients={progClients}
-          packages={packages}
-          agency={agency}
-          agencyLogoApi={store.agencyLogoApi}
-          agencyId={store.agencyId}
-          supabaseRoomingEnabled={store.isSupabaseEnabled}
-          syncRoomingClientFields={store.syncRoomingClientFields}
-          onToast={onToast}
-        />
+        !detailDataReady ? (
+          <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
+            {t.loading || "Loading..."}
+          </GlassCard>
+        ) : (
+          <RoomingWorkflowCanvas
+            program={program}
+            clients={progClients}
+            packages={packages}
+            agency={agency}
+            agencyLogoApi={store.agencyLogoApi}
+            agencyId={store.agencyId}
+            supabaseRoomingEnabled={store.isSupabaseEnabled}
+            syncRoomingClientFields={store.syncRoomingClientFields}
+            onToast={onToast}
+          />
+        )
       ) : (
         <>
       <GlassCard gold style={{ padding:"14px 16px", marginBottom:18 }}>
@@ -3909,7 +4140,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         emptySub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)}
         rows={paginatedProgramClients}
         renderRow={(c,i)=>{
-            const paid = getClientTotalPaid(c.id);
+            const paid = getListClientTotalPaid(c.id);
             const amount = getProgramClientSalePrice(program, c);
             const rem  = getProgramClientRemainingAmount(program, c, paid);
             const overpaid = getProgramClientOverpaidAmount(program, c, paid);
@@ -3923,16 +4154,19 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
                 program={program}
                 amount={amount} paid={paid} remaining={rem} overpaid={overpaid} status={stat}
                 completionTooltip={completionTooltip}
-                onClick={()=>setSelectedClient(c)}
-                onEdit={()=>setEditingClient(c)}
+                onClick={()=>runWithGlobalDetailData(() => setSelectedClient(c))}
+                onEdit={()=>runWithGlobalDetailData(() => setEditingClient(c))}
                 selectMode={selectMode}
                 showCheckbox={selectMode}
                 isChecked={checkedIds.has(c.id)}
                 onCheck={()=>toggleCheck(c.id)}
                 onTransfer={()=>openTransferSheet([c.id])}
-                onDelete={()=>{
+                onDelete={async ()=>{
+                  const ready = await ensureGlobalDetailDataForCurrentAction();
+                  if(!ready) return;
                   if(window.confirm(`حذف "${c.name}"؟`)){
                     store.deleteClient(c.id);
+                    requestScopedProgramDetailReload();
                     onToast("تم الحذف","info");
                   }
                 }}
@@ -3980,17 +4214,29 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         onCloseAddClient={() => setShowAddClient(false)}
         onSaveAddClient={() => {
           setShowAddClient(false);
+          requestScopedProgramDetailReload();
           onToast(t.addSuccess, "success");
         }}
         isExcelImportOpen={showExcelImport}
-        onCloseExcelImport={closeExcelImportModal}
+        onCloseExcelImport={() => {
+          if (excelImportSaving) {
+            closeExcelImportModal();
+            return;
+          }
+          closeExcelImportModal();
+          requestScopedProgramDetailReload();
+        }}
         onExcelImportingChange={setExcelImportSaving}
         isPassportImportOpen={showPassportImport}
-        onClosePassportImport={() => setShowPassportImport(false)}
+        onClosePassportImport={() => {
+          setShowPassportImport(false);
+          requestScopedProgramDetailReload();
+        }}
         editingClient={editingClient}
         onCloseEditClient={() => setEditingClient(null)}
         onSaveEditClient={() => {
           setEditingClient(null);
+          requestScopedProgramDetailReload();
           onToast(t.updateSuccess, "success");
         }}
         isTransferOpen={transferSheetOpen}
@@ -4000,6 +4246,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         programOccupancy={programOccupancy}
         onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
+        onClientDataChanged={requestScopedProgramDetailReload}
         invoiceApi={store.invoiceApi}
         isBulkDeleteOpen={bulkDeleteOpen}
         onCloseBulkDelete={() => setBulkDeleteOpen(false)}

@@ -126,6 +126,7 @@ export default function ClientDetail({
   onArchive,
   onRestore,
   onToast,
+  onDataChanged,
   highlightFromNotification = false,
   notificationHighlightToken = null,
   linkedPayments = EMPTY_LINKED_PAYMENTS,
@@ -896,7 +897,7 @@ export default function ClientDetail({
       )}
       {paymentsReady && showPayForm && canAddPayment && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
-          onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); }}
+          onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); onDataChanged?.(); }}
           onCancel={() => setShowPayForm(false)} />
       )}
 
@@ -927,6 +928,7 @@ export default function ClientDetail({
                     });
                   }
                   onToast(t.deleteSuccess, "info");
+                  onDataChanged?.();
                 }
               }} />
           ))}
