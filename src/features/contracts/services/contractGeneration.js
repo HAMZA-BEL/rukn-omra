@@ -93,11 +93,60 @@ const buildClientContractDocx = ({
   return renderContractDocx(templateArrayBuffer, contractData);
 };
 
-const resolveContractClient = ({ sourceClient, programClients = [] } = {}) => {
+const getNestedLookupValue = (lookup, firstKey, secondKey) => {
+  const innerLookup = lookup?.get(firstKey);
+  return innerLookup?.get(secondKey) || null;
+};
+
+const addNestedLookupValue = (lookup, firstKey, secondKey, value) => {
+  let innerLookup = lookup.get(firstKey);
+  if (!innerLookup) {
+    innerLookup = new Map();
+    lookup.set(firstKey, innerLookup);
+  }
+  if (!innerLookup.has(secondKey)) innerLookup.set(secondKey, value);
+};
+
+const pushNestedLookupValue = (lookup, firstKey, secondKey, value) => {
+  let innerLookup = lookup.get(firstKey);
+  if (!innerLookup) {
+    innerLookup = new Map();
+    lookup.set(firstKey, innerLookup);
+  }
+  const current = innerLookup.get(secondKey);
+  if (current) current.push(value);
+  else innerLookup.set(secondKey, [value]);
+};
+
+const buildBulkContractClientLookups = (programClients = []) => {
+  const clientsById = new Map();
+  const representedMinorsByRepresentativeId = new Map();
+
+  (Array.isArray(programClients) ? programClients : []).forEach((client) => {
+    if (!client) return;
+    addNestedLookupValue(clientsById, client.programId, client.id, client);
+    if (isClientMinorWithoutCin(client)) {
+      pushNestedLookupValue(
+        representedMinorsByRepresentativeId,
+        client.programId,
+        getRepresentedByClientId(client),
+        client
+      );
+    }
+  });
+
+  return { clientsById, representedMinorsByRepresentativeId };
+};
+
+const resolveContractClient = ({ sourceClient, programClients = [], clientLookups = null } = {}) => {
   if (!isClientMinorWithoutCin(sourceClient)) return sourceClient;
   const representedById = getRepresentedByClientId(sourceClient);
   const representative = representedById
-    ? programClients.find((item) => item.id === representedById && item.programId === sourceClient.programId)
+    ? (
+      clientLookups
+        ? getNestedLookupValue(clientLookups.clientsById, sourceClient.programId, representedById)
+        : programClients.find((item) => item.id === representedById && item.programId === sourceClient.programId)
+    )
     : null;
   if (!representative || !isEligibleRepresentative(representative)) {
     const error = new Error("missing-representative");
@@ -107,14 +156,23 @@ const resolveContractClient = ({ sourceClient, programClients = [] } = {}) => {
   return representative;
 };
 
-const getRepresentedMinors = ({ contractClient, programClients = [] } = {}) => (
-  programClients.filter((item) => (
+const getRepresentedMinors = ({ contractClient, programClients = [], clientLookups = null } = {}) => {
+  if (clientLookups) {
+    return (
+      getNestedLookupValue(
+        clientLookups.representedMinorsByRepresentativeId,
+        contractClient.programId,
+        contractClient.id
+      ) || []
+    ).filter((item) => item.id !== contractClient.id);
+  }
+  return programClients.filter((item) => (
     item.id !== contractClient.id
     && item.programId === contractClient.programId
     && getRepresentedByClientId(item) === contractClient.id
     && isClientMinorWithoutCin(item)
-  ))
-);
+  ));
+};
 
 export async function downloadSingleContract({
   agencyId,
@@ -165,18 +223,19 @@ export async function exportProgramWordContractsZip({
   const zip = new PizZip();
   const usedNames = new Set();
   const renderedContractClientIds = new Set();
+  const clientLookups = buildBulkContractClientLookups(programClients);
   let total = 0;
 
   for (let index = 0; index < exportClients.length; index += 1) {
     const sourceClient = exportClients[index];
-    const contractClient = resolveContractClient({ sourceClient, programClients });
+    const contractClient = resolveContractClient({ sourceClient, programClients, clientLookups });
     if (renderedContractClientIds.has(contractClient.id)) continue;
     renderedContractClientIds.add(contractClient.id);
 
     const payments = typeof getClientPayments === "function" ? getClientPayments(contractClient.id) : [];
     const totalPaid = typeof getClientTotalPaid === "function" ? getClientTotalPaid(contractClient.id) : null;
     const salePrice = contractClient.salePrice || contractClient.price || 0;
-    const representedMinors = getRepresentedMinors({ contractClient, programClients });
+    const representedMinors = getRepresentedMinors({ contractClient, programClients, clientLookups });
     const blob = buildClientContractDocx({
       templateArrayBuffer: arrayBuffer,
       client: contractClient,
