@@ -492,6 +492,8 @@ export default function ClientDetail({
         ? (t.noProgramPaymentPanel || completionLabels.noProgramPaymentPanel)
         : (t.incompleteProgramPaymentPanel || completionLabels.incompleteProgramPaymentPanel)
     );
+  const scopedPaymentFormReady = scopedPaymentsReady && Boolean(program);
+  const paymentFormDataReady = globalDetailReady || scopedPaymentFormReady;
   const handleAddPaymentClick = React.useCallback(async () => {
     if (!paymentsReady) {
       onToast?.(loadingLabel, "info");
@@ -501,12 +503,12 @@ export default function ClientDetail({
       onToast?.(paymentBlockMessage, "error");
       return;
     }
-    if (!globalDetailReady) {
+    if (!paymentFormDataReady) {
       await requestGlobalDetailDataForAction();
       return;
     }
     setShowPayForm(true);
-  }, [canAddPayment, globalDetailReady, loadingLabel, onToast, paymentBlockMessage, paymentsReady, requestGlobalDetailDataForAction]);
+  }, [canAddPayment, loadingLabel, onToast, paymentBlockMessage, paymentFormDataReady, paymentsReady, requestGlobalDetailDataForAction]);
 
   React.useEffect(() => {
     if (canAddPayment || !showPayForm) return;
@@ -952,8 +954,13 @@ export default function ClientDetail({
           </Button>
         </span>
       )}
-      {paymentsReady && globalDetailReady && showPayForm && canAddPayment && (
+      {paymentsReady && paymentFormDataReady && showPayForm && canAddPayment && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
+          clientOverride={scopedPaymentFormReady ? client : null}
+          programOverride={scopedPaymentFormReady ? program : null}
+          paymentsOverride={scopedPaymentFormReady ? payments : null}
+          totalPaidOverride={scopedPaymentFormReady ? totalPaid : undefined}
+          paymentsReadyOverride={scopedPaymentFormReady ? true : undefined}
           onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); onDataChanged?.(); }}
           onCancel={() => setShowPayForm(false)} />
       )}

@@ -1345,7 +1345,9 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
   const [programStatusMenuOpen, setProgramStatusMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
+  const [programPageSizeMenuOpen, setProgramPageSizeMenuOpen] = React.useState(false);
   const [hoveredYearOption, setHoveredYearOption] = React.useState(null);
+  const [hoveredProgramPageSizeOption, setHoveredProgramPageSizeOption] = React.useState(null);
   const [deletePrompt,  setDeletePrompt]  = React.useState(null);
   const [archivePrompt, setArchivePrompt] = React.useState(null);
   const [bulkTrashPrompt, setBulkTrashPrompt] = React.useState(null);
@@ -1357,6 +1359,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const programTypeButtonRef = React.useRef(null);
   const programStatusMenuRef = React.useRef(null);
   const programStatusButtonRef = React.useRef(null);
+  const programPageSizeMenuRef = React.useRef(null);
+  const programPageSizeButtonRef = React.useRef(null);
   const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
@@ -1830,6 +1834,29 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [programStatusMenuOpen]);
+
+  React.useEffect(() => {
+    if (!programPageSizeMenuOpen) return;
+    const handlePointerDown = (event) => {
+      const menuNode = programPageSizeMenuRef.current;
+      const buttonNode = programPageSizeButtonRef.current;
+      if (menuNode?.contains(event.target) || buttonNode?.contains(event.target)) return;
+      setProgramPageSizeMenuOpen(false);
+      setHoveredProgramPageSizeOption(null);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setProgramPageSizeMenuOpen(false);
+        setHoveredProgramPageSizeOption(null);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [programPageSizeMenuOpen]);
 
   React.useEffect(() => {
     setProgramsCurrentPage(1);
@@ -2485,43 +2512,119 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                   </label>
                 )}
               </div>
-              <label style={{
+              <div style={{
                 order:7,
+                position:"relative",
                 height:34,
                 display:"inline-flex",
                 alignItems:"center",
-                gap:6,
-                border:"1px solid var(--rukn-border-soft)",
-                borderRadius:9,
-                background:"var(--rukn-bg-soft)",
-                padding:"0 7px",
-                fontSize:12,
-                color:"var(--rukn-text-muted)",
-                fontWeight:800,
-                whiteSpace:"nowrap",
               }}>
-                <span>{pageSizeSuffix}</span>
-                <select
-                  value={programsPageSize}
-                  onChange={(event) => setProgramsPageSize(Number(event.target.value) || PROGRAMS_LIST_DEFAULT_PAGE_SIZE)}
+                <button
+                  ref={programPageSizeButtonRef}
+                  type="button"
+                  aria-label={pageSizeSuffix}
+                  aria-haspopup="listbox"
+                  aria-expanded={programPageSizeMenuOpen}
+                  onClick={() => setProgramPageSizeMenuOpen((open) => !open)}
                   style={{
-                    height:28,
-                    border:"1px solid transparent",
-                    borderRadius:7,
-                    background:"transparent",
-                    color:"var(--rukn-gold)",
-                    padding:"0 2px",
-                    fontFamily:"'Cairo',sans-serif",
+                    height:34,
+                    display:"inline-flex",
+                    alignItems:"center",
+                    justifyContent:"space-between",
+                    gap:8,
+                    border:"1px solid var(--rukn-border-soft)",
+                    borderRadius:9,
+                    background:"var(--rukn-bg-soft)",
+                    padding:"0 10px",
+                    color:"var(--rukn-text-muted)",
                     fontSize:12,
-                    fontWeight:900,
-                    outline:"none",
+                    fontWeight:800,
+                    fontFamily:"'Cairo',sans-serif",
+                    direction:dir,
+                    whiteSpace:"nowrap",
+                    cursor:"pointer",
+                    transition:"border-color .2s, box-shadow .2s, background .2s",
                   }}
                 >
-                  {PROGRAMS_LIST_PAGE_SIZE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
+                  <span style={{ display:"inline-flex", alignItems:"baseline", gap:7, minWidth:0 }}>
+                    <span>{pageSizeSuffix}</span>
+                    <span style={{ color:"var(--rukn-gold)", fontWeight:900, minWidth:18, textAlign:"center" }}>
+                      {programsPageSize}
+                    </span>
+                  </span>
+                  <ChevronDown
+                    size={13}
+                    color="var(--rukn-text-muted)"
+                    strokeWidth={2.3}
+                    style={{
+                      flexShrink:0,
+                      transform:programPageSizeMenuOpen ? "rotate(180deg)" : "none",
+                      transition:"transform .18s ease",
+                    }}
+                  />
+                </button>
+                {programPageSizeMenuOpen && (
+                  <div
+                    ref={programPageSizeMenuRef}
+                    role="listbox"
+                    aria-label={pageSizeSuffix}
+                    style={{
+                      position:"absolute",
+                      top:"calc(100% + 8px)",
+                      insetInlineStart:0,
+                      minWidth:"100%",
+                      width:96,
+                      zIndex:35,
+                      padding:6,
+                      borderRadius:14,
+                      border:"1px solid var(--rukn-border-soft)",
+                      background:"var(--rukn-bg-select)",
+                      boxShadow:"var(--rukn-shadow-card)",
+                      backdropFilter:"blur(12px)",
+                    }}
+                  >
+                    {PROGRAMS_LIST_PAGE_SIZE_OPTIONS.map((option) => {
+                      const active = option === programsPageSize;
+                      const hovered = hoveredProgramPageSizeOption === option;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          onMouseEnter={() => setHoveredProgramPageSizeOption(option)}
+                          onMouseLeave={() => setHoveredProgramPageSizeOption((current) => current === option ? null : current)}
+                          onClick={() => {
+                            setProgramsPageSize(option);
+                            setProgramPageSizeMenuOpen(false);
+                            setHoveredProgramPageSizeOption(null);
+                          }}
+                          style={{
+                            width:"100%",
+                            border:0,
+                            borderRadius:10,
+                            padding:"8px 10px",
+                            background:active
+                              ? "var(--rukn-gold-dim)"
+                              : hovered
+                                ? "var(--rukn-row-hover)"
+                                : "transparent",
+                            color:active ? "var(--rukn-gold)" : "var(--rukn-text)",
+                            fontSize:12,
+                            fontWeight:active ? 900 : 800,
+                            fontFamily:"'Cairo',sans-serif",
+                            textAlign:"center",
+                            cursor:"pointer",
+                            transition:"background-color .16s ease, color .16s ease",
+                          }}
+                        >
+                          {option}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
