@@ -41,6 +41,38 @@ const drawCover = (ctx, image, x, y, width, height, mode = "cover") => {
   ctx.drawImage(image, x + (width - sw) / 2, y + (height - sh) / 2, sw, sh);
 };
 
+const createBadgeRenderAssets = async (template = {}) => {
+  const widthMm = Number(template.widthMm || 90);
+  const heightMm = Number(template.heightMm || 140);
+  const scale = 250 / 25.4;
+  const pixelWidth = Math.round(widthMm * scale);
+  const pixelHeight = Math.round(heightMm * scale);
+  const layout = normalizeBadgeLayout(template.layout);
+  const visibleFields = layout.fields.filter((item) => item.visible !== false);
+  const templateUrl = await getBadgeTemplateImageUrl(template.templatePath);
+  const background = await loadImage(templateUrl);
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = pixelWidth;
+  baseCanvas.height = pixelHeight;
+  const baseCtx = baseCanvas.getContext("2d");
+  baseCtx.fillStyle = "#ffffff";
+  baseCtx.fillRect(0, 0, pixelWidth, pixelHeight);
+  if (background) drawCover(baseCtx, background, 0, 0, pixelWidth, pixelHeight, "cover");
+
+  return {
+    widthMm,
+    heightMm,
+    scale,
+    pixelWidth,
+    pixelHeight,
+    widthPt: mmToPt(widthMm),
+    heightPt: mmToPt(heightMm),
+    visibleFields,
+    background,
+    baseCanvas,
+  };
+};
+
 const dataForField = ({ field, client, program, agency, fileNumber }) => {
   const phones = badgePhonesFromProgram(program);
   const map = {
@@ -68,26 +100,19 @@ const getTemplateForProgram = async ({ agencyId, program }) => {
     || null;
 };
 
-const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber }) => {
-  const widthMm = Number(template.widthMm || 90);
-  const heightMm = Number(template.heightMm || 140);
-  const scale = 250 / 25.4;
+const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber, renderAssets }) => {
+  const assets = renderAssets || await createBadgeRenderAssets(template);
+  const { scale, pixelWidth, pixelHeight, visibleFields, baseCanvas } = assets;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(widthMm * scale);
-  canvas.height = Math.round(heightMm * scale);
+  canvas.width = pixelWidth;
+  canvas.height = pixelHeight;
   const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const templateUrl = await getBadgeTemplateImageUrl(template.templatePath);
-  const background = await loadImage(templateUrl);
-  if (background) drawCover(ctx, background, 0, 0, canvas.width, canvas.height, "cover");
+  ctx.drawImage(baseCanvas, 0, 0);
 
   const photoPath = client?.badgePhotoPath || client?.docs?.badgePhotoPath || "";
   const photo = photoPath ? await loadImage(await getPilgrimPhotoUrl(photoPath)) : null;
-  const layout = normalizeBadgeLayout(template.layout);
 
-  for (const field of layout.fields.filter((item) => item.visible !== false)) {
+  for (const field of visibleFields) {
     const box = {
       x: canvas.width * field.xPct / 100,
       y: canvas.height * field.yPct / 100,
@@ -134,8 +159,8 @@ const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber
   }
 
   return {
-    widthPt: mmToPt(widthMm),
-    heightPt: mmToPt(heightMm),
+    widthPt: assets.widthPt,
+    heightPt: assets.heightPt,
     pixelWidth: canvas.width,
     pixelHeight: canvas.height,
     jpeg: await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", .92)),
@@ -220,6 +245,7 @@ export async function downloadClientBadgePdf({ agencyId, client, program, agency
 export async function downloadProgramBadgesPdf({ agencyId, clients = [], program, agency }) {
   const template = await getTemplateForProgram({ agencyId, program });
   if (!template) throw new Error("missing-template");
+  const renderAssets = await createBadgeRenderAssets(template);
   const pages = [];
   for (let index = 0; index < clients.length; index += 1) {
     const page = await renderBadgeCanvas({
@@ -228,6 +254,7 @@ export async function downloadProgramBadgesPdf({ agencyId, clients = [], program
       program,
       agency,
       fileNumber: String(index + 1).padStart(3, "0"),
+      renderAssets,
     });
     pages.push(page);
   }
