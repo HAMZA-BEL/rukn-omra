@@ -1037,6 +1037,12 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             grid-template-columns: 1fr;
           }
         }
+        .client-representative-option:hover,
+        .client-representative-option:focus-visible {
+          background: rgba(212,175,55,.08) !important;
+          color: var(--rukn-gold) !important;
+          outline: none;
+        }
       `}</style>
       {!isEdit && (
         <GlassCard gold style={{ padding:16, marginBottom:14 }}>
@@ -1612,16 +1618,16 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 	                    <div
 	                      style={{
 	                        position:"absolute",
-	                        zIndex:1000,
+	                        zIndex:13000,
 	                        top:"calc(100% + 6px)",
 	                        left:0,
 	                        right:0,
 	                        maxHeight:220,
 	                        overflowY:"auto",
 	                        borderRadius:12,
-	                        border:"1px solid var(--rukn-border-soft)",
-	                        background:"var(--rukn-bg-card)",
-	                        boxShadow:"var(--rukn-shadow-card)",
+	                        border:"1px solid var(--rukn-menu-border)",
+	                        background:"var(--rukn-menu-bg)",
+	                        boxShadow:"var(--rukn-menu-shadow)",
 	                        padding:6,
 	                      }}
 	                    >
@@ -1632,6 +1638,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 	                          <button
 	                            key={item.id}
 	                            type="button"
+	                            className="client-representative-option"
 	                            onMouseDown={(event) => event.preventDefault()}
 	                            onClick={() => {
 	                              setForm((prev) => ({ ...prev, representedByClientId: item.id }));

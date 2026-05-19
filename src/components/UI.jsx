@@ -1,7 +1,9 @@
 import React from "react";
 import { createPortal } from "react-dom";
+import { ChevronDown } from "lucide-react";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon, IconBubble } from "./Icon";
 
 const t = theme.colors;
@@ -209,10 +211,255 @@ export function Input({
   );
 }
 
+const normalizeSelectOption = (option, index) => {
+  if (typeof option === "string") {
+    return { value: option, label: option, disabled: false, key: `${option}-${index}` };
+  }
+  const optionValue = option?.value ?? "";
+  return {
+    value: optionValue,
+    label: option?.label ?? optionValue,
+    disabled: Boolean(option?.disabled),
+    key: `${String(optionValue)}-${index}`,
+  };
+};
+
+const getSelectValueKey = (value) => String(value ?? "");
+
+const getFirstEnabledIndex = (options) => options.findIndex((option) => !option.disabled);
+
+const getNextEnabledIndex = (options, currentIndex, direction) => {
+  if (!options.length) return -1;
+  let nextIndex = currentIndex;
+  for (let step = 0; step < options.length; step += 1) {
+    nextIndex = (nextIndex + direction + options.length) % options.length;
+    if (!options[nextIndex]?.disabled) return nextIndex;
+  }
+  return -1;
+};
+
 // ── Select ────────────────────────────────────────────────────────────────────
-export function Select({ label, value, onChange, options, required, style, disabled = false }) {
+export function Select({ label, value, onChange, options = [], required, style, disabled = false }) {
+  const triggerRef = React.useRef(null);
+  const menuRef = React.useRef(null);
   const [focused, setFocused] = React.useState(false);
+  const [hovered, setHovered] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+  const [activeIndex, setActiveIndex] = React.useState(-1);
   const { dir } = useLang();
+  const isRTL = dir === "rtl";
+  const listboxId = React.useId();
+  const normalizedOptions = React.useMemo(
+    () => options.map(normalizeSelectOption),
+    [options]
+  );
+  const selectedIndex = normalizedOptions.findIndex(
+    (option) => getSelectValueKey(option.value) === getSelectValueKey(value)
+  );
+  const selectedOption = selectedIndex >= 0 ? normalizedOptions[selectedIndex] : null;
+  const firstEnabledIndex = React.useMemo(() => getFirstEnabledIndex(normalizedOptions), [normalizedOptions]);
+  const menuPos = useDropdownPosition({
+    anchorRef: triggerRef,
+    menuRef,
+    open,
+    rtl: isRTL,
+    offset: 7,
+  });
+  const triggerWidth = triggerRef.current?.getBoundingClientRect().width || 220;
+  const hasDisplayValue = value !== "" && value !== null && value !== undefined;
+  const displayLabel = selectedOption?.label ?? (hasDisplayValue ? String(value) : "");
+
+  React.useEffect(() => {
+    if (!open) return;
+    setActiveIndex(selectedIndex >= 0 && !normalizedOptions[selectedIndex]?.disabled
+      ? selectedIndex
+      : firstEnabledIndex);
+  }, [firstEnabledIndex, normalizedOptions, open, selectedIndex]);
+
+  React.useEffect(() => {
+    if (!open || typeof document === "undefined") return undefined;
+
+    const closeIfOutside = (event) => {
+      if (triggerRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const closeOnScroll = (event) => {
+      if (menuRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const closeOnResize = () => setOpen(false);
+
+    document.addEventListener("mousedown", closeIfOutside, true);
+    document.addEventListener("touchstart", closeIfOutside, true);
+    window.addEventListener("scroll", closeOnScroll, true);
+    window.addEventListener("resize", closeOnResize);
+    return () => {
+      document.removeEventListener("mousedown", closeIfOutside, true);
+      document.removeEventListener("touchstart", closeIfOutside, true);
+      window.removeEventListener("scroll", closeOnScroll, true);
+      window.removeEventListener("resize", closeOnResize);
+    };
+  }, [open]);
+
+  const emitChange = React.useCallback((nextValue) => {
+    onChange?.({
+      target: { value: nextValue },
+      currentTarget: { value: nextValue },
+    });
+  }, [onChange]);
+
+  const selectOption = React.useCallback((option) => {
+    if (!option || option.disabled || disabled) return;
+    if (getSelectValueKey(option.value) === getSelectValueKey(value)) {
+      setOpen(false);
+      if (typeof window !== "undefined") window.requestAnimationFrame?.(() => triggerRef.current?.focus());
+      return;
+    }
+    emitChange(option.value);
+    setOpen(false);
+    if (typeof window !== "undefined") window.requestAnimationFrame?.(() => triggerRef.current?.focus());
+  }, [disabled, emitChange, value]);
+
+  const openMenu = React.useCallback(() => {
+    if (disabled || !normalizedOptions.length) return;
+    setOpen(true);
+  }, [disabled, normalizedOptions.length]);
+
+  const handleKeyDown = React.useCallback((event) => {
+    if (disabled) return;
+
+    if (event.key === "Escape") {
+      if (open) {
+        event.preventDefault();
+        setOpen(false);
+      }
+      return;
+    }
+
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        openMenu();
+        return;
+      }
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => getNextEnabledIndex(
+        normalizedOptions,
+        current >= 0 ? current : (selectedIndex >= 0 ? selectedIndex : firstEnabledIndex),
+        direction
+      ));
+      return;
+    }
+
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      if (!open) {
+        openMenu();
+        return;
+      }
+      if (event.key === "Home") {
+        setActiveIndex(firstEnabledIndex);
+        return;
+      }
+      setActiveIndex(getNextEnabledIndex(normalizedOptions, 0, -1));
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!open) {
+        openMenu();
+        return;
+      }
+      selectOption(normalizedOptions[activeIndex >= 0 ? activeIndex : selectedIndex]);
+    }
+  }, [activeIndex, disabled, firstEnabledIndex, normalizedOptions, open, openMenu, selectOption, selectedIndex]);
+
+  const borderColor = disabled
+    ? v.borderInput
+    : focused
+      ? v.gold
+      : hovered
+        ? "var(--rukn-border-hover)"
+        : v.borderInput;
+  const menu = open && typeof document !== "undefined" ? createPortal(
+    <div
+      ref={menuRef}
+      id={listboxId}
+      role="listbox"
+      dir={dir}
+      style={{
+        position: "fixed",
+        top: menuPos.top,
+        left: menuPos.left,
+        visibility: menuPos.visibility,
+        zIndex: 13000,
+        minWidth: triggerWidth,
+        maxWidth: "min(360px, calc(100vw - 24px))",
+        maxHeight: "min(270px, calc(100vh - 24px))",
+        overflowY: "auto",
+        padding: 6,
+        borderRadius: 12,
+        border: "1px solid var(--rukn-menu-border)",
+        background: "var(--rukn-menu-bg)",
+        boxShadow: "var(--rukn-menu-shadow)",
+      }}
+    >
+      {normalizedOptions.map((option, index) => {
+        const selected = getSelectValueKey(option.value) === getSelectValueKey(value);
+        const active = activeIndex === index;
+        return (
+          <button
+            key={option.key}
+            id={`${listboxId}-${index}`}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            disabled={option.disabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+            onClick={() => selectOption(option)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              border: 0,
+              borderRadius: 9,
+              background: selected
+                ? "var(--rukn-gold-dim)"
+                : active
+                  ? "rgba(212,175,55,.08)"
+                  : "transparent",
+              color: selected || active ? v.gold : v.text,
+              padding: "8px 10px",
+              fontSize: 13,
+              fontWeight: selected ? 850 : 650,
+              cursor: option.disabled ? "not-allowed" : "pointer",
+              opacity: option.disabled ? 0.45 : 1,
+              fontFamily: "'Cairo',sans-serif",
+              textAlign: "start",
+              whiteSpace: "nowrap",
+              outline: "none",
+            }}
+          >
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {option.label}
+            </span>
+            {selected && <AppIcon name="check" size={14} color="currentColor" />}
+          </button>
+        );
+      })}
+    </div>,
+    document.body
+  ) : null;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, ...style }}>
       {label && (
@@ -220,39 +467,59 @@ export function Select({ label, value, onChange, options, required, style, disab
           {label} {required && <span style={{ color: t.danger }}>*</span>}
         </label>
       )}
-      <select
-        value={value}
-        onChange={onChange}
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-activedescendant={open && activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+        aria-required={required || undefined}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onClick={() => setOpen((current) => (disabled ? false : !current))}
+        onKeyDown={handleKeyDown}
         disabled={disabled}
         style={{
+          width: "100%",
+          minHeight: 42,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
           background: v.bgSelect,
-          border: `1px solid ${focused ? v.gold : v.borderInput}`,
+          border: `1px solid ${borderColor}`,
           borderRadius: 10,
-          padding: "10px 14px",
-          color: value ? v.text : v.textMuted,
+          padding: isRTL ? "10px 14px 10px 11px" : "10px 11px 10px 14px",
+          color: hasDisplayValue ? v.text : v.textMuted,
           fontSize: 14,
+          fontWeight: 600,
           fontFamily: "'Cairo',sans-serif",
           direction: dir,
           outline: "none",
-          transition: "border-color .2s",
+          transition: "border-color .2s, box-shadow .2s, background .2s",
           boxShadow: focused ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
           cursor: disabled ? "not-allowed" : "pointer",
           opacity: disabled ? 0.6 : 1,
         }}
       >
-        {options.map((o) => {
-          if (typeof o === "string") {
-            return <option key={o} value={o}>{o}</option>;
-          }
-          return (
-            <option key={o.value} value={o.value} disabled={o.disabled}>
-              {o.label}
-            </option>
-          );
-        })}
-      </select>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {displayLabel || "—"}
+        </span>
+        <ChevronDown
+          size={16}
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            color: focused || open ? v.gold : v.textMuted,
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform .18s ease, color .18s ease",
+          }}
+        />
+      </button>
+      {menu}
     </div>
   );
 }

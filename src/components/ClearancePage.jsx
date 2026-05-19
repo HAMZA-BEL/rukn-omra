@@ -1,7 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
-import { StatusBadge, GlassCard, SearchBar, Button, Modal } from "./UI";
+import { StatusBadge, GlassCard, SearchBar, Button, Modal, Select } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { printClearancePDF } from "../utils/exportPdf";
@@ -1025,55 +1025,25 @@ export default function ClearancePage({ store, focus = null }) {
           gap:12,
           alignItems:"end",
         }}>
-          <label style={{ display:"flex", flexDirection:"column", gap:6, flex:"1 1 260px", minWidth:220 }}>
-            <span style={{ fontSize:12, fontWeight:700, color:tc.grey }}>{labels.program}</span>
-            <select
-              value={selectedProgramId}
-              onChange={(event) => setSelectedProgramId(event.target.value)}
-              disabled={!programs.length}
-              style={{
-                width:"100%",
-                height:42,
-                background:"var(--rukn-bg-select)",
-                border:"1px solid var(--rukn-border-input)",
-                borderRadius:10,
-                color:"var(--rukn-text)",
-                padding:"9px 12px",
-                fontSize:13,
-                fontFamily:"'Cairo',sans-serif",
-                direction:dir,
-                outline:"none",
-              }}
-            >
-              {!programs.length && <option value="">{labels.selectProgram}</option>}
-              {programs.map((program) => (
-                <option key={program.id} value={program.id}>{program.name}</option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display:"flex", flexDirection:"column", gap:6, flex:"0 0 140px" }}>
-            <span style={{ fontSize:12, fontWeight:700, color:tc.grey }}>{labels.pageSize}</span>
-            <select
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value))}
-              disabled={!selectedProgram}
-              style={{
-                width:"100%",
-                height:42,
-                background:"var(--rukn-bg-select)",
-                border:"1px solid var(--rukn-border-input)",
-                borderRadius:10,
-                color:"var(--rukn-text)",
-                padding:"9px 12px",
-                fontSize:13,
-                fontFamily:"'Cairo',sans-serif",
-                direction:dir,
-                outline:"none",
-              }}
-            >
-              {[10, 20, 50].map((size) => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
+          <Select
+            label={labels.program}
+            value={selectedProgramId}
+            onChange={(event) => setSelectedProgramId(event.target.value)}
+            disabled={!programs.length}
+            options={[
+              ...(!programs.length ? [{ value:"", label:labels.selectProgram }] : []),
+              ...programs.map((program) => ({ value:program.id, label:program.name })),
+            ]}
+            style={{ flex:"1 1 260px", minWidth:220 }}
+          />
+          <Select
+            label={labels.pageSize}
+            value={pageSize}
+            onChange={(event) => setPageSize(Number(event.target.value))}
+            disabled={!selectedProgram}
+            options={[10, 20, 50].map((size) => ({ value:size, label:String(size) }))}
+            style={{ flex:"0 0 140px" }}
+          />
           <Button
             variant="primary"
             icon="download"
@@ -1411,20 +1381,6 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
     });
   }, [invoices, programFilter, search, yearFilter]);
 
-  const selectStyle = {
-    width:"100%",
-    height:42,
-    background:"var(--rukn-bg-select)",
-    border:"1px solid var(--rukn-border-input)",
-    borderRadius:10,
-    color:"var(--rukn-text)",
-    padding:"9px 12px",
-    fontSize:13,
-    fontFamily:"'Cairo',sans-serif",
-    direction:dir,
-    outline:"none",
-  };
-
   const renderInvoiceTitle = (invoice) => {
     const recipient = invoice.recipientSnapshot || {};
     const name = invoice.recipientType === "company"
@@ -1451,21 +1407,25 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:12, alignItems:"end", marginBottom:16 }}>
-          <label style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            <span style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text-muted)" }}>{labels.year}</span>
-            <select value={yearFilter} onChange={(event) => setYearFilter(event.target.value)} style={selectStyle}>
-              <option value="all">{labels.all}</option>
-              {invoiceYears.map((year) => <option key={year} value={year}>{year}</option>)}
-            </select>
-          </label>
+          <Select
+            label={labels.year}
+            value={yearFilter}
+            onChange={(event) => setYearFilter(event.target.value)}
+            options={[
+              { value:"all", label:labels.all },
+              ...invoiceYears.map((year) => ({ value:year, label:year })),
+            ]}
+          />
 
-          <label style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            <span style={{ fontSize:12, fontWeight:700, color:"var(--rukn-text-muted)" }}>{labels.program}</span>
-            <select value={programFilter} onChange={(event) => setProgramFilter(event.target.value)} style={selectStyle}>
-              <option value="all">{labels.all}</option>
-              {invoicePrograms.map((program) => <option key={program.key} value={program.key}>{program.label}</option>)}
-            </select>
-          </label>
+          <Select
+            label={labels.program}
+            value={programFilter}
+            onChange={(event) => setProgramFilter(event.target.value)}
+            options={[
+              { value:"all", label:labels.all },
+              ...invoicePrograms.map((program) => ({ value:program.key, label:program.label })),
+            ]}
+          />
 
           <SearchBar
             value={search}
