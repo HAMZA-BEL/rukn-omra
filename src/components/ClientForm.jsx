@@ -28,13 +28,11 @@ import {
   normalizeClientServiceType,
 } from "../utils/clientServiceTypes";
 import { getProgramKind } from "../utils/participantTerminology";
+import { getClientDisplayName } from "../utils/clientNames";
 import {
   REPRESENTED_BY_RELATIONSHIPS,
   clientHasCin,
-  getClientAge,
-  getRepresentativeLabel,
   getSameProgramRepresentativeOptions,
-  isClientAdultWithoutCin,
   isClientMinorWithoutCin,
   normalizeRepresentativeRelationship,
 } from "../utils/clientRepresentation";
@@ -110,10 +108,10 @@ const representationText = (lang) => ({
     ? "This pilgrim has a national ID, so an individual contract will be generated."
     : "هذا المعتمر يملك بطاقة وطنية، لذلك سيتم إنشاء عقد منفرد له.",
   minorNeedsRepresentative: lang === "fr"
-    ? "Ce mineur n’a pas de CIN. Sélectionnez un représentant du même programme."
+    ? "Ce pèlerin n’a pas de CIN. Vous pouvez choisir la personne qui le représente dans le contrat."
     : lang === "en"
-    ? "This minor has no national ID. Select a representative from the same program."
-    : "هذا القاصر لا يملك بطاقة وطنية. اختر من ينوب عنه من نفس البرنامج.",
+    ? "This pilgrim has no national ID. You can select who represents them in the contract."
+    : "هذا المعتمر لا يملك بطاقة وطنية، ويمكن اختيار من ينوب عنه في العقد.",
   adultNoCin: lang === "fr"
     ? "Ce pèlerin est adulte mais n’a pas de CIN."
     : lang === "en"
@@ -129,6 +127,7 @@ const representationText = (lang) => ({
   searchRepresentative: lang === "fr" ? "Rechercher dans les pèlerins du même programme" : lang === "en" ? "Search same-program pilgrims" : "ابحث داخل معتمري نفس البرنامج",
   selectRepresentative: lang === "fr" ? "Choisir un représentant" : lang === "en" ? "Select representative" : "اختر من ينوب عنه",
   noRepresentative: lang === "fr" ? "Aucun représentant éligible dans ce programme" : lang === "en" ? "No eligible representative in this program" : "لا يوجد ممثل مؤهل في هذا البرنامج",
+  noResults: lang === "fr" ? "Aucun résultat" : lang === "en" ? "No results" : "لا توجد نتائج",
   representativeRequired: lang === "fr"
     ? "Choisissez un représentant pour ce mineur."
     : lang === "en"
@@ -144,6 +143,30 @@ const pickString = (...candidates) => {
     }
   }
   return "";
+};
+
+const normalizeSearchValue = (value) => pickString(value).toLowerCase();
+
+const getRepresentativeDisplayName = (client = {}) => (
+  pickString(getClientDisplayName(client, ""), client.name, client.displayName, client.fullName, client.id)
+);
+
+const getRepresentativeSearchText = (client = {}) => {
+  const passport = client.passport || {};
+  return [
+    getRepresentativeDisplayName(client),
+    client.name,
+    client.displayName,
+    client.fullName,
+    client.firstName,
+    client.lastName,
+    client.prenom,
+    client.nom,
+    client.phone,
+    passport.number,
+    client.passportNumber,
+    client.passport_number,
+  ].map(normalizeSearchValue).filter(Boolean).join(" ");
 };
 
 const pickNumber = (...candidates) => {
@@ -421,6 +444,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const [badgePhotoError, setBadgePhotoError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [representativeSearch, setRepresentativeSearch] = React.useState("");
+  const [representativePickerOpen, setRepresentativePickerOpen] = React.useState(false);
 
   // Update form when client changes (for edit mode)
   React.useEffect(() => {
@@ -435,6 +459,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       setBadgePhotoRemoved(false);
       setBadgePhotoError("");
       setRepresentativeSearch("");
+      setRepresentativePickerOpen(false);
     }
   }, [client, defaultProgramId, programs]);
 
@@ -565,9 +590,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     },
   }), [client?.id, form]);
   const hasCin = clientHasCin(representationClient);
-  const clientAge = getClientAge(representationClient);
   const minorWithoutCin = isClientMinorWithoutCin(representationClient);
-  const adultWithoutCin = isClientAdultWithoutCin(representationClient);
   const representativeOptions = React.useMemo(() => (
     getSameProgramRepresentativeOptions({
       clients,
@@ -575,13 +598,28 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       currentClientId: client?.id || "",
     })
   ), [client?.id, clients, form.programId]);
+  const selectedRepresentative = React.useMemo(() => (
+    representativeOptions.find((item) => String(item.id || "") === String(form.representedByClientId || "")) || null
+  ), [form.representedByClientId, representativeOptions]);
+  const selectedRepresentativeLabel = selectedRepresentative ? getRepresentativeDisplayName(selectedRepresentative) : "";
   const filteredRepresentativeOptions = React.useMemo(() => {
-    const term = pickString(representativeSearch).toLowerCase();
+    const term = normalizeSearchValue(representativeSearch);
     if (!term) return representativeOptions;
     return representativeOptions.filter((item) => (
-      getRepresentativeLabel(item, lang).toLowerCase().includes(term)
+      getRepresentativeSearchText(item).includes(term)
     ));
-  }, [lang, representativeOptions, representativeSearch]);
+  }, [representativeOptions, representativeSearch]);
+  const representativeInputValue = representativeSearch || selectedRepresentativeLabel;
+  const relationshipOptions = React.useMemo(() => {
+    const options = REPRESENTED_BY_RELATIONSHIPS.map((item) => ({ value: item.value, label: item.label[lang] || item.label.ar }));
+    if (
+      form.representedByRelationship
+      && !options.some((item) => item.value === form.representedByRelationship)
+    ) {
+      options.push({ value: form.representedByRelationship, label: form.representedByRelationship });
+    }
+    return [{ value: "", label: "—" }, ...options];
+  }, [form.representedByRelationship, lang]);
   const programPackages = React.useMemo(
     () => selectedProgram ? normalizeProgramPackages(selectedProgram) : [],
     [selectedProgram]
@@ -653,8 +691,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 
   React.useEffect(() => {
     if (!form.representedByClientId) return;
-    if (representativeOptions.some((item) => item.id === form.representedByClientId)) return;
+    if (representativeOptions.some((item) => String(item.id || "") === String(form.representedByClientId || ""))) return;
     setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
+    setRepresentativeSearch("");
   }, [form.representedByClientId, representativeOptions]);
 
   const handlePackageChange = React.useCallback((e) => {
@@ -1482,69 +1521,162 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       </GlassCard>
       )}
 
-      {/* ── Contract Representation ── */}
-      {entryMode === ROOM_ENTRY_MODES.SINGLE && (
-      <GlassCard style={{ padding:16, marginBottom:14 }}>
-        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}>
-          <AppIcon name="users" size={14} color={tc.gold} /> {representationLabels.title}
-        </p>
-        {hasCin ? (
-          <p style={{ fontSize:12, color:tc.greenLight, lineHeight:1.7 }}>
-            {representationLabels.hasCin}
-          </p>
-        ) : minorWithoutCin ? (
-          <div>
-            <p style={{ fontSize:12, color:tc.warning, lineHeight:1.7, marginBottom:12 }}>
-              {representationLabels.minorNeedsRepresentative}
-            </p>
-            <div className="form-grid form-grid--two">
-              <Input
-                label={representationLabels.searchRepresentative}
-                value={representativeSearch}
-                onChange={(event) => setRepresentativeSearch(event.target.value)}
-              />
-              <Select
-                label={representationLabels.representedBy}
-                value={form.representedByClientId}
-                onChange={(event) => setForm((prev) => ({ ...prev, representedByClientId: event.target.value }))}
-                options={[
-                  { value: "", label: filteredRepresentativeOptions.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative },
-                  ...filteredRepresentativeOptions.map((item) => ({
-                    value: item.id,
-                    label: getRepresentativeLabel(item, lang),
-                  })),
-                ]}
-              />
-              <Select
-                label={representationLabels.relationship}
-                value={form.representedByRelationship}
-                onChange={(event) => setForm((prev) => ({ ...prev, representedByRelationship: event.target.value }))}
-                options={[
-                  { value: "", label: "—" },
-                  ...REPRESENTED_BY_RELATIONSHIPS.map((item) => ({ value: item.value, label: item.label[lang] || item.label.ar })),
-                ]}
-              />
-            </div>
-            {errors.representedByClientId && (
-              <p style={{ color:tc.danger, fontSize:11, marginTop:8 }}>{errors.representedByClientId}</p>
-            )}
-          </div>
-        ) : adultWithoutCin ? (
-          <p style={{ fontSize:12, color:tc.warning, lineHeight:1.7 }}>
-            {representationLabels.adultNoCin}
-          </p>
-        ) : (
-          <p style={{ fontSize:12, color:tc.grey, lineHeight:1.7 }}>
-            {representationLabels.waitingForBirthDate}
-          </p>
-        )}
-        {clientAge !== null && (
-          <p style={{ fontSize:11, color:tc.grey, marginTop:8 }}>
-            {lang === "fr" ? "Âge" : lang === "en" ? "Age" : "العمر"}: {clientAge}
-          </p>
-        )}
-      </GlassCard>
-      )}
+	      {/* ── Contract Representation ── */}
+	      {entryMode === ROOM_ENTRY_MODES.SINGLE && minorWithoutCin && (
+	      <GlassCard style={{
+	        padding:16,
+	        marginBottom:14,
+	        position:"relative",
+	        zIndex:representativePickerOpen ? 80 : 2,
+	        overflow:"visible",
+	      }}>
+	        <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}>
+	          <AppIcon name="users" size={14} color={tc.gold} /> {representationLabels.title}
+	        </p>
+	        <div>
+	          <p style={{ fontSize:12, color:"var(--rukn-text-muted)", lineHeight:1.7, marginBottom:12 }}>
+	            {representationLabels.minorNeedsRepresentative}
+	          </p>
+	          <div className="form-grid form-grid--two">
+	              <div style={{ display:"flex", flexDirection:"column", gap:6, position:"relative", minWidth:0 }}>
+	                <label style={{ fontSize:13, fontWeight:600, color:representativePickerOpen ? "var(--rukn-gold)" : "var(--rukn-text-muted)" }}>
+	                  {representationLabels.representedBy}
+	                </label>
+	                <div style={{ position:"relative" }}>
+	                  <input
+	                    value={representativeInputValue}
+	                    disabled={!representativeOptions.length}
+	                    placeholder={representativeOptions.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative}
+		                    onFocus={(event) => {
+		                      setRepresentativePickerOpen(true);
+		                      event.currentTarget.select();
+		                    }}
+	                    onBlur={() => window.setTimeout(() => setRepresentativePickerOpen(false), 120)}
+	                    onChange={(event) => {
+	                      setRepresentativeSearch(event.target.value);
+	                      setRepresentativePickerOpen(true);
+	                      if (form.representedByClientId) {
+	                        setForm((prev) => ({ ...prev, representedByClientId: "" }));
+	                      }
+	                    }}
+	                    style={{
+	                      width:"100%",
+	                      background:"var(--rukn-bg-input)",
+	                      border:`1px solid ${errors.representedByClientId ? tc.danger : representativePickerOpen ? "var(--rukn-gold)" : "var(--rukn-border-input)"}`,
+	                      borderRadius:10,
+	                      padding:dir === "rtl" ? "10px 14px 10px 38px" : "10px 38px 10px 14px",
+	                      color:"var(--rukn-text)",
+	                      fontSize:14,
+	                      fontFamily:"'Cairo',sans-serif",
+	                      direction:dir,
+	                      outline:"none",
+	                      transition:"border-color .2s, box-shadow .2s",
+	                      boxShadow:representativePickerOpen ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
+	                      opacity:representativeOptions.length ? 1 : .65,
+	                      cursor:representativeOptions.length ? "text" : "not-allowed",
+	                      boxSizing:"border-box",
+	                    }}
+	                  />
+	                  {form.representedByClientId && (
+	                    <button
+	                      type="button"
+	                      aria-label={lang === "fr" ? "Effacer" : lang === "en" ? "Clear" : "مسح"}
+	                      onMouseDown={(event) => event.preventDefault()}
+	                      onClick={() => {
+	                        setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
+	                        setRepresentativeSearch("");
+	                        setRepresentativePickerOpen(false);
+	                      }}
+	                      style={{
+	                        position:"absolute",
+	                        top:"50%",
+	                        [dir === "rtl" ? "left" : "right"]:10,
+	                        transform:"translateY(-50%)",
+	                        width:22,
+	                        height:22,
+	                        borderRadius:8,
+	                        border:"1px solid var(--rukn-border-soft)",
+	                        background:"var(--rukn-bg-soft)",
+	                        color:"var(--rukn-text-muted)",
+	                        cursor:"pointer",
+	                        display:"grid",
+	                        placeItems:"center",
+	                        fontSize:15,
+	                        lineHeight:1,
+	                      }}
+	                    >
+	                      ×
+	                    </button>
+	                  )}
+	                  {representativePickerOpen && representativeOptions.length > 0 && (
+	                    <div
+	                      style={{
+	                        position:"absolute",
+	                        zIndex:1000,
+	                        top:"calc(100% + 6px)",
+	                        left:0,
+	                        right:0,
+	                        maxHeight:220,
+	                        overflowY:"auto",
+	                        borderRadius:12,
+	                        border:"1px solid var(--rukn-border-soft)",
+	                        background:"var(--rukn-bg-card)",
+	                        boxShadow:"var(--rukn-shadow-card)",
+	                        padding:6,
+	                      }}
+	                    >
+	                      {filteredRepresentativeOptions.length ? filteredRepresentativeOptions.map((item) => {
+		                        const label = getRepresentativeDisplayName(item);
+	                        const selected = String(item.id || "") === String(form.representedByClientId || "");
+	                        return (
+	                          <button
+	                            key={item.id}
+	                            type="button"
+	                            onMouseDown={(event) => event.preventDefault()}
+	                            onClick={() => {
+	                              setForm((prev) => ({ ...prev, representedByClientId: item.id }));
+	                              setRepresentativeSearch("");
+	                              setRepresentativePickerOpen(false);
+	                            }}
+	                            style={{
+	                              width:"100%",
+	                              textAlign:dir === "rtl" ? "right" : "left",
+	                              border:"none",
+	                              borderRadius:9,
+	                              padding:"9px 10px",
+	                              background:selected ? "rgba(212,175,55,.16)" : "transparent",
+	                              color:selected ? "var(--rukn-gold)" : "var(--rukn-text)",
+	                              cursor:"pointer",
+	                              fontFamily:"'Cairo',sans-serif",
+	                              fontSize:13,
+	                              fontWeight:selected ? 800 : 600,
+	                            }}
+	                          >
+	                            {label}
+	                          </button>
+	                        );
+	                      }) : (
+	                        <div style={{ padding:"10px 12px", color:"var(--rukn-text-muted)", fontSize:12 }}>
+	                          {representationLabels.noResults}
+	                        </div>
+	                      )}
+	                    </div>
+	                  )}
+	                </div>
+	              </div>
+	              <Select
+	                label={representationLabels.relationship}
+	                value={form.representedByRelationship}
+	                onChange={(event) => setForm((prev) => ({ ...prev, representedByRelationship: event.target.value }))}
+	                options={relationshipOptions}
+	              />
+	          </div>
+	          {errors.representedByClientId && (
+	            <p style={{ color:tc.danger, fontSize:11, marginTop:8 }}>{errors.representedByClientId}</p>
+	          )}
+	        </div>
+	      </GlassCard>
+	      )}
 
       {/* ── Documents ── */}
       {entryMode === ROOM_ENTRY_MODES.SINGLE && (

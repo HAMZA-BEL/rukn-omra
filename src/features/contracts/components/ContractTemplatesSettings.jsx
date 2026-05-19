@@ -103,7 +103,7 @@ const getLocalizedFieldDescription = (field, lang, templateType) => {
 const getLocalizedGroupTitle = (group, lang, templateType) => {
   if (lang !== "ar") return group.title[lang] || group.title.ar;
   if (group.key === "pilgrim") return getArabicPilgrimTerm(templateType);
-  return group.title.ar;
+  return String(group.title.ar || "").replace(/المعتمر/g, getArabicPilgrimTerm(templateType));
 };
 
 export function ContractTemplatesSettings({ store, onToast, canManage = false, embedded = false }) {
@@ -375,11 +375,16 @@ export function ContractTemplatesSettings({ store, onToast, canManage = false, e
           {l.wordPasteWarning}
         </p>
         <div style={{ display: "grid", gap: 14 }}>
-          {CONTRACT_TEMPLATE_FIELD_GROUPS.map((group) => (
+          {CONTRACT_TEMPLATE_FIELD_GROUPS.filter((group) => !group.hidden).map((group) => (
             <div key={group.key}>
               <p style={{ fontSize: 13, fontWeight: 900, color: "var(--rukn-gold)", marginBottom: 8 }}>
                 {getLocalizedGroupTitle(group, lang, fieldsTemplateType)}
               </p>
+              {group.help && (
+                <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.65, marginBottom: 8 }}>
+                  {group.help[lang] || group.help.ar}
+                </p>
+              )}
               <div style={{ display: "grid", gap: 7 }}>
                 {group.fields.map((field) => {
                   const token = field.token || field.placeholder;
@@ -409,6 +414,7 @@ export function ContractTemplatesSettings({ store, onToast, canManage = false, e
                           direction: "ltr",
                           unicodeBidi: "isolate",
                           textAlign: "left",
+                          whiteSpace: "pre-wrap",
                         }}
                       >
                         {token}

@@ -117,6 +117,44 @@ const getRepresentedMinorsDetails = (representedMinors = []) => (
   }).filter(Boolean).join("\n")
 );
 
+const buildRepresentedMinorTemplateData = (minor = {}) => {
+  const passport = minor.passport || {};
+  return {
+    full_name: getRepresentedMinorName(minor),
+    first_name: firstValue(minor.firstName, minor.first_name, minor.prenom, passport.givenNames, passport.givenName, passport.firstName),
+    last_name: firstValue(minor.lastName, minor.last_name, minor.nom, passport.surname, passport.lastName),
+    cin: getClientCin(minor),
+    passport_number: firstValue(passport.number, minor.passportNumber, minor.passport_number, minor.passportNo, minor.passport_no),
+    birth_date: formatDateValue(firstValue(passport.birthDate, passport.birth_date, minor.birthDate, minor.birth_date, minor.dateOfBirth)),
+    phone: firstValue(minor.phone),
+    address: firstValue(minor.address, minor.adress, minor.addressLine, minor.homeAddress, minor.city),
+    gender: firstValue(minor.gender, passport.gender),
+    nationality: firstValue(passport.nationality, minor.nationality),
+    file_number: firstValue(
+      minor.fileNumber,
+      minor.file_number,
+      minor.fileNo,
+      minor.file_no,
+      minor.fileRef,
+      minor.file_ref,
+      minor.clientCode,
+      minor.client_code,
+      minor.dossier,
+      minor.dossierNo,
+      minor.dossier_no,
+      minor.ticketNo,
+      minor.ticket_no
+    ),
+  };
+};
+
+const buildNumberedRepresentedFields = (representedItems = []) => (
+  representedItems.reduce((acc, minor, index) => {
+    acc[`represented_${index + 1}`] = buildRepresentedMinorTemplateData(minor);
+    return acc;
+  }, {})
+);
+
 export const getContractTemplateType = (program = {}) => getProgramKind(program) === "hajj" ? "hajj" : "umrah";
 
 export const buildContractTemplatePath = ({ agencyId, templateType }) => {
@@ -158,8 +196,11 @@ export const buildContractTemplateData = ({
   const programType = translateProgramType(program.type, lang) || clean(program.type);
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
   const hotelStayDates = getProgramHotelStayDates(program, client);
+  const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems);
 
   return {
+    ...numberedRepresentedFields,
+    represented_minors: representedMinorItems.map(buildRepresentedMinorTemplateData),
     represented_minors_list: getRepresentedMinorsText(representedMinorItems, lang),
     represented_minors_count: representedMinorItems.length ? String(representedMinorItems.length) : "",
     represented_minors_details: getRepresentedMinorsDetails(representedMinorItems),

@@ -14,9 +14,12 @@ const firstText = (...values) => {
 export const REPRESENTED_BY_RELATIONSHIPS = [
   { value: "father", label: { ar: "أب", fr: "Père", en: "Father" } },
   { value: "mother", label: { ar: "أم", fr: "Mère", en: "Mother" } },
+  { value: "guardian", label: { ar: "وصي", fr: "Tuteur", en: "Guardian" } },
   { value: "brother", label: { ar: "أخ", fr: "Frère", en: "Brother" } },
   { value: "sister", label: { ar: "أخت", fr: "Sœur", en: "Sister" } },
-  { value: "guardian", label: { ar: "وصي", fr: "Tuteur", en: "Guardian" } },
+  { value: "husband", label: { ar: "زوج", fr: "Mari", en: "Husband" } },
+  { value: "wife", label: { ar: "زوجة", fr: "Épouse", en: "Wife" } },
+  { value: "relative", label: { ar: "قريب", fr: "Proche", en: "Relative" } },
   { value: "other", label: { ar: "آخر", fr: "Autre", en: "Other" } },
 ];
 
@@ -124,8 +127,14 @@ export const getSameProgramRepresentativeOptions = ({
 } = {}) => sortRepresentativeOptions(
   clients.filter((item) => (
     item
-    && item.id !== currentClientId
-    && item.programId === programId
-    && isEligibleRepresentative(item, referenceDate)
+    && String(item.id || "") !== String(currentClientId || "")
+    && String(item.programId || item.program_id || "") === String(programId || "")
+    && item.deleted !== true
+    && !item.deletedAt
+    && !item.deleted_at
+    && item.archived !== true
+    && !item.archivedAt
+    && !item.archived_at
+    && isClientAdult(item, referenceDate)
   ))
 );

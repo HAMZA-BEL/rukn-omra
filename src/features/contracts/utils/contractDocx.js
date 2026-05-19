@@ -5,6 +5,7 @@ import { CONTRACT_DOCX_MIME } from "./contractTemplateData";
 import { CONTRACT_TEMPLATE_FIELD_GROUPS } from "./contractTemplateFields";
 
 const CONTRACT_PLACEHOLDER_RE = /^\{\{\s*(.*?)\s*\}\}$/;
+const DYNAMIC_REPRESENTED_TAG_RE = /^represented_\d+(?:\.|$)/;
 
 const KNOWN_CONTRACT_TAGS = new Set(
   CONTRACT_TEMPLATE_FIELD_GROUPS.flatMap((group) => group.fields || [])
@@ -14,6 +15,10 @@ const KNOWN_CONTRACT_TAGS = new Set(
 
 function getTagName(part) {
   return String(part?.value || part?.raw || "").trim();
+}
+
+function isDynamicRepresentedTag(tagName) {
+  return DYNAMIC_REPRESENTED_TAG_RE.test(String(tagName || ""));
 }
 
 export function renderContractDocx(arrayBuffer, data) {
@@ -27,7 +32,7 @@ export function renderContractDocx(arrayBuffer, data) {
     nullGetter: (part) => {
       const tagName = getTagName(part);
       if (!tagName) return "";
-      if (KNOWN_CONTRACT_TAGS.has(tagName)) return "";
+      if (KNOWN_CONTRACT_TAGS.has(tagName) || isDynamicRepresentedTag(tagName)) return "";
       unknownTags.add(tagName);
       return `{{${tagName}}}`;
     },

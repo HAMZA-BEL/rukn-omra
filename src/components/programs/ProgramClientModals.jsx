@@ -34,6 +34,7 @@ export default function ProgramClientModals({
   transferClients,
   availablePrograms,
   programOccupancy,
+  programSummaryById,
   onConfirmTransfer,
   getClientPayments,
   onClientDataChanged,
@@ -128,6 +129,7 @@ export default function ProgramClientModals({
         clients={transferClients}
         availablePrograms={availablePrograms}
         occupancy={programOccupancy}
+        programSummaryById={programSummaryById}
         onConfirm={onConfirmTransfer}
         getClientPayments={getClientPayments}
         invoiceApi={invoiceApi}

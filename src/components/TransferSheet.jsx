@@ -17,6 +17,22 @@ const getPaymentMethod = (payment = {}) => (
 );
 
 const getClientProgramId = (client = {}) => client.programId || client.program_id || "";
+const getProgramId = (program = {}) => String(program.id || program.programId || program.program_id || "");
+const normalizeSearchText = (value) => String(value || "").trim().toLowerCase();
+const getProgramCapacity = (program = {}) => {
+  const capacity = Number(program.seats ?? program.capacity ?? 0);
+  return Number.isFinite(capacity) ? capacity : 0;
+};
+const isActiveDestinationProgram = (program = {}) => (
+  Boolean(getProgramId(program))
+  && program.deleted !== true
+  && !program.deletedAt
+  && !program.deleted_at
+  && program.archived !== true
+  && !program.archivedAt
+  && !program.archived_at
+  && normalizeSearchText(program.status || "active") !== "archived"
+);
 
 const getInvoiceClientId = (invoice = {}) => invoice.clientId || invoice.client_id || "";
 const getInvoiceProgramId = (invoice = {}) => invoice.programId || invoice.program_id || "";
@@ -24,6 +40,34 @@ const getInvoiceNumber = (invoice = {}) => invoice.invoiceDisplayNumber || invoi
 const isActiveInvoice = (invoice = {}) => !["trashed", "deleted", "cancelled"].includes(String(invoice.status || "issued"));
 
 const uniqueText = (items = []) => Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+const getProgramSearchTerms = (program = {}) => {
+  const kindSourceText = normalizeSearchText([
+    program.name,
+    program.nameFr,
+    program.name_fr,
+    program.type,
+    program.programType,
+    program.program_type,
+    program.category,
+  ].filter(Boolean).join(" "));
+  const kindTerms = [];
+  if (kindSourceText.includes("حج") || kindSourceText.includes("hajj") || kindSourceText.includes("hadj")) {
+    kindTerms.push("حج", "حاج", "hajj", "hadj");
+  }
+  if (kindSourceText.includes("عمرة") || kindSourceText.includes("umrah") || kindSourceText.includes("omra") || kindSourceText.includes("omrah")) {
+    kindTerms.push("عمرة", "umrah", "omra", "omrah");
+  }
+  return [
+    program.name,
+    program.nameFr,
+    program.name_fr,
+    program.type,
+    program.programType,
+    program.program_type,
+    program.category,
+    ...kindTerms,
+  ].map(normalizeSearchText).filter(Boolean).join(" ");
+};
 
 const transferPaymentLabels = (lang, t = {}) => {
   if (lang === "fr") {
@@ -86,6 +130,7 @@ export default function TransferSheet({
   clients = [],
   programs = [],
   occupancy = new Map(),
+  programSummaryById = null,
   onConfirm,
   getClientPayments,
   invoiceApi,
@@ -102,7 +147,7 @@ export default function TransferSheet({
   const [dragOffset, setDragOffset] = React.useState(0);
   const handleProgramPick = React.useCallback((programId, disabled) => {
     if (disabled) return;
-    setSelectedProgramId(programId);
+    setSelectedProgramId(String(programId || ""));
     setPaymentConfirmationVisible(false);
     setLinkedInvoices([]);
   }, [setSelectedProgramId]);
@@ -167,15 +212,29 @@ export default function TransferSheet({
 
   if (!open) return null;
 
-  const q = search.trim().toLowerCase();
-  const uniquePrograms = new Set(clients.map(getClientProgramId).filter(Boolean));
+  const q = normalizeSearchText(search);
+  const uniquePrograms = new Set(clients.map((client) => String(getClientProgramId(client) || "")).filter(Boolean));
   const excludedIds = uniquePrograms.size === 1 ? uniquePrograms : new Set();
+  const occupancyByProgramId = new Map(
+    Array.from(occupancy instanceof Map ? occupancy.entries() : Object.entries(occupancy || {}))
+      .map(([programId, count]) => [String(programId || ""), Number(count) || 0])
+  );
+  const summaryByProgramId = programSummaryById instanceof Map
+    ? programSummaryById
+    : new Map(Object.entries(programSummaryById || {}));
+  const getRegisteredCount = (program) => {
+    const programId = getProgramId(program);
+    const summaryCount = Number(summaryByProgramId.get(programId)?.registeredCount);
+    if (Number.isFinite(summaryCount)) return summaryCount;
+    return occupancyByProgramId.get(programId) || 0;
+  };
 
   const filteredPrograms = programs
-    .filter((program) => !excludedIds.has(program.id))
-    .filter((program) => (program.name || "").toLowerCase().includes(q));
-  const programById = new Map(programs.map((program) => [program.id, program]));
-  const selectedProgram = selectedProgramId ? programById.get(selectedProgramId) : null;
+    .filter(isActiveDestinationProgram)
+    .filter((program) => !excludedIds.has(getProgramId(program)))
+    .filter((program) => !q || getProgramSearchTerms(program).includes(q));
+  const programById = new Map(programs.map((program) => [getProgramId(program), program]));
+  const selectedProgram = selectedProgramId ? programById.get(String(selectedProgramId)) : null;
   const labels = transferPaymentLabels(lang, t);
   const paymentSummary = clients.reduce((summary, client) => {
     const payments = typeof getClientPayments === "function" ? getClientPayments(client.id) : [];
@@ -357,12 +416,12 @@ export default function TransferSheet({
                   </p>
                 ) : (
                   filteredPrograms.map((program) => {
-                    const registered = occupancy.get(program.id) || 0;
-                    const capacity = program.seats || 0;
+                    const registered = getRegisteredCount(program);
+                    const capacity = getProgramCapacity(program);
                     const willOverflow =
                       capacity > 0 ? registered + clients.length > capacity : false;
                     const isDisabled = willOverflow;
-                    const selected = selectedProgramId === program.id;
+                    const selected = String(selectedProgramId || "") === getProgramId(program);
                     return (
                       <GlassCard
                         key={program.id}

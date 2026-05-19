@@ -154,6 +154,17 @@ const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
+const isActiveTransferDestinationProgram = (program = {}) => (
+  Boolean(program?.id)
+  && program.deleted !== true
+  && !program.deletedAt
+  && !program.deleted_at
+  && program.archived !== true
+  && !program.archivedAt
+  && !program.archived_at
+  && String(program.status || "active").toLowerCase() !== "archived"
+);
+
 const getProgramPricingReferenceCost = (program, client) => {
   if (!program || !client) return 0;
   return getProgramServiceCostingReferenceCost(program, getClientServiceType(client));
@@ -2011,6 +2022,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
       <>
         <ProgramInner
           program={prog} store={store} onToast={onToast}
+          programSummaryById={programSummaryById}
           onBack={() => closeProgramDetail(true)}
           onEditProgram={() => setEditing(prog)}
         />
@@ -2883,7 +2895,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
 // ═══════════════════════════════════════
 // PROGRAM INNER — full client list
 // ═══════════════════════════════════════
-function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
+function ProgramInner({ program, store, onToast, onBack, onEditProgram, programSummaryById = null }) {
   const {
     clients,
     getClientTotalPaid,
@@ -3380,9 +3392,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [clearSelection, setSelectMode, setTransferSheetOpen, setTransferTargets]);
 
   const openTransferSheet = React.useCallback((ids) => {
-    if (!ids.length) return;
+    const nextIds = Array.from(new Set((Array.isArray(ids) ? ids : [ids])
+      .map((id) => String(id || ""))
+      .filter(Boolean)));
+    if (!nextIds.length) return;
     runWithGlobalDetailData(() => {
-      setTransferTargets(ids);
+      setTransferTargets(nextIds);
       setTransferSheetOpen(true);
     });
   }, [runWithGlobalDetailData, setTransferSheetOpen, setTransferTargets]);
@@ -3432,17 +3447,35 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [checkedIds, deleteClientsBulk, deleteClient, ensureGlobalDetailDataForCurrentAction, exitSelectMode, onToast, refreshScopedProgramDetail, tr]);
 
   const transferList = React.useMemo(
-    () => transferTargets
-      .map(id => activeClients.find(c => c.id === id) || clients.find(c => c.id === id))
-      .filter(Boolean),
-    [transferTargets, activeClients, clients]
+    () => {
+      const clientsById = new Map();
+      [...progClients, ...activeClients, ...clients].forEach((client) => {
+        const id = String(client?.id || "");
+        if (id && !clientsById.has(id)) clientsById.set(id, client);
+      });
+      return transferTargets
+        .map((id) => clientsById.get(String(id || "")))
+        .filter(Boolean);
+    },
+    [transferTargets, progClients, activeClients, clients]
   );
+
+  const transferDestinationPrograms = React.useMemo(() => {
+    const programsById = new Map();
+    (Array.isArray(allPrograms) ? allPrograms : []).forEach((destinationProgram) => {
+      if (!isActiveTransferDestinationProgram(destinationProgram)) return;
+      const id = String(destinationProgram.id || "");
+      if (id && !programsById.has(id)) programsById.set(id, destinationProgram);
+    });
+    return Array.from(programsById.values());
+  }, [allPrograms]);
 
   const programOccupancy = React.useMemo(() => {
     const map = new Map();
     (activeClients || []).forEach(c => {
-      if (!c.programId) return;
-      map.set(c.programId, (map.get(c.programId) || 0) + 1);
+      const programId = String(c.programId || c.program_id || "");
+      if (!programId) return;
+      map.set(programId, (map.get(programId) || 0) + 1);
     });
     return map;
   }, [activeClients]);
@@ -3450,7 +3483,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const handleTransferConfirm = React.useCallback(async (programId) => {
     const ready = await ensureGlobalDetailDataForCurrentAction();
     if (!ready) return;
-    const destination = allPrograms.find(p => p.id === programId);
+    const destination = allPrograms.find(p => String(p.id || "") === String(programId || ""));
     if (!destination) {
       onToast(t.programNotFound || "البرنامج غير متاح", "error");
       return;
@@ -3462,7 +3495,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       return;
     }
     const capacity = destination.seats || Number.MAX_SAFE_INTEGER;
-    const currentCount = programOccupancy.get(programId) || 0;
+    const currentCount = programOccupancy.get(String(programId || "")) || 0;
     if (capacity !== Number.MAX_SAFE_INTEGER && currentCount + clientsToMove.length > capacity) {
       onToast(t.programFull || "البرنامج ممتلئ", "error");
       return;
@@ -4378,8 +4411,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         isTransferOpen={transferSheetOpen}
         onCloseTransfer={closeTransferSheet}
         transferClients={transferList}
-        availablePrograms={allPrograms}
+        availablePrograms={transferDestinationPrograms}
         programOccupancy={programOccupancy}
+        programSummaryById={programSummaryById}
         onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
         onClientDataChanged={refreshScopedProgramDetail}

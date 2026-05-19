@@ -6,6 +6,7 @@ export default function TransferClientModal({
   clients,
   availablePrograms,
   occupancy,
+  programSummaryById,
   onConfirm,
   getClientPayments,
   invoiceApi,
@@ -17,6 +18,7 @@ export default function TransferClientModal({
       clients={clients}
       programs={availablePrograms}
       occupancy={occupancy}
+      programSummaryById={programSummaryById}
       onConfirm={onConfirm}
       getClientPayments={getClientPayments}
       invoiceApi={invoiceApi}
