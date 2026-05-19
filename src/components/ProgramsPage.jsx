@@ -3650,8 +3650,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
   const handleAmadeusExport = React.useCallback(async () => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
+    if (!useScopedProgramDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     try {
@@ -3686,11 +3688,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         "error"
       );
     }
-  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program]);
+  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program, useScopedProgramDetail]);
   const handlePassportListWordExport = React.useCallback(async () => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
+    if (!useScopedProgramDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
     const exportClients = getCurrentExportClients();
     try {
       const result = downloadPassportListWord({ program, clients: exportClients });
@@ -3703,11 +3707,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       console.error("[Programs] Passport list Word export failed:", error);
       onToast(t.error || (lang === "fr" ? "Erreur inattendue" : lang === "en" ? "Unexpected error" : "خطأ غير متوقع"), "error");
     }
-  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported]);
+  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported, useScopedProgramDetail]);
   const handleBadgePdfExport = React.useCallback(async () => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
+    if (!useScopedProgramDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     setBadgeExportBusy(true);
@@ -3728,7 +3734,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     } finally {
       setBadgeExportBusy(false);
     }
-  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId]);
+  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     runWithGlobalDetailData(() => setShowPassportImport(true));
@@ -3751,8 +3757,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   }, [ensureGlobalDetailData]);
   const handlePilgrimsListExport = React.useCallback(async () => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
+    if (!useScopedProgramDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const XLSX = await import("xlsx");
@@ -3775,11 +3783,13 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
       { bookType: "xlsx", compression: true }
     );
     onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
-  }, [activePackageChip?.label, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType]);
+  }, [activePackageChip?.label, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType, useScopedProgramDetail]);
   const handleContractsExcelExport = React.useCallback(async () => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
+    if (!useScopedProgramDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
     const XLSX = await import("xlsx");
@@ -3834,7 +3844,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     XLSX.utils.book_append_sheet(wb, ws, "contracts");
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
-  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program]);
+  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program, useScopedProgramDetail]);
   const handleWordContractsExport = React.useCallback(async () => {
     closeHeaderActions();
     if (wordContractExportBusy) return;
