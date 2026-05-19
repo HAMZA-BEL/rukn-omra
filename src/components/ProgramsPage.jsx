@@ -152,6 +152,7 @@ const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
 const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
+const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 
 const getProgramPricingReferenceCost = (program, client) => {
   if (!program || !client) return 0;
@@ -2846,7 +2847,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
   const statusFilterRef = React.useRef(null);
   const serviceTypeFilterRef = React.useRef(null);
   const detailHydrationRequestedRef = React.useRef(false);
-  const [scopedProgramDetailReloadKey, setScopedProgramDetailReloadKey] = React.useState(0);
+  const scopedProgramDetailHiddenPaymentIdsRef = React.useRef(new Set());
+  const [scopedProgramDetailRefreshKey, setScopedProgramDetailRefreshKey] = React.useState(0);
   const [scopedProgramDetail, setScopedProgramDetail] = React.useState({
     programId: "",
     status: "idle",
@@ -2922,24 +2924,35 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     return false;
   }, [detailDataReady, ensureGlobalDetailData, onToast, t.loading]);
 
-  const requestScopedProgramDetailReload = React.useCallback(() => {
+  const refreshScopedProgramDetail = React.useCallback((options = {}) => {
     const programId = String(program.id || "");
+    if (!programId) return;
+    const hiddenPaymentIds = Array.isArray(options?.hiddenPaymentIds)
+      ? options.hiddenPaymentIds.map((id) => String(id || "")).filter(Boolean)
+      : [];
+    if (hiddenPaymentIds.length) {
+      const nextHiddenIds = new Set(scopedProgramDetailHiddenPaymentIdsRef.current);
+      hiddenPaymentIds.forEach((id) => nextHiddenIds.add(id));
+      scopedProgramDetailHiddenPaymentIdsRef.current = nextHiddenIds;
+    }
     setScopedProgramDetail((current) => (
       current.programId === programId
         ? {
             ...current,
-            status: "loading",
-            clients: [],
-            payments: [],
+            status: current.program || current.clients.length || current.payments.length ? "refreshing" : "loading",
+            payments: scopedProgramDetailHiddenPaymentIdsRef.current.size
+              ? current.payments.filter((payment) => !scopedProgramDetailHiddenPaymentIdsRef.current.has(String(payment?.id || "")))
+              : current.payments,
             error: null,
           }
         : current
     ));
-    setScopedProgramDetailReloadKey((key) => key + 1);
+    setScopedProgramDetailRefreshKey((key) => key + 1);
   }, [program.id]);
 
   React.useEffect(() => {
     detailHydrationRequestedRef.current = false;
+    scopedProgramDetailHiddenPaymentIdsRef.current = new Set();
   }, [program.id]);
 
   React.useEffect(() => {
@@ -2947,83 +2960,91 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     if (!programId) return undefined;
 
     let cancelled = false;
+    let refreshTimer = null;
+    const filterHiddenPayments = (payments = []) => {
+      const hiddenPaymentIds = scopedProgramDetailHiddenPaymentIdsRef.current;
+      if (!hiddenPaymentIds.size) return payments;
+      return payments.filter((payment) => !hiddenPaymentIds.has(String(payment?.id || "")));
+    };
     setScopedProgramDetail((current) => {
-      const keepCurrent = current.programId === programId && current.status === "ready";
+      const keepCurrent = current.programId === programId
+        && (current.program || current.clients.length || current.payments.length);
       return {
         programId,
         status: keepCurrent ? "refreshing" : "loading",
         program: keepCurrent ? current.program : null,
         clients: keepCurrent ? current.clients : [],
-        payments: keepCurrent ? current.payments : [],
+        payments: keepCurrent ? filterHiddenPayments(current.payments) : [],
         error: null,
       };
     });
 
-    if (typeof store.loadProgramDetailData !== "function") {
-      setScopedProgramDetail({
-        programId,
-        status: "failed",
-        program: null,
-        clients: [],
-        payments: [],
-        error: new Error("Missing scoped program detail loader"),
+    const setScopedProgramDetailFailure = (error) => {
+      setScopedProgramDetail((current) => {
+        const keepCurrent = current.programId === programId
+          && (current.program || current.clients.length || current.payments.length);
+        return {
+          programId,
+          status: "failed",
+          program: keepCurrent ? current.program : null,
+          clients: keepCurrent ? current.clients : [],
+          payments: keepCurrent ? filterHiddenPayments(current.payments) : [],
+          error,
+        };
       });
+    };
+
+    if (typeof store.loadProgramDetailData !== "function") {
+      setScopedProgramDetailFailure(new Error("Missing scoped program detail loader"));
       return undefined;
     }
 
-    store.loadProgramDetailData(programId)
-      .then((result) => {
-        if (cancelled) return;
-        if (result?.error) {
+    const loadScopedProgramDetail = () => {
+      store.loadProgramDetailData(programId)
+        .then((result) => {
+          if (cancelled) return;
+          if (result?.error) {
+            setScopedProgramDetailFailure(result.error);
+            return;
+          }
+          if (!result?.program) {
+            setScopedProgramDetailFailure(new Error("Scoped program detail not found"));
+            return;
+          }
+          const resultPayments = Array.isArray(result?.payments) ? result.payments : [];
+          const hiddenPaymentIds = new Set(scopedProgramDetailHiddenPaymentIdsRef.current);
+          if (hiddenPaymentIds.size) {
+            const fetchedPaymentIds = new Set(resultPayments.map((payment) => String(payment?.id || "")).filter(Boolean));
+            hiddenPaymentIds.forEach((id) => {
+              if (!fetchedPaymentIds.has(id)) hiddenPaymentIds.delete(id);
+            });
+            scopedProgramDetailHiddenPaymentIdsRef.current = hiddenPaymentIds;
+          }
           setScopedProgramDetail({
             programId,
-            status: "failed",
-            program: null,
-            clients: [],
-            payments: [],
-            error: result.error,
+            status: "ready",
+            program: result.program,
+            clients: Array.isArray(result?.clients) ? result.clients : [],
+            payments: filterHiddenPayments(resultPayments),
+            error: null,
           });
-          return;
-        }
-        if (!result?.program) {
-          setScopedProgramDetail({
-            programId,
-            status: "failed",
-            program: null,
-            clients: [],
-            payments: [],
-            error: new Error("Scoped program detail not found"),
-          });
-          return;
-        }
-        setScopedProgramDetail({
-          programId,
-          status: "ready",
-          program: result.program,
-          clients: Array.isArray(result?.clients) ? result.clients : [],
-          payments: Array.isArray(result?.payments) ? result.payments : [],
-          error: null,
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          console.error("[Programs] Scoped program detail fetch failed:", error);
+          setScopedProgramDetailFailure(error);
         });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error("[Programs] Scoped program detail fetch failed:", error);
-        setScopedProgramDetail({
-          programId,
-          status: "failed",
-          program: null,
-          clients: [],
-          payments: [],
-          error,
-        });
-      });
+    };
+
+    refreshTimer = window.setTimeout(loadScopedProgramDetail, SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
   }, [
     program.id,
-    scopedProgramDetailReloadKey,
+    scopedProgramDetailRefreshKey,
     store.loadProgramDetailData,
     store.lastSynced,
   ]);
@@ -3303,9 +3324,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         }, 0);
     setBulkDeleteOpen(false);
     exitSelectMode();
-    requestScopedProgramDetailReload();
+    refreshScopedProgramDetail();
     onToast(tr("bulkDeleteSuccess", { count: deletedCount || ids.length }), "info");
-  }, [checkedIds, deleteClientsBulk, deleteClient, ensureGlobalDetailDataForCurrentAction, exitSelectMode, onToast, requestScopedProgramDetailReload, tr]);
+  }, [checkedIds, deleteClientsBulk, deleteClient, ensureGlobalDetailDataForCurrentAction, exitSelectMode, onToast, refreshScopedProgramDetail, tr]);
 
   const transferList = React.useMemo(
     () => transferTargets
@@ -3352,8 +3373,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
     onToast(tr("transferSuccess", { count: movedCount, program: destination.name }), "success");
     closeTransferSheet();
     exitSelectMode();
-    requestScopedProgramDetailReload();
-  }, [allPrograms, ensureGlobalDetailDataForCurrentAction, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode, requestScopedProgramDetailReload]);
+    refreshScopedProgramDetail();
+  }, [allPrograms, ensureGlobalDetailDataForCurrentAction, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode, refreshScopedProgramDetail]);
 
   const selectedVisibleCount = React.useMemo(
     () => paginatedProgramClients.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
@@ -4166,7 +4187,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
                   if(!ready) return;
                   if(window.confirm(`حذف "${c.name}"؟`)){
                     store.deleteClient(c.id);
-                    requestScopedProgramDetailReload();
+                    refreshScopedProgramDetail();
                     onToast("تم الحذف","info");
                   }
                 }}
@@ -4216,7 +4237,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         onCloseAddClient={() => setShowAddClient(false)}
         onSaveAddClient={() => {
           setShowAddClient(false);
-          requestScopedProgramDetailReload();
+          refreshScopedProgramDetail();
           onToast(t.addSuccess, "success");
         }}
         isExcelImportOpen={showExcelImport}
@@ -4226,19 +4247,19 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
             return;
           }
           closeExcelImportModal();
-          requestScopedProgramDetailReload();
+          refreshScopedProgramDetail();
         }}
         onExcelImportingChange={setExcelImportSaving}
         isPassportImportOpen={showPassportImport}
         onClosePassportImport={() => {
           setShowPassportImport(false);
-          requestScopedProgramDetailReload();
+          refreshScopedProgramDetail();
         }}
         editingClient={editingClient}
         onCloseEditClient={() => setEditingClient(null)}
         onSaveEditClient={() => {
           setEditingClient(null);
-          requestScopedProgramDetailReload();
+          refreshScopedProgramDetail();
           onToast(t.updateSuccess, "success");
         }}
         isTransferOpen={transferSheetOpen}
@@ -4248,7 +4269,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram }) {
         programOccupancy={programOccupancy}
         onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
-        onClientDataChanged={requestScopedProgramDetailReload}
+        onClientDataChanged={refreshScopedProgramDetail}
         programOverride={useScopedProgramDetail ? (scopedProgramDetail.program || program) : null}
         programClientsOverride={useScopedProgramDetail ? progClients : null}
         paymentsOverride={useScopedProgramDetail ? scopedProgramDetail.payments : null}

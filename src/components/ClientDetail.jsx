@@ -978,7 +978,8 @@ export default function ClientDetail({
                 const ready = await requestGlobalDetailDataForAction();
                 if (!ready) return;
                 if (window.confirm(t.confirmDeletePayment)) {
-                  deletePayment(pmt.id, { clientId: pmt.clientId || pmt.client_id });
+                  const hiddenPaymentIds = pmt.id ? [pmt.id] : [];
+                  const deleteResult = deletePayment(pmt.id, { clientId: pmt.clientId || pmt.client_id });
                   if (pmt.id) {
                     setLocallyHiddenPaymentIds((current) => {
                       const next = new Set(current);
@@ -987,7 +988,12 @@ export default function ClientDetail({
                     });
                   }
                   onToast(t.deleteSuccess, "info");
-                  onDataChanged?.();
+                  onDataChanged?.({ reason: "payment-delete", hiddenPaymentIds });
+                  if (deleteResult && typeof deleteResult.then === "function") {
+                    deleteResult.then((result) => {
+                      if (!result?.error) onDataChanged?.({ reason: "payment-delete-sync", hiddenPaymentIds });
+                    }).catch(() => {});
+                  }
                 }
               }} />
           ))}

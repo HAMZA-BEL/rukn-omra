@@ -2711,7 +2711,7 @@ export function useStore(agencyId, onToast) {
       { skipRemote: isSupabaseEnabled }
     );
     notify(localizedPaymentTrashMessage(), "success");
-    sync(() => deletePaymentRemote(id, agencyId));
+    return sync(() => deletePaymentRemote(id, agencyId));
   }, [payments, trashPaymentLocal, logActivity, notify, queueClientProgramArchiveSuggestionCheck, sync, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled]);
 
   const restorePaymentFromTrash = useCallback(async (id) => {
