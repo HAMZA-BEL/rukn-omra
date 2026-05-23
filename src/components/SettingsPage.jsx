@@ -1,12 +1,14 @@
 import React from "react";
 import { Input, Button, GlassCard, Divider, Modal } from "./UI";
 import { theme } from "./styles";
+import { AGENCY_FEATURES, useAgencyFeature } from "../hooks/useAgencyFeature";
 import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled, supabase } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
 import { ContractTemplatesSettings } from "../features/contracts";
+import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 
 const t2 = theme.colors;
@@ -71,6 +73,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [securityOpen, setSecurityOpen] = React.useState(false);
   const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
   const [contractTemplatesOpen, setContractTemplatesOpen] = React.useState(false);
+  const [posterTemplatesOpen, setPosterTemplatesOpen] = React.useState(false);
   const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
@@ -100,7 +103,14 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     return () => { cancelled = true; };
   }, [form?.logoPath, form?.logoUrl, store.agencyLogoApi]);
   const [isSyncing,  setIsSyncing] = React.useState(false);
+  const { enabled: programPostersEnabled } = useAgencyFeature(
+    store.agencyId,
+    AGENCY_FEATURES.PROGRAM_POSTERS
+  );
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  React.useEffect(() => {
+    if (!programPostersEnabled) setPosterTemplatesOpen(false);
+  }, [programPostersEnabled]);
 
   const handleForceSync = async () => {
     setIsSyncing(true);
@@ -287,6 +297,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const canManageUsers = normalizedRole === "manager" || normalizedRole === "owner";
   const canManageBackups = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
   const canManageContractTemplates = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
+  const canManagePosterTemplates = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
 
   const backupWarningText = (
     lang === "fr"
@@ -341,6 +352,16 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       : lang === "en"
       ? "Upload one Word template for Umrah and one Word template for Hajj."
       : "ارفع قالب Word واحد للعمرة وقالب Word واحد للحج."
+  );
+  const posterTemplatesTitle = (
+    lang === "fr" ? "Modèles d’affiches programmes" : lang === "en" ? "Program Poster Templates" : "قوالب ملصقات البرامج"
+  );
+  const posterTemplatesDesc = (
+    lang === "fr"
+      ? "Importez un modèle d’affiche vide qui sera utilisé plus tard pour générer automatiquement les affiches des programmes."
+      : lang === "en"
+      ? "Upload a blank poster template that will later be used to generate program posters automatically."
+      : "ارفع قالب ملصق فارغ، وسيتم استعماله لاحقًا لتوليد ملصقات البرامج تلقائيًا."
   );
 
   const handleBackupExport = () => {
@@ -680,6 +701,22 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
             store={store}
             onToast={onToast}
             canManage={canManageContractTemplates}
+            embedded
+          />
+        </SettingsSectionCard>
+      )}
+
+      {programPostersEnabled && (
+        <SettingsSectionCard
+          title={posterTemplatesTitle}
+          description={posterTemplatesDesc}
+          open={posterTemplatesOpen}
+          onToggle={() => setPosterTemplatesOpen((current) => !current)}
+        >
+          <ProgramPosterTemplatesSettings
+            store={store}
+            onToast={onToast}
+            canManage={canManagePosterTemplates}
             embedded
           />
         </SettingsSectionCard>

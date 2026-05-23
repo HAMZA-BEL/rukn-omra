@@ -315,6 +315,17 @@ const pickDefaultProgramId = (programs = []) => {
   return latest?.program?.id || programs[0]?.id || "";
 };
 
+const isActiveClearanceProgram = (program = {}) => (
+  Boolean(program?.id)
+  && program.deleted !== true
+  && !program.deletedAt
+  && !program.deleted_at
+  && program.archived !== true
+  && !program.archivedAt
+  && !program.archived_at
+  && String(program.status || "active").trim().toLowerCase() !== "archived"
+);
+
 const getLocalizedClearanceLabels = (lang) => {
   if (lang === "fr") {
     return {
@@ -623,6 +634,10 @@ export default function ClearancePage({ store, focus = null }) {
   const invoiceFocusTokenRef = React.useRef(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
+  const activeClearancePrograms = React.useMemo(
+    () => programs.filter(isActiveClearanceProgram),
+    [programs]
+  );
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
   const proformaInvoiceLabel = lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية";
   const invoiceColumnLabel = lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة";
@@ -677,20 +692,20 @@ export default function ClearancePage({ store, focus = null }) {
   }, [focus, refreshSavedInvoices]);
 
   React.useEffect(() => {
-    if (!programs.length) {
+    if (!activeClearancePrograms.length) {
       if (selectedProgramId) setSelectedProgramId("");
       return;
     }
-    const hasSelected = selectedProgramId && programs.some((program) => program.id === selectedProgramId);
+    const hasSelected = selectedProgramId && activeClearancePrograms.some((program) => program.id === selectedProgramId);
     if (hasSelected) return;
     const saved = typeof window !== "undefined"
       ? localStorage.getItem(CLEARANCE_PROGRAM_STORAGE_KEY)
       : "";
-    const next = saved && programs.some((program) => program.id === saved)
+    const next = saved && activeClearancePrograms.some((program) => program.id === saved)
       ? saved
-      : pickDefaultProgramId(programs);
+      : pickDefaultProgramId(activeClearancePrograms);
     setSelectedProgramId(next);
-  }, [programs, selectedProgramId]);
+  }, [activeClearancePrograms, selectedProgramId]);
 
   React.useEffect(() => {
     if (!selectedProgramId || typeof window === "undefined") return;
@@ -726,8 +741,8 @@ export default function ClearancePage({ store, focus = null }) {
   }, [paymentMethodOpen, statusFilterOpen]);
 
   const selectedProgram = React.useMemo(
-    () => programs.find((program) => program.id === selectedProgramId) || null,
-    [programs, selectedProgramId]
+    () => activeClearancePrograms.find((program) => program.id === selectedProgramId) || null,
+    [activeClearancePrograms, selectedProgramId]
   );
 
   const selectedProgramClients = React.useMemo(
@@ -1029,10 +1044,10 @@ export default function ClearancePage({ store, focus = null }) {
             label={labels.program}
             value={selectedProgramId}
             onChange={(event) => setSelectedProgramId(event.target.value)}
-            disabled={!programs.length}
+            disabled={!activeClearancePrograms.length}
             options={[
-              ...(!programs.length ? [{ value:"", label:labels.selectProgram }] : []),
-              ...programs.map((program) => ({ value:program.id, label:program.name })),
+              ...(!activeClearancePrograms.length ? [{ value:"", label:labels.selectProgram }] : []),
+              ...activeClearancePrograms.map((program) => ({ value:program.id, label:program.name })),
             ]}
             style={{ flex:"1 1 260px", minWidth:220 }}
           />

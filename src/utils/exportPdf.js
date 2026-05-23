@@ -526,33 +526,131 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
   const fmt   = (n) => Number(n || 0).toLocaleString("fr-MA") + " MAD";
+  const fmtPaymentAmount = (n) => (
+    lang === "ar"
+      ? `${Number(n || 0).toLocaleString("fr-MA")} د.م`
+      : `MAD ${Number(n || 0).toLocaleString("fr-MA")}`
+  );
   const today = new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : "ar-MA");
+  const formatDate = (value = "") => {
+    const raw = String(value || "").trim();
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+    return raw || "-";
+  };
+  const internalNotePatterns = [
+    /بيانات\s*تقريبية/i,
+    /معلومات\s*(ناقصة|غير\s*مكتملة)/i,
+    /يرجى\s+إكمال\s+المعلومات/i,
+    /هذه\s+معلومات/i,
+    /تم\s+استيراد\s+بيانات\s+من\s+ملف/i,
+    /donn[ée]es\s+import[ée]es/i,
+    /informations?\s+[àa]\s+compl[ée]ter/i,
+    /data\s+imported/i,
+    /missing\s+information/i,
+    /information\s+needs\s+completion/i,
+    /approx(imate|imation)?/i,
+    /fallback/i,
+    /debug/i,
+    /internal/i,
+    /warning/i,
+    /\bMRZ\b/i,
+    /\bOCR\b/i,
+  ];
+  const isRealClientNote = (value = "") => {
+    const note = String(value || "").trim();
+    return Boolean(note) && !internalNotePatterns.some((pattern) => pattern.test(note));
+  };
+  const getPaymentSortTime = (payment = {}) => {
+    for (const raw of [payment.date, payment.createdAt, payment.created_at]) {
+      if (!raw) continue;
+      const time = new Date(raw).getTime();
+      if (Number.isFinite(time)) return time;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+  const getReceiptNumber = (payment = {}) => String(
+    isPreviousPaymentRecord(payment)
+      ? getLegacyReceiptNumber(payment)
+      : (
+        payment.receiptNo
+        || payment.receipt_no
+        || payment.receiptNumber
+        || payment.receipt_number
+        || ""
+      )
+  ).trim();
+  const getSortedPayments = (payments = []) => (
+    (Array.isArray(payments) ? payments : [])
+      .map((payment, index) => ({ payment, index }))
+      .sort((a, b) => {
+        const byDate = getPaymentSortTime(a.payment) - getPaymentSortTime(b.payment);
+        return byDate || a.index - b.index;
+      })
+      .map(({ payment }) => payment)
+  );
+  const renderPaymentDetails = (payments = []) => {
+    const sortedPayments = getSortedPayments(payments);
+    if (!sortedPayments.length) return "-";
+    return sortedPayments.map((payment) => {
+      const amount = fmtPaymentAmount(Number(payment.amount) || 0);
+      const receipt = getReceiptNumber(payment) || "-";
+      const date = formatDate(payment.date || payment.createdAt || payment.created_at);
+      return `<div class="payment-line"><span class="payment-amount">${escapeHtml(amount)}</span><span class="payment-sep">:</span><span class="payment-receipt">${escapeHtml(receipt)}</span><span class="payment-sep">|</span><span class="payment-date">${escapeHtml(date)}</span></div>`;
+    }).join("");
+  };
+  const getClientPhone = (client = {}) => String(
+    client.phone
+      || client.phoneNumber
+      || client.phone_number
+      || client.mobile
+      || ""
+  ).trim();
+  const getClientNotes = (client = {}) => {
+    const candidates = [
+      client.financeNote,
+      client.finance_note,
+      client.clearanceNote,
+      client.clearance_note,
+      client.paymentNote,
+      client.payment_note,
+      client.note,
+      client.notes,
+      client.remark,
+      client.remarks,
+    ].map((value) => String(value || "").trim());
+    return candidates.find(isRealClientNote) || "";
+  };
 
   // ── Labels ────────────────────────────────────────────────────────────────
   const L = {
     agencyName:    lang === "fr" ? (agency?.nameFr  || "Tiznit Voyages")    : (agency?.nameAr || "تيزنيت أسفار"),
     phones:        [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join("  |  "),
     address:       agency?.addressTiznit || "",
-    title:         t.clearanceReport || (lang === "fr" ? "Bilan financier" : "كشف التصفية المالية"),
-    printedOn:     lang === "fr" ? "Imprimé le" : "تاريخ الطباعة",
-    filter:        lang === "fr" ? "Filtre appliqué" : "الفلتر المطبق",
-    fileId:        t.fileId   || (lang === "fr" ? "N° Dossier" : "رقم الملف"),
-    name:          t.name     || (lang === "fr" ? "Nom"        : "الاسم"),
-    program:       t.program  || (lang === "fr" ? "Programme"  : "البرنامج"),
-    salePrice:     t.salePrice || (lang === "fr" ? "Prix vente" : "سعر البيع"),
-    paid:          t.paid     || (lang === "fr" ? "Payé"       : "المدفوع"),
-    remaining:     t.remaining || (lang === "fr" ? "Reste"     : "المتبقي"),
-    invoice:       lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة",
-    status:        lang === "fr" ? "Statut"     : "الحالة",
-    cleared:       t.status_cleared || (lang === "fr" ? "Soldé"    : "مصفّى"),
-    partial:       t.status_partial || (lang === "fr" ? "Partiel"  : "جزئي"),
-    unpaid:        t.status_unpaid  || (lang === "fr" ? "Non payé" : "لم يدفع"),
-    totalRevenue:  lang === "fr" ? "Total revenus"  : "إجمالي الإيرادات",
-    collected:     t.collected || (lang === "fr" ? "Encaissé"   : "المحصَّل"),
-    totalRem:      lang === "fr" ? "Total restant"  : "إجمالي المتبقي",
-    discounts:     t.discounts || (lang === "fr" ? "Remises"    : "الخصومات"),
-    totalClients:  t.totalClients || (lang === "fr" ? "Total dossiers" : "إجمالي الملفات"),
-    chartTitle:    lang === "fr" ? "Répartition des statuts" : "توزيع الحالات المالية",
+    title:         t.clearanceReport || (lang === "fr" ? "Bilan financier" : lang === "en" ? "Financial clearance report" : "كشف التصفية المالية"),
+    printedOn:     lang === "fr" ? "Imprimé le" : lang === "en" ? "Printed on" : "تاريخ الطباعة",
+    filter:        lang === "fr" ? "Filtre appliqué" : lang === "en" ? "Applied filter" : "الفلتر المطبق",
+    fileId:        t.fileId   || (lang === "fr" ? "N° Dossier" : lang === "en" ? "File No." : "رقم الملف"),
+    name:          t.name     || (lang === "fr" ? "Nom" : lang === "en" ? "Name" : "الاسم"),
+    phone:         t.phone    || (lang === "fr" ? "Téléphone" : lang === "en" ? "Phone" : "رقم الهاتف"),
+    program:       t.program  || (lang === "fr" ? "Programme" : lang === "en" ? "Program" : "البرنامج"),
+    serviceType:   t.serviceType || (lang === "fr" ? "Type de service" : lang === "en" ? "Service type" : "نوع الخدمة"),
+    salePrice:     t.salePrice || (lang === "fr" ? "Prix vente" : lang === "en" ? "Sale price" : "سعر البيع"),
+    paid:          t.paid     || (lang === "fr" ? "Payé" : lang === "en" ? "Paid" : "المدفوع"),
+    remaining:     t.remaining || (lang === "fr" ? "Reste" : lang === "en" ? "Remaining" : "المتبقي"),
+    paymentDetails: lang === "fr" ? "Détails paiements" : lang === "en" ? "Payment details" : "تفاصيل الدفعات",
+    notes:         lang === "fr" ? "Notes" : lang === "en" ? "Notes" : "الملاحظة",
+    status:        lang === "fr" ? "Statut" : lang === "en" ? "Status" : "حالة الدفع",
+    cleared:       t.status_cleared || (lang === "fr" ? "Soldé" : lang === "en" ? "Paid" : "مصفّى"),
+    partial:       t.status_partial || (lang === "fr" ? "Partiel" : lang === "en" ? "Partial" : "جزئي"),
+    unpaid:        t.status_unpaid  || (lang === "fr" ? "Non payé" : lang === "en" ? "Unpaid" : "لم يدفع"),
+    overpaid:      lang === "fr" ? "Trop-perçu" : lang === "en" ? "Overpaid" : "زائد",
+    totalRevenue:  lang === "fr" ? "Total revenus" : lang === "en" ? "Total revenue" : "إجمالي الإيرادات",
+    collected:     t.collected || (lang === "fr" ? "Encaissé" : lang === "en" ? "Collected" : "المحصَّل"),
+    totalRem:      lang === "fr" ? "Total restant" : lang === "en" ? "Total remaining" : "إجمالي المتبقي",
+    discounts:     t.discounts || (lang === "fr" ? "Remises" : lang === "en" ? "Discounts" : "الخصومات"),
+    totalClients:  t.totalClients || (lang === "fr" ? "Total dossiers" : lang === "en" ? "Total files" : "إجمالي الملفات"),
+    chartTitle:    lang === "fr" ? "Répartition des statuts" : lang === "en" ? "Status breakdown" : "توزيع الحالات المالية",
     printBtn:      lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة",
   };
 
@@ -574,23 +672,31 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
   const rows = data.map((c, i) => {
     const sLabel = c.status === "cleared" ? L.cleared : c.status === "partial" ? L.partial : L.unpaid;
     const sClass = c.status === "cleared" ? "cleared" : c.status === "partial" ? "partial" : "unpaid";
-    const invoiceNumber = getClientFinalInvoiceNumber(c, finalInvoices);
+    const serviceTypeLabel = getClientServiceTypeLabel(c, t, lang);
+    const phone = getClientPhone(c) || "—";
+    const remaining = Number(c.remaining) || 0;
+    const overpaid = Math.max(0, (Number(c.paid) || 0) - (Number(c.salePrice) || 0));
+    const paymentDetails = renderPaymentDetails(c.clientPayments);
+    const notes = getClientNotes(c) || "-";
     return `
       <tr>
         <td style="font-family:monospace;font-size:9px;color:#555">${escapeHtml((c.displayRef || c.id || "—").toString())}</td>
-        <td style="font-weight:600">${escapeHtml(c.name || "—")}</td>
+        <td style="font-weight:600">${escapeHtml(c.displayName || c.name || "—")}</td>
+        <td>${escapeHtml(phone)}</td>
         <td style="font-size:10px;color:#444">${escapeHtml(c.prog?.name || "—")}</td>
+        <td>${escapeHtml(serviceTypeLabel)}</td>
         <td style="text-align:${isRTL ? "left" : "right"};font-weight:600;color:#0d4a1a">${escapeHtml(fmt(c.salePrice))}</td>
         <td style="text-align:${isRTL ? "left" : "right"};color:#15803d;font-weight:600">${escapeHtml(fmt(c.paid))}</td>
-        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${c.remaining > 0 ? "#b91c1c" : "#15803d"}">${c.remaining > 0 ? escapeHtml(fmt(c.remaining)) : "OK"}</td>
+        <td style="text-align:${isRTL ? "left" : "right"};font-weight:700;color:${remaining > 0 ? "#b91c1c" : "#15803d"}">${escapeHtml(fmt(remaining))}${overpaid > 0 ? `<div class="overpaid-note">${escapeHtml(L.overpaid)} ${escapeHtml(fmt(overpaid))}</div>` : ""}</td>
         <td style="text-align:center"><span class="status ${sClass}">${escapeHtml(sLabel)}</span></td>
-        <td class="invoice-cell">${escapeHtml(invoiceNumber)}</td>
+        <td class="payment-details">${paymentDetails}</td>
+        <td class="notes-cell">${escapeHtml(notes)}</td>
       </tr>`;
   }).join("");
 
-  const headers = [L.fileId, L.name, L.program, L.salePrice, L.paid, L.remaining, L.status, L.invoice]
+  const headers = [L.fileId, L.name, L.phone, L.program, L.serviceType, L.salePrice, L.paid, L.remaining, L.status, L.paymentDetails, L.notes]
     .map(h => `<th>${escapeHtml(h)}</th>`).join("");
-  const colgroup = ["9%", "20%", "16%", "11%", "11%", "11%", "9%", "13%"]
+  const colgroup = ["6%", "14%", "8%", "8%", "7%", "8%", "8%", "8%", "6%", "18%", "9%"]
     .map(width => `<col style="width:${width}">`).join("");
 
   // ── HTML ──────────────────────────────────────────────────────────────────
@@ -601,7 +707,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
   <title>${escapeHtml(L.title)}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    @page { size: A4 portrait; margin: 13mm 14mm; }
+    @page { size: A4 landscape; margin: 11mm 12mm; }
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .no-print { display: none; }
@@ -646,26 +752,69 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
     }
     .title-row { text-align: center; margin-bottom: 12px; }
     /* ── Table ── */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 10px; table-layout: fixed; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 8.6px; table-layout: fixed; }
     thead tr { background: #0d4a1a; }
     th {
       color: #d4af37;
-      padding: 7px 5px;
+      padding: 6px 3px;
       font-weight: 700;
-      font-size: 9.5px;
+      font-size: 8px;
       border: 1px solid #0a3a15;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.25;
     }
-    td { padding: 5px; border: 1px solid #e0e0e0; vertical-align: middle; font-size: 10px; }
-    .invoice-cell {
-      text-align: center;
-      font-family: monospace;
-      font-size: 9px;
-      font-weight: 700;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    td {
+      padding: 4px 3px;
+      border: 1px solid #e0e0e0;
+      vertical-align: top;
+      font-size: 8.4px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .payment-details {
+      font-size: 8.1px;
       color: #334155;
+      direction: ${dir};
+      overflow-wrap: normal;
+    }
+    .payment-line {
+      line-height: 1.28;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .payment-line + .payment-line {
+      border-top: 1px solid rgba(13,74,26,.12);
+      margin-top: 2px;
+      padding-top: 2px;
+    }
+    .payment-amount {
+      color: #0f5132;
+      font-weight: 800;
+    }
+    .payment-receipt {
+      color: #334155;
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 700;
+    }
+    .payment-date {
+      color: #475569;
+    }
+    .payment-sep {
+      color: #94a3b8;
+      padding: 0 3px;
+    }
+    .notes-cell {
+      color: #475569;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .overpaid-note {
+      margin-top: 1px;
+      color: #6b7280;
+      font-size: 7px;
+      font-weight: 700;
+      line-height: 1.15;
+      white-space: nowrap;
     }
     tbody tr:nth-child(even) td { background: #f4fbf5; }
     .status {

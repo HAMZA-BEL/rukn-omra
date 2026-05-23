@@ -10,6 +10,7 @@ import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
 import { getClientServiceType } from "../utils/clientServiceTypes";
 import { normalizeHotelCheckinDay } from "../utils/hotelDates";
+import { normalizeRouteStops } from "../utils/programRoutes";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -189,6 +190,21 @@ const fromProgramPageSummaryItem = (row = {}) => {
     seats: toFiniteNumber(row.seats ?? row.capacity),
     hotelMecca: row.hotel_mecca || row.hotelMecca || "",
     hotelMadina: row.hotel_madina || row.hotelMadina || "",
+    ...(("outbound_route_text" in row) || ("outboundRouteText" in row)
+      ? { outboundRouteText: row.outbound_route_text || row.outboundRouteText || "" }
+      : {}),
+    ...(("outbound_route_stops" in row) || ("outboundRouteStops" in row)
+      ? { outboundRouteStops: normalizeRouteStops(row.outbound_route_stops ?? row.outboundRouteStops) }
+      : {}),
+    ...(("return_route_text" in row) || ("returnRouteText" in row)
+      ? { returnRouteText: row.return_route_text || row.returnRouteText || "" }
+      : {}),
+    ...(("return_route_stops" in row) || ("returnRouteStops" in row)
+      ? { returnRouteStops: normalizeRouteStops(row.return_route_stops ?? row.returnRouteStops) }
+      : {}),
+    ...(("poster_travel_route" in row) || ("posterTravelRoute" in row)
+      ? { posterTravelRoute: row.poster_travel_route || row.posterTravelRoute || "" }
+      : {}),
     deleted: false,
     deletedAt: null,
     status: row.status || "active",
@@ -258,6 +274,11 @@ const PROGRAM_SELECT_COLUMNS = [
   "seats",
   "hotel_mecca",
   "hotel_madina",
+  "outbound_route_stops",
+  "return_route_stops",
+  "outbound_route_text",
+  "return_route_text",
+  "poster_travel_route",
   "badge_guide_phone",
   "badge_saudi_phone_1",
   "badge_saudi_phone_2",
@@ -361,6 +382,21 @@ const toProgram = (p, agencyId) => ({
   seats:        p.seats        ?? 40,
   hotel_mecca:  p.hotelMecca   ?? null,
   hotel_madina: p.hotelMadina  ?? null,
+  ...(("outboundRouteStops" in p) || ("outbound_route_stops" in p)
+    ? { outbound_route_stops: normalizeRouteStops(p.outboundRouteStops ?? p.outbound_route_stops) }
+    : {}),
+  ...(("returnRouteStops" in p) || ("return_route_stops" in p)
+    ? { return_route_stops: normalizeRouteStops(p.returnRouteStops ?? p.return_route_stops) }
+    : {}),
+  ...(("outboundRouteText" in p) || ("outbound_route_text" in p)
+    ? { outbound_route_text: p.outboundRouteText ?? p.outbound_route_text ?? null }
+    : {}),
+  ...(("returnRouteText" in p) || ("return_route_text" in p)
+    ? { return_route_text: p.returnRouteText ?? p.return_route_text ?? null }
+    : {}),
+  ...(("posterTravelRoute" in p) || ("poster_travel_route" in p)
+    ? { poster_travel_route: p.posterTravelRoute ?? p.poster_travel_route ?? null }
+    : {}),
   badge_guide_phone:   p.guidePhone   ?? null,
   badge_saudi_phone_1: p.saudiPhone1  ?? null,
   badge_saudi_phone_2: p.saudiPhone2  ?? null,
@@ -389,6 +425,11 @@ const fromProgram = (row) => ({
   seats:       row.seats,
   hotelMecca:  row.hotel_mecca,
   hotelMadina: row.hotel_madina,
+  outboundRouteStops: normalizeRouteStops(row.outbound_route_stops),
+  returnRouteStops: normalizeRouteStops(row.return_route_stops),
+  outboundRouteText: row.outbound_route_text || "",
+  returnRouteText: row.return_route_text || "",
+  posterTravelRoute: row.poster_travel_route || "",
   guidePhone:  row.badge_guide_phone || "",
   saudiPhone1: row.badge_saudi_phone_1 || "",
   saudiPhone2: row.badge_saudi_phone_2 || "",
@@ -649,6 +690,50 @@ const fromBadgeTemplate = (row) => ({
   heightMm: Number(row.height_mm || 140),
   layout: row.layout || {},
   isDefault: Boolean(row.is_default),
+  createdAt: row.created_at || "",
+  updatedAt: row.updated_at || "",
+});
+
+const normalizePosterProgramType = (value) => (
+  value === "hajj" ? "hajj" : "umrah"
+);
+
+const normalizeProgramPosterLevelsCount = (value) => {
+  const count = Number(value);
+  if (!Number.isFinite(count)) return 3;
+  return Math.min(5, Math.max(1, Math.round(count)));
+};
+
+const normalizeProgramPosterAreas = (areas) => (
+  Array.isArray(areas) ? areas : []
+);
+
+const toProgramPosterTemplate = (template, agencyId) => {
+  const payload = {
+    agency_id: agencyId,
+    name: cleanString(template.name) || "Program poster template",
+    program_type: normalizePosterProgramType(template.programType || template.program_type),
+    levels_count: normalizeProgramPosterLevelsCount(template.levelsCount ?? template.levels_count),
+    image_path: cleanString(template.imagePath || template.image_path),
+    file_name: cleanString(template.fileName || template.file_name),
+    file_size: toNullableFiniteNumber(template.fileSize ?? template.file_size),
+    areas: normalizeProgramPosterAreas(template.areas),
+    updated_at: new Date().toISOString(),
+  };
+  if (template.id) payload.id = template.id;
+  return payload;
+};
+
+const fromProgramPosterTemplate = (row) => ({
+  id: row.id,
+  agencyId: row.agency_id,
+  name: row.name || "",
+  programType: normalizePosterProgramType(row.program_type),
+  levelsCount: normalizeProgramPosterLevelsCount(row.levels_count),
+  imagePath: row.image_path || "",
+  fileName: row.file_name || "",
+  fileSize: Number(row.file_size || 0),
+  areas: normalizeProgramPosterAreas(row.areas),
   createdAt: row.created_at || "",
   updatedAt: row.updated_at || "",
 });
@@ -1648,6 +1733,37 @@ export const db = {
       if (!agencyId || !id) return { error: null };
       const { error } = await supabase
         .from("badge_templates")
+        .delete()
+        .eq("agency_id", agencyId)
+        .eq("id", id);
+      return { error };
+    },
+  },
+
+  programPosterTemplates: {
+    async fetchAll(agencyId) {
+      if (!agencyId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("program_poster_templates")
+        .select("*")
+        .eq("agency_id", agencyId)
+        .order("updated_at", { ascending: false });
+      return { data: data?.map(fromProgramPosterTemplate) ?? [], error };
+    },
+    async upsert(template, agencyId) {
+      if (!agencyId) return { data: null, error: null };
+      const payload = toProgramPosterTemplate(template, agencyId);
+      const { data, error } = await supabase
+        .from("program_poster_templates")
+        .upsert(payload, { onConflict: "id" })
+        .select("*")
+        .single();
+      return { data: data ? fromProgramPosterTemplate(data) : null, error };
+    },
+    async delete(id, agencyId) {
+      if (!agencyId || !id) return { error: null };
+      const { error } = await supabase
+        .from("program_poster_templates")
         .delete()
         .eq("agency_id", agencyId)
         .eq("id", id);

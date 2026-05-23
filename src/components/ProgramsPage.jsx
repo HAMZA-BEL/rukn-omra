@@ -46,6 +46,7 @@ import {
   calculateHotelStayDates,
   formatDateForExcel,
 } from "../utils/hotelDates";
+import { AGENCY_FEATURES, useAgencyFeature } from "../hooks/useAgencyFeature";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { db } from "../lib/db";
 import { AppIcon } from "./Icon";
@@ -102,6 +103,22 @@ import {
 import {
   exportProgramWordContractsZip,
 } from "../features/contracts";
+import {
+  fetchPosterTemplates,
+  getPosterTemplateImageUrl,
+} from "../features/posterTemplates/services/posterTemplatesApi";
+import {
+  buildProgramPosterFilename,
+  downloadPosterBlob,
+  generateProgramPosterPng,
+} from "../features/posterTemplates/services/programPosterGenerator";
+import {
+  getProgramPosterLevelsCount,
+} from "../features/posterTemplates/utils/programPosterMapping";
+import {
+  normalizePosterTemplateLevelsCount,
+  normalizePosterTemplateType,
+} from "../features/posterTemplates/utils/posterTemplateData";
 import { downloadPassportListWord } from "../features/programs/exports/passportListWordExport";
 import {
   AlignCenter,
@@ -2910,6 +2927,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
+  const { enabled: programPostersEnabled } = useAgencyFeature(
+    store.agencyId,
+    AGENCY_FEATURES.PROGRAM_POSTERS
+  );
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const detailDataReady = clientsReady && paymentsReady;
@@ -2953,6 +2974,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
   const [badgeExportBusy, setBadgeExportBusy] = React.useState(false);
   const [wordContractExportBusy, setWordContractExportBusy] = React.useState(false);
+  const [posterExportBusy, setPosterExportBusy] = React.useState(false);
+  const [posterTemplateChoice, setPosterTemplateChoice] = React.useState(null);
+  const [posterTemplateChoiceId, setPosterTemplateChoiceId] = React.useState("");
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
@@ -3648,11 +3672,144 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     missingTemplate: lang === "fr" ? "Importez d’abord le modèle de contrat Word." : lang === "en" ? "Upload the Word contract template first." : "ارفع قالب العقد أولًا لتصدير عقود Word.",
     error: lang === "fr" ? "Impossible d’exporter les contrats Word." : lang === "en" ? "Unable to export Word contracts." : "تعذر تصدير عقود Word",
   }), [lang, t.loading]);
+  const posterExportLabels = React.useMemo(() => ({
+    action: lang === "fr" ? "Télécharger l’affiche du programme" : lang === "en" ? "Download program poster" : "تنزيل ملصق البرنامج",
+    busy: lang === "fr" ? "Génération de l’affiche..." : lang === "en" ? "Generating poster..." : "جاري تجهيز الملصق...",
+    chooseTitle: lang === "fr" ? "Choisir le modèle d’affiche" : lang === "en" ? "Choose poster template" : "اختيار قالب الملصق",
+    chooseHint: lang === "fr"
+      ? "Plusieurs modèles correspondent à ce programme. Choisissez celui à utiliser."
+      : lang === "en"
+        ? "Several templates match this program. Choose which one to use."
+        : "توجد عدة قوالب مناسبة لهذا البرنامج. اختر القالب الذي تريد استعماله.",
+    download: lang === "fr" ? "Télécharger l’affiche" : lang === "en" ? "Download poster" : "تنزيل الملصق",
+    cancel: t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء"),
+    noMatch: lang === "fr"
+      ? "Aucun modèle d’affiche adapté à ce programme."
+      : lang === "en"
+        ? "No matching poster template found for this program."
+        : "لا يوجد قالب ملصق مناسب لهذا البرنامج. أضف قالبًا من الإعدادات بنفس نوع البرنامج وعدد المستويات.",
+    tooManyLevels: lang === "fr"
+      ? "Les modèles d’affiche prennent en charge jusqu’à 5 niveaux."
+      : lang === "en"
+        ? "Poster templates support up to 5 levels."
+        : "قوالب الملصقات تدعم حتى 5 مستويات فقط.",
+    missingImage: lang === "fr"
+      ? "L’image du modèle d’affiche n’est pas disponible."
+      : lang === "en"
+        ? "The poster template image is not available."
+        : "صورة قالب الملصق غير متاحة.",
+    success: lang === "fr" ? "Affiche du programme téléchargée." : lang === "en" ? "Program poster downloaded." : "تم تنزيل ملصق البرنامج.",
+    error: lang === "fr" ? "Impossible de générer l’affiche du programme." : lang === "en" ? "Unable to generate the program poster." : "تعذر إنشاء ملصق البرنامج.",
+    levelsBadge: (count) => {
+      if (lang === "fr") return `${count} ${count === 1 ? "niveau" : "niveaux"}`;
+      if (lang === "en") return `${count} ${count === 1 ? "level" : "levels"}`;
+      return `${count} ${count === 1 ? "مستوى" : "مستويات"}`;
+    },
+  }), [lang, t.cancel]);
   const costingLabels = React.useMemo(() => getProgramCostingLabels(lang), [lang]);
   const closeHeaderActions = React.useCallback(() => {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
   }, []);
+  const closePosterTemplateChoice = React.useCallback(() => {
+    if (posterExportBusy) return;
+    setPosterTemplateChoice(null);
+    setPosterTemplateChoiceId("");
+  }, [posterExportBusy]);
+  const generatePosterFromTemplate = React.useCallback(async (template) => {
+    const imageUrl = await getPosterTemplateImageUrl(template);
+    if (!imageUrl) throw new Error("missing-template-image");
+    const blob = await generateProgramPosterPng({
+      template,
+      imageUrl,
+      program,
+      lang,
+    });
+    downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
+  }, [lang, program]);
+  const runPosterTemplateDownload = React.useCallback(async (template) => {
+    if (!template || posterExportBusy) return;
+    setPosterExportBusy(true);
+    try {
+      await generatePosterFromTemplate(template);
+      setPosterTemplateChoice(null);
+      setPosterTemplateChoiceId("");
+      onToast?.(posterExportLabels.success, "success");
+    } catch (error) {
+      console.error("[ProgramPoster] Poster generation failed:", error);
+      onToast?.(
+        error?.message === "missing-template-image" ? posterExportLabels.missingImage : posterExportLabels.error,
+        "error"
+      );
+    } finally {
+      setPosterExportBusy(false);
+    }
+  }, [generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success]);
+  const handleProgramPosterDownload = React.useCallback(async () => {
+    closeHeaderActions();
+    if (!programPostersEnabled || posterExportBusy) return;
+
+    const rawLevelsCount = getProgramPosterLevelsCount(program);
+    if (rawLevelsCount > 5) {
+      onToast?.(posterExportLabels.tooManyLevels, "error");
+      return;
+    }
+
+    const programType = normalizePosterTemplateType(getProgramKind(program, null, {
+      allowNameFallback: true,
+      defaultKind: "umrah",
+    }));
+    const levelsCount = normalizePosterTemplateLevelsCount(rawLevelsCount);
+
+    setPosterExportBusy(true);
+    try {
+      const { data, error } = await fetchPosterTemplates({ agencyId: store.agencyId });
+      if (error) throw error;
+
+      const matches = (Array.isArray(data) ? data : [])
+        .filter((template) => (
+          normalizePosterTemplateType(template.programType || template.program_type) === programType
+          && normalizePosterTemplateLevelsCount(template.levelsCount ?? template.levels_count) === levelsCount
+        ))
+        .sort((a, b) => {
+          const bTime = Date.parse(b.updatedAt || b.updated_at || "") || 0;
+          const aTime = Date.parse(a.updatedAt || a.updated_at || "") || 0;
+          if (bTime !== aTime) return bTime - aTime;
+          return String(a.name || "").localeCompare(String(b.name || ""), lang);
+        });
+
+      if (!matches.length) {
+        onToast?.(posterExportLabels.noMatch, "error");
+        return;
+      }
+
+      if (matches.length === 1) {
+        await generatePosterFromTemplate(matches[0]);
+        onToast?.(posterExportLabels.success, "success");
+        return;
+      }
+
+      setPosterTemplateChoice({
+        templates: matches,
+        programType,
+        levelsCount,
+      });
+      setPosterTemplateChoiceId(matches[0]?.id || "");
+    } catch (error) {
+      console.error("[ProgramPoster] Template selection failed:", error);
+      onToast?.(
+        error?.message === "missing-template-image" ? posterExportLabels.missingImage : posterExportLabels.error,
+        "error"
+      );
+    } finally {
+      setPosterExportBusy(false);
+    }
+  }, [closeHeaderActions, generatePosterFromTemplate, lang, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.noMatch, posterExportLabels.success, posterExportLabels.tooManyLevels, program, programPostersEnabled, store.agencyId]);
+  const handlePosterTemplateChoiceDownload = React.useCallback(() => {
+    const selectedTemplate = posterTemplateChoice?.templates?.find((template) => template.id === posterTemplateChoiceId)
+      || posterTemplateChoice?.templates?.[0];
+    runPosterTemplateDownload(selectedTemplate);
+  }, [posterTemplateChoice, posterTemplateChoiceId, runPosterTemplateDownload]);
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const getCurrentWordContractExportClients = React.useCallback(() => {
     if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
@@ -3953,6 +4110,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF",
       onClick: handleProgramPdfExport,
     },
+    ...(programPostersEnabled ? [{
+      key: "program-poster",
+      icon: "download",
+      label: posterExportBusy ? posterExportLabels.busy : posterExportLabels.action,
+      onClick: handleProgramPosterDownload,
+    }] : []),
     {
       key: "amadeus",
       icon: "clearance",
@@ -3983,7 +4146,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, programPostersEnabled, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -4004,6 +4167,87 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         onAddClient={() => runWithGlobalDetailData(() => setShowAddClient(true))}
         addClientLabel={participantTerms.addAction || t.addClient}
       />
+
+      <Modal
+        open={Boolean(posterTemplateChoice)}
+        onClose={closePosterTemplateChoice}
+        title={posterExportLabels.chooseTitle}
+        width={520}
+        closeOnBackdrop={!posterExportBusy}
+        closeOnEscape={!posterExportBusy}
+      >
+        {posterTemplateChoice && (
+          <div style={{ display:"grid", gap:16, direction:dir }}>
+            <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:13, lineHeight:1.7 }}>
+              {posterExportLabels.chooseHint}
+            </p>
+            <div style={{ display:"grid", gap:8 }}>
+              {posterTemplateChoice.templates.map((template) => {
+                const active = String(template.id || "") === String(posterTemplateChoiceId || "");
+                return (
+                  <button
+                    key={template.id}
+                    type="button"
+                    disabled={posterExportBusy}
+                    onClick={() => setPosterTemplateChoiceId(template.id)}
+                    style={{
+                      border:`1px solid ${active ? "rgba(212,175,55,.55)" : "var(--rukn-border-soft)"}`,
+                      background:active ? "rgba(212,175,55,.11)" : "var(--rukn-bg-soft)",
+                      borderRadius:12,
+                      padding:"11px 12px",
+                      color:"var(--rukn-text)",
+                      display:"flex",
+                      alignItems:"center",
+                      gap:11,
+                      textAlign:"start",
+                      cursor:posterExportBusy ? "not-allowed" : "pointer",
+                      fontFamily:"'Cairo',sans-serif",
+                    }}
+                  >
+                    <span style={{
+                      width:16,
+                      height:16,
+                      borderRadius:999,
+                      border:`2px solid ${active ? "var(--rukn-gold)" : "rgba(148,163,184,.45)"}`,
+                      display:"inline-flex",
+                      alignItems:"center",
+                      justifyContent:"center",
+                      flex:"0 0 auto",
+                    }}>
+                      <span style={{
+                        width:7,
+                        height:7,
+                        borderRadius:999,
+                        background:active ? "var(--rukn-gold)" : "transparent",
+                      }} />
+                    </span>
+                    <span style={{ minWidth:0, display:"grid", gap:3 }}>
+                      <strong style={{ fontSize:13, color:"var(--rukn-text-strong)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {template.name || posterExportLabels.action}
+                      </strong>
+                      <span style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>
+                        {posterExportLabels.levelsBadge(normalizePosterTemplateLevelsCount(template.levelsCount ?? template.levels_count))}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+              <Button variant="ghost" onClick={closePosterTemplateChoice} disabled={posterExportBusy}>
+                {posterExportLabels.cancel}
+              </Button>
+              <Button
+                icon="download"
+                onClick={handlePosterTemplateChoiceDownload}
+                disabled={posterExportBusy || !posterTemplateChoiceId}
+              >
+                {posterExportBusy ? posterExportLabels.busy : posterExportLabels.download}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <ProgramDetailOverview
         activeTab={programTab}
