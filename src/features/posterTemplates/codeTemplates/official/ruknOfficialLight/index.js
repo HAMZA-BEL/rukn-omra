@@ -8,11 +8,13 @@ export const renderPoster = async ({
   agency = {},
   locale = "ar",
   lang,
+  posterOptions = {},
 } = {}) => (
   generateOfficialRuknPosterPng({
     program,
     agency,
     agencyLogoUrl: agency?.logoUrl || agency?.logo_url || "",
     lang: lang || locale || "ar",
+    posterOptions,
   })
 );

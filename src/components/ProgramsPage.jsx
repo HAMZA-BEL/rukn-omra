@@ -115,10 +115,12 @@ import {
 import {
   loadCodePosterTemplate,
   OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
+  TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY,
 } from "../features/posterTemplates/codeTemplates/registry";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
 import {
   getProgramPosterLevelsCount,
+  resolvePosterAreaValue,
 } from "../features/posterTemplates/utils/programPosterMapping";
 import {
   normalizePosterTemplateLevelsCount,
@@ -176,6 +178,14 @@ const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
+
+const getDefaultPosterTitle = (program = {}, lang = "ar") => (
+  String(resolvePosterAreaValue("program_name", program, { lang })
+    || program.name
+    || program.programName
+    || program.title
+    || "").trim()
+);
 
 const isActiveTransferDestinationProgram = (program = {}) => (
   Boolean(program?.id)
@@ -2984,6 +2994,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const [posterExportBusy, setPosterExportBusy] = React.useState(false);
   const [posterTemplateChoice, setPosterTemplateChoice] = React.useState(null);
   const [posterTemplateChoiceId, setPosterTemplateChoiceId] = React.useState("");
+  const [posterShowDates, setPosterShowDates] = React.useState(true);
+  const [posterTitleOverride, setPosterTitleOverride] = React.useState(() => getDefaultPosterTitle(program, lang));
   const [hoveredHeaderAction, setHoveredHeaderAction] = React.useState("");
   const searchInputRef = React.useRef(null);
   const headerActionsRef = React.useRef(null);
@@ -3696,6 +3708,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         : "ملصق مجاني يتكيف تلقائيًا مع مستويات هذا البرنامج.",
     codeGroup: lang === "fr" ? "Modèles signature par code" : lang === "en" ? "Signature code templates" : "قوالب خاصة بالوكالة",
     customGroup: lang === "fr" ? "Modèles importés par l’agence" : lang === "en" ? "Uploaded agency templates" : "قوالب مرفوعة من الوكالة",
+    showDates: lang === "fr" ? "Afficher les dates" : lang === "en" ? "Show dates" : "إظهار التواريخ",
+    titleOverride: lang === "fr" ? "Titre de l’affiche" : lang === "en" ? "Poster title" : "عنوان الملصق",
     download: lang === "fr" ? "Télécharger l’affiche" : lang === "en" ? "Download poster" : "تنزيل الملصق",
     cancel: t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء"),
     noMatch: lang === "fr"
@@ -3722,6 +3736,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     },
   }), [lang, t.cancel]);
   const costingLabels = React.useMemo(() => getProgramCostingLabels(lang), [lang]);
+  const defaultPosterTitle = React.useMemo(() => getDefaultPosterTitle(program, lang), [program, lang]);
   const closeHeaderActions = React.useCallback(() => {
     setHeaderActionsOpen(false);
     setHoveredHeaderAction("");
@@ -3730,7 +3745,19 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     if (posterExportBusy) return;
     setPosterTemplateChoice(null);
     setPosterTemplateChoiceId("");
-  }, [posterExportBusy]);
+    setPosterShowDates(true);
+    setPosterTitleOverride(defaultPosterTitle);
+  }, [defaultPosterTitle, posterExportBusy]);
+  const openPosterTemplateChoice = React.useCallback((choice) => {
+    setPosterShowDates(true);
+    setPosterTitleOverride(defaultPosterTitle);
+    setPosterTemplateChoice(choice);
+    setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
+  }, [defaultPosterTitle]);
+  const getPosterOptions = React.useCallback(() => ({
+    showDates: posterShowDates !== false,
+    titleOverride: String(posterTitleOverride || "").trim(),
+  }), [posterShowDates, posterTitleOverride]);
   const generatePosterFromTemplate = React.useCallback(async (template) => {
     const imageUrl = await getPosterTemplateImageUrl(template);
     if (!imageUrl) throw new Error("missing-template-image");
@@ -3749,9 +3776,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       program,
       agency,
       locale: lang,
+      posterOptions: getPosterOptions(),
     });
     downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
-  }, [agency, lang, program]);
+  }, [agency, getPosterOptions, lang, program]);
   const runPosterTemplateDownload = React.useCallback(async (template) => {
     if (!template || posterExportBusy) return;
     setPosterExportBusy(true);
@@ -3759,6 +3787,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       await generatePosterFromTemplate(template);
       setPosterTemplateChoice(null);
       setPosterTemplateChoiceId("");
+      setPosterShowDates(true);
+      setPosterTitleOverride(defaultPosterTitle);
       onToast?.(posterExportLabels.success, "success");
     } catch (error) {
       console.error("[ProgramPoster] Poster generation failed:", error);
@@ -3769,7 +3799,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     } finally {
       setPosterExportBusy(false);
     }
-  }, [generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success]);
+  }, [defaultPosterTitle, generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success]);
   const runCodePosterDownload = React.useCallback(async (templateKey = OFFICIAL_RUKN_CODE_TEMPLATE_KEY) => {
     if (posterExportBusy) return;
     setPosterExportBusy(true);
@@ -3777,6 +3807,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       await generateCodePoster(templateKey);
       setPosterTemplateChoice(null);
       setPosterTemplateChoiceId("");
+      setPosterShowDates(true);
+      setPosterTitleOverride(defaultPosterTitle);
       onToast?.(posterExportLabels.success, "success");
     } catch (error) {
       console.error("[ProgramPoster] Code poster generation failed:", error);
@@ -3784,7 +3816,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     } finally {
       setPosterExportBusy(false);
     }
-  }, [generateCodePoster, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.success]);
+  }, [defaultPosterTitle, generateCodePoster, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.success]);
   const runOfficialPosterDownload = React.useCallback(() => (
     runCodePosterDownload(OFFICIAL_RUKN_CODE_TEMPLATE_KEY)
   ), [runCodePosterDownload]);
@@ -3800,17 +3832,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     const levelsCount = normalizePosterTemplateLevelsCount(rawLevelsCount);
 
     if (!programPostersEnabled) {
-      if (assignedCodePosterTemplates.length > 0) {
-        setPosterTemplateChoice({
-          codeTemplates: assignedCodePosterTemplates,
-          templates: [],
-          programType,
-          levelsCount,
-        });
-        setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
-        return;
-      }
-      await runOfficialPosterDownload();
+      openPosterTemplateChoice({
+        codeTemplates: assignedCodePosterTemplates,
+        templates: [],
+        programType,
+        levelsCount,
+      });
       return;
     }
 
@@ -3836,30 +3863,33 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
 
       if (assignedCodePosterTemplates.length === 0 && matches.length === 0) {
         setPosterExportBusy(false);
-        await runOfficialPosterDownload();
+        openPosterTemplateChoice({
+          codeTemplates: [],
+          templates: [],
+          programType,
+          levelsCount,
+        });
         return;
       }
 
-      setPosterTemplateChoice({
+      openPosterTemplateChoice({
         codeTemplates: assignedCodePosterTemplates,
         templates: matches,
         programType,
         levelsCount,
       });
-      setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
     } catch (error) {
       console.error("[ProgramPoster] Custom template lookup failed; official poster remains available:", error);
-      setPosterTemplateChoice({
+      openPosterTemplateChoice({
         codeTemplates: assignedCodePosterTemplates,
         templates: [],
         programType,
         levelsCount,
       });
-      setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
     } finally {
       setPosterExportBusy(false);
     }
-  }, [assignedCodePosterTemplates, closeHeaderActions, lang, posterExportBusy, program, programPostersEnabled, runOfficialPosterDownload, store.agencyId]);
+  }, [assignedCodePosterTemplates, closeHeaderActions, lang, openPosterTemplateChoice, posterExportBusy, program, programPostersEnabled, store.agencyId]);
   const handlePosterTemplateChoiceDownload = React.useCallback(() => {
     if (posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID) {
       runOfficialPosterDownload();
@@ -3874,6 +3904,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       || posterTemplateChoice?.templates?.[0];
     runPosterTemplateDownload(selectedTemplate);
   }, [posterTemplateChoice, posterTemplateChoiceId, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
+  const posterOptionsVisible = posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID
+    || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const getCurrentWordContractExportClients = React.useCallback(() => {
     if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
@@ -4427,6 +4459,80 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
                 </div>
               )}
             </div>
+            {posterOptionsVisible && (
+              <div style={{
+                border:"1px solid rgba(212,175,55,.28)",
+                background:"linear-gradient(135deg,rgba(212,175,55,.10),rgba(255,255,255,.03))",
+                borderRadius:12,
+                padding:"12px",
+                display:"grid",
+                gap:12,
+              }}>
+                <Input
+                  label={posterExportLabels.titleOverride}
+                  value={posterTitleOverride}
+                  onChange={(event) => setPosterTitleOverride(event.target.value)}
+                  disabled={posterExportBusy}
+                  inputStyle={{
+                    background:"#FFFFFF",
+                    borderColor:"rgba(212,175,55,.38)",
+                    color:"#111827",
+                    fontWeight:700,
+                    textAlign:"right",
+                  }}
+                />
+                <div style={{
+                  display:"flex",
+                  alignItems:"center",
+                  justifyContent:"space-between",
+                  gap:12,
+                }}>
+                  <span style={{
+                    color:"var(--rukn-text-strong)",
+                    fontSize:13,
+                    fontWeight:800,
+                  }}>
+                    {posterExportLabels.showDates}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={posterShowDates}
+                    aria-label={posterExportLabels.showDates}
+                    disabled={posterExportBusy}
+                    onClick={() => setPosterShowDates((show) => !show)}
+                    style={{
+                      width:56,
+                      height:30,
+                      border:0,
+                      borderRadius:999,
+                      padding:0,
+                      position:"relative",
+                      flex:"0 0 auto",
+                      background:posterShowDates
+                        ? "linear-gradient(135deg,var(--rukn-gold),#f5c857)"
+                        : "rgba(148,163,184,.32)",
+                      boxShadow:posterShowDates ? "0 8px 18px rgba(212,175,55,.24)" : "inset 0 0 0 1px rgba(148,163,184,.2)",
+                      cursor:posterExportBusy ? "not-allowed" : "pointer",
+                      opacity:posterExportBusy ? .55 : 1,
+                      transition:"background .2s ease, box-shadow .2s ease, opacity .2s ease",
+                    }}
+                  >
+                    <span style={{
+                      position:"absolute",
+                      top:3,
+                      left:posterShowDates ? 29 : 3,
+                      width:24,
+                      height:24,
+                      borderRadius:999,
+                      background:"#fff",
+                      boxShadow:"0 3px 10px rgba(15,23,42,.24)",
+                      transition:"left .2s ease",
+                    }} />
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
               <Button variant="ghost" onClick={closePosterTemplateChoice} disabled={posterExportBusy}>
                 {posterExportLabels.cancel}

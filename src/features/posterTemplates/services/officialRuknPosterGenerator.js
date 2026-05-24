@@ -582,8 +582,10 @@ const getAgencyContact = (agency = {}, labels = {}) => {
   return { phones: uniquePhones, address, agencyName };
 };
 
-const drawHero = (ctx, program, labels, lang, palette) => {
-  const programName = resolvePosterAreaValue("program_name", program, { lang }) || labels.defaultProgram;
+const drawHero = (ctx, program, labels, lang, palette, posterOptions = {}) => {
+  const programName = cleanText(posterOptions?.titleOverride)
+    || resolvePosterAreaValue("program_name", program, { lang })
+    || labels.defaultProgram;
   const programType = getProgramTypeLabel(program, labels);
   const startingPrice = resolvePosterAreaValue("starting_price", program, { lang });
   const titleBox = lang === "ar"
@@ -941,15 +943,16 @@ const drawFlightConnector = (ctx, box, direction, palette) => {
   drawPlaneIcon(ctx, lineCenter + direction * 38, y + 13, 30, palette.primary, -Math.PI / 2);
 };
 
-const drawTripDetails = (ctx, program, labels, lang, palette, startY) => {
+const drawTripDetails = (ctx, program, labels, lang, palette, startY, options = {}) => {
   const departure = resolvePosterAreaValue("departure_date", program, { lang });
   const returnDate = resolvePosterAreaValue("return_date", program, { lang });
   const route = getOfficialRouteText(resolvePosterAreaValue("poster_travel_route", program, { lang }));
   const airline = sanitizeAirlineText(resolvePosterAreaValue("flight_info", program, { lang }));
   const routeLabel = getRouteLabel(labels, airline, lang);
+  const showDates = options.showDates !== false;
   let y = startY;
 
-  if (departure && returnDate) {
+  if (showDates && departure && returnDate) {
     const cardW = 390;
     const cardH = 102;
     const leftCard = { x: CONTENT_X, y, width: cardW, height: cardH };
@@ -965,7 +968,7 @@ const drawTripDetails = (ctx, program, labels, lang, palette, startY) => {
       height: cardH,
     }, lang === "ar" ? -1 : 1, palette);
     y += cardH + 22;
-  } else if (departure || returnDate) {
+  } else if (showDates && (departure || returnDate)) {
     drawDateCard(ctx, departure ? labels.departure : labels.returnDate, departure || returnDate, {
       x: CONTENT_X + 250,
       y,
@@ -1079,7 +1082,14 @@ const drawFooter = (ctx, agency, labels, lang, palette, y = 1510) => {
   }, { lang: "en", type: "powered_by" });
 };
 
-const getTripStartY = (tableEndY, levelCount) => {
+const getTripStartY = (tableEndY, levelCount, options = {}) => {
+  if (options.showDates === false) {
+    const routeCardH = 106;
+    const topGap = levelCount <= 1 ? 86 : levelCount === 2 ? 70 : levelCount === 3 ? 58 : 48;
+    const minY = tableEndY + topGap;
+    const centeredY = tableEndY + (getFooterY() - tableEndY - routeCardH) / 2;
+    return Math.max(minY, Math.min(centeredY, getFooterY() - routeCardH - 92));
+  }
   if (levelCount <= 1) return tableEndY + 84;
   if (levelCount === 2) return tableEndY + 64;
   if (levelCount === 3) return tableEndY + 50;
@@ -1094,6 +1104,7 @@ export const generateOfficialRuknPosterPng = async ({
   agency = {},
   agencyLogoUrl = "",
   lang = "ar",
+  posterOptions = {},
 } = {}) => {
   if (!isBrowser()) throw new Error("poster-generation-browser-only");
   if (document.fonts?.ready) {
@@ -1116,11 +1127,20 @@ export const generateOfficialRuknPosterPng = async ({
   ctx.scale(renderScale, renderScale);
 
   try {
+    const showDates = posterOptions?.showDates !== false;
     drawBackground(ctx, palette);
     drawAgencyBrand(ctx, agency, logoImage, lang, labels, palette);
-    drawHero(ctx, program, labels, lang, palette);
+    drawHero(ctx, program, labels, lang, palette, posterOptions);
     const tableLayout = drawLevelsTable(ctx, program, labels, lang, palette);
-    drawTripDetails(ctx, program, labels, lang, palette, getTripStartY(tableLayout.endY, tableLayout.levelCount));
+    drawTripDetails(
+      ctx,
+      program,
+      labels,
+      lang,
+      palette,
+      getTripStartY(tableLayout.endY, tableLayout.levelCount, { showDates }),
+      { showDates }
+    );
     drawFooter(ctx, agency, labels, lang, palette, getFooterY(tableLayout.levelCount));
 
     return await new Promise((resolve, reject) => {

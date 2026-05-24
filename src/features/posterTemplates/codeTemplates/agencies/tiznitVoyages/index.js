@@ -92,6 +92,20 @@ const cleanText = (value, fallback = "") => {
   return text || fallback;
 };
 
+const normalizeNumericText = (value) => String(value || "")
+  .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+  .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)));
+
+const hasPositivePosterPrice = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  const text = cleanText(value);
+  if (!text) return false;
+  const digits = normalizeNumericText(text).replace(/[^\d]/g, "");
+  return Number(digits) > 0;
+};
+
+const formatPosterPriceDisplay = (value) => (hasPositivePosterPrice(value) ? cleanText(value) : "");
+
 const getRenderScale = () => {
   if (!isBrowser()) return 1;
   const deviceScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
@@ -671,9 +685,15 @@ const buildVersionLabel = (program = {}) => {
 
 const getLevelFallbackLabel = (index) => `المستوى ${index + 1}`;
 
-const getPosterData = (program = {}) => {
+const getVisibleRoomColumns = (rows = []) => ROOM_COLUMNS.filter((room) => (
+  rows.some((row) => hasPositivePosterPrice(row?.prices?.[room.key]))
+));
+
+const getPosterData = (program = {}, posterOptions = {}) => {
   const levels = getProgramPosterLevels(program).slice(0, 5);
-  const programName = resolvePosterAreaValue("program_name", program, { lang: "ar" }) || "برنامج عمرة";
+  const programName = cleanText(posterOptions?.titleOverride)
+    || resolvePosterAreaValue("program_name", program, { lang: "ar" })
+    || "برنامج عمرة";
   const startingPrice = resolvePosterAreaValue("starting_price", program, { lang: "ar" });
   const departureDate = resolvePosterAreaValue("departure_date", program, { lang: "ar" });
   const returnDate = resolvePosterAreaValue("return_date", program, { lang: "ar" });
@@ -684,12 +704,18 @@ const getPosterData = (program = {}) => {
     madinah: cleanText(resolvePosterAreaValue(`madinah_hotel_l${index + 1}`, program, { lang: "ar" })),
     makkah: cleanText(resolvePosterAreaValue(`makkah_hotel_l${index + 1}`, program, { lang: "ar" })),
     prices: {
-      double: cleanText(resolvePosterAreaValue(`level_${index + 1}_double_price`, program, { lang: "ar" })),
-      triple: cleanText(resolvePosterAreaValue(`level_${index + 1}_triple_price`, program, { lang: "ar" })),
-      quad: cleanText(resolvePosterAreaValue(`level_${index + 1}_quad_price`, program, { lang: "ar" })),
-      quint: cleanText(resolvePosterAreaValue(`level_${index + 1}_quint_price`, program, { lang: "ar" })),
+      double: formatPosterPriceDisplay(resolvePosterAreaValue(`level_${index + 1}_double_price`, program, { lang: "ar" })),
+      triple: formatPosterPriceDisplay(resolvePosterAreaValue(`level_${index + 1}_triple_price`, program, { lang: "ar" })),
+      quad: formatPosterPriceDisplay(resolvePosterAreaValue(`level_${index + 1}_quad_price`, program, { lang: "ar" })),
+      quint: formatPosterPriceDisplay(resolvePosterAreaValue(`level_${index + 1}_quint_price`, program, { lang: "ar" })),
     },
   }));
+  const normalizedRows = rows.length ? rows : [{
+    level: getLevelFallbackLabel(0),
+    madinah: "",
+    makkah: "",
+    prices: { double: "", triple: "", quad: "", quint: "" },
+  }];
 
   return {
     programName,
@@ -699,12 +725,8 @@ const getPosterData = (program = {}) => {
     airline,
     route,
     flightServiceLine: buildFlightServiceLine(airline, route),
-    rows: rows.length ? rows : [{
-      level: getLevelFallbackLabel(0),
-      madinah: "",
-      makkah: "",
-      prices: { double: "", triple: "", quad: "", quint: "" },
-    }],
+    rows: normalizedRows,
+    visibleRoomColumns: getVisibleRoomColumns(normalizedRows),
   };
 };
 
@@ -864,14 +886,21 @@ const getTableMetrics = (rowCount) => {
   };
 };
 
-const buildTableColumns = (table) => {
-  const levelW = 182;
-  const madinahW = 190;
-  const makkahW = 190;
-  const priceW = (table.width - levelW - madinahW - makkahW) / 4;
+const buildTableColumns = (table, visibleRooms = ROOM_COLUMNS) => {
+  const fullPriceW = (table.width - 182 - 190 - 190) / ROOM_COLUMNS.length;
+  const hotelWeight = 190 / fullPriceW;
+  const levelWeight = 182 / fullPriceW;
+  const priceWeight = 1;
+  const priceColumns = Array.isArray(visibleRooms) ? visibleRooms : ROOM_COLUMNS;
+  const totalWeight = priceColumns.length * priceWeight + hotelWeight * 2 + levelWeight;
+  const unitW = table.width / Math.max(1, totalWeight);
+  const priceW = unitW * priceWeight;
+  const madinahW = unitW * hotelWeight;
+  const makkahW = unitW * hotelWeight;
+  const levelW = unitW * levelWeight;
   const columns = [];
   let x = table.x;
-  ROOM_COLUMNS.forEach((room) => {
+  priceColumns.forEach((room) => {
     columns.push({ key: room.key, label: room.label, x, width: priceW, type: "price" });
     x += priceW;
   });
@@ -885,7 +914,7 @@ const buildTableColumns = (table) => {
 
 const drawTable = (ctx, data) => {
   const table = getTableMetrics(data.rows.length);
-  const columns = buildTableColumns(table);
+  const columns = buildTableColumns(table, data.visibleRoomColumns);
 
   fillRoundRect(ctx, table.x - 4, table.y - 4, table.width + 8, table.height + 8, 8, COLORS.white);
   strokeRoundRect(ctx, table.x - 4, table.y - 4, table.width + 8, table.height + 8, 8, "rgba(63,134,201,.35)", 2);
@@ -942,7 +971,7 @@ const drawTable = (ctx, data) => {
       }
 
       if (isPrice) {
-        const value = row.prices[column.key] || "—";
+        const value = formatPosterPriceDisplay(row.prices?.[column.key]) || "—";
         drawText(ctx, value, {
           x: column.x + 8,
           y: y + 10,
@@ -1101,16 +1130,28 @@ const getIncludedItemsFlow = (ctx, items, box, data) => {
   });
 };
 
-const getLowerLayout = (rowCount, routeBottom) => {
+const getLowerLayout = (rowCount, contentBottom, options = {}) => {
   const count = Math.max(1, Math.min(5, rowCount || 1));
-  const notesGap = count >= 5 ? 22 : count >= 4 ? 24 : 28;
+  const showDates = options.showDates !== false;
+  const notesGap = showDates
+    ? count >= 5 ? 22 : count >= 4 ? 24 : 28
+    : count <= 1 ? 64 : count === 2 ? 46 : count === 3 ? 36 : count === 4 ? 30 : 24;
   const serviceGap = count >= 5 ? 10 : count >= 4 ? 12 : count >= 3 ? 14 : 20;
   const serviceBandH = count >= 5 ? 54 : count >= 4 ? 64 : 84;
-  const notesY = routeBottom + notesGap;
+  const notesY = contentBottom + notesGap;
   const preferredServiceY = FOOTER_Y - 176;
   const maxServiceBottom = FOOTER_Y - 48;
   const maxServiceY = maxServiceBottom - serviceBandH;
-  const notesHeight = Math.min(236, Math.max(206, maxServiceY - serviceGap - notesY));
+  const notesMaxHeight = showDates
+    ? 236
+    : count <= 2 ? 236 : count === 3 ? 226 : count === 4 ? 218 : 210;
+  const notesMinHeight = showDates
+    ? 206
+    : 206;
+  const notesHeight = Math.min(
+    notesMaxHeight,
+    Math.max(notesMinHeight, maxServiceY - serviceGap - notesY)
+  );
   const notesBottom = notesY + notesHeight;
   const serviceY = Math.min(maxServiceY, Math.max(preferredServiceY, notesBottom + serviceGap));
 
@@ -1120,7 +1161,7 @@ const getLowerLayout = (rowCount, routeBottom) => {
   };
 };
 
-const drawNotesSection = (ctx, data, layout) => {
+const drawNotesSection = (ctx, data, layout, serviceBand) => {
   const y = layout.y;
   const height = layout.height;
   const gap = 28;
@@ -1130,7 +1171,10 @@ const drawNotesSection = (ctx, data, layout) => {
 
   ctx.save();
   ctx.fillStyle = COLORS.white;
-  ctx.fillRect(0, y - 14, POSTER_WIDTH, height + 40);
+  const cleanBackingBottom = serviceBand?.y
+    ? Math.max(y + height + 40, serviceBand.y)
+    : y + height + 40;
+  ctx.fillRect(0, y - 14, POSTER_WIDTH, cleanBackingBottom - (y - 14));
   ctx.restore();
 
   [left, right].forEach((box) => {
@@ -1355,6 +1399,7 @@ const canvasToPngBlob = (canvas) => new Promise((resolve, reject) => {
 
 export const renderPoster = async ({
   program,
+  posterOptions = {},
 } = {}) => {
   if (!isBrowser()) throw new Error("poster-renderer-browser-only");
   if (document.fonts?.ready) {
@@ -1377,13 +1422,14 @@ export const renderPoster = async ({
 
   const assets = await loadTemplateAssets();
   try {
-    const data = getPosterData(program);
+    const data = getPosterData(program, posterOptions);
+    const showDates = posterOptions?.showDates !== false;
     drawBackground(ctx);
     drawHero(ctx, data, assets);
     const tableBottom = drawTable(ctx, data);
-    const routeBottom = drawDateRouteSection(ctx, data, tableBottom);
-    const lowerLayout = getLowerLayout(data.rows.length, routeBottom);
-    drawNotesSection(ctx, data, lowerLayout.notes);
+    const contentBottom = showDates ? drawDateRouteSection(ctx, data, tableBottom) : tableBottom;
+    const lowerLayout = getLowerLayout(data.rows.length, contentBottom, { showDates });
+    drawNotesSection(ctx, data, lowerLayout.notes, lowerLayout.serviceBand);
     drawFooter(ctx, lowerLayout.serviceBand);
     drawVersionLabel(ctx, program);
     return await canvasToPngBlob(canvas);
