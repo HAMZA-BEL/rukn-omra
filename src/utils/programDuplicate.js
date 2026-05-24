@@ -1,4 +1,5 @@
 import { normalizeHotelCheckinDay, normalizeVisitOrder } from "./hotelDates";
+import { normalizeRouteStops, routeStopsToText } from "./programRoutes";
 
 export const getProgramDepartureYear = (program) => {
   const departure = String(program?.departure || "").trim();
@@ -27,6 +28,70 @@ const deepCloneProgramConfigValue = (value) => {
     if (typeof value === "object") return { ...value };
     return value;
   }
+};
+
+const hasOwn = (source, key) => Object.prototype.hasOwnProperty.call(source, key);
+
+const firstDefinedProgramValue = (source = {}, keys = []) => {
+  for (const key of keys) {
+    if (hasOwn(source, key) && source[key] !== undefined) return source[key];
+  }
+  return undefined;
+};
+
+const hasProgramRouteFields = (source = {}) => [
+  "outboundRouteStops",
+  "outbound_route_stops",
+  "returnRouteStops",
+  "return_route_stops",
+  "outboundRouteText",
+  "outbound_route_text",
+  "returnRouteText",
+  "return_route_text",
+  "posterTravelRoute",
+  "poster_travel_route",
+].some((key) => hasOwn(source, key));
+
+const getDuplicateRouteStops = (source = {}, stopsKeys = [], textKeys = []) => {
+  const stops = normalizeRouteStops(firstDefinedProgramValue(source, stopsKeys));
+  if (stops.length) return stops;
+  return normalizeRouteStops(firstDefinedProgramValue(source, textKeys));
+};
+
+const getDuplicateRouteText = (source = {}, textKeys = [], stops = []) => {
+  const text = firstDefinedProgramValue(source, textKeys);
+  return text === undefined || text === null ? routeStopsToText(stops) : String(text);
+};
+
+const getDuplicateProgramRouteFields = (source = {}) => {
+  if (!hasProgramRouteFields(source)) return {};
+
+  const outboundRouteStops = getDuplicateRouteStops(
+    source,
+    ["outboundRouteStops", "outbound_route_stops"],
+    ["outboundRouteText", "outbound_route_text"]
+  );
+  const returnRouteStops = getDuplicateRouteStops(
+    source,
+    ["returnRouteStops", "return_route_stops"],
+    ["returnRouteText", "return_route_text"]
+  );
+
+  return {
+    outboundRouteStops,
+    returnRouteStops,
+    outboundRouteText: getDuplicateRouteText(
+      source,
+      ["outboundRouteText", "outbound_route_text"],
+      outboundRouteStops
+    ),
+    returnRouteText: getDuplicateRouteText(
+      source,
+      ["returnRouteText", "return_route_text"],
+      returnRouteStops
+    ),
+    posterTravelRoute: String(firstDefinedProgramValue(source, ["posterTravelRoute", "poster_travel_route"]) || ""),
+  };
 };
 
 export const normalizeDuplicateProgramName = (value) => String(value || "").trim();
@@ -76,6 +141,7 @@ export const createDuplicateProgramPayload = (program = {}, newName = "") => {
     badgeTemplateId: source.badgeTemplateId || "",
     notes: source.notes || "",
     priceTable: deepCloneProgramConfigValue(Array.isArray(source.priceTable) ? source.priceTable : []),
+    ...getDuplicateProgramRouteFields(source),
     deleted: false,
     deletedAt: null,
     deletedBatchId: null,
