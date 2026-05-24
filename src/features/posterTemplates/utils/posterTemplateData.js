@@ -219,11 +219,21 @@ const clampNumber = (value, min, max, fallback) => {
 export const normalizePosterAreaStyle = (style = {}) => {
   const fontWeight = style.fontWeight === "400" || style.fontWeight === "normal" ? "400" : "700";
   const align = ["left", "center", "right"].includes(style.align) ? style.align : POSTER_AREA_DEFAULT_STYLE.align;
+  const optionalStyle = {};
+  if (style.paddingX !== undefined) optionalStyle.paddingX = clampNumber(style.paddingX, 0, 40, 0);
+  if (style.paddingY !== undefined) optionalStyle.paddingY = clampNumber(style.paddingY, 0, 40, 0);
+  if (style.lineHeight !== undefined) optionalStyle.lineHeight = clampNumber(style.lineHeight, 1.05, 1.6, 1.18);
+  if (style.minFontSize !== undefined) optionalStyle.minFontSize = clampNumber(style.minFontSize, POSTER_AREA_MIN_FONT_SIZE, POSTER_AREA_MAX_FONT_SIZE, POSTER_AREA_MIN_FONT_SIZE);
+  if (style.maxLines !== undefined) optionalStyle.maxLines = Math.max(1, Math.round(clampNumber(style.maxLines, 1, 20, 1)));
+  if (style.autoFit !== undefined) optionalStyle.autoFit = style.autoFit !== false;
+  if (style.wrap !== undefined) optionalStyle.wrap = style.wrap !== false;
+  if (["top", "middle", "bottom"].includes(style.verticalAlign)) optionalStyle.verticalAlign = style.verticalAlign;
   return {
     fontSize: clampNumber(style.fontSize, POSTER_AREA_MIN_FONT_SIZE, POSTER_AREA_MAX_FONT_SIZE, POSTER_AREA_DEFAULT_STYLE.fontSize),
     color: String(style.color || POSTER_AREA_DEFAULT_STYLE.color).trim().slice(0, 40) || POSTER_AREA_DEFAULT_STYLE.color,
     align,
     fontWeight,
+    ...optionalStyle,
   };
 };
 

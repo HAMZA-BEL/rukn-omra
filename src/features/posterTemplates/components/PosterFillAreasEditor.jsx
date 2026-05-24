@@ -10,6 +10,10 @@ import {
   POSTER_AREA_DEFAULT_STYLE,
   POSTER_AREA_LABELS,
 } from "../utils/posterTemplateData";
+import {
+  getPosterPreviewTextCss,
+  getPosterTextDirection,
+} from "../utils/posterTextRendering";
 
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 3;
@@ -635,17 +639,9 @@ const isNumericPreviewArea = (type) => (
   || /^level_\d+_.*_price$/.test(type)
 );
 
-const previewDirectionForArea = (type, lang) => (
-  isNumericPreviewArea(type)
-    ? "ltr"
-    : lang === "ar"
-    ? "rtl"
-    : "ltr"
-);
-
 function AreaPreviewContent({ area, lang }) {
   const sample = SAMPLE_TEXT[area.type]?.[lang] || SAMPLE_TEXT[area.type]?.ar || "";
-  const direction = previewDirectionForArea(area.type, lang);
+  const direction = getPosterTextDirection(area.type, sample, lang);
 
   if (area.type === "starting_price" && lang === "ar") {
     return (
@@ -1950,6 +1946,7 @@ export default function PosterFillAreasEditor({
                   const showSelectionChrome = selected && !isKeyboardNudging;
                   const showResizeHandles = showSelectionChrome && !hasMultiSelection;
                   const style = area.style || POSTER_AREA_DEFAULT_STYLE;
+                  const previewTextCss = getPosterPreviewTextCss(style, { type: area.type });
                   return (
                     <div
                       key={area.id}
@@ -1989,16 +1986,16 @@ export default function PosterFillAreasEditor({
                         height: "100%",
                         borderRadius: 7,
                         overflow: "hidden",
-                        padding: selected ? 7 : 0,
+                        padding: previewTextCss.paddingCss,
                         boxSizing: "border-box",
                         display: "flex",
-                        alignItems: "center",
+                        alignItems: previewTextCss.alignItems,
                         justifyContent: style.align === "left" ? "flex-start" : style.align === "right" ? "flex-end" : "center",
                         color: style.color || POSTER_AREA_DEFAULT_STYLE.color,
                         fontSize: `${clampFontSize(style.fontSize)}px`,
                         fontWeight: style.fontWeight,
                         textAlign: style.align,
-                        lineHeight: 1.15,
+                        lineHeight: previewTextCss.lineHeightCss,
                         whiteSpace: "normal",
                         wordBreak: "break-word",
                         pointerEvents: "none",

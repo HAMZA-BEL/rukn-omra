@@ -113,6 +113,11 @@ import {
   generateProgramPosterPng,
 } from "../features/posterTemplates/services/programPosterGenerator";
 import {
+  loadCodePosterTemplate,
+  OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
+} from "../features/posterTemplates/codeTemplates/registry";
+import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
+import {
   getProgramPosterLevelsCount,
 } from "../features/posterTemplates/utils/programPosterMapping";
 import {
@@ -170,6 +175,7 @@ const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
+const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
 
 const isActiveTransferDestinationProgram = (program = {}) => (
   Boolean(program?.id)
@@ -2931,6 +2937,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     store.agencyId,
     AGENCY_FEATURES.PROGRAM_POSTERS
   );
+  const { templates: assignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId);
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const detailDataReady = clientsReady && paymentsReady;
@@ -3677,10 +3684,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     busy: lang === "fr" ? "Génération de l’affiche..." : lang === "en" ? "Generating poster..." : "جاري تجهيز الملصق...",
     chooseTitle: lang === "fr" ? "Choisir le modèle d’affiche" : lang === "en" ? "Choose poster template" : "اختيار قالب الملصق",
     chooseHint: lang === "fr"
-      ? "Plusieurs modèles correspondent à ce programme. Choisissez celui à utiliser."
+      ? "Choisissez l’affiche officielle Rukn ou l’un des modèles de votre agence."
       : lang === "en"
-        ? "Several templates match this program. Choose which one to use."
-        : "توجد عدة قوالب مناسبة لهذا البرنامج. اختر القالب الذي تريد استعماله.",
+        ? "Choose the official Rukn poster or one of your agency templates."
+        : "اختر قالب ركن الرسمي أو أحد القوالب الخاصة بالوكالة.",
+    officialName: lang === "fr" ? "Modèle officiel Rukn" : lang === "en" ? "Official Rukn template" : "قالب ركن الرسمي",
+    officialHint: lang === "fr"
+      ? "Affiche gratuite qui s’adapte automatiquement aux niveaux du programme."
+      : lang === "en"
+        ? "Free poster that adapts automatically to this program’s levels."
+        : "ملصق مجاني يتكيف تلقائيًا مع مستويات هذا البرنامج.",
+    codeGroup: lang === "fr" ? "Modèles signature par code" : lang === "en" ? "Signature code templates" : "قوالب خاصة بالوكالة",
+    customGroup: lang === "fr" ? "Modèles importés par l’agence" : lang === "en" ? "Uploaded agency templates" : "قوالب مرفوعة من الوكالة",
     download: lang === "fr" ? "Télécharger l’affiche" : lang === "en" ? "Download poster" : "تنزيل الملصق",
     cancel: t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء"),
     noMatch: lang === "fr"
@@ -3727,6 +3742,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     });
     downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
   }, [lang, program]);
+  const generateCodePoster = React.useCallback(async (templateKey = OFFICIAL_RUKN_CODE_TEMPLATE_KEY) => {
+    const codeTemplate = await loadCodePosterTemplate(templateKey);
+    if (!codeTemplate?.renderPoster) throw new Error("missing-code-poster-template");
+    const blob = await codeTemplate.renderPoster({
+      program,
+      agency,
+      locale: lang,
+    });
+    downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
+  }, [agency, lang, program]);
   const runPosterTemplateDownload = React.useCallback(async (template) => {
     if (!template || posterExportBusy) return;
     setPosterExportBusy(true);
@@ -3745,71 +3770,110 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       setPosterExportBusy(false);
     }
   }, [generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success]);
+  const runCodePosterDownload = React.useCallback(async (templateKey = OFFICIAL_RUKN_CODE_TEMPLATE_KEY) => {
+    if (posterExportBusy) return;
+    setPosterExportBusy(true);
+    try {
+      await generateCodePoster(templateKey);
+      setPosterTemplateChoice(null);
+      setPosterTemplateChoiceId("");
+      onToast?.(posterExportLabels.success, "success");
+    } catch (error) {
+      console.error("[ProgramPoster] Code poster generation failed:", error);
+      onToast?.(posterExportLabels.error, "error");
+    } finally {
+      setPosterExportBusy(false);
+    }
+  }, [generateCodePoster, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.success]);
+  const runOfficialPosterDownload = React.useCallback(() => (
+    runCodePosterDownload(OFFICIAL_RUKN_CODE_TEMPLATE_KEY)
+  ), [runCodePosterDownload]);
   const handleProgramPosterDownload = React.useCallback(async () => {
     closeHeaderActions();
-    if (!programPostersEnabled || posterExportBusy) return;
+    if (posterExportBusy) return;
 
     const rawLevelsCount = getProgramPosterLevelsCount(program);
-    if (rawLevelsCount > 5) {
-      onToast?.(posterExportLabels.tooManyLevels, "error");
-      return;
-    }
-
     const programType = normalizePosterTemplateType(getProgramKind(program, null, {
       allowNameFallback: true,
       defaultKind: "umrah",
     }));
     const levelsCount = normalizePosterTemplateLevelsCount(rawLevelsCount);
 
-    setPosterExportBusy(true);
-    try {
-      const { data, error } = await fetchPosterTemplates({ agencyId: store.agencyId });
-      if (error) throw error;
-
-      const matches = (Array.isArray(data) ? data : [])
-        .filter((template) => (
-          normalizePosterTemplateType(template.programType || template.program_type) === programType
-          && normalizePosterTemplateLevelsCount(template.levelsCount ?? template.levels_count) === levelsCount
-        ))
-        .sort((a, b) => {
-          const bTime = Date.parse(b.updatedAt || b.updated_at || "") || 0;
-          const aTime = Date.parse(a.updatedAt || a.updated_at || "") || 0;
-          if (bTime !== aTime) return bTime - aTime;
-          return String(a.name || "").localeCompare(String(b.name || ""), lang);
+    if (!programPostersEnabled) {
+      if (assignedCodePosterTemplates.length > 0) {
+        setPosterTemplateChoice({
+          codeTemplates: assignedCodePosterTemplates,
+          templates: [],
+          programType,
+          levelsCount,
         });
-
-      if (!matches.length) {
-        onToast?.(posterExportLabels.noMatch, "error");
+        setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
         return;
       }
+      await runOfficialPosterDownload();
+      return;
+    }
 
-      if (matches.length === 1) {
-        await generatePosterFromTemplate(matches[0]);
-        onToast?.(posterExportLabels.success, "success");
+    setPosterExportBusy(true);
+    try {
+      let matches = [];
+      if (rawLevelsCount <= 5) {
+        const { data, error } = await fetchPosterTemplates({ agencyId: store.agencyId });
+        if (error) throw error;
+
+        matches = (Array.isArray(data) ? data : [])
+          .filter((template) => (
+            normalizePosterTemplateType(template.programType || template.program_type) === programType
+            && normalizePosterTemplateLevelsCount(template.levelsCount ?? template.levels_count) === levelsCount
+          ))
+          .sort((a, b) => {
+            const bTime = Date.parse(b.updatedAt || b.updated_at || "") || 0;
+            const aTime = Date.parse(a.updatedAt || a.updated_at || "") || 0;
+            if (bTime !== aTime) return bTime - aTime;
+            return String(a.name || "").localeCompare(String(b.name || ""), lang);
+          });
+      }
+
+      if (assignedCodePosterTemplates.length === 0 && matches.length === 0) {
+        setPosterExportBusy(false);
+        await runOfficialPosterDownload();
         return;
       }
 
       setPosterTemplateChoice({
+        codeTemplates: assignedCodePosterTemplates,
         templates: matches,
         programType,
         levelsCount,
       });
-      setPosterTemplateChoiceId(matches[0]?.id || "");
+      setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
     } catch (error) {
-      console.error("[ProgramPoster] Template selection failed:", error);
-      onToast?.(
-        error?.message === "missing-template-image" ? posterExportLabels.missingImage : posterExportLabels.error,
-        "error"
-      );
+      console.error("[ProgramPoster] Custom template lookup failed; official poster remains available:", error);
+      setPosterTemplateChoice({
+        codeTemplates: assignedCodePosterTemplates,
+        templates: [],
+        programType,
+        levelsCount,
+      });
+      setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID);
     } finally {
       setPosterExportBusy(false);
     }
-  }, [closeHeaderActions, generatePosterFromTemplate, lang, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.noMatch, posterExportLabels.success, posterExportLabels.tooManyLevels, program, programPostersEnabled, store.agencyId]);
+  }, [assignedCodePosterTemplates, closeHeaderActions, lang, posterExportBusy, program, programPostersEnabled, runOfficialPosterDownload, store.agencyId]);
   const handlePosterTemplateChoiceDownload = React.useCallback(() => {
+    if (posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID) {
+      runOfficialPosterDownload();
+      return;
+    }
+    const selectedCodeTemplate = posterTemplateChoice?.codeTemplates?.find((template) => template.key === posterTemplateChoiceId);
+    if (selectedCodeTemplate) {
+      runCodePosterDownload(selectedCodeTemplate.key);
+      return;
+    }
     const selectedTemplate = posterTemplateChoice?.templates?.find((template) => template.id === posterTemplateChoiceId)
       || posterTemplateChoice?.templates?.[0];
     runPosterTemplateDownload(selectedTemplate);
-  }, [posterTemplateChoice, posterTemplateChoiceId, runPosterTemplateDownload]);
+  }, [posterTemplateChoice, posterTemplateChoiceId, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const getCurrentWordContractExportClients = React.useCallback(() => {
     if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
@@ -4110,12 +4174,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Exporter PDF" : lang === "en" ? "Export PDF" : "تصدير PDF",
       onClick: handleProgramPdfExport,
     },
-    ...(programPostersEnabled ? [{
+    {
       key: "program-poster",
       icon: "download",
       label: posterExportBusy ? posterExportLabels.busy : posterExportLabels.action,
       onClick: handleProgramPosterDownload,
-    }] : []),
+    },
     {
       key: "amadeus",
       icon: "clearance",
@@ -4146,7 +4210,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, programPostersEnabled, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -4182,7 +4246,135 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
               {posterExportLabels.chooseHint}
             </p>
             <div style={{ display:"grid", gap:8 }}>
-              {posterTemplateChoice.templates.map((template) => {
+              <button
+                type="button"
+                disabled={posterExportBusy}
+                onClick={() => setPosterTemplateChoiceId(OFFICIAL_RUKN_POSTER_CHOICE_ID)}
+                style={{
+                  border:`1px solid ${posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID ? "rgba(212,175,55,.55)" : "var(--rukn-border-soft)"}`,
+                  background:posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID ? "rgba(212,175,55,.11)" : "var(--rukn-bg-soft)",
+                  borderRadius:12,
+                  padding:"11px 12px",
+                  color:"var(--rukn-text)",
+                  display:"flex",
+                  alignItems:"center",
+                  gap:11,
+                  textAlign:"start",
+                  cursor:posterExportBusy ? "not-allowed" : "pointer",
+                  fontFamily:"'Cairo',sans-serif",
+                }}
+              >
+                <span style={{
+                  width:16,
+                  height:16,
+                  borderRadius:999,
+                  border:`2px solid ${posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID ? "var(--rukn-gold)" : "rgba(148,163,184,.45)"}`,
+                  display:"inline-flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                  flex:"0 0 auto",
+                }}>
+                  <span style={{
+                    width:7,
+                    height:7,
+                    borderRadius:999,
+                    background:posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID ? "var(--rukn-gold)" : "transparent",
+                  }} />
+                </span>
+                <span style={{ minWidth:0, display:"grid", gap:3 }}>
+                  <strong style={{ fontSize:13, color:"var(--rukn-text-strong)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {posterExportLabels.officialName}
+                  </strong>
+                  <span style={{ fontSize:11, color:"var(--rukn-text-muted)", lineHeight:1.5 }}>
+                    {posterExportLabels.officialHint}
+                  </span>
+                </span>
+              </button>
+
+              {posterTemplateChoice.codeTemplates?.length > 0 && (
+                <div style={{
+                  marginTop:5,
+                  paddingTop:10,
+                  borderTop:"1px solid var(--rukn-border-soft)",
+                  display:"grid",
+                  gap:8,
+                }}>
+                  <p style={{
+                    margin:0,
+                    color:"var(--rukn-text-muted)",
+                    fontSize:11,
+                    fontWeight:800,
+                  }}>
+                    {posterExportLabels.codeGroup}
+                  </p>
+                  {posterTemplateChoice.codeTemplates.map((template) => {
+                    const active = String(template.key || "") === String(posterTemplateChoiceId || "");
+                    const name = template.meta?.name?.[lang] || template.meta?.name?.ar || template.key;
+                    return (
+                      <button
+                        key={template.key}
+                        type="button"
+                        disabled={posterExportBusy}
+                        onClick={() => setPosterTemplateChoiceId(template.key)}
+                        style={{
+                          border:`1px solid ${active ? "rgba(212,175,55,.55)" : "var(--rukn-border-soft)"}`,
+                          background:active ? "rgba(212,175,55,.11)" : "var(--rukn-bg-soft)",
+                          borderRadius:12,
+                          padding:"11px 12px",
+                          color:"var(--rukn-text)",
+                          display:"flex",
+                          alignItems:"center",
+                          gap:11,
+                          textAlign:"start",
+                          cursor:posterExportBusy ? "not-allowed" : "pointer",
+                          fontFamily:"'Cairo',sans-serif",
+                        }}
+                      >
+                        <span style={{
+                          width:16,
+                          height:16,
+                          borderRadius:999,
+                          border:`2px solid ${active ? "var(--rukn-gold)" : "rgba(148,163,184,.45)"}`,
+                          display:"inline-flex",
+                          alignItems:"center",
+                          justifyContent:"center",
+                          flex:"0 0 auto",
+                        }}>
+                          <span style={{
+                            width:7,
+                            height:7,
+                            borderRadius:999,
+                            background:active ? "var(--rukn-gold)" : "transparent",
+                          }} />
+                        </span>
+                        <span style={{ minWidth:0, display:"grid", gap:3 }}>
+                          <strong style={{ fontSize:13, color:"var(--rukn-text-strong)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {name}
+                          </strong>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {posterTemplateChoice.templates?.length > 0 && (
+                <div style={{
+                  marginTop:5,
+                  paddingTop:10,
+                  borderTop:"1px solid var(--rukn-border-soft)",
+                  display:"grid",
+                  gap:8,
+                }}>
+                  <p style={{
+                    margin:0,
+                    color:"var(--rukn-text-muted)",
+                    fontSize:11,
+                    fontWeight:800,
+                  }}>
+                    {posterExportLabels.customGroup}
+                  </p>
+                  {posterTemplateChoice.templates.map((template) => {
                 const active = String(template.id || "") === String(posterTemplateChoiceId || "");
                 return (
                   <button
@@ -4231,7 +4423,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
                     </span>
                   </button>
                 );
-              })}
+                  })}
+                </div>
+              )}
             </div>
             <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
               <Button variant="ghost" onClick={closePosterTemplateChoice} disabled={posterExportBusy}>
