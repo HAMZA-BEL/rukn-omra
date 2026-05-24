@@ -1044,12 +1044,61 @@ const drawIncludedItem = (ctx, x, y, text, maxWidth, icon, fontSize = 20, option
   drawText(ctx, text, { x, y, width: maxWidth - iconSize - 16, height: options.height || 26 }, {
     color: COLORS.text,
     fontSize,
-    minFontSize: 12,
+    minFontSize: options.minFontSize || 12,
     maxLines: options.maxLines || 1,
     align: "right",
     wrap: options.wrap !== false,
     lineHeight: 1.08,
   }, { type: "service_note" });
+};
+
+const measureIncludedTextWidth = (ctx, text, fontSize) => {
+  ctx.save();
+  ctx.font = `700 ${fontSize}px Cairo, "Noto Sans Arabic", Arial, sans-serif`;
+  const width = ctx.measureText(String(text || "")).width;
+  ctx.restore();
+  return width;
+};
+
+const getIncludedItemsFlow = (ctx, items, box, data) => {
+  const top = box.y + 58;
+  const bottomPadding = box.height <= 210 ? 4 : 6;
+  const availableHeight = Math.max(0, box.y + box.height - bottomPadding - top);
+  const compact = availableHeight < 158;
+  const relaxed = availableHeight >= 172;
+  const itemGap = compact ? 2 : relaxed ? 4 : 3;
+  const normalHeight = compact ? 24 : relaxed ? 28 : 26;
+  const normalFontSize = compact ? 17 : 18;
+  const flightFontSize = compact ? 15 : 16;
+  const flightTwoLineHeight = compact ? 40 : relaxed ? 44 : 42;
+  const maxWidth = box.width - 56;
+  const textWidth = maxWidth - 22 - 16;
+
+  return items.map((item) => {
+    const isFlightLine = item.text === data.flightServiceLine;
+    if (!isFlightLine) {
+      return {
+        ...item,
+        height: normalHeight,
+        fontSize: normalFontSize,
+        maxLines: 1,
+        wrap: false,
+        gap: itemGap,
+      };
+    }
+
+    const singleLineWidth = measureIncludedTextWidth(ctx, item.text, flightFontSize);
+    const useTwoLines = singleLineWidth > textWidth;
+    return {
+      ...item,
+      height: useTwoLines ? flightTwoLineHeight : normalHeight,
+      fontSize: flightFontSize,
+      minFontSize: 12,
+      maxLines: useTwoLines ? 2 : 1,
+      wrap: useTwoLines,
+      gap: itemGap,
+    };
+  });
 };
 
 const getLowerLayout = (rowCount, routeBottom) => {
@@ -1102,24 +1151,32 @@ const drawNotesSection = (ctx, data, layout) => {
     align: "right",
   }, { type: "services_title" });
 
-  [
+  const includedItems = [
     { icon: "visa", text: "إجراءات التأشيرة" },
     { icon: "guide", text: "التأطير طيلة مدة البرنامج" },
     { icon: "plane", text: data.flightServiceLine },
     { icon: "transport", text: "التنقلات" },
     { icon: "hotel", text: "الإقامة بالفنادق حسب البرنامج" },
-  ].filter((item) => cleanText(item.text)).forEach((item, index) => {
-    const isFlightLine = item.text === data.flightServiceLine;
+  ].filter((item) => cleanText(item.text));
+
+  let includedY = right.y + 58;
+  getIncludedItemsFlow(ctx, includedItems, right, data).forEach((item) => {
     drawIncludedItem(
       ctx,
       right.x + 28,
-      right.y + 58 + index * 30,
+      includedY,
       item.text,
       right.width - 56,
       item.icon,
-      isFlightLine ? 16 : 18,
-      { height: isFlightLine ? 44 : 28, maxLines: isFlightLine ? 2 : 1 }
+      item.fontSize,
+      {
+        height: item.height,
+        minFontSize: item.minFontSize,
+        maxLines: item.maxLines,
+        wrap: item.wrap,
+      }
     );
+    includedY += item.height + item.gap;
   });
 
   drawText(ctx, TIZNIT_NOTES_LINES[0], {

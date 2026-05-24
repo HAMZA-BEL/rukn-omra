@@ -56,6 +56,11 @@ const routeLabels = (lang, t = {}) => ({
   stopPlaceholder: lang === "fr" ? "Ville ou station" : lang === "en" ? "City or station" : "مدينة أو محطة",
   saving: lang === "fr" ? "Enregistrement..." : lang === "en" ? "Saving..." : "جاري الحفظ...",
   saved: lang === "fr" ? "Enregistré" : lang === "en" ? "Saved" : "تم الحفظ",
+  saveError: lang === "fr"
+    ? "Impossible d’enregistrer l’itinéraire. Veuillez réessayer."
+    : lang === "en"
+      ? "Unable to save the route. Please try again."
+      : "تعذر حفظ المسار. حاول مرة أخرى.",
   outboundPlaceholder: lang === "fr" ? "Agadir" : lang === "en" ? "Agadir" : "أكادير",
   returnPlaceholder: lang === "fr" ? "Djeddah" : lang === "en" ? "Jeddah" : "جدة",
   customPlaceholder: lang === "fr"
@@ -372,6 +377,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
   const [routeDraft, setRouteDraft] = React.useState(initialRoute);
   const [routeSaving, setRouteSaving] = React.useState(false);
   const [routeSaveDone, setRouteSaveDone] = React.useState(false);
+  const [routeSaveError, setRouteSaveError] = React.useState("");
   const levelMenuRef = React.useRef(null);
   const routeSaveTimersRef = React.useRef([]);
   const clearRouteSaveTimers = React.useCallback(() => {
@@ -397,6 +403,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
     if (routeSaving) return;
     clearRouteSaveTimers();
     setRouteSaveDone(false);
+    setRouteSaveError("");
     const outboundStops = normalizeRouteStops(form.outboundRouteStops).length
       ? normalizeRouteStops(form.outboundRouteStops)
       : normalizeRouteStops(form.outboundRouteText);
@@ -449,25 +456,40 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
     const outboundRouteStops = cleanDraftRouteStops(routeDraft.outboundRouteStops);
     const returnRouteStops = cleanDraftRouteStops(routeDraft.returnRouteStops);
     const posterTravelRoute = String(routeDraft.posterTravelRoute || "").trim();
+    const routeFields = {
+      outboundRouteStops,
+      returnRouteStops,
+      outboundRouteText: routeStopsToText(outboundRouteStops),
+      returnRouteText: routeStopsToText(returnRouteStops),
+      posterTravelRoute,
+    };
     setRouteSaving(true);
     setRouteSaveDone(false);
-    const saveTimer = window.setTimeout(() => {
-      setForm((current) => ({
-        ...current,
-        outboundRouteStops,
-        returnRouteStops,
-        outboundRouteText: routeStopsToText(outboundRouteStops),
-        returnRouteText: routeStopsToText(returnRouteStops),
-        posterTravelRoute,
-      }));
-      setRouteTouched(true);
-      setRouteSaveDone(true);
-      const closeTimer = window.setTimeout(() => {
-        setRouteModalOpen(false);
+    setRouteSaveError("");
+    const saveTimer = window.setTimeout(async () => {
+      try {
+        if (isEdit && program?.id) {
+          const result = await updateProgram(program.id, routeFields);
+          if (result?.error) throw result.error;
+        }
+        setForm((current) => ({
+          ...current,
+          ...routeFields,
+        }));
+        setRouteTouched(true);
+        setRouteSaveDone(true);
+        const closeTimer = window.setTimeout(() => {
+          setRouteModalOpen(false);
+          setRouteSaving(false);
+          setRouteSaveDone(false);
+        }, 280);
+        routeSaveTimersRef.current.push(closeTimer);
+      } catch (error) {
+        console.error("[ProgramForm] Route save failed:", error);
+        setRouteSaveError(routeCopy.saveError);
         setRouteSaving(false);
         setRouteSaveDone(false);
-      }, 280);
-      routeSaveTimersRef.current.push(closeTimer);
+      }
     }, 520);
     routeSaveTimersRef.current.push(saveTimer);
   };
@@ -829,6 +851,11 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
                 {routeSaving ? routeCopy.saving : routeCopy.save}
               </Button>
             </div>
+            {routeSaveError && (
+              <p style={{ margin:0, color:"var(--rukn-danger)", fontSize:12, lineHeight:1.6 }}>
+                {routeSaveError}
+              </p>
+            )}
           </div>
           {(routeSaving || routeSaveDone) && (
             <RouteSaveOverlay done={routeSaveDone} copy={routeCopy} />

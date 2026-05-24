@@ -65,6 +65,7 @@ import {
   getProgramDepartureDate,
 } from "../utils/notificationRules";
 import { normalizeHotelCheckinDay } from "../utils/hotelDates";
+import { normalizeRouteStops } from "../utils/programRoutes";
 import {
   canUseBadgePhotoStorage,
   getPilgrimPhotoUrl,
@@ -1456,6 +1457,11 @@ export function useStore(agencyId, onToast) {
       seats: row.seats,
       hotelMecca: row.hotel_mecca,
       hotelMadina: row.hotel_madina,
+      outboundRouteStops: normalizeRouteStops(row.outbound_route_stops),
+      returnRouteStops: normalizeRouteStops(row.return_route_stops),
+      outboundRouteText: row.outbound_route_text || "",
+      returnRouteText: row.return_route_text || "",
+      posterTravelRoute: row.poster_travel_route || "",
       priceTable: row.price_table ?? [],
       notes: row.notes,
       status: row.status,
@@ -2764,11 +2770,13 @@ export function useStore(agencyId, onToast) {
   }, [setPrograms, logActivity, sync, agencyId]);
 
   const updateProgram = useCallback((id, data) => {
+    const currentProgram = programs.find(p => p.id === id);
+    const nextProgram = currentProgram ? { ...currentProgram, ...data } : { id, ...data };
     setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
     queueProgramArchiveSuggestionCheck(id);
     logActivity("program_update", translateActivityDescription(`تم تعديل برنامج ${data.name || id}`), "");
-    sync(() => saveProgram({ id, ...data }, agencyId));
-  }, [setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
+    return sync(() => saveProgram(nextProgram, agencyId));
+  }, [programs, setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const archiveProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
