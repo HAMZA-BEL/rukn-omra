@@ -80,6 +80,9 @@ const QR_VERSION = 2;
 const QR_SIZE = 17 + QR_VERSION * 4;
 const QR_DATA_CODEWORDS = 28;
 const QR_ECC_CODEWORDS = 16;
+const IMAGE_ASSET_CACHE = new Map();
+const QR_MATRIX_CACHE = new Map();
+const IMAGE_ALPHA_BOUNDS_CACHE = new WeakMap();
 
 const isBrowser = () => typeof window !== "undefined" && typeof document !== "undefined";
 
@@ -313,6 +316,7 @@ const drawQrFormatBits = (qr, mask) => {
 };
 
 const buildQrMatrix = (text) => {
+  if (QR_MATRIX_CACHE.has(text)) return QR_MATRIX_CACHE.get(text);
   const data = buildQrDataCodewords(text);
   const codewords = [...data, ...getQrErrorCorrection(data, QR_ECC_CODEWORDS)];
   const qr = createQrMatrix();
@@ -320,6 +324,7 @@ const buildQrMatrix = (text) => {
   drawQrFunctionPatterns(qr);
   applyQrData(qr, codewords, mask);
   drawQrFormatBits(qr, mask);
+  QR_MATRIX_CACHE.set(text, qr.modules);
   return qr.modules;
 };
 
@@ -402,27 +407,41 @@ const drawText = (ctx, value, box, style = {}, options = {}) => {
 
 const loadImage = async (url) => {
   if (!isBrowser() || !url) return null;
-  let objectUrl = "";
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    objectUrl = URL.createObjectURL(blob);
+  if (IMAGE_ASSET_CACHE.has(url)) return IMAGE_ASSET_CACHE.get(url);
 
-    return await new Promise((resolve) => {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      image.onload = () => resolve({ image, objectUrl });
-      image.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        resolve(null);
-      };
-      image.src = objectUrl;
-    });
-  } catch {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    return null;
-  }
+  const loadPromise = (async () => {
+    let objectUrl = "";
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      objectUrl = URL.createObjectURL(blob);
+
+      return await new Promise((resolve) => {
+        const image = new Image();
+        image.crossOrigin = "anonymous";
+        image.onload = async () => {
+          try {
+            if (typeof image.decode === "function") await image.decode();
+          } catch {
+            // The loaded image is still usable if decode() is not supported or rejects.
+          }
+          resolve({ image, objectUrl, cached: true });
+        };
+        image.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(null);
+        };
+        image.src = objectUrl;
+      });
+    } catch {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      return null;
+    }
+  })();
+
+  IMAGE_ASSET_CACHE.set(url, loadPromise);
+  return loadPromise;
 };
 
 const loadTemplateAssets = async () => {
@@ -437,7 +456,7 @@ const loadTemplateAssets = async () => {
 
 const revokeTemplateAssets = (assets = {}) => {
   Object.values(assets).forEach((asset) => {
-    if (asset?.objectUrl) URL.revokeObjectURL(asset.objectUrl);
+    if (asset?.objectUrl && !asset.cached) URL.revokeObjectURL(asset.objectUrl);
   });
 };
 
@@ -461,6 +480,7 @@ const drawImageContain = (ctx, image, x, y, width, height) => {
 
 const getImageAlphaBounds = (image) => {
   if (!image || !isBrowser()) return null;
+  if (IMAGE_ALPHA_BOUNDS_CACHE.has(image)) return IMAGE_ALPHA_BOUNDS_CACHE.get(image);
   try {
     const canvas = document.createElement("canvas");
     canvas.width = image.width;
@@ -482,14 +502,20 @@ const getImageAlphaBounds = (image) => {
         maxY = Math.max(maxY, y);
       }
     }
-    if (maxX < minX || maxY < minY) return null;
-    return {
+    if (maxX < minX || maxY < minY) {
+      IMAGE_ALPHA_BOUNDS_CACHE.set(image, null);
+      return null;
+    }
+    const bounds = {
       x: Math.max(0, minX - 4),
       y: Math.max(0, minY - 4),
       width: Math.min(image.width - minX, maxX - minX + 10),
       height: Math.min(image.height - minY, maxY - minY + 10),
     };
+    IMAGE_ALPHA_BOUNDS_CACHE.set(image, bounds);
+    return bounds;
   } catch {
+    IMAGE_ALPHA_BOUNDS_CACHE.set(image, null);
     return null;
   }
 };
