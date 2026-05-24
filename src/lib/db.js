@@ -844,6 +844,9 @@ const toAgency = (a) => ({
   bank_iban:           a.bankIban          ?? null,
   bank_note:           a.bankNote          ?? null,
   logo_path:           a.logoPath || a.logo_path || null,
+  default_poster_template_type: a.defaultPosterTemplateType || a.default_poster_template_type || "official",
+  default_poster_template_key:  a.defaultPosterTemplateKey ?? a.default_poster_template_key ?? "rukn",
+  default_poster_template_id:   a.defaultPosterTemplateId || a.default_poster_template_id || null,
 });
 
 const fromAgency = (row) => ({
@@ -867,6 +870,9 @@ const fromAgency = (row) => ({
   bankNote:          row.bank_note || "",
   logoPath:          row.logo_path || "",
   logoUrl:           row.logo_url || "",
+  defaultPosterTemplateType: row.default_poster_template_type || "official",
+  defaultPosterTemplateKey: row.default_poster_template_key || "rukn",
+  defaultPosterTemplateId: row.default_poster_template_id || "",
 });
 
 const normalizeRoomingLocation = (location) => (

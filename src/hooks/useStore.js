@@ -3204,8 +3204,9 @@ export function useStore(agencyId, onToast) {
   }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, fetchProgramTrashContext, getClientPermanentDeleteBlockMap, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, permanentlyDeleteClientRemote, permanentlyDeleteClientsRemote, purgePaymentLocal, saveClient, sync]);
 
   const updateAgency = useCallback((data) => {
+    const nextAgency = { ...agency, ...data };
     setAgency(prev => ({ ...prev, ...data }));
-    sync(() => db.agency.update(agencyId, { ...agency, ...data }));
+    return sync(() => db.agency.update(agencyId, nextAgency));
   }, [agency, setAgency, sync, agencyId]);
 
   // ── Force sync: push all local data to Supabase ───────────────────────────

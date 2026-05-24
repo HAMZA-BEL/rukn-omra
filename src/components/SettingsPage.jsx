@@ -9,6 +9,7 @@ import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
 import { ContractTemplatesSettings } from "../features/contracts";
 import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
+import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 
 const t2 = theme.colors;
@@ -63,10 +64,52 @@ function SettingsSectionCard({ title, description, open, onToggle, children }) {
   );
 }
 
+const OFFICIAL_POSTER_TEMPLATE_VALUE = "official:rukn";
+
+const getDefaultPosterTemplateValue = (agency = {}) => {
+  const type = String(agency.defaultPosterTemplateType || agency.default_poster_template_type || "official");
+  if (type === "code") {
+    const key = String(agency.defaultPosterTemplateKey || agency.default_poster_template_key || "").trim();
+    return key ? `code:${key}` : OFFICIAL_POSTER_TEMPLATE_VALUE;
+  }
+  if (type === "uploaded") {
+    const id = String(agency.defaultPosterTemplateId || agency.default_poster_template_id || "").trim();
+    return id ? `uploaded:${id}` : OFFICIAL_POSTER_TEMPLATE_VALUE;
+  }
+  return OFFICIAL_POSTER_TEMPLATE_VALUE;
+};
+
+const parseDefaultPosterTemplateValue = (value = OFFICIAL_POSTER_TEMPLATE_VALUE) => {
+  const [type, ...rest] = String(value || OFFICIAL_POSTER_TEMPLATE_VALUE).split(":");
+  const idOrKey = rest.join(":").trim();
+  if (type === "code" && idOrKey) {
+    return {
+      defaultPosterTemplateType: "code",
+      defaultPosterTemplateKey: idOrKey,
+      defaultPosterTemplateId: "",
+    };
+  }
+  if (type === "uploaded" && idOrKey) {
+    return {
+      defaultPosterTemplateType: "uploaded",
+      defaultPosterTemplateKey: "",
+      defaultPosterTemplateId: idOrKey,
+    };
+  }
+  return {
+    defaultPosterTemplateType: "official",
+    defaultPosterTemplateKey: "rukn",
+    defaultPosterTemplateId: "",
+  };
+};
+
 export default function SettingsPage({ store, onToast, currentUserRole, currentUserId }) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
+  const [selectedDefaultPosterTemplateValue, setSelectedDefaultPosterTemplateValue] = React.useState(() => (
+    getDefaultPosterTemplateValue(agency)
+  ));
   const [agencyOpen, setAgencyOpen] = React.useState(false);
   const [logoOpen, setLogoOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
@@ -78,13 +121,15 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
   const [pendingImportFile, setPendingImportFile] = React.useState(null);
+  const [settingsSaving, setSettingsSaving] = React.useState(false);
   const [passwordForm, setPasswordForm] = React.useState({ newPassword: "", confirmPassword: "" });
   const [passwordBusy, setPasswordBusy] = React.useState(false);
   const [passwordMessage, setPasswordMessage] = React.useState({ type: "", text: "" });
   const logoInputRef = React.useRef(null);
   const backupInputRef = React.useRef(null);
   React.useEffect(() => {
-    setForm(agency);
+    setForm({ ...agency });
+    setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(agency));
   }, [agency]);
   React.useEffect(() => {
     let cancelled = false;
@@ -107,6 +152,10 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     store.agencyId,
     AGENCY_FEATURES.PROGRAM_POSTERS
   );
+  const {
+    templates: agencyCodePosterTemplates,
+    loading: agencyCodePosterTemplatesLoading,
+  } = useAgencyCodePosterTemplates(store.agencyId);
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
   React.useEffect(() => {
     if (!programPostersEnabled) setPosterTemplatesOpen(false);
@@ -124,9 +173,34 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     }
   };
 
-  const handleSave = () => {
-    updateAgency(form);
-    onToast(t.saveSettingsSuccess, "success");
+  const handleSave = async () => {
+    if (settingsSaving) return;
+    if (programPostersEnabled && posterTemplateOptionsLoading) {
+      onToast(posterDefaultLabels.loading, "info");
+      return;
+    }
+    const validPosterTemplate = defaultPosterTemplateOptions.some((option) => option.value === selectedPosterTemplateValue);
+    if (!validPosterTemplate) {
+      onToast(posterDefaultLabels.unavailable, "error");
+      return;
+    }
+    const nextForm = {
+      ...form,
+      ...parseDefaultPosterTemplateValue(selectedPosterTemplateValue),
+    };
+    setSettingsSaving(true);
+    try {
+      const result = await updateAgency(nextForm);
+      if (result?.error) throw result.error;
+      setForm(nextForm);
+      setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(nextForm));
+      onToast(t.saveSettingsSuccess, "success");
+    } catch (error) {
+      console.error("[Settings] Agency settings save failed:", error);
+      onToast(t.saveSettingsFailed || t.error || "تعذر حفظ الإعدادات", "error");
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   const passwordLabels = React.useMemo(() => {
@@ -363,6 +437,72 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       ? "Upload a blank poster template that will later be used to generate program posters automatically."
       : "ارفع قالب ملصق فارغ، وسيتم استعماله لاحقًا لتوليد ملصقات البرامج تلقائيًا."
   );
+  const posterDefaultLabels = React.useMemo(() => {
+    if (lang === "fr") {
+      return {
+        section: "Paramètres des affiches",
+        label: "Modèle d’affiche par défaut",
+        desc: "Choisissez le modèle qui sera utilisé automatiquement lors du téléchargement des affiches des programmes.",
+        official: "Modèle officiel Rukn",
+        officialHint: "Disponible pour toutes les agences.",
+        codeGroup: "Modèles privés de l’agence",
+        onlyOfficial: "Seul le modèle officiel Rukn est disponible pour le moment.",
+        loading: "Chargement des modèles...",
+        unavailable: "Le modèle sélectionné n’est pas disponible pour cette agence.",
+      };
+    }
+    if (lang === "en") {
+      return {
+        section: "Poster settings",
+        label: "Default poster template",
+        desc: "Choose the template that will be used automatically when downloading program posters.",
+        official: "Official Rukn template",
+        officialHint: "Available to every agency.",
+        codeGroup: "Agency private templates",
+        onlyOfficial: "Only the official Rukn template is available right now.",
+        loading: "Loading templates...",
+        unavailable: "The selected template is not available to this agency.",
+      };
+    }
+    return {
+      section: "إعدادات الملصقات",
+      label: "قالب الملصق الافتراضي",
+      desc: "اختر القالب الذي سيتم استعماله تلقائيًا عند تنزيل ملصقات البرامج.",
+      official: "قالب ركن الرسمي",
+      officialHint: "متاح لكل الوكالات.",
+      codeGroup: "قوالب خاصة بالوكالة",
+      onlyOfficial: "قالب ركن الرسمي هو القالب الوحيد المتاح حاليًا.",
+      loading: "جاري تحميل القوالب...",
+      unavailable: "القالب المحدد غير متاح لهذه الوكالة.",
+    };
+  }, [lang]);
+  const defaultPosterTemplateOptions = React.useMemo(() => ([
+    {
+      value: OFFICIAL_POSTER_TEMPLATE_VALUE,
+      label: posterDefaultLabels.official,
+      group: posterDefaultLabels.section,
+      description: posterDefaultLabels.officialHint,
+    },
+    ...agencyCodePosterTemplates.map((template) => ({
+      value: `code:${template.key}`,
+      label: template.meta?.name?.[lang] || template.meta?.name?.ar || template.key,
+      group: posterDefaultLabels.codeGroup,
+      description: "",
+    })),
+  ]), [agencyCodePosterTemplates, lang, posterDefaultLabels]);
+  const savedPosterTemplateValue = selectedDefaultPosterTemplateValue || getDefaultPosterTemplateValue(form);
+  const selectedPosterTemplateValue = defaultPosterTemplateOptions.some((option) => option.value === savedPosterTemplateValue)
+    ? savedPosterTemplateValue
+    : OFFICIAL_POSTER_TEMPLATE_VALUE;
+  const selectedPosterTemplateOption = defaultPosterTemplateOptions.find((option) => option.value === selectedPosterTemplateValue)
+    || defaultPosterTemplateOptions[0];
+  const posterTemplateOptionsLoading = agencyCodePosterTemplatesLoading;
+  const handleDefaultPosterTemplateChange = (value) => {
+    if (posterTemplateOptionsLoading) return;
+    const parsed = parseDefaultPosterTemplateValue(value);
+    setSelectedDefaultPosterTemplateValue(value);
+    setForm((current) => ({ ...current, ...parsed }));
+  };
 
   const handleBackupExport = () => {
     if (!canManageBackups) return;
@@ -678,7 +818,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
       </SettingsSectionCard>
 
       <div className="page-actions" style={{ marginBottom:20 }}>
-        <Button variant="primary" icon="save" onClick={handleSave}>{t.saveSettingsLabel}</Button>
+        <Button variant="primary" icon="save" onClick={handleSave} disabled={settingsSaving}>{t.saveSettingsLabel}</Button>
       </div>
 
       <SettingsSectionCard
@@ -713,6 +853,154 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
           open={posterTemplatesOpen}
           onToggle={() => setPosterTemplatesOpen((current) => !current)}
         >
+          <style>{`
+            .default-poster-template-option:not(:disabled):hover {
+              border-color: rgba(212,175,55,.46) !important;
+              background: rgba(255,255,255,.96) !important;
+              box-shadow: 0 12px 26px rgba(15,23,42,.08), 0 1px 0 rgba(255,255,255,.8) inset !important;
+              transform: translateY(-1px);
+            }
+          `}</style>
+          <div style={{
+            border:"1px solid rgba(212,175,55,.24)",
+            background:"linear-gradient(135deg,rgba(212,175,55,.08),rgba(255,255,255,.03))",
+            borderRadius:14,
+            padding:14,
+            marginBottom:16,
+            display:"grid",
+            gap:12,
+            direction: lang === "ar" ? "rtl" : "ltr",
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap", alignItems:"flex-start" }}>
+              <div style={{ minWidth:0 }}>
+                <p style={{ margin:0, fontSize:13, fontWeight:900, color:"var(--rukn-text-strong)" }}>
+                  {posterDefaultLabels.label}
+                </p>
+                <p style={{ margin:"4px 0 0", fontSize:12, color:"var(--rukn-text-muted)", lineHeight:1.7 }}>
+                  {posterDefaultLabels.desc}
+                </p>
+              </div>
+              {selectedPosterTemplateOption && (
+                <span style={{
+                  border:"1px solid rgba(212,175,55,.26)",
+                  background:"rgba(212,175,55,.08)",
+                  color:"var(--rukn-gold)",
+                  borderRadius:999,
+                  padding:"5px 10px",
+                  fontSize:11,
+                  fontWeight:900,
+                  lineHeight:1,
+                  maxWidth:"100%",
+                  overflow:"hidden",
+                  textOverflow:"ellipsis",
+                  whiteSpace:"nowrap",
+                }}>
+                  {selectedPosterTemplateOption.label}
+                </span>
+              )}
+            </div>
+            <div style={{ display:"grid", gap:7, maxWidth:560 }}>
+              <div
+                role="radiogroup"
+                aria-label={posterDefaultLabels.label}
+                style={{
+                  display:"grid",
+                  gap:8,
+                  opacity:posterTemplateOptionsLoading ? .68 : 1,
+                }}
+              >
+                {defaultPosterTemplateOptions.map((option) => {
+                  const active = option.value === selectedPosterTemplateValue;
+                  return (
+                    <button
+                      key={option.value}
+                      className="default-poster-template-option"
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={posterTemplateOptionsLoading}
+                      onClick={() => handleDefaultPosterTemplateChange(option.value)}
+                      style={{
+                        width:"100%",
+                        border:`1px solid ${active ? "rgba(212,175,55,.62)" : "rgba(148,163,184,.24)"}`,
+                        background:active
+                          ? "linear-gradient(135deg,rgba(212,175,55,.16),rgba(255,255,255,.92))"
+                          : "rgba(255,255,255,.9)",
+                        color:"#111827",
+                        borderRadius:12,
+                        padding:"11px 12px",
+                        display:"flex",
+                        alignItems:"center",
+                        justifyContent:"space-between",
+                        gap:12,
+                        textAlign:"start",
+                        cursor:posterTemplateOptionsLoading ? "not-allowed" : "pointer",
+                        fontFamily:"'Cairo',sans-serif",
+                        boxShadow:active
+                          ? "0 12px 28px rgba(212,175,55,.13), 0 1px 0 rgba(255,255,255,.78) inset"
+                          : "0 8px 20px rgba(15,23,42,.055), 0 1px 0 rgba(255,255,255,.72) inset",
+                        transition:"border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease",
+                      }}
+                    >
+                      <span style={{ minWidth:0, display:"grid", gap:3 }}>
+                        <span style={{
+                          fontSize:13,
+                          fontWeight:900,
+                          color:active ? "#8A6A10" : "#111827",
+                          overflow:"hidden",
+                          textOverflow:"ellipsis",
+                          whiteSpace:"nowrap",
+                        }}>
+                          {option.label}
+                        </span>
+                        {option.description && (
+                          <span style={{
+                            fontSize:11,
+                            color:"#64748B",
+                            lineHeight:1.5,
+                          }}>
+                            {option.description}
+                          </span>
+                        )}
+                      </span>
+                      <span style={{
+                        width:18,
+                        height:18,
+                        borderRadius:999,
+                        border:`2px solid ${active ? "var(--rukn-gold)" : "rgba(148,163,184,.5)"}`,
+                        display:"inline-flex",
+                        alignItems:"center",
+                        justifyContent:"center",
+                        flex:"0 0 auto",
+                      }}>
+                        <span style={{
+                          width:8,
+                          height:8,
+                          borderRadius:999,
+                          background:active ? "var(--rukn-gold)" : "transparent",
+                        }} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ minHeight:18 }}>
+                {posterTemplateOptionsLoading ? (
+                  <span style={{ color:"var(--rukn-text-muted)", fontSize:11.5, lineHeight:1.6 }}>
+                    {posterDefaultLabels.loading}
+                  </span>
+                ) : defaultPosterTemplateOptions.length <= 1 ? (
+                  <span style={{ color:"var(--rukn-text-muted)", fontSize:11.5, lineHeight:1.6 }}>
+                    {posterDefaultLabels.onlyOfficial}
+                  </span>
+                ) : (
+                  <span style={{ color:"var(--rukn-text-muted)", fontSize:11.5, lineHeight:1.6 }}>
+                    {selectedPosterTemplateOption?.group || posterDefaultLabels.section}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
           <ProgramPosterTemplatesSettings
             store={store}
             onToast={onToast}
@@ -720,6 +1008,26 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
             embedded
           />
         </SettingsSectionCard>
+      )}
+
+      {programPostersEnabled && (
+        <div
+          className="page-actions"
+          style={{
+            margin:"-2px 0 20px",
+            padding:"14px",
+            border:"1px solid rgba(212,175,55,.22)",
+            borderRadius:14,
+            background:"linear-gradient(135deg,rgba(212,175,55,.08),rgba(255,255,255,.02))",
+            display:"flex",
+            justifyContent: lang === "ar" ? "flex-start" : "flex-end",
+            direction: lang === "ar" ? "rtl" : "ltr",
+          }}
+        >
+          <Button variant="primary" icon="save" onClick={handleSave} disabled={settingsSaving}>
+            {t.saveSettingsLabel}
+          </Button>
+        </div>
       )}
 
       {/* Cloud connection status */}

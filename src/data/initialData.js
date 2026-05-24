@@ -19,6 +19,9 @@ export const DEFAULT_AGENCY = {
   bankIban: "",
   bankNote: "",
   logoPath: "",
+  defaultPosterTemplateType: "official",
+  defaultPosterTemplateKey: "rukn",
+  defaultPosterTemplateId: "",
 };
 
 // legacy demo data removed — Supabase is the single source of truth now.

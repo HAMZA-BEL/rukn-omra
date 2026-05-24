@@ -1,4 +1,5 @@
 import {
+  getPosterDatePairs,
   getProgramPosterLevels,
   resolvePosterAreaValue,
 } from "../../../utils/programPosterMapping";
@@ -27,6 +28,8 @@ const PAGE_X = 38;
 const PAGE_W = POSTER_WIDTH - PAGE_X * 2;
 const FOOTER_Y = 1570;
 const FOOTER_H = 148;
+const DATE_CARD_H = 82;
+const BULK_DATE_ROW_GAP = 14;
 
 const COLORS = {
   blue: "#3F86C9",
@@ -63,11 +66,12 @@ const TIZNIT_AGENCY_CONTACT_LINES = [
   "وكالة أكادير: 0528210022 / 0689800037",
 ];
 
-const TIZNIT_PEOPLE_CONTACT_LINES = [
-  "الحسين بلوقيد : 0661786932",
-  "الطاهر بن بريك : 0615506049",
-  "عبد الله واحمان : 0661151420",
-  "حمزة بلوقيد : 0641298739",
+const TIZNIT_PEOPLE_CONTACTS = [
+  { name: "الحسين بلوقيد", phone: "0661786932" },
+  { name: "الطاهر بن بريك", phone: "0615506049" },
+  { name: "عبد الله واحمان", phone: "0661151420" },
+  { name: "حمزة بلوقيد", phone: "0641298739" },
+  { name: "عبد المنعم أغويت", phone: "0699761113" },
 ];
 
 const TIZNIT_ADDRESS_LINES = [
@@ -106,10 +110,10 @@ const hasPositivePosterPrice = (value) => {
 
 const formatPosterPriceDisplay = (value) => (hasPositivePosterPrice(value) ? cleanText(value) : "");
 
-const getRenderScale = () => {
+const getRenderScale = (width = POSTER_WIDTH, height = POSTER_HEIGHT) => {
   if (!isBrowser()) return 1;
   const deviceScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-  const pixelScale = Math.sqrt(MAX_EXPORT_PIXELS / Math.max(1, POSTER_WIDTH * POSTER_HEIGHT));
+  const pixelScale = Math.sqrt(MAX_EXPORT_PIXELS / Math.max(1, width * height));
   return Math.min(deviceScale, Math.max(1, pixelScale));
 };
 
@@ -697,6 +701,7 @@ const getPosterData = (program = {}, posterOptions = {}) => {
   const startingPrice = resolvePosterAreaValue("starting_price", program, { lang: "ar" });
   const departureDate = resolvePosterAreaValue("departure_date", program, { lang: "ar" });
   const returnDate = resolvePosterAreaValue("return_date", program, { lang: "ar" });
+  const datePairs = getPosterDatePairs(program, posterOptions, { lang: "ar" });
   const airline = sanitizeAirlineText(resolvePosterAreaValue("flight_info", program, { lang: "ar" }));
   const route = formatRouteValue(resolvePosterAreaValue("poster_travel_route", program, { lang: "ar" }));
   const rows = levels.map((level, index) => ({
@@ -722,6 +727,7 @@ const getPosterData = (program = {}, posterOptions = {}) => {
     startingPrice,
     departureDate,
     returnDate,
+    datePairs,
     airline,
     route,
     flightServiceLine: buildFlightServiceLine(airline, route),
@@ -730,13 +736,13 @@ const getPosterData = (program = {}, posterOptions = {}) => {
   };
 };
 
-const drawBackground = (ctx) => {
-  const gradient = ctx.createLinearGradient(0, 0, 0, POSTER_HEIGHT);
+const drawBackground = (ctx, posterHeight = POSTER_HEIGHT) => {
+  const gradient = ctx.createLinearGradient(0, 0, 0, posterHeight);
   gradient.addColorStop(0, "#F9F3E8");
   gradient.addColorStop(0.62, "#FFFFFF");
   gradient.addColorStop(1, "#F4E8D0");
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, POSTER_WIDTH, POSTER_HEIGHT);
+  ctx.fillRect(0, 0, POSTER_WIDTH, posterHeight);
 
   ctx.save();
   ctx.strokeStyle = "rgba(63,134,201,.06)";
@@ -745,7 +751,7 @@ const drawBackground = (ctx) => {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.bezierCurveTo(x + 120, 300, x - 80, 620, x + 60, 940);
-    ctx.bezierCurveTo(x + 180, 1200, x + 20, 1460, x + 140, POSTER_HEIGHT);
+    ctx.bezierCurveTo(x + 180, 1200, x + 20, 1460, x + 140, posterHeight);
     ctx.stroke();
   }
   ctx.restore();
@@ -1029,15 +1035,14 @@ const drawDateCard = (ctx, box, label, value) => {
   }, { type: `${label}_value` });
 };
 
-const drawDateRouteSection = (ctx, data, startY) => {
-  const y = startY + 44;
+const drawDateRouteRow = (ctx, departureDate, returnDate, y) => {
   const cardW = 420;
-  const cardH = 82;
+  const cardH = DATE_CARD_H;
   const departure = { x: 755, y, width: cardW, height: cardH };
   const arrival = { x: 65, y, width: cardW, height: cardH };
 
-  drawDateCard(ctx, departure, "تاريخ الذهاب", data.departureDate);
-  drawDateCard(ctx, arrival, "تاريخ العودة", data.returnDate);
+  drawDateCard(ctx, departure, "تاريخ الذهاب", departureDate || "—");
+  drawDateCard(ctx, arrival, "تاريخ العودة", returnDate || "—");
 
   const lineY = y + cardH / 2;
   const lineStart = departure.x - 34;
@@ -1064,6 +1069,28 @@ const drawDateRouteSection = (ctx, data, startY) => {
   drawPlaneIcon(ctx, lineCenter - 38, lineY + 13, 30, COLORS.blueDark, -Math.PI / 2);
 
   return y + cardH;
+};
+
+const drawDateRouteSection = (ctx, data, startY, options = {}) => {
+  const y = startY + 44;
+  const isBulkPoster = options.isBulkPoster === true;
+  const datePairs = isBulkPoster
+    ? (Array.isArray(data.datePairs) ? data.datePairs : [])
+    : [{ departureDate: data.departureDate, returnDate: data.returnDate }];
+
+  if (isBulkPoster && !datePairs.length) return startY;
+
+  datePairs.forEach((pair, index) => {
+    drawDateRouteRow(
+      ctx,
+      pair.departureDate,
+      pair.returnDate,
+      y + index * (DATE_CARD_H + BULK_DATE_ROW_GAP)
+    );
+  });
+
+  return y + datePairs.length * DATE_CARD_H
+    + Math.max(0, datePairs.length - 1) * BULK_DATE_ROW_GAP;
 };
 
 const drawIncludedItem = (ctx, x, y, text, maxWidth, icon, fontSize = 20, options = {}) => {
@@ -1133,14 +1160,15 @@ const getIncludedItemsFlow = (ctx, items, box, data) => {
 const getLowerLayout = (rowCount, contentBottom, options = {}) => {
   const count = Math.max(1, Math.min(5, rowCount || 1));
   const showDates = options.showDates !== false;
+  const footerY = options.footerY || FOOTER_Y;
   const notesGap = showDates
     ? count >= 5 ? 22 : count >= 4 ? 24 : 28
     : count <= 1 ? 64 : count === 2 ? 46 : count === 3 ? 36 : count === 4 ? 30 : 24;
   const serviceGap = count >= 5 ? 10 : count >= 4 ? 12 : count >= 3 ? 14 : 20;
   const serviceBandH = count >= 5 ? 54 : count >= 4 ? 64 : 84;
   const notesY = contentBottom + notesGap;
-  const preferredServiceY = FOOTER_Y - 176;
-  const maxServiceBottom = FOOTER_Y - 48;
+  const preferredServiceY = footerY - 176;
+  const maxServiceBottom = footerY - 48;
   const maxServiceY = maxServiceBottom - serviceBandH;
   const notesMaxHeight = showDates
     ? 236
@@ -1256,14 +1284,15 @@ const drawNotesSection = (ctx, data, layout, serviceBand) => {
   return y + height;
 };
 
-const drawFooter = (ctx, serviceBand) => {
-  const footerY = FOOTER_Y;
+const drawFooter = (ctx, serviceBand, options = {}) => {
+  const footerY = options.footerY || FOOTER_Y;
+  const posterHeight = options.posterHeight || POSTER_HEIGHT;
   const footerH = FOOTER_H;
   const box = { x: PAGE_X, y: footerY, width: PAGE_W, height: footerH };
 
   ctx.save();
   ctx.fillStyle = COLORS.white;
-  ctx.fillRect(0, footerY - 92, POSTER_WIDTH, POSTER_HEIGHT - footerY + 92);
+  ctx.fillRect(0, footerY - 92, POSTER_WIDTH, posterHeight - footerY + 92);
   ctx.restore();
 
   const resolvedServiceBand = serviceBand || { x: 0, y: footerY - 176, width: POSTER_WIDTH, height: 84 };
@@ -1278,10 +1307,30 @@ const drawFooter = (ctx, serviceBand) => {
   ctx.restore();
 
   const serviceCenterY = resolvedServiceBand.y + resolvedServiceBand.height / 2;
+  const serviceVisualOffsetY = Math.min(10, Math.max(8, resolvedServiceBand.height * 0.14));
+  const serviceVisualCenterY = serviceCenterY + serviceVisualOffsetY;
+  const serviceContentW = Math.min(860, Math.max(0, resolvedServiceBand.width - PAGE_X * 2));
+  const serviceContentX = resolvedServiceBand.x + (resolvedServiceBand.width - serviceContentW) / 2;
+  const serviceSlotGap = 82;
+  const serviceSlotW = (serviceContentW - serviceSlotGap) / 2;
+  const serviceLabelH = Math.min(32, Math.max(28, resolvedServiceBand.height * 0.56));
+  const serviceLabelY = resolvedServiceBand.y + (resolvedServiceBand.height - serviceLabelH) / 2 + serviceVisualOffsetY;
+  const serviceIconSize = 21;
+  const serviceIconGap = 14;
+  const getServiceItemLayout = (slotX, labelW) => {
+    const groupW = labelW + serviceIconGap + serviceIconSize;
+    const labelX = slotX + (serviceSlotW - groupW) / 2;
+    return {
+      label: { x: labelX, y: serviceLabelY, width: labelW, height: serviceLabelH },
+      iconX: labelX + labelW + serviceIconGap + serviceIconSize / 2,
+    };
+  };
 
-  const hotelLabel = { x: PAGE_X + 626, y: serviceCenterY - 15, width: 342, height: 30 };
-  const transportLabel = { x: PAGE_X + 198, y: serviceCenterY - 15, width: 280, height: 30 };
-  drawLineIcon(ctx, "hotel", hotelLabel.x + hotelLabel.width + 18, serviceCenterY, 21, COLORS.gold);
+  const transportItem = getServiceItemLayout(serviceContentX, 280);
+  const hotelItem = getServiceItemLayout(serviceContentX + serviceSlotW + serviceSlotGap, 342);
+  const hotelLabel = hotelItem.label;
+  const transportLabel = transportItem.label;
+  drawLineIcon(ctx, "hotel", hotelItem.iconX, serviceVisualCenterY, serviceIconSize, COLORS.gold);
   drawText(ctx, "حجز فنادق خمس نجوم حسب الطلب", hotelLabel, {
     color: COLORS.dark,
     fontSize: 21,
@@ -1290,7 +1339,7 @@ const drawFooter = (ctx, serviceBand) => {
     align: "right",
     wrap: false,
   }, { type: "hotel_booking_label" });
-  drawLineIcon(ctx, "car", transportLabel.x + transportLabel.width + 18, serviceCenterY, 21, COLORS.gold);
+  drawLineIcon(ctx, "car", transportItem.iconX, serviceVisualCenterY, serviceIconSize, COLORS.gold);
   drawText(ctx, "نقل خاص حسب الطلب", transportLabel, {
     color: COLORS.dark,
     fontSize: 21,
@@ -1339,21 +1388,57 @@ const drawFooter = (ctx, serviceBand) => {
     }, { type: `tiznit_agency_contact_${index}` });
   });
 
-  const peopleX = box.x + 196;
-  TIZNIT_PEOPLE_CONTACT_LINES.forEach((line, index) => {
-    drawText(ctx, line, {
-      x: peopleX,
-      y: box.y + 14 + index * 25,
-      width: 390,
-      height: 24,
+  const compactPeopleContacts = TIZNIT_PEOPLE_CONTACTS.length > 4;
+  const peopleContactTop = 14;
+  const peopleContactGap = compactPeopleContacts ? 16.2 : 25;
+  const peopleContactHeight = compactPeopleContacts ? 19 : 24;
+  const peopleNameColumn = { x: box.x + 388, width: 160 };
+  const peopleSeparatorColumn = { x: box.x + 366, width: 18 };
+  const peoplePhoneColumn = { x: box.x + 250, width: 112 };
+  TIZNIT_PEOPLE_CONTACTS.forEach((contact, index) => {
+    const y = box.y + peopleContactTop + index * peopleContactGap;
+    drawText(ctx, contact.name, {
+      x: peopleNameColumn.x,
+      y,
+      width: peopleNameColumn.width,
+      height: peopleContactHeight,
     }, {
       color: COLORS.dark,
-      fontSize: 20,
-      minFontSize: 13,
+      fontSize: compactPeopleContacts ? 18 : 20,
+      minFontSize: compactPeopleContacts ? 12 : 13,
       maxLines: 1,
       align: "right",
+      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
       wrap: false,
-    }, { type: `tiznit_people_contact_${index}` });
+    }, { type: `tiznit_people_contact_name_${index}` });
+    drawText(ctx, ":", {
+      x: peopleSeparatorColumn.x,
+      y,
+      width: peopleSeparatorColumn.width,
+      height: peopleContactHeight,
+    }, {
+      color: COLORS.dark,
+      fontSize: compactPeopleContacts ? 18 : 20,
+      minFontSize: compactPeopleContacts ? 12 : 13,
+      maxLines: 1,
+      align: "center",
+      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
+      wrap: false,
+    }, { type: `tiznit_people_contact_separator_${index}`, lang: "en" });
+    drawText(ctx, contact.phone, {
+      x: peoplePhoneColumn.x,
+      y,
+      width: peoplePhoneColumn.width,
+      height: peopleContactHeight,
+    }, {
+      color: COLORS.dark,
+      fontSize: compactPeopleContacts ? 18 : 20,
+      minFontSize: compactPeopleContacts ? 12 : 13,
+      maxLines: 1,
+      align: "left",
+      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
+      wrap: false,
+    }, { type: `tiznit_people_contact_phone_${index}`, lang: "en" });
   });
 
   TIZNIT_ADDRESS_LINES.forEach((line, index) => {
@@ -1374,10 +1459,10 @@ const drawFooter = (ctx, serviceBand) => {
 
 };
 
-const drawVersionLabel = (ctx, program = {}) => {
+const drawVersionLabel = (ctx, program = {}, posterHeight = POSTER_HEIGHT) => {
   drawText(ctx, buildVersionLabel(program), {
     x: 10,
-    y: POSTER_HEIGHT - 20,
+    y: posterHeight - 20,
     width: 90,
     height: 14,
   }, {
@@ -1410,10 +1495,18 @@ export const renderPoster = async ({
     }
   }
 
-  const scale = getRenderScale();
+  const data = getPosterData(program, posterOptions);
+  const showDates = posterOptions?.showDates !== false;
+  const bulkDateRows = posterOptions?.isBulkPoster === true && showDates
+    ? data.datePairs.length
+    : 1;
+  const dateSectionExtraHeight = Math.max(0, bulkDateRows - 1) * (DATE_CARD_H + BULK_DATE_ROW_GAP);
+  const posterHeight = POSTER_HEIGHT + dateSectionExtraHeight;
+  const footerY = FOOTER_Y + dateSectionExtraHeight;
+  const scale = getRenderScale(POSTER_WIDTH, posterHeight);
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(POSTER_WIDTH * scale);
-  canvas.height = Math.round(POSTER_HEIGHT * scale);
+  canvas.height = Math.round(posterHeight * scale);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("poster-canvas-unavailable");
   ctx.scale(scale, scale);
@@ -1422,16 +1515,16 @@ export const renderPoster = async ({
 
   const assets = await loadTemplateAssets();
   try {
-    const data = getPosterData(program, posterOptions);
-    const showDates = posterOptions?.showDates !== false;
-    drawBackground(ctx);
+    drawBackground(ctx, posterHeight);
     drawHero(ctx, data, assets);
     const tableBottom = drawTable(ctx, data);
-    const contentBottom = showDates ? drawDateRouteSection(ctx, data, tableBottom) : tableBottom;
-    const lowerLayout = getLowerLayout(data.rows.length, contentBottom, { showDates });
+    const contentBottom = showDates
+      ? drawDateRouteSection(ctx, data, tableBottom, { isBulkPoster: posterOptions?.isBulkPoster === true })
+      : tableBottom;
+    const lowerLayout = getLowerLayout(data.rows.length, contentBottom, { showDates, footerY });
     drawNotesSection(ctx, data, lowerLayout.notes, lowerLayout.serviceBand);
-    drawFooter(ctx, lowerLayout.serviceBand);
-    drawVersionLabel(ctx, program);
+    drawFooter(ctx, lowerLayout.serviceBand, { footerY, posterHeight });
+    drawVersionLabel(ctx, program, posterHeight);
     return await canvasToPngBlob(canvas);
   } finally {
     revokeTemplateAssets(assets);

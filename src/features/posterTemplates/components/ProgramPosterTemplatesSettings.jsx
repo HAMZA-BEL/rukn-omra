@@ -117,7 +117,7 @@ const formatLevelsCount = (value, lang) => {
   return `${count} ${count === 1 ? "مستوى" : "مستويات"}`;
 };
 
-export function ProgramPosterTemplatesSettings({ store, onToast, canManage = false, embedded = false }) {
+export function ProgramPosterTemplatesSettings({ store, onToast, canManage = false, embedded = false, onTemplatesChanged }) {
   const { lang } = useLang();
   const l = React.useMemo(() => text(lang), [lang]);
   const agencyId = store?.agencyId || store?.agency?.id || "";
@@ -246,6 +246,7 @@ export function ProgramPosterTemplatesSettings({ store, onToast, canManage = fal
       });
       if (error) throw error;
       await refresh();
+      onTemplatesChanged?.();
       setModalOpen(false);
       onToast?.(l.saveSuccess, "success");
     } catch (error) {
@@ -266,6 +267,7 @@ export function ProgramPosterTemplatesSettings({ store, onToast, canManage = fal
       const { error, storageError } = await deletePosterTemplate({ agencyId, template: target });
       if (error) throw error;
       await refresh();
+      onTemplatesChanged?.();
       onToast?.(storageError ? l.deleteError : l.deleteSuccess, storageError ? "error" : "info");
     } catch (error) {
       console.error("[Posters] Template delete failed", error);

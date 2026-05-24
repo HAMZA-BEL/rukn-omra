@@ -1,5 +1,6 @@
 import { getProgramKind } from "../../../utils/participantTerminology";
 import {
+  getPosterDatePairs,
   getProgramPosterLevels,
   resolvePosterAreaValue,
 } from "../utils/programPosterMapping";
@@ -12,6 +13,8 @@ const CONTENT_X = PAGE_MARGIN;
 const CONTENT_RIGHT = POSTER_WIDTH - PAGE_MARGIN;
 const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_X;
 const MAX_EXPORT_PIXELS = 12000000;
+const OFFICIAL_DATE_CARD_H = 102;
+const OFFICIAL_DATE_ROW_GAP = 22;
 
 const DEFAULT_PALETTE = {
   background: "#F8F3E8",
@@ -364,12 +367,12 @@ const drawTextBox = (ctx, text, box, style = {}, options = {}) => {
   }, options);
 };
 
-const drawDiamondPattern = (ctx, palette) => {
+const drawDiamondPattern = (ctx, palette, posterHeight = POSTER_HEIGHT) => {
   ctx.save();
   ctx.strokeStyle = withAlpha(palette.primary, 0.035);
   ctx.lineWidth = 1;
   for (let x = -30; x < POSTER_WIDTH + 80; x += 92) {
-    for (let y = 20; y < POSTER_HEIGHT + 80; y += 92) {
+    for (let y = 20; y < posterHeight + 80; y += 92) {
       ctx.beginPath();
       ctx.moveTo(x + 34, y);
       ctx.lineTo(x + 68, y + 34);
@@ -389,13 +392,13 @@ const drawDiamondPattern = (ctx, palette) => {
   ctx.restore();
 };
 
-const drawBackground = (ctx, palette) => {
-  const gradient = ctx.createLinearGradient(0, 0, POSTER_WIDTH, POSTER_HEIGHT);
+const drawBackground = (ctx, palette, posterHeight = POSTER_HEIGHT) => {
+  const gradient = ctx.createLinearGradient(0, 0, POSTER_WIDTH, posterHeight);
   gradient.addColorStop(0, palette.backgroundSoft);
   gradient.addColorStop(0.48, palette.background);
   gradient.addColorStop(1, "#F2E7D0");
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, POSTER_WIDTH, POSTER_HEIGHT);
+  ctx.fillRect(0, 0, POSTER_WIDTH, posterHeight);
 
   const goldGlow = ctx.createRadialGradient(1080, 88, 20, 1080, 88, 620);
   goldGlow.addColorStop(0, withAlpha(palette.accent, 0.18));
@@ -408,9 +411,9 @@ const drawBackground = (ctx, palette) => {
   brandGlow.addColorStop(0, withAlpha(palette.brand, 0.11));
   brandGlow.addColorStop(1, withAlpha(palette.brand, 0));
   ctx.fillStyle = brandGlow;
-  ctx.fillRect(0, 900, POSTER_WIDTH, POSTER_HEIGHT - 900);
+  ctx.fillRect(0, 900, POSTER_WIDTH, posterHeight - 900);
 
-  drawDiamondPattern(ctx, palette);
+  drawDiamondPattern(ctx, palette, posterHeight);
 
   ctx.save();
   ctx.strokeStyle = withAlpha(palette.accent, 0.18);
@@ -943,6 +946,24 @@ const drawFlightConnector = (ctx, box, direction, palette) => {
   drawPlaneIcon(ctx, lineCenter + direction * 38, y + 13, 30, palette.primary, -Math.PI / 2);
 };
 
+const drawDatePairRow = (ctx, pair, labels, lang, palette, y) => {
+  const cardW = 390;
+  const cardH = OFFICIAL_DATE_CARD_H;
+  const leftCard = { x: CONTENT_X, y, width: cardW, height: cardH };
+  const rightCard = { x: CONTENT_RIGHT - cardW, y, width: cardW, height: cardH };
+  const departureBox = lang === "ar" ? rightCard : leftCard;
+  const returnBox = lang === "ar" ? leftCard : rightCard;
+
+  drawDateCard(ctx, labels.departure, pair.departureDate || "—", departureBox, lang, palette, "departure_date");
+  drawDateCard(ctx, labels.returnDate, pair.returnDate || "—", returnBox, lang, palette, "return_date");
+  drawFlightConnector(ctx, {
+    x: leftCard.x + leftCard.width + 44,
+    y,
+    width: rightCard.x - (leftCard.x + leftCard.width) - 88,
+    height: cardH,
+  }, lang === "ar" ? -1 : 1, palette);
+};
+
 const drawTripDetails = (ctx, program, labels, lang, palette, startY, options = {}) => {
   const departure = resolvePosterAreaValue("departure_date", program, { lang });
   const returnDate = resolvePosterAreaValue("return_date", program, { lang });
@@ -950,24 +971,20 @@ const drawTripDetails = (ctx, program, labels, lang, palette, startY, options = 
   const airline = sanitizeAirlineText(resolvePosterAreaValue("flight_info", program, { lang }));
   const routeLabel = getRouteLabel(labels, airline, lang);
   const showDates = options.showDates !== false;
+  const isBulkPoster = options.posterOptions?.isBulkPoster === true;
+  const bulkDatePairs = isBulkPoster ? getPosterDatePairs(program, options.posterOptions, { lang }) : [];
   let y = startY;
 
-  if (showDates && departure && returnDate) {
-    const cardW = 390;
-    const cardH = 102;
-    const leftCard = { x: CONTENT_X, y, width: cardW, height: cardH };
-    const rightCard = { x: CONTENT_RIGHT - cardW, y, width: cardW, height: cardH };
-    const departureBox = lang === "ar" ? rightCard : leftCard;
-    const returnBox = lang === "ar" ? leftCard : rightCard;
-    drawDateCard(ctx, labels.departure, departure, departureBox, lang, palette, "departure_date");
-    drawDateCard(ctx, labels.returnDate, returnDate, returnBox, lang, palette, "return_date");
-    drawFlightConnector(ctx, {
-      x: leftCard.x + leftCard.width + 44,
-      y,
-      width: rightCard.x - (leftCard.x + leftCard.width) - 88,
-      height: cardH,
-    }, lang === "ar" ? -1 : 1, palette);
-    y += cardH + 22;
+  if (showDates && isBulkPoster && bulkDatePairs.length) {
+    bulkDatePairs.forEach((pair, index) => {
+      drawDatePairRow(ctx, pair, labels, lang, palette, y + index * (OFFICIAL_DATE_CARD_H + OFFICIAL_DATE_ROW_GAP));
+    });
+    y += bulkDatePairs.length * OFFICIAL_DATE_CARD_H
+      + Math.max(0, bulkDatePairs.length - 1) * OFFICIAL_DATE_ROW_GAP
+      + OFFICIAL_DATE_ROW_GAP;
+  } else if (showDates && departure && returnDate) {
+    drawDatePairRow(ctx, { departureDate: departure, returnDate }, labels, lang, palette, y);
+    y += OFFICIAL_DATE_CARD_H + OFFICIAL_DATE_ROW_GAP;
   } else if (showDates && (departure || returnDate)) {
     drawDateCard(ctx, departure ? labels.departure : labels.returnDate, departure || returnDate, {
       x: CONTENT_X + 250,
@@ -1083,12 +1100,13 @@ const drawFooter = (ctx, agency, labels, lang, palette, y = 1510) => {
 };
 
 const getTripStartY = (tableEndY, levelCount, options = {}) => {
+  const footerY = options.footerY || getFooterY();
   if (options.showDates === false) {
     const routeCardH = 106;
     const topGap = levelCount <= 1 ? 86 : levelCount === 2 ? 70 : levelCount === 3 ? 58 : 48;
     const minY = tableEndY + topGap;
-    const centeredY = tableEndY + (getFooterY() - tableEndY - routeCardH) / 2;
-    return Math.max(minY, Math.min(centeredY, getFooterY() - routeCardH - 92));
+    const centeredY = tableEndY + (footerY - tableEndY - routeCardH) / 2;
+    return Math.max(minY, Math.min(centeredY, footerY - routeCardH - 92));
   }
   if (levelCount <= 1) return tableEndY + 84;
   if (levelCount === 2) return tableEndY + 64;
@@ -1115,11 +1133,18 @@ export const generateOfficialRuknPosterPng = async ({
   const logoUrl = agencyLogoUrl || agency.logoUrl || agency.logo_url || "";
   const logoImage = await loadImage(logoUrl);
   const palette = getOfficialPosterPalette({ agencyLogoImage: logoImage });
+  const showDates = posterOptions?.showDates !== false;
+  const bulkDateRows = posterOptions?.isBulkPoster === true && showDates
+    ? getPosterDatePairs(program, posterOptions, { lang }).length
+    : 1;
+  const dateSectionExtraHeight = Math.max(0, bulkDateRows - 1) * (OFFICIAL_DATE_CARD_H + OFFICIAL_DATE_ROW_GAP);
+  const posterHeight = POSTER_HEIGHT + dateSectionExtraHeight;
+  const footerY = getFooterY() + dateSectionExtraHeight;
 
-  const renderScale = getRenderScale(POSTER_WIDTH, POSTER_HEIGHT);
+  const renderScale = getRenderScale(POSTER_WIDTH, posterHeight);
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(POSTER_WIDTH * renderScale);
-  canvas.height = Math.round(POSTER_HEIGHT * renderScale);
+  canvas.height = Math.round(posterHeight * renderScale);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("poster-canvas-unavailable");
   ctx.imageSmoothingEnabled = true;
@@ -1127,8 +1152,7 @@ export const generateOfficialRuknPosterPng = async ({
   ctx.scale(renderScale, renderScale);
 
   try {
-    const showDates = posterOptions?.showDates !== false;
-    drawBackground(ctx, palette);
+    drawBackground(ctx, palette, posterHeight);
     drawAgencyBrand(ctx, agency, logoImage, lang, labels, palette);
     drawHero(ctx, program, labels, lang, palette, posterOptions);
     const tableLayout = drawLevelsTable(ctx, program, labels, lang, palette);
@@ -1138,10 +1162,10 @@ export const generateOfficialRuknPosterPng = async ({
       labels,
       lang,
       palette,
-      getTripStartY(tableLayout.endY, tableLayout.levelCount, { showDates }),
-      { showDates }
+      getTripStartY(tableLayout.endY, tableLayout.levelCount, { showDates, footerY }),
+      { showDates, posterOptions }
     );
-    drawFooter(ctx, agency, labels, lang, palette, getFooterY(tableLayout.levelCount));
+    drawFooter(ctx, agency, labels, lang, palette, footerY);
 
     return await new Promise((resolve, reject) => {
       canvas.toBlob((blob) => {

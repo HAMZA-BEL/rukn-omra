@@ -104,6 +104,7 @@ export const generateProgramPosterPng = async ({
   imageUrl,
   program,
   lang = "ar",
+  posterOptions = {},
 } = {}) => {
   if (!isBrowser()) throw new Error("poster-generation-browser-only");
   const { image, objectUrl } = await loadImageFromUrl(imageUrl);
@@ -135,7 +136,7 @@ export const generateProgramPosterPng = async ({
       : [];
 
     areas.forEach((area, index) => {
-      const value = resolvePosterAreaValue(area.type, program, { lang, area, index });
+      const value = resolvePosterAreaValue(area.type, program, { lang, area, index, posterOptions });
       if (!value || (Array.isArray(value) && !value.length)) return;
       drawPosterTextInBox(
         ctx,

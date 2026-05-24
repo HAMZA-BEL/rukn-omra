@@ -118,13 +118,45 @@ const parseDateParts = (value) => {
   };
 };
 
-const formatPosterDate = (value, lang = "ar") => {
+export const formatPosterDate = (value, lang = "ar") => {
   const parts = parseDateParts(value);
   if (!parts || !parts.day || !parts.month || !parts.year) return "";
   const day = String(parts.day).padStart(2, "0");
   const month = String(parts.month).padStart(2, "0");
   if (lang === "ar") return `${day} ${ARABIC_MONTHS[parts.month - 1] || month} ${parts.year}`;
   return `${day}/${month}/${parts.year}`;
+};
+
+const getProgramDepartureDateValue = (program = {}) => (
+  program.departure || program.departureDate || program.departure_date
+);
+
+const getProgramReturnDateValue = (program = {}) => (
+  program.returnDate || program.return_date || program.return
+);
+
+export const getPosterDatePair = (program = {}, lang = "ar") => ({
+  program,
+  programId: cleanText(program.id || program.programId || program.program_id),
+  departureDate: formatPosterDate(getProgramDepartureDateValue(program), lang),
+  returnDate: formatPosterDate(getProgramReturnDateValue(program), lang),
+});
+
+export const getPosterDatePairs = (program = {}, posterOptions = {}, options = {}) => {
+  if (posterOptions?.showDates === false) return [];
+  const lang = options.lang || "ar";
+  const sourcePrograms = posterOptions?.isBulkPoster === true
+    && Array.isArray(posterOptions.selectedPrograms)
+    && posterOptions.selectedPrograms.length
+    ? posterOptions.selectedPrograms
+    : [program];
+
+  return sourcePrograms
+    .map((sourceProgram, index) => ({
+      ...getPosterDatePair(sourceProgram, lang),
+      index,
+    }))
+    .filter((pair) => pair.departureDate || pair.returnDate);
 };
 
 const getProgramField = (program = {}, keys = []) => {
@@ -170,15 +202,21 @@ const buildLegacyPricesTable = (levels, lang) => (
 export const resolvePosterAreaValue = (areaType, program = {}, options = {}) => {
   const lang = options.lang || "ar";
   const type = String(areaType || "");
+  const posterOptions = options.posterOptions || {};
   const levels = getProgramPosterLevels(program);
 
-  if (type === "program_name") return cleanText(program.name || program.programName || program.title);
+  if (type === "program_name") {
+    return cleanText(posterOptions.titleOverride)
+      || cleanText(program.name || program.programName || program.title);
+  }
   if (type === "starting_price") return formatPosterStartingPrice(getProgramStartingPrice(levels), lang);
   if (type === "departure_date") {
-    return formatPosterDate(program.departure || program.departureDate || program.departure_date, lang);
+    if (posterOptions.showDates === false) return "";
+    return formatPosterDate(getProgramDepartureDateValue(program), lang);
   }
   if (type === "return_date") {
-    return formatPosterDate(program.returnDate || program.return_date || program.return, lang);
+    if (posterOptions.showDates === false) return "";
+    return formatPosterDate(getProgramReturnDateValue(program), lang);
   }
   if (type === "flight_info") {
     return getProgramField(program, [
