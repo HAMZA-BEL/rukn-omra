@@ -672,6 +672,41 @@ const buildFlightServiceLine = (airline, route) => {
   return "تذكرة الطائرة";
 };
 
+const getProgramDepartureDateValue = (program = {}) => (
+  program.departure || program.departureDate || program.departure_date
+);
+
+const getDateSortTime = (value) => {
+  if (!value) return Number.POSITIVE_INFINITY;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getTime();
+
+  const text = String(value || "").trim();
+  const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const date = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    return Number.isNaN(date.getTime()) ? Number.POSITIVE_INFINITY : date.getTime();
+  }
+
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? Number.POSITIVE_INFINITY : parsed.getTime();
+};
+
+const getDatePairDepartureSortTime = (pair = {}) => (
+  getDateSortTime(getProgramDepartureDateValue(pair.program) || pair.rawDepartureDate || pair.departure || pair.departureDate)
+);
+
+const sortPosterDatePairsByDeparture = (datePairs = []) => (
+  [...datePairs].sort((a, b) => {
+    const aTime = getDatePairDepartureSortTime(a);
+    const bTime = getDatePairDepartureSortTime(b);
+    const aValid = Number.isFinite(aTime);
+    const bValid = Number.isFinite(bTime);
+    if (aValid && bValid && aTime !== bTime) return aTime - bTime;
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    return Number(a.index || 0) - Number(b.index || 0);
+  })
+);
+
 const parseVersionDate = (program = {}) => {
   const candidate = program.updated_at || program.updatedAt || program.modified_at || program.modifiedAt;
   const parsed = candidate ? new Date(candidate) : null;
@@ -701,7 +736,7 @@ const getPosterData = (program = {}, posterOptions = {}) => {
   const startingPrice = resolvePosterAreaValue("starting_price", program, { lang: "ar" });
   const departureDate = resolvePosterAreaValue("departure_date", program, { lang: "ar" });
   const returnDate = resolvePosterAreaValue("return_date", program, { lang: "ar" });
-  const datePairs = getPosterDatePairs(program, posterOptions, { lang: "ar" });
+  const datePairs = sortPosterDatePairsByDeparture(getPosterDatePairs(program, posterOptions, { lang: "ar" }));
   const airline = sanitizeAirlineText(resolvePosterAreaValue("flight_info", program, { lang: "ar" }));
   const route = formatRouteValue(resolvePosterAreaValue("poster_travel_route", program, { lang: "ar" }));
   const rows = levels.map((level, index) => ({
@@ -1071,6 +1106,138 @@ const drawDateRouteRow = (ctx, departureDate, returnDate, y) => {
   return y + cardH;
 };
 
+const getCompactDateLayout = (dateCount = 2) => {
+  const count = Math.max(2, dateCount);
+  if (count >= 5) {
+    return { topGap: 10, headerH: 18, headerGap: 4, rowH: 19, rowGap: 2, fontSize: 12.8, minFontSize: 9.5 };
+  }
+  if (count === 4) {
+    return { topGap: 12, headerH: 19, headerGap: 5, rowH: 23, rowGap: 3, fontSize: 14, minFontSize: 10 };
+  }
+  if (count === 3) {
+    return { topGap: 14, headerH: 20, headerGap: 6, rowH: 28, rowGap: 6, fontSize: 16, minFontSize: 10.5 };
+  }
+  return { topGap: 18, headerH: 22, headerGap: 7, rowH: 34, rowGap: 8, fontSize: 18.5, minFontSize: 11.5 };
+};
+
+const getCompactDateSectionHeight = (dateCount = 0) => {
+  if (dateCount <= 1) return DATE_CARD_H;
+  const layout = getCompactDateLayout(dateCount);
+  return layout.topGap + layout.headerH + layout.headerGap
+    + dateCount * layout.rowH
+    + Math.max(0, dateCount - 1) * layout.rowGap;
+};
+
+const drawCompactDatePill = (ctx, box, value, layout, type) => {
+  const verticalPadding = Math.max(3, Math.min(5, Math.round(box.height * 0.18)));
+  fillRoundRect(ctx, box.x, box.y, box.width, box.height, Math.min(16, box.height / 2), "rgba(251,242,222,.96)");
+  strokeRoundRect(ctx, box.x, box.y, box.width, box.height, Math.min(16, box.height / 2), "rgba(63,134,201,.42)", 1.8);
+  drawText(ctx, value || "—", {
+    x: box.x + 14,
+    y: box.y + 1,
+    width: box.width - 28,
+    height: box.height - 1,
+  }, {
+    color: COLORS.dark,
+    fontSize: layout.fontSize,
+    minFontSize: layout.minFontSize,
+    maxLines: 1,
+    align: "center",
+    wrap: false,
+    lineHeight: 1.05,
+    paddingY: verticalPadding,
+    verticalAlign: "middle",
+  }, { type });
+};
+
+const drawCompactDateRowConnector = (ctx, departureColumn, returnColumn, centerY, rowHeight) => {
+  const lineStartX = departureColumn.x - 18;
+  const lineEndX = returnColumn.x + returnColumn.width + 18;
+  const lineCenterX = (lineStartX + lineEndX) / 2;
+  const planeSize = Math.max(14, Math.min(19, rowHeight * 0.62));
+
+  ctx.save();
+  ctx.globalAlpha = 0.62;
+  ctx.strokeStyle = COLORS.blueDark;
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([5, 7]);
+  ctx.beginPath();
+  ctx.moveTo(lineStartX, centerY);
+  ctx.lineTo(lineEndX, centerY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = COLORS.blueDark;
+  ctx.beginPath();
+  ctx.moveTo(lineEndX - 5, centerY);
+  ctx.lineTo(lineEndX + 9, centerY - 7);
+  ctx.lineTo(lineEndX + 9, centerY + 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  drawPlaneIcon(ctx, lineCenterX, centerY, planeSize, COLORS.blueDark, -Math.PI / 2);
+};
+
+const drawCompactDateRouteSection = (ctx, datePairs, startY) => {
+  const sortedPairs = sortPosterDatePairsByDeparture(datePairs);
+  const layout = getCompactDateLayout(sortedPairs.length);
+  const y = startY + layout.topGap;
+  const departureColumn = { x: 714, width: 400 };
+  const returnColumn = { x: 126, width: 400 };
+  const headerY = y;
+  const rowStartY = headerY + layout.headerH + layout.headerGap;
+  const sectionHeight = getCompactDateSectionHeight(sortedPairs.length);
+
+  drawText(ctx, "تاريخ الذهاب", {
+    x: departureColumn.x,
+    y: headerY,
+    width: departureColumn.width,
+    height: layout.headerH,
+  }, {
+    color: COLORS.blueDark,
+    fontSize: 17,
+    minFontSize: 11,
+    maxLines: 1,
+    align: "center",
+    wrap: false,
+    lineHeight: 1,
+  }, { type: "bulk_departure_date_header" });
+
+  drawText(ctx, "تاريخ العودة", {
+    x: returnColumn.x,
+    y: headerY,
+    width: returnColumn.width,
+    height: layout.headerH,
+  }, {
+    color: COLORS.blueDark,
+    fontSize: 17,
+    minFontSize: 11,
+    maxLines: 1,
+    align: "center",
+    wrap: false,
+    lineHeight: 1,
+  }, { type: "bulk_return_date_header" });
+
+  sortedPairs.forEach((pair, index) => {
+    const rowY = rowStartY + index * (layout.rowH + layout.rowGap);
+    drawCompactDateRowConnector(ctx, departureColumn, returnColumn, rowY + layout.rowH / 2, layout.rowH);
+    drawCompactDatePill(ctx, {
+      x: departureColumn.x,
+      y: rowY,
+      width: departureColumn.width,
+      height: layout.rowH,
+    }, pair.departureDate, layout, `bulk_departure_date_${index}`);
+    drawCompactDatePill(ctx, {
+      x: returnColumn.x,
+      y: rowY,
+      width: returnColumn.width,
+      height: layout.rowH,
+    }, pair.returnDate, layout, `bulk_return_date_${index}`);
+  });
+
+  return startY + sectionHeight;
+};
+
 const drawDateRouteSection = (ctx, data, startY, options = {}) => {
   const y = startY + 44;
   const isBulkPoster = options.isBulkPoster === true;
@@ -1079,6 +1246,10 @@ const drawDateRouteSection = (ctx, data, startY, options = {}) => {
     : [{ departureDate: data.departureDate, returnDate: data.returnDate }];
 
   if (isBulkPoster && !datePairs.length) return startY;
+
+  if (isBulkPoster && datePairs.length > 1) {
+    return drawCompactDateRouteSection(ctx, datePairs, startY);
+  }
 
   datePairs.forEach((pair, index) => {
     drawDateRouteRow(
@@ -1389,9 +1560,12 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
   });
 
   const compactPeopleContacts = TIZNIT_PEOPLE_CONTACTS.length > 4;
-  const peopleContactTop = 14;
-  const peopleContactGap = compactPeopleContacts ? 16.2 : 25;
-  const peopleContactHeight = compactPeopleContacts ? 19 : 24;
+  const peopleContactTop = compactPeopleContacts ? 9 : 14;
+  const peopleContactGap = compactPeopleContacts ? 17.8 : 25;
+  const peopleContactHeight = compactPeopleContacts ? 16.5 : 24;
+  const peopleContactFontSize = compactPeopleContacts ? 16.8 : 20;
+  const peopleContactMinFontSize = compactPeopleContacts ? 11.5 : 13;
+  const peopleContactLineHeight = compactPeopleContacts ? 1.04 : 1.12;
   const peopleNameColumn = { x: box.x + 388, width: 160 };
   const peopleSeparatorColumn = { x: box.x + 366, width: 18 };
   const peoplePhoneColumn = { x: box.x + 250, width: 112 };
@@ -1404,11 +1578,11 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       height: peopleContactHeight,
     }, {
       color: COLORS.dark,
-      fontSize: compactPeopleContacts ? 18 : 20,
-      minFontSize: compactPeopleContacts ? 12 : 13,
+      fontSize: peopleContactFontSize,
+      minFontSize: peopleContactMinFontSize,
       maxLines: 1,
       align: "right",
-      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
+      lineHeight: peopleContactLineHeight,
       wrap: false,
     }, { type: `tiznit_people_contact_name_${index}` });
     drawText(ctx, ":", {
@@ -1418,11 +1592,11 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       height: peopleContactHeight,
     }, {
       color: COLORS.dark,
-      fontSize: compactPeopleContacts ? 18 : 20,
-      minFontSize: compactPeopleContacts ? 12 : 13,
+      fontSize: peopleContactFontSize,
+      minFontSize: peopleContactMinFontSize,
       maxLines: 1,
       align: "center",
-      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
+      lineHeight: peopleContactLineHeight,
       wrap: false,
     }, { type: `tiznit_people_contact_separator_${index}`, lang: "en" });
     drawText(ctx, contact.phone, {
@@ -1432,11 +1606,11 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       height: peopleContactHeight,
     }, {
       color: COLORS.dark,
-      fontSize: compactPeopleContacts ? 18 : 20,
-      minFontSize: compactPeopleContacts ? 12 : 13,
+      fontSize: peopleContactFontSize,
+      minFontSize: peopleContactMinFontSize,
       maxLines: 1,
       align: "left",
-      lineHeight: compactPeopleContacts ? 1.02 : 1.12,
+      lineHeight: peopleContactLineHeight,
       wrap: false,
     }, { type: `tiznit_people_contact_phone_${index}`, lang: "en" });
   });
@@ -1497,12 +1671,8 @@ export const renderPoster = async ({
 
   const data = getPosterData(program, posterOptions);
   const showDates = posterOptions?.showDates !== false;
-  const bulkDateRows = posterOptions?.isBulkPoster === true && showDates
-    ? data.datePairs.length
-    : 1;
-  const dateSectionExtraHeight = Math.max(0, bulkDateRows - 1) * (DATE_CARD_H + BULK_DATE_ROW_GAP);
-  const posterHeight = POSTER_HEIGHT + dateSectionExtraHeight;
-  const footerY = FOOTER_Y + dateSectionExtraHeight;
+  const posterHeight = POSTER_HEIGHT;
+  const footerY = FOOTER_Y;
   const scale = getRenderScale(POSTER_WIDTH, posterHeight);
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(POSTER_WIDTH * scale);
