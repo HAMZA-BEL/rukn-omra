@@ -114,6 +114,7 @@ import {
 import {
   loadCodePosterTemplate,
   OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
+  TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY,
   TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY,
 } from "../features/posterTemplates/codeTemplates/registry";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
@@ -2488,7 +2489,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     const referenceProgram = posterOptions?.referenceProgram;
     if (!referenceProgram) return;
 
-    const codeTemplate = await loadCodePosterTemplate(templateKey);
+    const codeTemplate = await loadCodePosterTemplate(templateKey, { program: referenceProgram });
     if (!codeTemplate?.renderPoster) throw new Error("missing-code-poster-template");
     const blob = await codeTemplate.renderPoster({
       program: referenceProgram,
@@ -4354,7 +4355,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
   }, [lang, program]);
   const generateCodePoster = React.useCallback(async (templateKey = OFFICIAL_RUKN_CODE_TEMPLATE_KEY) => {
-    const codeTemplate = await loadCodePosterTemplate(templateKey);
+    const codeTemplate = await loadCodePosterTemplate(templateKey, { program });
     if (!codeTemplate?.renderPoster) throw new Error("missing-code-poster-template");
     const blob = await codeTemplate.renderPoster({
       program,
@@ -4429,7 +4430,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     runPosterTemplateDownload(selectedTemplate);
   }, [posterTemplateChoice, posterTemplateChoiceId, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
   const posterOptionsVisible = posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID
-    || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
+    || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY
+    || posterTemplateChoiceId === TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY;
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const getCurrentWordContractExportClients = React.useCallback(() => {
     if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));

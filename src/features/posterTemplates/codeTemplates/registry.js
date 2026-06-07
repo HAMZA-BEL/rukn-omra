@@ -1,5 +1,8 @@
+import { getProgramKind } from "../../../utils/participantTerminology";
+
 export const OFFICIAL_RUKN_CODE_TEMPLATE_KEY = "rukn_official_light";
 export const TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY = "tiznit_voyages_signature";
+export const TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY = "tiznit_voyages_hajj";
 
 export const RUKN_OFFICIAL_LIGHT_META = {
   key: OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
@@ -21,8 +24,20 @@ export const TIZNIT_VOYAGES_SIGNATURE_META = {
     fr: "Modèle Tiznit Voyages",
     en: "Tiznit Voyages Template",
   },
-  supportedProgramTypes: ["umrah", "hajj"],
+  supportedProgramTypes: ["umrah"],
   maxLevels: 5,
+};
+
+export const TIZNIT_VOYAGES_HAJJ_META = {
+  key: TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY,
+  type: "agency_private",
+  name: {
+    ar: "قالب تيزنيت أسفار للحج",
+    fr: "Modèle Hajj Tiznit Voyages",
+    en: "Tiznit Voyages Hajj Template",
+  },
+  supportedProgramTypes: ["hajj"],
+  maxLevels: 4,
 };
 
 const CODE_POSTER_TEMPLATE_REGISTRY = {
@@ -33,6 +48,10 @@ const CODE_POSTER_TEMPLATE_REGISTRY = {
   [TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY]: {
     meta: TIZNIT_VOYAGES_SIGNATURE_META,
     load: () => import("./agencies/tiznitVoyages"),
+  },
+  [TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY]: {
+    meta: TIZNIT_VOYAGES_HAJJ_META,
+    load: () => import("./agencies/tiznitVoyages/hajj"),
   },
 };
 
@@ -61,8 +80,24 @@ export const getCodePosterTemplateByKey = (templateKey) => {
   return entry;
 };
 
-export const loadCodePosterTemplate = async (templateKey) => {
-  const entry = getCodePosterTemplateByKey(templateKey);
+export const resolveCodePosterTemplateKey = (templateKey, options = {}) => {
+  const key = String(templateKey || "");
+  if (
+    key === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY
+    || key === TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY
+  ) {
+    const programKind = getProgramKind(options?.program, null, {
+      allowNameFallback: true,
+      defaultKind: "",
+    });
+    if (programKind === "hajj") return TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY;
+    if (programKind === "umrah") return TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
+  }
+  return key;
+};
+
+export const loadCodePosterTemplate = async (templateKey, options = {}) => {
+  const entry = getCodePosterTemplateByKey(resolveCodePosterTemplateKey(templateKey, options));
   if (!entry) return null;
   return entry.load();
 };

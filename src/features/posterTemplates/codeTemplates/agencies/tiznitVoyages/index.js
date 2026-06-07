@@ -30,6 +30,7 @@ const FOOTER_Y = 1570;
 const FOOTER_H = 148;
 const DATE_CARD_H = 82;
 const BULK_DATE_ROW_GAP = 14;
+const BULK_DATE_MAX_COMPACT_SECTION_H = 135;
 
 const COLORS = {
   blue: "#3F86C9",
@@ -794,6 +795,7 @@ const drawBackground = (ctx, posterHeight = POSTER_HEIGHT) => {
 
 const drawHero = (ctx, data, assets) => {
   const heroH = 650;
+  const upperShiftY = 18;
 
   ctx.save();
   ctx.beginPath();
@@ -814,7 +816,7 @@ const drawHero = (ctx, data, assets) => {
 
   ctx.save();
   ctx.beginPath();
-  roundRectPath(ctx, -70, 26, 555, 114, 58);
+  roundRectPath(ctx, -70, 26 + upperShiftY, 555, 114, 58);
   ctx.fillStyle = "#F9C85B";
   ctx.fill();
   ctx.lineWidth = 5;
@@ -826,7 +828,7 @@ const drawHero = (ctx, data, assets) => {
   ctx.shadowColor = "rgba(36,78,137,.24)";
   ctx.shadowBlur = 8;
   ctx.shadowOffsetY = 2;
-  drawText(ctx, data.programName, { x: 30, y: 62, width: 410, height: 58 }, {
+  drawText(ctx, data.programName, { x: 30, y: 62 + upperShiftY, width: 410, height: 58 }, {
     color: COLORS.white,
     fontSize: 38,
     minFontSize: 18,
@@ -836,18 +838,18 @@ const drawHero = (ctx, data, assets) => {
   }, { type: "program_name" });
   ctx.restore();
 
-  drawCircleImage(ctx, assets.madinahCircle?.image, 638, 318, 182, {
+  drawCircleImage(ctx, assets.madinahCircle?.image, 638, 318 + upperShiftY, 182, {
     border: 34,
     positionX: 0.48,
     positionY: 0.45,
   });
-  drawCircleImage(ctx, assets.kaabaCircle?.image, 1010, 426, 137, {
+  drawCircleImage(ctx, assets.kaabaCircle?.image, 1010, 426 + upperShiftY, 137, {
     border: 28,
     positionX: 0.5,
     positionY: 0.54,
   });
 
-  const logoBox = { x: 858, y: 6, width: 336, height: 218 };
+  const logoBox = { x: 858, y: 6 + upperShiftY, width: 336, height: 218 };
   if (assets.logo?.image) {
     drawTransparentImageContain(ctx, assets.logo.image, logoBox.x + 38, logoBox.y - 4, 268, 126);
   }
@@ -876,7 +878,7 @@ const drawHero = (ctx, data, assets) => {
     wrap: false,
   }, { type: "agency_experience" });
 
-  const priceRibbon = { x: 0, y: 448, width: 500, height: 116 };
+  const priceRibbon = { x: 0, y: 448 + upperShiftY, width: 500, height: 116 };
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(priceRibbon.x, priceRibbon.y);
@@ -893,7 +895,7 @@ const drawHero = (ctx, data, assets) => {
   ctx.restore();
 
   const priceTextBox = { x: 56, width: 300 };
-  drawText(ctx, "إبتداء من :", { x: priceTextBox.x, y: 466, width: priceTextBox.width, height: 38 }, {
+  drawText(ctx, "إبتداء من :", { x: priceTextBox.x, y: 466 + upperShiftY, width: priceTextBox.width, height: 38 }, {
     color: COLORS.blueSoft,
     fontSize: 34,
     minFontSize: 20,
@@ -901,7 +903,7 @@ const drawHero = (ctx, data, assets) => {
     align: "center",
   }, { type: "starting_from" });
   if (data.startingPrice) {
-    drawText(ctx, data.startingPrice, { x: priceTextBox.x, y: 506, width: priceTextBox.width, height: 48 }, {
+    drawText(ctx, data.startingPrice, { x: priceTextBox.x, y: 506 + upperShiftY, width: priceTextBox.width, height: 48 }, {
       color: COLORS.dark,
       fontSize: 34,
       minFontSize: 18,
@@ -1108,16 +1110,99 @@ const drawDateRouteRow = (ctx, departureDate, returnDate, y) => {
 
 const getCompactDateLayout = (dateCount = 2) => {
   const count = Math.max(2, dateCount);
-  if (count >= 5) {
-    return { topGap: 10, headerH: 18, headerGap: 4, rowH: 19, rowGap: 2, fontSize: 12.8, minFontSize: 9.5 };
+  if (count > 5) {
+    const topGap = 6;
+    const headerH = 16;
+    const headerGap = 2;
+    const rowGap = count <= 6 ? 1 : 0;
+    const availableRowH = (
+      BULK_DATE_MAX_COMPACT_SECTION_H
+      - topGap
+      - headerH
+      - headerGap
+      - Math.max(0, count - 1) * rowGap
+    ) / count;
+    const rowH = Math.max(1, Math.floor(availableRowH * 10) / 10);
+    const pillH = Math.max(1, Math.min(rowH, rowH <= 14 ? rowH : rowH - 1));
+    const pillPaddingY = pillH <= 14 ? 1 : 2;
+    const fontSize = Math.max(6, Math.min(14, (pillH - pillPaddingY * 2) / 1.02));
+    return {
+      topGap,
+      headerH,
+      headerGap,
+      rowH,
+      rowGap,
+      pillW: 380,
+      pillH,
+      fontSize,
+      minFontSize: Math.max(6, fontSize - 2),
+      lineHeight: 1.02,
+      pillPaddingY,
+      headerFontSize: 14.5,
+    };
+  }
+  if (count === 5) {
+    return {
+      topGap: 6,
+      headerH: 17,
+      headerGap: 2,
+      rowH: 21,
+      rowGap: 1,
+      pillW: 384,
+      pillH: 20,
+      fontSize: 15.6,
+      minFontSize: 12,
+      lineHeight: 1.02,
+      pillPaddingY: 2,
+      headerFontSize: 15,
+    };
   }
   if (count === 4) {
-    return { topGap: 12, headerH: 19, headerGap: 5, rowH: 23, rowGap: 3, fontSize: 14, minFontSize: 10 };
+    return {
+      topGap: 7,
+      headerH: 18,
+      headerGap: 3,
+      rowH: 25,
+      rowGap: 2,
+      pillW: 392,
+      pillH: 23,
+      fontSize: 16.6,
+      minFontSize: 12.5,
+      lineHeight: 1.02,
+      pillPaddingY: 3,
+      headerFontSize: 15.8,
+    };
   }
   if (count === 3) {
-    return { topGap: 14, headerH: 20, headerGap: 6, rowH: 28, rowGap: 6, fontSize: 16, minFontSize: 10.5 };
+    return {
+      topGap: 12,
+      headerH: 20,
+      headerGap: 4,
+      rowH: 30,
+      rowGap: 4,
+      pillW: 400,
+      pillH: 28,
+      fontSize: 20.2,
+      minFontSize: 14,
+      lineHeight: 1.03,
+      pillPaddingY: 3,
+      headerFontSize: 16.5,
+    };
   }
-  return { topGap: 18, headerH: 22, headerGap: 7, rowH: 34, rowGap: 8, fontSize: 18.5, minFontSize: 11.5 };
+  return {
+    topGap: 14,
+    headerH: 22,
+    headerGap: 5,
+    rowH: 36,
+    rowGap: 8,
+    pillW: 400,
+    pillH: 34,
+    fontSize: 22,
+    minFontSize: 15,
+    lineHeight: 1.03,
+    pillPaddingY: 4,
+    headerFontSize: 17,
+  };
 };
 
 const getCompactDateSectionHeight = (dateCount = 0) => {
@@ -1128,15 +1213,57 @@ const getCompactDateSectionHeight = (dateCount = 0) => {
     + Math.max(0, dateCount - 1) * layout.rowGap;
 };
 
+const drawCompactDateHeader = (ctx, label, column, y, layout, type) => {
+  const labelW = Math.min(148, column.width);
+  const labelH = Math.min(layout.headerH, 20);
+  const labelX = column.x + (column.width - labelW) / 2;
+  const labelY = y + (layout.headerH - labelH) / 2;
+
+  fillRoundRect(ctx, labelX, labelY, labelW, labelH, labelH / 2, "rgba(251,242,222,.82)");
+  strokeRoundRect(ctx, labelX, labelY, labelW, labelH, labelH / 2, "rgba(63,134,201,.28)", 1);
+  drawText(ctx, label, {
+    x: labelX + 10,
+    y: labelY + 1,
+    width: labelW - 20,
+    height: labelH - 2,
+  }, {
+    color: COLORS.blueDark,
+    fontSize: layout.headerFontSize || 16,
+    minFontSize: 11,
+    maxLines: 1,
+    align: "center",
+    wrap: false,
+    lineHeight: 1,
+  }, { type });
+};
+
 const drawCompactDatePill = (ctx, box, value, layout, type) => {
-  const verticalPadding = Math.max(3, Math.min(5, Math.round(box.height * 0.18)));
-  fillRoundRect(ctx, box.x, box.y, box.width, box.height, Math.min(16, box.height / 2), "rgba(251,242,222,.96)");
-  strokeRoundRect(ctx, box.x, box.y, box.width, box.height, Math.min(16, box.height / 2), "rgba(63,134,201,.42)", 1.8);
+  const radius = Math.min(15, box.height / 2);
+  const verticalPadding = layout.pillPaddingY ?? Math.max(2, Math.min(4, Math.round(box.height * 0.14)));
+
+  ctx.save();
+  ctx.shadowColor = "rgba(36,78,137,.08)";
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  fillRoundRect(ctx, box.x, box.y, box.width, box.height, radius, "rgba(251,242,222,.96)");
+  ctx.restore();
+
+  strokeRoundRect(ctx, box.x, box.y, box.width, box.height, radius, "rgba(63,134,201,.45)", 1.5);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = withAlpha(COLORS.gold, 0.72);
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(box.x + 18, box.y + box.height - 3);
+  ctx.lineTo(box.x + Math.min(box.width - 18, 70), box.y + box.height - 3);
+  ctx.stroke();
+  ctx.restore();
+
   drawText(ctx, value || "—", {
     x: box.x + 14,
-    y: box.y + 1,
+    y: box.y + verticalPadding,
     width: box.width - 28,
-    height: box.height - 1,
+    height: box.height - verticalPadding * 2,
   }, {
     color: COLORS.dark,
     fontSize: layout.fontSize,
@@ -1144,33 +1271,37 @@ const drawCompactDatePill = (ctx, box, value, layout, type) => {
     maxLines: 1,
     align: "center",
     wrap: false,
-    lineHeight: 1.05,
-    paddingY: verticalPadding,
+    lineHeight: layout.lineHeight || 1.03,
+    paddingY: 0,
     verticalAlign: "middle",
   }, { type });
 };
 
 const drawCompactDateRowConnector = (ctx, departureColumn, returnColumn, centerY, rowHeight) => {
-  const lineStartX = departureColumn.x - 18;
-  const lineEndX = returnColumn.x + returnColumn.width + 18;
+  const lineStartX = departureColumn.x - 12;
+  const lineEndX = returnColumn.x + returnColumn.width + 12;
   const lineCenterX = (lineStartX + lineEndX) / 2;
-  const planeSize = Math.max(14, Math.min(19, rowHeight * 0.62));
+  const planeSize = Math.max(13, Math.min(18, rowHeight * 0.58));
+  const planeGap = planeSize * 0.82;
 
   ctx.save();
-  ctx.globalAlpha = 0.62;
+  ctx.globalAlpha = 0.58;
   ctx.strokeStyle = COLORS.blueDark;
-  ctx.lineWidth = 1.6;
-  ctx.setLineDash([5, 7]);
+  ctx.lineWidth = 1.35;
+  ctx.lineCap = "round";
+  ctx.setLineDash([4, 7]);
   ctx.beginPath();
   ctx.moveTo(lineStartX, centerY);
+  ctx.lineTo(lineCenterX + planeGap, centerY);
+  ctx.moveTo(lineCenterX - planeGap, centerY);
   ctx.lineTo(lineEndX, centerY);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = COLORS.blueDark;
   ctx.beginPath();
-  ctx.moveTo(lineEndX - 5, centerY);
-  ctx.lineTo(lineEndX + 9, centerY - 7);
-  ctx.lineTo(lineEndX + 9, centerY + 7);
+  ctx.moveTo(lineEndX - 4, centerY);
+  ctx.lineTo(lineEndX + 8, centerY - 6);
+  ctx.lineTo(lineEndX + 8, centerY + 6);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -1182,57 +1313,35 @@ const drawCompactDateRouteSection = (ctx, datePairs, startY) => {
   const sortedPairs = sortPosterDatePairsByDeparture(datePairs);
   const layout = getCompactDateLayout(sortedPairs.length);
   const y = startY + layout.topGap;
-  const departureColumn = { x: 714, width: 400 };
-  const returnColumn = { x: 126, width: 400 };
   const headerY = y;
   const rowStartY = headerY + layout.headerH + layout.headerGap;
   const sectionHeight = getCompactDateSectionHeight(sortedPairs.length);
 
-  drawText(ctx, "تاريخ الذهاب", {
-    x: departureColumn.x,
-    y: headerY,
-    width: departureColumn.width,
-    height: layout.headerH,
-  }, {
-    color: COLORS.blueDark,
-    fontSize: 17,
-    minFontSize: 11,
-    maxLines: 1,
-    align: "center",
-    wrap: false,
-    lineHeight: 1,
-  }, { type: "bulk_departure_date_header" });
-
-  drawText(ctx, "تاريخ العودة", {
-    x: returnColumn.x,
-    y: headerY,
-    width: returnColumn.width,
-    height: layout.headerH,
-  }, {
-    color: COLORS.blueDark,
-    fontSize: 17,
-    minFontSize: 11,
-    maxLines: 1,
-    align: "center",
-    wrap: false,
-    lineHeight: 1,
-  }, { type: "bulk_return_date_header" });
+  const pillW = layout.pillW || 400;
+  const pillOffsetX = Math.max(0, (400 - pillW) / 2);
+  const departureColumn = { x: 714 + pillOffsetX, width: pillW };
+  const returnColumn = { x: 126 + pillOffsetX, width: pillW };
+  drawCompactDateHeader(ctx, "تاريخ الذهاب", departureColumn, headerY, layout, "bulk_departure_date_header");
+  drawCompactDateHeader(ctx, "تاريخ العودة", returnColumn, headerY, layout, "bulk_return_date_header");
 
   sortedPairs.forEach((pair, index) => {
     const rowY = rowStartY + index * (layout.rowH + layout.rowGap);
-    drawCompactDateRowConnector(ctx, departureColumn, returnColumn, rowY + layout.rowH / 2, layout.rowH);
-    drawCompactDatePill(ctx, {
+    const pillY = rowY + Math.max(0, (layout.rowH - layout.pillH) / 2);
+    const departurePill = {
       x: departureColumn.x,
-      y: rowY,
+      y: pillY,
       width: departureColumn.width,
-      height: layout.rowH,
-    }, pair.departureDate, layout, `bulk_departure_date_${index}`);
-    drawCompactDatePill(ctx, {
+      height: layout.pillH,
+    };
+    const returnPill = {
       x: returnColumn.x,
-      y: rowY,
+      y: pillY,
       width: returnColumn.width,
-      height: layout.rowH,
-    }, pair.returnDate, layout, `bulk_return_date_${index}`);
+      height: layout.pillH,
+    };
+    drawCompactDateRowConnector(ctx, departurePill, returnPill, rowY + layout.rowH / 2, layout.rowH);
+    drawCompactDatePill(ctx, departurePill, pair.departureDate, layout, `bulk_departure_date_${index}`);
+    drawCompactDatePill(ctx, returnPill, pair.returnDate, layout, `bulk_return_date_${index}`);
   });
 
   return startY + sectionHeight;
