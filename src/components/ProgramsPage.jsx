@@ -114,7 +114,6 @@ import {
 import {
   loadCodePosterTemplate,
   OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
-  TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY,
   TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY,
 } from "../features/posterTemplates/codeTemplates/registry";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
@@ -4430,8 +4429,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     runPosterTemplateDownload(selectedTemplate);
   }, [posterTemplateChoice, posterTemplateChoiceId, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
   const posterOptionsVisible = posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID
-    || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY
-    || posterTemplateChoiceId === TIZNIT_VOYAGES_HAJJ_TEMPLATE_KEY;
+    || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
   const getCurrentWordContractExportClients = React.useCallback(() => {
     if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
