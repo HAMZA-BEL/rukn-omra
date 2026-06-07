@@ -2691,7 +2691,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
                 boxShadow:"none",
               }}
             >
-              إنشاء ملصق
+              {t.bulkPosterCreate}
             </Button>
             <Button variant="primary" icon="plus" onClick={() => setShowForm(true)}>{t.addProgram}</Button>
           </div>

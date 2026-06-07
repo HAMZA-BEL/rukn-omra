@@ -1,6 +1,8 @@
 import { getClientDisplayName } from "../clientNames";
+import { formatAirlineNameForDocument } from "../airlines";
 import { ensureInvoiceRegistryItem } from "./invoiceRegistry";
 import { buildInvoiceKey, getInvoiceIssueDate, trimInvoiceValue } from "./invoiceNumbering";
+import { getInvoiceProgramDisplayName } from "./invoiceProgramDisplay";
 import { normalizeInvoiceRecipient, validateInvoiceRecipient } from "./invoiceValidation";
 
 export const getInvoiceClientCin = (client = {}) => (
@@ -50,7 +52,19 @@ export const buildInvoiceData = ({
   const { totalPaid, salePrice, remaining, paidInFull } = calculateInvoiceTotals({ client: safeClient, payments });
   const cin = getInvoiceClientCin(safeClient);
   const passportNo = trimInvoiceValue(safeClient.passport?.number);
-  const carrier = trimInvoiceValue(safeProgram?.carrier || safeProgram?.company || safeProgram?.compagnie || safeProgram?.airline || safeProgram?.transport);
+  const carrier = formatAirlineNameForDocument(
+    trimInvoiceValue(
+      safeProgram?.carrier
+      || safeProgram?.company
+      || safeProgram?.compagnie
+      || safeProgram?.airline
+      || safeProgram?.transport
+      || safeProgram?.airlineName
+      || safeProgram?.airlineCode
+      || safeProgram?.carrierCode
+    ),
+    lang
+  );
   const latestPayment = getLatestInvoicePayment(payments);
   const isProforma = documentType === "proforma";
   if (!isProforma && !paidInFull) {
@@ -72,6 +86,7 @@ export const buildInvoiceData = ({
 
   return {
     valid: true,
+    lang,
     documentType,
     recipient: invoiceRecipient,
     clientName,
@@ -83,6 +98,7 @@ export const buildInvoiceData = ({
     cin,
     passportNo,
     carrier,
+    programName: getInvoiceProgramDisplayName(safeProgram, lang),
     latestPayment,
     invoiceItem,
     invoiceNo: invoiceItem?.invoiceNumber || "",

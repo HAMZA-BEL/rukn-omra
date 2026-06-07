@@ -49,7 +49,8 @@ const getBulkPosterStartingPrice = (program = {}) => {
 };
 
 export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownloadRequest }) {
-  const { t, lang } = useLang();
+  const { t, tr, lang, dir } = useLang();
+  const isRTL = dir === "rtl";
   const [referenceProgramId, setReferenceProgramId] = React.useState("");
   const [selectedProgramIds, setSelectedProgramIds] = React.useState(() => new Set());
   const [titleOverride, setTitleOverride] = React.useState("");
@@ -166,10 +167,15 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
     <Modal
       open={isOpen}
       onClose={handleClose}
-      title="إنشاء ملصق"
+      title={t.bulkPosterCreate}
       width={640}
     >
-      <div style={{ display:"grid", gap:12, direction:"rtl" }}>
+      <div style={{
+        display:"grid",
+        gap:12,
+        direction:dir,
+        textAlign:isRTL ? "right" : "left",
+      }}>
         <style>{`
           .bulk-poster-program-list {
             scrollbar-width: thin;
@@ -205,11 +211,11 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
         `}</style>
         <div style={{ display:"grid", gap:5 }}>
           <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:12.5, lineHeight:1.7 }}>
-            اختر البرنامج الأول لتحديد مجموعة البرامج المطابقة.
+            {t.bulkPosterInstruction}
           </p>
           {referenceProgramId ? (
             <p style={{ margin:0, color:"var(--rukn-gold)", fontSize:11.5, fontWeight:800, lineHeight:1.6 }}>
-              تظهر الآن البرامج المطابقة فقط.
+              {t.bulkPosterMatchingOnly}
             </p>
           ) : (
             <span style={{ minHeight:18 }} />
@@ -243,10 +249,10 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
                 defaultKind: "umrah",
               }), lang);
               const metadataItems = [
-                { label: "النوع", value: programType || "—" },
-                { label: "الذهاب", value: departureDate || "—" },
-                { label: "العودة", value: returnDate || "—" },
-                { label: "ابتداء من", value: startingPrice ? formatCurrencyForLang(startingPrice) : "—" },
+                { label: t.bulkPosterType, value: programType || "—" },
+                { label: t.bulkPosterDepartureDate, value: departureDate || "—" },
+                { label: t.bulkPosterReturnDate, value: returnDate || "—" },
+                { label: t.bulkPosterStartingFrom, value: startingPrice ? formatCurrencyForLang(startingPrice) : "—" },
               ];
 
               return (
@@ -304,7 +310,7 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
                       whiteSpace:"nowrap",
                       lineHeight:1.35,
                     }}>
-                      {program.name || "برنامج بدون اسم"}
+                      {program.name || t.bulkPosterUnnamedProgram}
                     </strong>
                     <span style={{
                       display:"flex",
@@ -327,7 +333,7 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
                           fontWeight:800,
                         }}>
                           <span style={{ color:"var(--rukn-text-muted)", fontSize:9.5, fontWeight:700 }}>
-                            {item.label}
+                            {item.label}:
                           </span>
                           <span>{item.value}</span>
                         </span>
@@ -347,7 +353,7 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
                 lineHeight:1.7,
                 background:"rgba(148,163,184,.06)",
               }}>
-                لا توجد برامج ضمن الفلاتر الحالية.
+                {t.bulkPosterNoPrograms}
               </div>
             )}
           </div>
@@ -363,18 +369,18 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
           gap:12,
         }}>
           <Input
-            label="عنوان الملصق"
+            label={t.bulkPosterTitle}
             value={titleOverride}
             onChange={(event) => setTitleOverride(event.target.value)}
-            placeholder={referenceProgram?.name || "عنوان الملصق"}
+            placeholder={referenceProgram?.name || t.bulkPosterTitle}
             disabled={!selectedProgramIds.size}
             inputStyle={{
               background:"#FFFFFF",
               borderColor:"rgba(148,163,184,.28)",
               color:"#111827",
               fontWeight:800,
-              textAlign:"right",
-              direction:"rtl",
+              textAlign:isRTL ? "right" : "left",
+              direction:dir,
             }}
           />
           <div style={{
@@ -390,13 +396,13 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
               fontSize:12.5,
               fontWeight:800,
             }}>
-              إظهار التواريخ
+              {t.bulkPosterShowDates}
             </span>
             <button
               type="button"
               role="switch"
               aria-checked={showDates}
-              aria-label="إظهار التواريخ"
+              aria-label={t.bulkPosterShowDates}
               onClick={() => setShowDates((value) => !value)}
               style={{
                 width:50,
@@ -438,20 +444,20 @@ export function BulkProgramPosterModal({ isOpen, onClose, programs = [], onDownl
         }}>
           <span style={{ minWidth:0, display:"grid", gap:2 }}>
             <span style={{ color:"var(--rukn-text-muted)", fontSize:12, fontWeight:800 }}>
-              تم اختيار {selectedProgramIds.size} برنامج
+              {tr("bulkPosterSelectedCount", { count: selectedProgramIds.size })}
             </span>
             {selectedProgramIds.size > 0 && (
               <span style={{ color:"var(--rukn-text-muted)", fontSize:10.5, lineHeight:1.45 }}>
-                أول اختيار هو مرجع الأسعار والفنادق.
+                {t.bulkPosterReferenceHint}
               </span>
             )}
           </span>
           <span className="bulk-poster-footer-actions" style={{ display:"inline-flex", gap:9, alignItems:"center", flexWrap:"wrap" }}>
             <Button variant="ghost" onClick={handleClose}>
-              {t.cancel || "إلغاء"}
+              {t.cancel}
             </Button>
             <Button icon="download" onClick={handleCreatePoster} disabled={!selectedProgramIds.size}>
-              تنزيل الملصق
+              {t.bulkPosterDownload}
             </Button>
           </span>
         </div>

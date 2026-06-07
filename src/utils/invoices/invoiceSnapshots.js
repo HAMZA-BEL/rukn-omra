@@ -1,4 +1,13 @@
+import { formatAirlineNameForDocument } from "../airlines";
+import {
+  formatProgramLevelForDocument,
+  formatRoomTypeForDocument,
+} from "../documentDisplay";
 import { trimInvoiceValue } from "./invoiceNumbering";
+import {
+  getInvoiceProgramDisplayName,
+  getInvoiceProgramDisplayNameFromSnapshot,
+} from "./invoiceProgramDisplay";
 
 export const SAVED_INVOICES_KEY = "rukn_saved_invoices_v1";
 
@@ -75,12 +84,13 @@ export const normalizeSavedInvoice = (invoice = {}) => {
       ice: trimInvoiceValue(recipientSnapshot.ice),
     },
     programSnapshot: {
-      programName: trimInvoiceValue(programSnapshot.programName),
+      programName: getInvoiceProgramDisplayNameFromSnapshot(programSnapshot),
+      programKind: trimInvoiceValue(programSnapshot.programKind || programSnapshot.type),
       departureDate: trimInvoiceValue(programSnapshot.departureDate),
       returnDate: trimInvoiceValue(programSnapshot.returnDate),
       level: trimInvoiceValue(programSnapshot.level),
       roomType: trimInvoiceValue(programSnapshot.roomType),
-      carrier: trimInvoiceValue(programSnapshot.carrier),
+      carrier: formatAirlineNameForDocument(trimInvoiceValue(programSnapshot.carrier)),
     },
     amountSnapshot: {
       total: safeAmount(amountSnapshot.total),
@@ -134,12 +144,13 @@ export const createInvoiceSnapshotDraft = ({
       ice,
     },
     programSnapshot: {
-      programName: trimInvoiceValue(program?.name),
+      programName: getInvoiceProgramDisplayName(program, invoiceData.lang || "ar"),
+      programKind: trimInvoiceValue(program?.type || program?.program_type || program?.programType || program?.programKind),
       departureDate: trimInvoiceValue(program?.departure),
       returnDate: trimInvoiceValue(program?.returnDate),
       level: trimInvoiceValue(client?.packageLevel || client?.hotelLevel),
       roomType: trimInvoiceValue(client?.roomType || client?.roomTypeLabel),
-      carrier: trimInvoiceValue(invoiceData.carrier),
+      carrier: formatAirlineNameForDocument(trimInvoiceValue(invoiceData.carrier), invoiceData.lang || "ar"),
     },
     amountSnapshot: {
       total: safeAmount(invoiceData.salePrice),
@@ -209,7 +220,8 @@ export const saveSavedInvoiceSnapshot = (snapshot) => {
   return normalized;
 };
 
-export const savedInvoiceSnapshotToPrintData = (snapshot = {}) => {
+export const savedInvoiceSnapshotToPrintData = (snapshot = {}, options = {}) => {
+  const lang = typeof options === "string" ? options : options.lang || "ar";
   const invoice = normalizeSavedInvoice(snapshot);
   if (!invoice) return null;
   const recipient = invoice.recipientSnapshot;
@@ -232,12 +244,12 @@ export const savedInvoiceSnapshotToPrintData = (snapshot = {}) => {
     paidInFull: true,
     cin: recipient.cin,
     passportNo: recipient.passportNumber,
-    carrier: program.carrier,
-    programName: program.programName,
+    carrier: formatAirlineNameForDocument(program.carrier, lang),
+    programName: getInvoiceProgramDisplayNameFromSnapshot(program, lang),
     departureDate: program.departureDate,
     returnDate: program.returnDate,
-    level: program.level,
-    roomType: program.roomType,
+    level: formatProgramLevelForDocument(program.level, lang),
+    roomType: formatRoomTypeForDocument(program.roomType, lang),
     latestPayment: latestPayment ? {
       receiptNo: latestPayment.receiptNumber,
       date: latestPayment.date,

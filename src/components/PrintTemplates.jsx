@@ -6,6 +6,11 @@ import { formatCurrency } from "../utils/currency";
 import { amountInWordsSentence } from "../utils/amountToWords";
 import { getClientDisplayName } from "../utils/clientNames";
 import { escapeHtml } from "../utils/escapeHtml";
+import {
+  formatProgramLevelForDocument,
+  formatProgramPackageLabelForDocument,
+  formatRoomTypeForDocument,
+} from "../utils/documentDisplay";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
@@ -13,6 +18,7 @@ import {
   createInvoiceSnapshot,
   createInvoiceSnapshotDraft,
   findSavedInvoiceSnapshot,
+  getInvoiceProgramDisplayName,
   saveSavedInvoiceSnapshot,
   savedInvoiceSnapshotToPrintData,
   validateInvoiceRecipient,
@@ -507,7 +513,7 @@ async function printInvoiceDocument({
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
   const invoicePayments = payments || [];
   const remoteFinalInvoice = !snapshot && documentType !== "proforma" && invoiceApi?.isRemote && invoiceApi?.issueFinalInvoiceSnapshot;
-  const snapshotInvoiceData = snapshot ? savedInvoiceSnapshotToPrintData(snapshot) : null;
+  const snapshotInvoiceData = snapshot ? savedInvoiceSnapshotToPrintData(snapshot, { lang }) : null;
   if (snapshot && !snapshotInvoiceData) return false;
   const builtInvoiceData = snapshotInvoiceData || buildInvoiceData({
     client,
@@ -541,7 +547,7 @@ async function printInvoiceDocument({
     });
     const result = await invoiceApi.issueFinalInvoiceSnapshot(draft);
     const savedSnapshot = result?.data || result;
-    const remoteInvoiceData = savedInvoiceSnapshotToPrintData(savedSnapshot);
+    const remoteInvoiceData = savedInvoiceSnapshotToPrintData(savedSnapshot, { lang });
     if (!remoteInvoiceData) {
       try { earlyPrintWindow?.close?.(); } catch {}
       return false;
@@ -559,7 +565,7 @@ async function printInvoiceDocument({
     : null;
   const snapshotSource = snapshotInvoiceData ? snapshot : existingSnapshot || pendingSnapshot;
   invoiceData = snapshotSource
-    ? savedInvoiceSnapshotToPrintData(snapshotSource) || builtInvoiceData
+    ? savedInvoiceSnapshotToPrintData(snapshotSource, { lang }) || builtInvoiceData
     : builtInvoiceData;
   }
   if (!invoiceData.valid) return false;
@@ -597,21 +603,26 @@ async function printInvoiceDocument({
   const title = isProforma
     ? label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
     : label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`);
-  const serviceLabel = label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package");
   const paymentReference = !isProforma && latestPayment && (latestPayment.receiptNo || latestPayment.date)
     ? [
       latestPayment.receiptNo ? `${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}: ${latestPayment.receiptNo}` : "",
       latestPayment.date ? `${label(lang, "التاريخ", "Date", "Date")}: ${formatPrintDate(latestPayment.date)}` : "",
     ].filter(Boolean).join(" — ")
     : "";
-  const displayProgramName = programName || program?.name || "—";
+  const displayProgramName = programName || getInvoiceProgramDisplayName(program, lang);
+  const programDisplaySource = {
+    ...(program || {}),
+    type: program?.type || displayProgramName,
+    programName: displayProgramName,
+  };
+  const serviceLabel = formatProgramPackageLabelForDocument(programDisplaySource, lang);
   const displayDeparture = departureDate || program?.departure || "—";
   const displayReturn = returnDate || program?.returnDate || "—";
-  const displayLevel = level || client?.packageLevel || client?.hotelLevel || "";
-  const displayRoomType = roomType || client?.roomType || client?.roomTypeLabel || "";
+  const displayLevel = formatProgramLevelForDocument(level || client?.packageLevel || client?.hotelLevel || "", lang);
+  const displayRoomType = formatRoomTypeForDocument(roomType || client?.roomType || client?.roomTypeLabel || "", lang);
   const displayPhone = phone || client?.phone || "";
   const descriptionLines = [
-    `${serviceLabel}${displayProgramName && displayProgramName !== "—" ? ` — ${displayProgramName}` : ""}`,
+    serviceLabel,
     `${label(lang, "المستفيد", "Bénéficiaire", "Beneficiary")}: ${clientName}`,
     displayDeparture && displayDeparture !== "—" ? `${label(lang, "الذهاب", "Départ", "Departure")}: ${displayDeparture}` : "",
     displayReturn && displayReturn !== "—" ? `${label(lang, "العودة", "Retour", "Return")}: ${displayReturn}` : "",
@@ -660,7 +671,7 @@ ${commonPrintCSS}
       <p>${label(lang, "الذهاب", "Départ", "Departure")}: ${escapeHtml(displayDeparture)}</p>
       <p>${label(lang, "العودة", "Retour", "Return")}: ${escapeHtml(displayReturn)}</p>
       <p>${label(lang, "المستوى", "Niveau", "Level/package")}: ${escapeHtml(cleanDisplay(displayLevel, ""))}</p>
-      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${escapeHtml(translateRoomType(displayRoomType, lang) || "—")}</p>
+      <p>${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${escapeHtml(cleanDisplay(displayRoomType, ""))}</p>
       <p>${label(lang, "شركة الطيران", "Compagnie aérienne", "Airline")}: ${escapeHtml(cleanDisplay(carrier, ""))}</p>
     </div>
   </div>

@@ -1,7 +1,13 @@
 import PizZip from "pizzip";
 import { formatCurrency } from "../currency";
 import { amountInWordsSentence } from "../amountToWords";
+import {
+  formatProgramLevelForDocument,
+  formatProgramPackageLabelForDocument,
+  formatRoomTypeForDocument,
+} from "../documentDisplay";
 import { buildInvoiceData } from "./invoiceBuilder";
+import { getInvoiceProgramDisplayName } from "./invoiceProgramDisplay";
 import { savedInvoiceSnapshotToPrintData } from "./invoiceSnapshots";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -170,9 +176,12 @@ export function buildInvoiceDocxBlob({ invoiceData, lang = "ar" } = {}) {
       ? label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`)
       : label(lang, "فاتورة", "FACTURE", "INVOICE");
   const amountWords = amountInWordsSentence(isProforma ? Math.max(0, Number(remaining) || 0) : salePrice, lang, isProforma ? "proforma" : "invoice");
-  const serviceLabel = label(lang, "باقة العمرة", "Forfait Omra", "Umrah Package");
+  const displayProgramName = getInvoiceProgramDisplayName({ type: programName, programName }, lang);
+  const serviceLabel = formatProgramPackageLabelForDocument({ type: programName, programName }, lang);
+  const displayLevel = formatProgramLevelForDocument(level, lang);
+  const displayRoomType = formatRoomTypeForDocument(roomType, lang);
   const description = [
-    `${serviceLabel}${programName ? ` - ${programName}` : ""}`,
+    serviceLabel,
     `${label(lang, "المستفيد", "Bénéficiaire", "Beneficiary")}: ${clientName}`,
     departureDate ? `${label(lang, "الذهاب", "Départ", "Departure")}: ${departureDate}` : "",
     returnDate ? `${label(lang, "العودة", "Retour", "Return")}: ${returnDate}` : "",
@@ -194,7 +203,7 @@ export function buildInvoiceDocxBlob({ invoiceData, lang = "ar" } = {}) {
       ],
       [
         { text: [...recipientLines, `${label(lang, "الهاتف", "Téléphone", "Phone")}: ${cleanDisplay(phone, "")}`, `${label(lang, "CIN", "CIN", "CIN")}: ${cleanDisplay(cin, "")}`, `${label(lang, "رقم الجواز", "N° passeport", "Passport No.")}: ${cleanDisplay(passportNo, "")}`], width: 4200 },
-        { text: [`${label(lang, "البرنامج", "Programme", "Program")}: ${cleanDisplay(programName)}`, `${label(lang, "الذهاب", "Départ", "Departure")}: ${cleanDisplay(departureDate)}`, `${label(lang, "العودة", "Retour", "Return")}: ${cleanDisplay(returnDate)}`, `${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(level, "")}`, `${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${cleanDisplay(roomType, "")}`, `${label(lang, "شركة الطيران", "Compagnie aérienne", "Airline")}: ${cleanDisplay(carrier, "")}`], width: 4200 },
+        { text: [`${label(lang, "البرنامج", "Programme", "Program")}: ${cleanDisplay(displayProgramName)}`, `${label(lang, "الذهاب", "Départ", "Departure")}: ${cleanDisplay(departureDate)}`, `${label(lang, "العودة", "Retour", "Return")}: ${cleanDisplay(returnDate)}`, `${label(lang, "المستوى", "Niveau", "Level/package")}: ${cleanDisplay(displayLevel, "")}`, `${label(lang, "نوع الغرفة", "Type de chambre", "Room type")}: ${cleanDisplay(displayRoomType, "")}`, `${label(lang, "شركة الطيران", "Compagnie aérienne", "Airline")}: ${cleanDisplay(carrier, "")}`], width: 4200 },
       ],
     ], { rtl }),
     paragraph("", { rtl, spacingAfter: 120 }),
@@ -237,7 +246,7 @@ export function buildInvoiceDocxBlob({ invoiceData, lang = "ar" } = {}) {
 }
 
 export function downloadInvoiceWordSnapshot({ snapshot, lang = "ar" } = {}) {
-  const invoiceData = savedInvoiceSnapshotToPrintData(snapshot);
+  const invoiceData = savedInvoiceSnapshotToPrintData(snapshot, { lang });
   if (!invoiceData?.valid) return false;
   const blob = buildInvoiceDocxBlob({ invoiceData, lang });
   if (!blob) return false;
@@ -277,7 +286,7 @@ export function downloadInvoiceWordDocument({
     ...invoiceData,
     invoiceNo,
     phone: firstText(client?.phone),
-    programName: firstText(program?.name),
+    programName: firstText(invoiceData.programName, getInvoiceProgramDisplayName(program, lang)),
     departureDate: firstText(program?.departure),
     returnDate: firstText(program?.returnDate),
     level: firstText(client?.packageLevel, client?.hotelLevel),

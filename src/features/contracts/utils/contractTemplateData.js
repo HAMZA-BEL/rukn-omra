@@ -3,8 +3,16 @@ import { getClientDisplayName } from "../../../utils/clientNames";
 import { formatCurrency } from "../../../utils/currency";
 import { calculateHotelStayDates } from "../../../utils/hotelDates";
 import { getRoomTypeLabel, normalizeProgramPackages } from "../../../utils/programPackages";
-import { translateProgramType, translateRoomType } from "../../../utils/i18nValues";
-import { getProgramAirline, normalizeAirlineCode } from "../../../utils/airlines";
+import {
+  formatProgramLevelForDocument,
+  formatProgramTypeForDocument,
+  formatRoomTypeForDocument,
+} from "../../../utils/documentDisplay";
+import {
+  formatAirlineNameForDocument,
+  getProgramAirline,
+  normalizeAirlineCode,
+} from "../../../utils/airlines";
 import { getClientCin } from "../../../utils/clientRepresentation";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
@@ -61,15 +69,26 @@ const getAgencyPhone = (agency = {}) => (
 
 const getProgramAirlineLabel = (program = {}, lang = "ar") => {
   const airline = getProgramAirline(program);
-  if (!airline) return clean(program.transport);
+  if (!airline) {
+    return formatAirlineNameForDocument(
+      firstValue(program.transport, program.carrier, program.airline, program.company, program.airlineName, program.airlineCode, program.carrierCode),
+      lang
+    );
+  }
   const code = normalizeAirlineCode(airline.code);
   const translatedName = KNOWN_AIRLINE_LABELS[code]?.[lang] || airline.name || program.transport || code;
-  return code ? `${translatedName} (${code})` : translatedName;
+  return formatAirlineNameForDocument(translatedName, lang);
 };
 
 const getClientRoomType = (client = {}, lang = "ar") => {
   const raw = firstValue(client.roomTypeLabel, client.room_type_label, client.roomType, client.room_type);
-  return translateRoomType(raw, lang) || getRoomTypeLabel(raw) || raw;
+  return formatRoomTypeForDocument(raw, lang) || getRoomTypeLabel(raw) || raw;
+};
+
+const getClientProgramLevel = (program = {}, client = {}, lang = "ar") => {
+  const pkg = getClientProgramPackage(program, client);
+  const raw = firstValue(client.packageLevel, client.hotelLevel, client.hotel_level, pkg?.level);
+  return formatProgramLevelForDocument(raw, lang) || raw;
 };
 
 const getClientProgramPackage = (program = {}, client = {}) => {
@@ -193,7 +212,8 @@ export const buildContractTemplateData = ({
     ? toNumber(client.salePrice ?? client.price)
     : toNumber(salePrice);
   const remaining = Math.max(0, finalSalePrice - paidAmount);
-  const programType = translateProgramType(program.type, lang) || clean(program.type);
+  const programType = formatProgramTypeForDocument(program, lang);
+  const programLevel = getClientProgramLevel(program, client, lang);
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
   const hotelStayDates = getProgramHotelStayDates(program, client);
   const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems);
@@ -218,6 +238,8 @@ export const buildContractTemplateData = ({
     program: {
       name: firstValue(program.name, program.nameFr),
       type: programType,
+      level: programLevel,
+      category: programLevel,
       departure_date: formatDateValue(firstValue(program.departure, program.departureDate, program.departure_date)),
       return_date: formatDateValue(firstValue(program.returnDate, program.return_date)),
       airline: getProgramAirlineLabel(program, lang),
