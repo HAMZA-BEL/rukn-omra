@@ -239,7 +239,7 @@ const getNextEnabledIndex = (options, currentIndex, direction) => {
 };
 
 // ── Select ────────────────────────────────────────────────────────────────────
-export function Select({ label, value, onChange, options = [], required, style, disabled = false }) {
+export function Select({ label, value, onChange, options = [], required, style, disabled = false, portalContainer = null }) {
   const triggerRef = React.useRef(null);
   const menuRef = React.useRef(null);
   const [focused, setFocused] = React.useState(false);
@@ -387,7 +387,11 @@ export function Select({ label, value, onChange, options = [], required, style, 
       : hovered
         ? "var(--rukn-border-hover)"
         : v.borderInput;
-  const menu = open && typeof document !== "undefined" ? createPortal(
+  const fullscreenPortalContainer = typeof document !== "undefined"
+    ? (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement || null)
+    : null;
+  const menuPortalContainer = portalContainer || fullscreenPortalContainer || (typeof document !== "undefined" ? document.body : null);
+  const menu = open && menuPortalContainer ? createPortal(
     <div
       ref={menuRef}
       id={listboxId}
@@ -457,7 +461,7 @@ export function Select({ label, value, onChange, options = [], required, style, 
         );
       })}
     </div>,
-    document.body
+    menuPortalContainer
   ) : null;
 
   return (

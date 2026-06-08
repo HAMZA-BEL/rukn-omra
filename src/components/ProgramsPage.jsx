@@ -1417,6 +1417,11 @@ const getClientRegistrationSource = (client = {}) => pickFirstText(client, [
   "sourceRegistration",
   "source",
 ]);
+const getRoomCardRegistrationSource = (client = {}) => pickFirstText(client, [
+  "registrationSource",
+  "registration_source",
+  "sourceRegistration",
+]);
 
 const normalizeRoomingSearchText = (value) => String(value || "")
   .normalize("NFD")
@@ -8797,9 +8802,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
         <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420} portalContainer={roomingModalPortalContainer}>
           <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} />
-            <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} />
-            <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} />
+            <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} portalContainer={roomingModalPortalContainer} />
+            <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} portalContainer={roomingModalPortalContainer} />
+            <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} portalContainer={roomingModalPortalContainer} />
             {roomModal.mode === "create" && (
               <Input
                 label={t.roomingRoomCountInput || "عدد الغرف"}
@@ -9272,7 +9277,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
         {occupantIds.map((clientId) => {
           const client = data.clientsById[clientId];
-          const source = getClientRegistrationSource(client);
+          const source = getRoomCardRegistrationSource(client);
           return (
             <div key={clientId} style={{
               display: "flex",
