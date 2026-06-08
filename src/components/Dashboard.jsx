@@ -7,13 +7,14 @@ import { AppIcon, IconBubble } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translateActivityDescription } from "../utils/i18nValues";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import { createActivityProgramResolver, getActivityProgramLabel } from "../utils/activityProgramContext";
 
 const tc = theme.colors;
 
 export default function Dashboard({ store, onNavigate, onSelectClient, headerActions, onBrandNavigate }) {
   const { t, dir, lang } = useLang();
   const isRTL = dir === "rtl";
-  const { stats, clients, programs, activityLog,
+  const { stats, clients, deletedClients = [], programs, deletedPrograms = [], payments = [], deletedPayments = [], activityLog,
           getClientStatus, getClientTotalPaid, getProgramClients, getProgramById } = store;
   const [search, setSearch] = React.useState("");
   const [brandHover, setBrandHover] = React.useState(false);
@@ -37,6 +38,14 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
       .sort((a, b) => new Date(b.time || b.createdAt || 0) - new Date(a.time || a.createdAt || 0))
       .slice(0, 5)
   ), [activityLog]);
+  const resolveActivityProgram = React.useMemo(() => createActivityProgramResolver({
+    clients,
+    deletedClients,
+    programs,
+    deletedPrograms,
+    payments,
+    deletedPayments,
+  }), [clients, deletedClients, deletedPayments, payments, programs, deletedPrograms]);
   const activePrograms = React.useMemo(() => (
     programs.filter((program) => (
       program
@@ -217,7 +226,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
                 </div>
               )}
               {dashboardActivityRows.map((a,i)=>(
-                <ActivityRow key={a.id || i} activity={a} index={i} />
+                <ActivityRow key={a.id || i} activity={a} index={i} programContext={resolveActivityProgram(a)} />
               ))}
             </div>
           </>
@@ -283,7 +292,7 @@ const ProgramMini = React.memo(function ProgramMini({ program, registered, pct, 
   );
 });
 
-const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
+const ActivityRow = React.memo(function ActivityRow({ activity, index, programContext = null }) {
   const { t, lang } = useLang();
   const icons = {
     client_add:"user",
@@ -328,6 +337,7 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
   const timeStr = `${time.toLocaleDateString(locale)} ${time.toLocaleTimeString(locale,{hour:"2-digit",minute:"2-digit"})}`;
   const description = translateActivityDescription(activity.description, lang);
+  const programLabel = getActivityProgramLabel(lang, t);
   return (
     <div className="animate-fadeInUp" style={{ animationDelay:`${index*.02}s` }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 14px",
@@ -344,6 +354,11 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index }) {
           {activity.clientName && (
             <span style={{ fontSize:12, color:accent,
               marginRight:6 }}> — {activity.clientName}</span>
+          )}
+          {programContext?.name && (
+            <div style={{ fontSize:11, color:theme.colors.grey, marginTop:3 }}>
+              {programLabel}: <span style={{ color:theme.colors.gold }}>{programContext.name}</span>
+            </div>
           )}
         </div>
         <span style={{ fontSize:11, color:theme.colors.grey, whiteSpace:"nowrap" }}>{timeStr}</span>

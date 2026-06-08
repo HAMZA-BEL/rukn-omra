@@ -5,6 +5,7 @@ import { GlassCard, Button, SearchBar, Modal } from "./UI";
 import { useLang } from "../hooks/useLang";
 import { theme } from "./styles";
 import { translateActivityDescription } from "../utils/i18nValues";
+import { createActivityProgramResolver, getActivityProgramLabel } from "../utils/activityProgramContext";
 
 const PAGE_SIZE = 20;
 
@@ -136,6 +137,21 @@ export default function ActivityLogPage({ store, onToast }) {
   const cachedActivity = store.activityLog || [];
   const latestRealtimeActivity = store.latestRealtimeActivity;
   const canFetchRemoteActivity = Boolean(store.isSupabaseEnabled && fetchActivityLogPage);
+  const resolveActivityProgram = React.useMemo(() => createActivityProgramResolver({
+    clients: store.clients || [],
+    deletedClients: store.deletedClients || [],
+    programs: store.programs || [],
+    deletedPrograms: store.deletedPrograms || [],
+    payments: store.payments || [],
+    deletedPayments: store.deletedPayments || [],
+  }), [
+    store.clients,
+    store.deletedClients,
+    store.deletedPayments,
+    store.payments,
+    store.programs,
+    store.deletedPrograms,
+  ]);
 
   React.useEffect(() => {
     realtimeFiltersRef.current = { category, period, search, page };
@@ -501,7 +517,7 @@ export default function ActivityLogPage({ store, onToast }) {
           </div>
         )}
         {rows.map((row, idx) => (
-          <ActivityLogItem key={row.id || idx} row={row} t={t} lang={lang} />
+          <ActivityLogItem key={row.id || idx} row={row} t={t} lang={lang} programContext={resolveActivityProgram(row)} />
         ))}
       </GlassCard>
 
@@ -642,7 +658,7 @@ function CompactChipGroup({ value, options, onChange }) {
   );
 }
 
-function ActivityLogItem({ row, t, lang }) {
+function ActivityLogItem({ row, t, lang, programContext = null }) {
   const time = getActivityTime(row);
   const locale = lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA";
   const timeStr = time
@@ -650,6 +666,7 @@ function ActivityLogItem({ row, t, lang }) {
     : "—";
   const description = translateActivityDescription(row.description, lang);
   const clientName = row.clientName || row.client_name;
+  const programLabel = getActivityProgramLabel(lang, t);
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"12px 16px",
       background:"var(--rukn-row-bg)",
@@ -660,6 +677,11 @@ function ActivityLogItem({ row, t, lang }) {
       </div>
       {clientName && (
         <span style={{ fontSize:12, color:theme.colors.gold }}>{clientName}</span>
+      )}
+      {programContext?.name && (
+        <span style={{ fontSize:12, color:theme.colors.grey }}>
+          {programLabel}: <span style={{ color:theme.colors.gold }}>{programContext.name}</span>
+        </span>
       )}
       {row.isArchived && (
         <span style={{ fontSize:10, color:theme.colors.grey }}>{t.archivedBadge || "مؤرشف"}</span>
