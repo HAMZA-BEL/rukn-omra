@@ -342,6 +342,7 @@ export default function ClientDetail({
         client,
         program,
         agency,
+        lang,
         fileNumber: badgeFileNumber,
       });
     } catch (error) {
@@ -354,7 +355,7 @@ export default function ClientDetail({
     } finally {
       setBadgeBusy(false);
     }
-  }, [agency, badgeFileNumber, client, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
+  }, [agency, badgeFileNumber, client, lang, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
 
   const handleDownloadContract = React.useCallback(async () => {
     const labels = {

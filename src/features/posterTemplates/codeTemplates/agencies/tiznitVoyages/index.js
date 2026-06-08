@@ -4,6 +4,7 @@ import {
   resolvePosterAreaValue,
 } from "../../../utils/programPosterMapping";
 import { drawPosterTextInBox } from "../../../utils/posterTextRendering";
+import { getLocalizedAgencyName } from "../../../../../utils/agencyDisplay";
 import tiznitLogoUrl from "./assets/tiznit-logo.png";
 import madinahHeroUrl from "./assets/madinah-hero.png";
 import madinahCircleUrl from "./assets/madinah-circle.jpg";
@@ -793,7 +794,7 @@ const drawBackground = (ctx, posterHeight = POSTER_HEIGHT) => {
   ctx.restore();
 };
 
-const drawHero = (ctx, data, assets) => {
+const drawHero = (ctx, data, assets, agency = {}, lang = "ar") => {
   const heroH = 650;
   const upperShiftY = 18;
 
@@ -853,7 +854,9 @@ const drawHero = (ctx, data, assets) => {
   if (assets.logo?.image) {
     drawTransparentImageContain(ctx, assets.logo.image, logoBox.x + 38, logoBox.y - 4, 268, 126);
   }
-  drawText(ctx, "تيزنيت أسفار", { x: logoBox.x, y: logoBox.y + 124, width: logoBox.width, height: 48 }, {
+  const agencyName = getLocalizedAgencyName(agency, lang);
+  const latinAgencyName = lang === "ar" ? getLocalizedAgencyName(agency, "fr") : "";
+  drawText(ctx, agencyName, { x: logoBox.x, y: logoBox.y + 124, width: logoBox.width, height: 48 }, {
     color: COLORS.white,
     fontSize: 43,
     minFontSize: 16,
@@ -861,7 +864,7 @@ const drawHero = (ctx, data, assets) => {
     align: "center",
     paddingX: 6,
   }, { type: "agency_name" });
-  drawText(ctx, "TIZNIT VOYAGES", { x: logoBox.x, y: logoBox.y + 174, width: logoBox.width, height: 28 }, {
+  drawText(ctx, latinAgencyName, { x: logoBox.x, y: logoBox.y + 174, width: logoBox.width, height: 28 }, {
     color: COLORS.white,
     fontSize: 24,
     minFontSize: 12,
@@ -1767,6 +1770,9 @@ const canvasToPngBlob = (canvas) => new Promise((resolve, reject) => {
 
 export const renderPoster = async ({
   program,
+  agency = {},
+  locale = "ar",
+  lang,
   posterOptions = {},
 } = {}) => {
   if (!isBrowser()) throw new Error("poster-renderer-browser-only");
@@ -1778,6 +1784,7 @@ export const renderPoster = async ({
     }
   }
 
+  const resolvedLang = lang || locale || "ar";
   const data = getPosterData(program, posterOptions);
   const showDates = posterOptions?.showDates !== false;
   const posterHeight = POSTER_HEIGHT;
@@ -1795,7 +1802,7 @@ export const renderPoster = async ({
   const assets = await loadTemplateAssets();
   try {
     drawBackground(ctx, posterHeight);
-    drawHero(ctx, data, assets);
+    drawHero(ctx, data, assets, agency, resolvedLang);
     const tableBottom = drawTable(ctx, data);
     const contentBottom = showDates
       ? drawDateRouteSection(ctx, data, tableBottom, { isBulkPoster: posterOptions?.isBulkPoster === true })

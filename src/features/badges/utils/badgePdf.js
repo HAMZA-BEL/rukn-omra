@@ -4,6 +4,7 @@ import { normalizeBadgeLayout } from "./badgeLayout";
 import { getBadgeTemplateImageUrl, getPilgrimPhotoUrl } from "./badgeStorage";
 import { fitTextBox } from "./badgeTextFit";
 import { getParticipantTerminology } from "../../../utils/participantTerminology";
+import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 
 const mmToPt = (mm) => Number(mm || 0) * 72 / 25.4;
 const sanitizeFile = (value) => String(value || "badge").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").slice(0, 90);
@@ -73,7 +74,7 @@ const createBadgeRenderAssets = async (template = {}) => {
   };
 };
 
-const dataForField = ({ field, client, program, agency, fileNumber }) => {
+const dataForField = ({ field, client, program, agency, fileNumber, lang }) => {
   const phones = badgePhonesFromProgram(program);
   const map = {
     fullName: clientName(client, program),
@@ -84,7 +85,7 @@ const dataForField = ({ field, client, program, agency, fileNumber }) => {
     hotelMadina: client?.hotelMadina || client?.hotel_madina || program?.hotelMadina || "",
     programName: program?.name || "",
     badgeNote: program?.badgeNote || "",
-    agencyName: agency?.nameAr || agency?.nameFr || "",
+    agencyName: getLocalizedAgencyName(agency, lang),
     fileNumber: fileNumber || "",
   };
   return map[field.key] || "";
@@ -100,7 +101,7 @@ const getTemplateForProgram = async ({ agencyId, program }) => {
     || null;
 };
 
-const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber, renderAssets }) => {
+const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber, lang, renderAssets }) => {
   const assets = renderAssets || await createBadgeRenderAssets(template);
   const { scale, pixelWidth, pixelHeight, visibleFields, baseCanvas } = assets;
   const canvas = document.createElement("canvas");
@@ -139,7 +140,7 @@ const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber
       continue;
     }
 
-    const text = dataForField({ field, client, program, agency, fileNumber });
+    const text = dataForField({ field, client, program, agency, fileNumber, lang });
     if (!text) continue;
     const fitted = fitTextBox(ctx, text, box, {
       fontSize: (field.fontSize || 12) * scale / 3.2,
@@ -234,15 +235,15 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url);
 };
 
-export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber }) {
+export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar" }) {
   const template = await getTemplateForProgram({ agencyId, program });
   if (!template) throw new Error("missing-template");
-  const page = await renderBadgeCanvas({ template, client, program, agency, fileNumber });
+  const page = await renderBadgeCanvas({ template, client, program, agency, fileNumber, lang });
   const pdf = await makePdf([page]);
   downloadBlob(pdf, `badge-${sanitizeFile(clientName(client, program))}.pdf`);
 }
 
-export async function downloadProgramBadgesPdf({ agencyId, clients = [], program, agency }) {
+export async function downloadProgramBadgesPdf({ agencyId, clients = [], program, agency, lang = "ar" }) {
   const template = await getTemplateForProgram({ agencyId, program });
   if (!template) throw new Error("missing-template");
   const renderAssets = await createBadgeRenderAssets(template);
@@ -253,6 +254,7 @@ export async function downloadProgramBadgesPdf({ agencyId, clients = [], program
       client: clients[index],
       program,
       agency,
+      lang,
       fileNumber: String(index + 1).padStart(3, "0"),
       renderAssets,
     });

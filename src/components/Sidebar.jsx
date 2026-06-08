@@ -2,6 +2,7 @@ import React from "react";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
+import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 
 const tc = theme.colors;
 
@@ -82,7 +83,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
                   background:"linear-gradient(135deg,#f0d060,#d4af37)",
                   WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{t.appName}</p>
                 <p style={{ fontSize:9, color:"var(--rukn-text-muted)" }}>
-                  {agency?.nameAr || agency?.nameFr || t.agencyName}
+                  {getLocalizedAgencyName(agency, lang, t.agencyFallbackName)}
                 </p>
               </div>
             </>

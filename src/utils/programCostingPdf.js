@@ -1,14 +1,10 @@
 import { escapeHtml } from "./escapeHtml";
 import { COSTING_ROOM_TYPES, getSharedCostTotal } from "../components/programs/programCosting";
+import { getLocalizedAgencyName } from "./agencyDisplay";
 
 const fmt = (value) => `${Number(value || 0).toLocaleString("fr-MA", { maximumFractionDigits: 2 })} MAD`;
 const fmtSar = (value) => `${Number(value || 0).toLocaleString("fr-MA", { maximumFractionDigits: 2 })} SAR`;
 const fmtPercent = (value) => value === null || value === undefined ? "—" : `${Number(value).toLocaleString("fr-MA", { maximumFractionDigits: 1 })}%`;
-
-const agencyNameForLang = (agency = {}, lang = "ar") => {
-  if (lang === "ar") return agency.nameAr || agency.agencyNameAr || agency.nameFr || agency.name || "";
-  return agency.nameFr || agency.agencyNameFr || agency.nameAr || agency.name || "";
-};
 
 const reportDateForLang = (lang = "ar") => (
   new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : lang === "en" ? "en-US" : "ar-MA")
@@ -20,7 +16,7 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
   const sharedTotal = getSharedCostTotal(draft);
   const generated = reportDateForLang(lang);
   const title = labels.reportTitle;
-  const agencyName = agencyNameForLang(agency, lang);
+  const agencyName = getLocalizedAgencyName(agency, lang);
   const roomLabels = COSTING_ROOM_TYPES.reduce((acc, roomType) => {
     acc[roomType.key] = labels[roomType.key] || roomType.key;
     return acc;

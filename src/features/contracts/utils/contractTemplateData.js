@@ -14,6 +14,7 @@ import {
   normalizeAirlineCode,
 } from "../../../utils/airlines";
 import { getClientCin } from "../../../utils/clientRepresentation";
+import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
 export const CONTRACT_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -49,15 +50,6 @@ const formatMoney = (value, lang) => {
 };
 
 const formatDateValue = (value) => clean(value);
-
-const getAgencyName = (agency = {}, lang = "ar") => (
-  firstValue(
-    lang === "ar" ? agency.nameAr : agency.nameFr,
-    agency.nameFr,
-    agency.nameAr,
-    agency.name
-  )
-);
 
 const getAgencyAddress = (agency = {}) => (
   firstValue(agency.addressTiznit, agency.addressAgadir, agency.address, agency.city)
@@ -256,7 +248,7 @@ export const buildContractTemplateData = ({
       remaining_amount: formatMoney(remaining, lang),
     },
     agency: {
-      name: getAgencyName(agency, lang),
+      name: getLocalizedAgencyName(agency, lang),
       address: getAgencyAddress(agency),
       phone: getAgencyPhone(agency),
       email: firstValue(agency.email),

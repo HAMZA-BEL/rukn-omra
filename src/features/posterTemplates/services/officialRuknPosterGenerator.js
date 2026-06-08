@@ -5,6 +5,7 @@ import {
   resolvePosterAreaValue,
 } from "../utils/programPosterMapping";
 import { drawPosterTextInBox } from "../utils/posterTextRendering";
+import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 
 const POSTER_WIDTH = 1240;
 const POSTER_HEIGHT = 1754;
@@ -474,18 +475,8 @@ const drawImageCover = (ctx, image, x, y, width, height) => {
   ctx.drawImage(image, x + (width - drawW) / 2, y + (height - drawH) / 2, drawW, drawH);
 };
 
-const getAgencyName = (agency, labels) => pickText(agency, [
-  "name",
-  "agencyName",
-  "agency_name",
-  "nameAr",
-  "name_ar",
-  "commercialName",
-  "commercial_name",
-]) || labels.defaultAgency;
-
 const drawAgencyBrand = (ctx, agency = {}, logoImage, lang, labels, palette) => {
-  const agencyName = getAgencyName(agency, labels);
+  const agencyName = getLocalizedAgencyName(agency, lang, labels.defaultAgency);
   const logoSize = 128;
   const logoY = 64;
   const logoX = lang === "ar" ? CONTENT_RIGHT - logoSize : CONTENT_X;
@@ -567,7 +558,7 @@ const sanitizeAirlineText = (value) => cleanText(value)
 
 const getOfficialRouteText = (value) => cleanText(value).replace(/\s*\/\s*/g, " | ");
 
-const getAgencyContact = (agency = {}, labels = {}) => {
+const getAgencyContact = (agency = {}, labels = {}, lang = "ar") => {
   const phones = [
     agency.phoneTiznit1,
     agency.phoneTiznit2,
@@ -581,7 +572,7 @@ const getAgencyContact = (agency = {}, labels = {}) => {
     pickText(agency, ["agency_city", "city", "ville"]),
     pickText(agency, ["addressTiznit", "addressAgadir", "address", "address_line"]),
   ].filter(Boolean).join(" - ");
-  const agencyName = getAgencyName(agency, labels);
+  const agencyName = getLocalizedAgencyName(agency, lang, labels.defaultAgency);
   return { phones: uniquePhones, address, agencyName };
 };
 
@@ -1015,7 +1006,7 @@ const drawTripDetails = (ctx, program, labels, lang, palette, startY, options = 
 };
 
 const drawFooter = (ctx, agency, labels, lang, palette, y = 1510) => {
-  const contact = getAgencyContact(agency, labels);
+  const contact = getAgencyContact(agency, labels, lang);
   const phoneText = contact.phones.join("  |  ");
   const align = lang === "ar" ? "right" : "left";
   const addressBox = lang === "ar"

@@ -10,6 +10,7 @@ import { ContractTemplatesSettings } from "../features/contracts";
 import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
+import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 
 const t2 = theme.colors;
 
@@ -735,7 +736,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
             {logoPreviewUrl ? (
               <img
                 src={logoPreviewUrl}
-                alt={t.agencyLogoTitle}
+                alt={getLocalizedAgencyName(form, lang, t.agencyFallbackName)}
                 onError={() => setLogoPreviewUrl("")}
                 style={{ maxWidth: "100%", maxHeight: 80, objectFit: "contain" }}
               />

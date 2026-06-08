@@ -44,6 +44,7 @@ export const TRANSLATIONS = {
   ar: {
     appName: "رُكن",
     agencyName: "تيزنيت أسفار",
+    agencyFallbackName: "الوكالة",
     agencyNameFr: "Tiznit Voyages",
     agencyNameAr: "",
     dashboard: "الرئيسية",
@@ -554,6 +555,7 @@ export const TRANSLATIONS = {
     nameEmptyGuard: "تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا",
     transferNameEmptyGuard: "تم إيقاف النقل لحماية بيانات المعتمر: الاسم سيصبح فارغًا بعد النقل",
     roomingDesigner: "مصمم التسكين الذكي",
+    roomingTab: "التسكين",
     roomingMakkah: "تسكين مكة",
     roomingMadinah: "تسكين المدينة",
     roomingGenerateRooms: "توليد الغرف",
@@ -1034,6 +1036,7 @@ export const TRANSLATIONS = {
   fr: {
     appName: "RUKN",
     agencyName: "Tiznit Voyages",
+    agencyFallbackName: "Agence",
     agencyNameAr: "تيزنيت أسفار",
     dashboard: "Tableau de bord",
     clients: "Pèlerins Hajj et Omra",
@@ -1559,6 +1562,7 @@ export const TRANSLATIONS = {
     nameEmptyGuard: "Enregistrement bloqué : le nom du pèlerin deviendrait vide",
     transferNameEmptyGuard: "Transfert bloqué pour protéger les données : le nom deviendrait vide",
     roomingDesigner: "Concepteur d'hébergement intelligent",
+    roomingTab: "Hébergement",
     roomingMakkah: "Hébergement La Mecque",
     roomingMadinah: "Hébergement Médine",
     roomingGenerateRooms: "Générer les chambres",
@@ -2039,6 +2043,7 @@ export const TRANSLATIONS = {
   en: {
     appName: "RUKN",
     agencyName: "Tiznit Voyages",
+    agencyFallbackName: "Agency",
     agencyNameAr: "تيزنيت أسفار",
     dashboard: "Dashboard",
     clients: "Hajj & Umrah pilgrims",
@@ -2548,6 +2553,7 @@ export const TRANSLATIONS = {
     nameEmptyGuard: "Save blocked: pilgrim name would become empty",
     transferNameEmptyGuard: "Transfer blocked to protect pilgrim data: name would become empty",
     roomingDesigner: "Smart Rooming Designer",
+    roomingTab: "Rooming",
     roomingMakkah: "Makkah rooming",
     roomingMadinah: "Madinah rooming",
     roomingGenerateRooms: "Generate rooms",

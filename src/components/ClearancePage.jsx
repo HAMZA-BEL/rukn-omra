@@ -9,6 +9,7 @@ import { printInvoice, printProformaInvoice, printInvoiceSnapshot, previewInvoic
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
+import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
   deleteSavedInvoiceSnapshot,
   downloadInvoiceWordDocument,
@@ -336,7 +337,6 @@ const getLocalizedClearanceLabels = (lang) => {
       emptyProgram: "Aucun client dans ce programme",
       reportTitle: "État de règlement",
       exportDate: "Date d'export",
-      agencyName: "Tiznit Voyages",
       currency: "Devise",
       clientCount: "Nombre de clients",
       period: "Période",
@@ -380,7 +380,6 @@ const getLocalizedClearanceLabels = (lang) => {
       emptyProgram: "No clients in this program",
       reportTitle: "Clearance Report",
       exportDate: "Export date",
-      agencyName: "Tiznit Voyages",
       currency: "Currency",
       clientCount: "Number of clients",
       period: "Period",
@@ -423,7 +422,6 @@ const getLocalizedClearanceLabels = (lang) => {
     emptyProgram: "لا يوجد معتمرون في هذا البرنامج",
     reportTitle: "كشف التصفية",
     exportDate: "تاريخ التصدير",
-    agencyName: "تيزنيت أسفار",
     currency: "العملة",
     clientCount: "عدد المعتمرين",
     period: "الفترة",
@@ -467,11 +465,6 @@ const sanitizeFileName = (value = "") => {
     .replace(/-+/g, "-")
     .slice(0, 90);
   return safe || "program";
-};
-
-const getAgencyName = (agency = {}, lang = "ar", labels = {}) => {
-  if (lang === "ar") return agency?.nameAr || agency?.agencyNameAr || agency?.nameFr || labels.agencyName;
-  return agency?.nameFr || agency?.agencyNameFr || agency?.nameAr || labels.agencyName;
 };
 
 const getClientPackageLabel = (client = {}) => (
@@ -867,7 +860,7 @@ export default function ClearancePage({ store, focus = null }) {
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
     const XLSX = await import("xlsx");
-    const agencyName = getAgencyName(agency, lang, labels);
+    const agencyName = getLocalizedAgencyName(agency, lang, t.agencyFallbackName);
     const exportDate = new Intl.DateTimeFormat(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US").format(new Date());
     const period = [selectedProgram.departure, selectedProgram.returnDate].filter(Boolean).join(" - ") || "—";
     const summaryRows = [

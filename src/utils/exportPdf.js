@@ -4,6 +4,7 @@ import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClient
 import { clientServiceIncludesAccommodation, getClientServiceTypeLabel } from "./clientServiceTypes";
 import { translateRoomType } from "./i18nValues";
 import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "./paymentRecords";
+import { getLocalizedAgencyName } from "./agencyDisplay";
 
 const getFinalInvoiceNumber = (invoice = {}) => String(
   invoice.invoiceDisplayNumber
@@ -102,7 +103,7 @@ export function printProgramPDF({
 
   // ── Labels (fall back to Arabic if key missing) ─────────────────────────
   const L = {
-    agencyName:   lang === "fr" ? (agency?.nameFr  || "Tiznit Voyages")     : (agency?.nameAr || "تيزنيت أسفار"),
+    agencyName:   getLocalizedAgencyName(agency, lang, t.agencyFallbackName),
     phones:       [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join("  |  "),
     printedOn:    lang === "fr" ? "Imprimé le" : lang === "en" ? "Printed on" : "تاريخ الطباعة",
     program:      lang === "fr" ? "Programme" : lang === "en" ? "Programme" : "البرنامج",
@@ -624,7 +625,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
 
   // ── Labels ────────────────────────────────────────────────────────────────
   const L = {
-    agencyName:    lang === "fr" ? (agency?.nameFr  || "Tiznit Voyages")    : (agency?.nameAr || "تيزنيت أسفار"),
+    agencyName:    getLocalizedAgencyName(agency, lang, t.agencyFallbackName),
     phones:        [agency?.phoneTiznit1, agency?.phoneTiznit2].filter(Boolean).join("  |  "),
     address:       agency?.addressTiznit || "",
     title:         t.clearanceReport || (lang === "fr" ? "Bilan financier" : lang === "en" ? "Financial clearance report" : "كشف التصفية المالية"),

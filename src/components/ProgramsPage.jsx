@@ -126,6 +126,7 @@ import {
   normalizePosterTemplateType,
 } from "../features/posterTemplates/utils/posterTemplateData";
 import { downloadPassportListWord } from "../features/programs/exports/passportListWordExport";
+import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
   AlignCenter,
   AlignLeft,
@@ -1557,9 +1558,10 @@ const parseStyleValue = (value) => {
     }, {});
 };
 
-const createRoomingHeaderSheet = ({ program, clients, city, agency }) => {
+const createRoomingHeaderSheet = ({ program, clients, city, agency, lang = "ar" }) => {
   const data = createBlankSheetData();
   const cityName = city === "makkah" ? "مكة" : "المدينة";
+  const agencyLabel = lang === "fr" ? "Agence" : lang === "en" ? "Agency" : "الوكالة";
   const hotel = city === "makkah" ? program.hotelMecca : program.hotelMadina;
   const style = {
     A1: "background-color:#0f172a;color:#d4af37;font-weight:bold;font-size:18px;text-align:center;",
@@ -1592,7 +1594,7 @@ const createRoomingHeaderSheet = ({ program, clients, city, agency }) => {
   data[2][8] = `عدد المعتمرين: ${clients.length}`;
   data[2][12] = `المقاعد: ${program.seats || "—"}`;
   data[3][0] = `الفندق: ${hotel || "—"}`;
-  data[3][4] = `الوكالة: ${agency?.nameAr || agency?.nameFr || "—"}`;
+  data[3][4] = `${agencyLabel}: ${getLocalizedAgencyName(agency, lang, "—")}`;
   data[3][8] = "ملاحظات:";
   data[3][12] = "";
 
@@ -4533,6 +4535,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         clients: exportClients,
         program,
         agency,
+        lang,
       });
     } catch (error) {
       onToast(
@@ -4544,7 +4547,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     } finally {
       setBadgeExportBusy(false);
     }
-  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
+  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     runWithGlobalDetailData(() => setShowPassportImport(true));
@@ -4810,7 +4813,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         onTabChange={handleProgramTabChange}
         tabs={[
           { key:"clients", label:participantTerms.plural || t.clients, icon:"users" },
-          { key:"rooming", label:"التسكين", icon:"hotel" },
+          { key:"rooming", label:t.roomingTab, icon:"hotel" },
         ]}
         showSummary={listDataReady && programTab !== "rooming"}
         statCards={[
@@ -7111,7 +7114,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const cityLabel = city === "makkah" ? (t.makkah || "مكة") : (t.madinah || "المدينة");
     const win = window.open("", "_blank");
     if (!win) return;
-    const agencyName = agency?.nameAr || agency?.nameFr || t.agencyName || "";
+    const agencyName = getLocalizedAgencyName(agency, lang, t.agencyFallbackName);
     const agencyLogoUrl = await resolveAgencyLogoUrlForRooming();
     const printRooms = rooms.map((room, index) => {
       const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
@@ -7281,7 +7284,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         rooms: pdfRooms,
         lang,
         programName: program.name || "program",
-        agencyName: agency?.nameAr || agency?.nameFr || agency?.name || "",
+        agencyName: getLocalizedAgencyName(agency, lang),
         agencyLogoUrl,
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
         labels: sharedLabels,
@@ -9665,6 +9668,7 @@ function RoomingFlowSurface({
 }
 
 function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) {
+  const { lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [panelOpen, setPanelOpen] = React.useState(true);
   const [fullscreen, setFullscreen] = React.useState(false);
@@ -9726,7 +9730,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
   const readStoredSheet = React.useCallback(() => {
     try {
       const raw = localStorage.getItem(storageKey);
-      if (!raw) return createRoomingHeaderSheet({ program, clients, city, agency });
+      if (!raw) return createRoomingHeaderSheet({ program, clients, city, agency, lang });
       const parsed = JSON.parse(raw);
       return {
         version: parsed.version || 2,
@@ -9736,9 +9740,9 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
         meta: normalizeRoomingMeta(parsed.meta),
       };
     } catch {
-      return createRoomingHeaderSheet({ program, clients, city, agency });
+      return createRoomingHeaderSheet({ program, clients, city, agency, lang });
     }
-  }, [storageKey, program, clients, city, agency]);
+  }, [storageKey, program, clients, city, agency, lang]);
 
   const captureSheet = React.useCallback(() => {
     const sheet = sheetRef.current;
@@ -10508,7 +10512,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
     if (!window.confirm("سيتم إعادة توليد التسكين من بيانات المعتمرين الحالية مع مسح الغرف الحالية داخل هذه الورقة. هل تريد المتابعة؟")) return;
     const activeCell = getActiveCell();
     const groupedRooms = buildRoomingGroupsFromClients(clients, city);
-    const payload = createRoomingHeaderSheet({ program, clients, city, agency });
+    const payload = createRoomingHeaderSheet({ program, clients, city, agency, lang });
     const rooms = {};
     const insertedClients = {};
     groupedRooms.forEach((room, index) => {
@@ -10547,7 +10551,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
     setMetaTick((value) => value + 1);
     setRefreshKey((value) => value + 1);
     onToast?.("تم توليد التسكين من مجموعات المعتمرين الحالية", "success");
-  }, [getActiveCell, clients, city, program, agency, storageKey, onToast, clientsById]);
+  }, [getActiveCell, clients, city, program, agency, lang, storageKey, onToast, clientsById]);
 
   const resetSheet = React.useCallback(() => {
     if (!window.confirm("سيتم حذف ورقة التسكين المحلية لهذا الفندق. هل أنت متأكد؟")) return;
@@ -10560,13 +10564,13 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
 
   const clearWholeSheet = React.useCallback(() => {
     if (!window.confirm("سيتم مسح الورقة الحالية وإرجاعها إلى ترويسة البرنامج فقط. هل تريد المتابعة؟")) return;
-    const payload = createRoomingHeaderSheet({ program, clients, city, agency });
+    const payload = createRoomingHeaderSheet({ program, clients, city, agency, lang });
     localStorage.setItem(storageKey, JSON.stringify(payload));
     metaRef.current = normalizeRoomingMeta(payload.meta);
     setMetaTick((value) => value + 1);
     setRefreshKey(k => k + 1);
     onToast?.("تم مسح الورقة", "info");
-  }, [program, clients, city, agency, storageKey, onToast]);
+  }, [program, clients, city, agency, lang, storageKey, onToast]);
 
   const clearSelection = React.useCallback(() => {
     const sheet = sheetRef.current;

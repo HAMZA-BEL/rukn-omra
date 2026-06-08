@@ -6,6 +6,7 @@ import { formatCurrency } from "../utils/currency";
 import { AppIcon, IconBubble } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translateActivityDescription } from "../utils/i18nValues";
+import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 
 const tc = theme.colors;
 
@@ -106,7 +107,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
               {t.appName}
             </h1>
             <p style={{ fontSize:12, color:tc.grey }}>
-              {store.agency?.nameAr || store.agency?.nameFr || t.agencyName}
+              {getLocalizedAgencyName(store.agency, lang, t.agencyFallbackName)}
             </p>
           </div>
         </button>
