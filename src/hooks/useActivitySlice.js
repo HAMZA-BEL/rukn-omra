@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   clearActivityEntries,
   fetchActivityPage,
@@ -32,6 +32,7 @@ const upsertActivity = (entries = [], entry) => {
 
 export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) {
   const [activityLog, setActivityLog] = useState([]);
+  const [latestRealtimeActivity, setLatestRealtimeActivity] = useState(null);
 
   const setInitialActivity = useCallback((items = []) => {
     setActivityLog(Array.isArray(items) ? items.slice(0, ACTIVITY_CACHE_LIMIT) : []);
@@ -81,20 +82,19 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
     setActivityLog((prev) => upsertActivity(prev, entry));
   }, []);
 
-  const subscribeActivityLog = useCallback(
-    ({ onInsert = () => {}, onError = () => {}, updateCache = true } = {}) => {
-      if (!isSupabaseEnabled || !agencyId) return () => {};
-      return subscribeActivityEntries(agencyId, {
-        onInsert: (entry, payload) => {
-          if (!entry?.id) return;
-          if (updateCache) upsertActivityEntry(entry);
-          onInsert(entry, payload);
-        },
-        onError,
-      });
-    },
-    [agencyId, isSupabaseEnabled, upsertActivityEntry]
-  );
+  useEffect(() => {
+    setLatestRealtimeActivity(null);
+    if (!isSupabaseEnabled || !agencyId) return undefined;
+    return subscribeActivityEntries(agencyId, {
+      onInsert: (entry) => {
+        upsertActivityEntry(entry);
+        setLatestRealtimeActivity(entry);
+      },
+      onError: (error) => {
+        console.error("[activity] realtime subscription failed", error);
+      },
+    });
+  }, [agencyId, isSupabaseEnabled, upsertActivityEntry]);
 
   const logActivity = useCallback(
     (type, description, clientName = "", options = {}) => {
@@ -105,7 +105,9 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
         clientName,
         time: new Date().toISOString(),
       };
-      setActivityLog((prev) => [entry, ...prev].slice(0, ACTIVITY_CACHE_LIMIT));
+      if (!isSupabaseEnabled || !options.skipRemote) {
+        setActivityLog((prev) => upsertActivity(prev, entry));
+      }
       if (!options.skipRemote && isSupabaseEnabled && agencyId) {
         insertActivityEntry(agencyId, null, entry).catch(() => {});
       }
@@ -115,9 +117,9 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
 
   return {
     activityLog,
+    latestRealtimeActivity,
     setInitialActivity,
     upsertActivityEntry,
-    subscribeActivityLog,
     fetchActivityLogPage,
     clearActivityLog,
     logActivity,

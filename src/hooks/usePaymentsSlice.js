@@ -207,6 +207,7 @@ export function usePaymentsSlice() {
   return {
     payments,
     deletedPayments,
+    mapPaymentRow,
     setInitialPayments,
     setInitialDeletedPayments,
     replacePayments,

@@ -132,9 +132,9 @@ export default function ActivityLogPage({ store, onToast }) {
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
-  const subscribeActivityLog = store.subscribeActivityLog;
   const clearActivityLog = store.clearActivityLog;
   const cachedActivity = store.activityLog || [];
+  const latestRealtimeActivity = store.latestRealtimeActivity;
   const canFetchRemoteActivity = Boolean(store.isSupabaseEnabled && fetchActivityLogPage);
 
   React.useEffect(() => {
@@ -176,20 +176,9 @@ export default function ActivityLogPage({ store, onToast }) {
   }, []);
 
   React.useEffect(() => {
-    if (!canFetchRemoteActivity || typeof subscribeActivityLog !== "function") return undefined;
-    realtimeAppliedIdsRef.current = new Set();
-    const unsubscribe = subscribeActivityLog({
-      updateCache: false,
-      onInsert: applyRealtimeActivityEntry,
-      onError: (err) => {
-        console.error("[ActivityLogPage] realtime subscription failed", err);
-      },
-    });
-    return () => {
-      realtimeAppliedIdsRef.current = new Set();
-      unsubscribe?.();
-    };
-  }, [applyRealtimeActivityEntry, canFetchRemoteActivity, subscribeActivityLog]);
+    if (!canFetchRemoteActivity || !latestRealtimeActivity) return;
+    applyRealtimeActivityEntry(latestRealtimeActivity);
+  }, [applyRealtimeActivityEntry, canFetchRemoteActivity, latestRealtimeActivity]);
 
   const applyLocalPage = React.useCallback(() => {
     const q = normalizeText(search);
@@ -209,10 +198,7 @@ export default function ActivityLogPage({ store, onToast }) {
   }, [cachedActivity, category, page, period, search]);
 
   const loadActivities = React.useCallback(async () => {
-    if (!canFetchRemoteActivity) {
-      applyLocalPage();
-      return;
-    }
+    if (!canFetchRemoteActivity) return;
     const loadSeq = loadSeqRef.current + 1;
     loadSeqRef.current = loadSeq;
     setLoading(true);
@@ -245,7 +231,7 @@ export default function ActivityLogPage({ store, onToast }) {
     } finally {
       if (loadSeqRef.current === loadSeq) setLoading(false);
     }
-  }, [applyLocalPage, canFetchRemoteActivity, category, fetchActivityLogPage, page, period, search, t.activityError]);
+  }, [canFetchRemoteActivity, category, fetchActivityLogPage, page, period, search, t.activityError]);
 
   React.useEffect(() => {
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
@@ -269,8 +255,14 @@ export default function ActivityLogPage({ store, onToast }) {
   }, []);
 
   React.useEffect(() => {
+    if (!canFetchRemoteActivity) return;
     loadActivities();
-  }, [loadActivities]);
+  }, [canFetchRemoteActivity, loadActivities]);
+
+  React.useEffect(() => {
+    if (canFetchRemoteActivity) return;
+    applyLocalPage();
+  }, [applyLocalPage, canFetchRemoteActivity]);
 
   React.useEffect(() => {
     if (!filtersOpen) return undefined;

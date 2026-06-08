@@ -2045,6 +2045,7 @@ export const db = {
       const { error } = await supabase
         .from("activity_log")
         .insert({
+          ...(entry.id ? { id: entry.id } : {}),
           agency_id:   agencyId,
           user_id:     userId ?? null,
           type:        entry.type,

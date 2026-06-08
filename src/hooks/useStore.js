@@ -605,12 +605,14 @@ export function useStore(agencyId, onToast) {
   const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY, stripAgencyRuntimeFields);
   const {
     activityLog,
+    latestRealtimeActivity,
     setInitialActivity,
-    subscribeActivityLog,
     fetchActivityLogPage,
     clearActivityLog,
     logActivity,
   } = useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID });
+  const [latestClientRealtimeEvent, setLatestClientRealtimeEvent] = useState(null);
+  const [latestPaymentRealtimeEvent, setLatestPaymentRealtimeEvent] = useState(null);
   const {
     notifications,
     unreadNotifications,
@@ -636,6 +638,7 @@ export function useStore(agencyId, onToast) {
   const {
     payments,
     deletedPayments,
+    mapPaymentRow,
     setInitialPayments,
     setInitialDeletedPayments,
     replacePayments,
@@ -1442,6 +1445,8 @@ export function useStore(agencyId, onToast) {
 
   // ── Real-time subscriptions ───────────────────────────────────────────────
   useEffect(() => {
+    setLatestClientRealtimeEvent(null);
+    setLatestPaymentRealtimeEvent(null);
     if (!isSupabaseEnabled || !agencyId) return;
 
     const mapProgramRow = (row) => ({
@@ -1488,6 +1493,8 @@ export function useStore(agencyId, onToast) {
       prenom: row.prenom,
       phone: row.phone,
       address: row.address,
+      registrationSource: row.registration_source,
+      registration_source: row.registration_source,
       city: row.city,
       hotelLevel: row.hotel_level,
       packageLevel: row.hotel_level,
@@ -1499,6 +1506,10 @@ export function useStore(agencyId, onToast) {
       officialPrice: Number(row.official_price ?? 0),
       salePrice: Number(row.sale_price ?? 0),
       ticketNo: row.ticket_no,
+      representedByClientId: row.represented_by_client_id || row.docs?.representedByClientId || "",
+      represented_by_client_id: row.represented_by_client_id || row.docs?.representedByClientId || "",
+      representedByRelationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
+      represented_by_relationship: row.represented_by_relationship || row.docs?.representedByRelationship || "",
       passport: row.passport ?? {},
       docs: { ...(row.docs ?? {}), serviceType: getClientServiceType({ docs: row.docs }) },
       notes: row.notes,
@@ -1542,13 +1553,15 @@ export function useStore(agencyId, onToast) {
         }
       },
       onClient: ({ eventType, new: row, old }) => {
-        if (row?.agency_id && row.agency_id !== agencyId) return;
+        const payloadRow = row || old;
+        if (payloadRow?.agency_id && payloadRow.agency_id !== agencyId) return;
         queueProgramArchiveSuggestionCheck([
           row?.program_id || row?.programId,
           old?.program_id || old?.programId,
         ]);
         if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
           const mapped = mapClientRow(row);
+          const oldMapped = old?.id ? mapClientRow(old) : null;
           if (mapped.deleted) {
             setClients(prev => prev.filter(c => c.id !== mapped.id));
             setDeletedClients(prev => {
@@ -1557,6 +1570,7 @@ export function useStore(agencyId, onToast) {
                 ? prev.map(c => c.id === mapped.id ? { ...c, ...mapped } : c)
                 : [mapped, ...prev];
             });
+            setLatestClientRealtimeEvent({ eventType, client: mapped, oldClient: oldMapped, id: mapped.id, at: Date.now() });
             return;
           }
           setDeletedClients(prev => prev.filter(c => c.id !== mapped.id));
@@ -1566,19 +1580,43 @@ export function useStore(agencyId, onToast) {
               ? prev.map(c => c.id === mapped.id ? { ...c, ...mapped } : c)
               : [...prev, mapped];
           });
+          setLatestClientRealtimeEvent({ eventType, client: mapped, oldClient: oldMapped, id: mapped.id, at: Date.now() });
         } else if (eventType === "DELETE") {
           setClients(prev => prev.filter(c => c.id !== old.id));
           setDeletedClients(prev => prev.filter(c => c.id !== old.id));
+          setLatestClientRealtimeEvent({
+            eventType,
+            client: null,
+            oldClient: old?.id ? mapClientRow(old) : null,
+            id: old?.id || "",
+            at: Date.now(),
+          });
         }
       },
       onPayment: ({ eventType, new: row, old }) => {
-        if (row?.agency_id && row.agency_id !== agencyId) return;
+        const payloadRow = row || old;
+        if (payloadRow?.agency_id && payloadRow.agency_id !== agencyId) return;
         invalidateClientPermanentDeletePreflight(row?.client_id || row?.clientId || old?.client_id || old?.clientId);
         queueClientProgramArchiveSuggestionCheck(row?.client_id || row?.clientId || old?.client_id || old?.clientId);
-        if (eventType === "INSERT" || eventType === "UPDATE")
+        if (eventType === "INSERT" || eventType === "UPDATE") {
           handlePaymentRealtimeUpsert(row);
-        else if (eventType === "DELETE")
+          setLatestPaymentRealtimeEvent({
+            eventType,
+            payment: mapPaymentRow(row),
+            oldPayment: old ? mapPaymentRow(old) : null,
+            id: row?.id || "",
+            at: Date.now(),
+          });
+        } else if (eventType === "DELETE") {
           handlePaymentRealtimeDelete(old?.id);
+          setLatestPaymentRealtimeEvent({
+            eventType,
+            payment: null,
+            oldPayment: old ? mapPaymentRow(old) : null,
+            id: old?.id || "",
+            at: Date.now(),
+          });
+        }
       },
       onNotification: ({ eventType, new: row, old }) => {
         const payload = row || old;
@@ -1592,7 +1630,7 @@ export function useStore(agencyId, onToast) {
     });
 
     return () => { supabase.removeChannel(channel); };
-  }, [agencyId, invalidateClientPermanentDeletePreflight, queueClientProgramArchiveSuggestionCheck, queueProgramArchiveSuggestionCheck]);
+  }, [agencyId, invalidateClientPermanentDeletePreflight, mapPaymentRow, queueClientProgramArchiveSuggestionCheck, queueProgramArchiveSuggestionCheck]);
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getClientStatus = useCallback((client) => {
     const paid  = getClientTotalPaid(client.id);
@@ -3332,7 +3370,8 @@ export function useStore(agencyId, onToast) {
     : unreadNotificationsCount;
 
   return {
-    programs, clients, payments, agency, agencyId, activityLog, stats,
+    programs, clients, payments, agency, agencyId, activityLog, latestRealtimeActivity,
+    latestClientRealtimeEvent, latestPaymentRealtimeEvent, stats,
     agencyUsers,
     deletedPrograms, deletedClients, deletedPayments,
     activeClients, archivedClients,
@@ -3372,6 +3411,6 @@ export function useStore(agencyId, onToast) {
     deleteNotification,
     deleteNotifications,
     deleteAllArchivedNotifications: deleteAllArchived,
-    fetchActivityLogPage, subscribeActivityLog, clearActivityLog: clearActivityLogConfirmed, recordActivity: logActivity,
+    fetchActivityLogPage, clearActivityLog: clearActivityLogConfirmed, recordActivity: logActivity,
   };
 }

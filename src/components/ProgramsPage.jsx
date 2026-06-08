@@ -92,6 +92,7 @@ import {
   getClientCompletionLabels,
   getClientCompletionTooltip,
   getClientDisplayStatus,
+  getClientProgramId,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { buildProgramListSummaryById } from "../utils/programListSummaries";
@@ -3566,6 +3567,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
 function ProgramInner({ program, store, onToast, onBack, onEditProgram, programSummaryById = null }) {
   const {
     clients,
+    payments: globalPayments = [],
     getClientTotalPaid,
     getClientPayments,
     agency,
@@ -3771,6 +3773,163 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       return { ...current, payments };
     });
   }, [program.id, selectedClient]);
+
+  const isVisibleScopedProgramClient = React.useCallback((client) => {
+    if (!client) return false;
+    const programId = String(program.id || "");
+    const clientProgramId = String(getClientProgramId(client) || client.programId || client.program_id || "");
+    const status = String(client.status || "").toLowerCase();
+    return Boolean(programId)
+      && clientProgramId === programId
+      && !client.deleted
+      && !client.deletedAt
+      && !client.deleted_at
+      && !client.archived
+      && !client.archivedAt
+      && !client.archived_at
+      && status !== "deleted"
+      && status !== "archived";
+  }, [program.id]);
+
+  const patchScopedProgramClientFromRealtime = React.useCallback((event) => {
+    const programId = String(program.id || "");
+    const client = event?.client || null;
+    const oldClient = event?.oldClient || null;
+    const clientId = String(client?.id || oldClient?.id || event?.id || "");
+    if (!programId || !clientId) return;
+
+    const shouldShowClient = isVisibleScopedProgramClient(client);
+
+    setScopedProgramDetail((current) => {
+      if (current.programId !== programId) return current;
+      const currentClients = Array.isArray(current.clients) ? current.clients : [];
+      const clientExists = currentClients.some((item) => String(item?.id || "") === clientId);
+      const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+
+      if (shouldShowClient) {
+        const clients = clientExists
+          ? currentClients.map((item) => (
+              String(item?.id || "") === clientId ? { ...item, ...client } : item
+            ))
+          : [...currentClients, client];
+        const isActivePaymentRow = (payment) => {
+          const status = String(payment?.status || "active").toLowerCase();
+          return status !== "trashed"
+            && status !== "deleted"
+            && !payment?.trashedAt
+            && !payment?.trashed_at
+            && !payment?.deletedAt
+            && !payment?.deleted_at;
+        };
+        const paymentsById = new Map(currentPayments.map((payment) => [String(payment?.id || ""), payment]));
+        (Array.isArray(globalPayments) ? globalPayments : [])
+          .filter((payment) => String(payment?.clientId || payment?.client_id || "") === clientId)
+          .filter(isActivePaymentRow)
+          .forEach((payment) => {
+            const paymentId = String(payment?.id || "");
+            if (paymentId) paymentsById.set(paymentId, payment);
+          });
+        return { ...current, clients, payments: Array.from(paymentsById.values()) };
+      }
+
+      if (!clientExists) return current;
+      return {
+        ...current,
+        clients: currentClients.filter((item) => String(item?.id || "") !== clientId),
+        payments: currentPayments.filter((payment) => String(payment?.clientId || payment?.client_id || "") !== clientId),
+      };
+    });
+
+    setSelectedClient((current) => {
+      if (String(current?.id || "") !== clientId) return current;
+      return shouldShowClient ? { ...current, ...client } : null;
+    });
+    setEditingClient((current) => {
+      if (String(current?.id || "") !== clientId) return current;
+      return shouldShowClient ? { ...current, ...client } : null;
+    });
+    if (!shouldShowClient) {
+      setCheckedIds((current) => {
+        if (!current.has(clientId)) return current;
+        const next = new Set(current);
+        next.delete(clientId);
+        return next;
+      });
+    }
+  }, [globalPayments, isVisibleScopedProgramClient, program.id]);
+
+  const isActiveScopedPayment = React.useCallback((payment) => {
+    if (!payment) return false;
+    const status = String(payment.status || "active").toLowerCase();
+    return status !== "trashed"
+      && status !== "deleted"
+      && !payment.trashedAt
+      && !payment.trashed_at
+      && !payment.deletedAt
+      && !payment.deleted_at;
+  }, []);
+
+  const scopedPaymentBelongsToCurrentProgram = React.useCallback((payment, current) => {
+    const paymentClientId = String(payment?.clientId || payment?.client_id || "");
+    const programId = String(program.id || "");
+    if (!paymentClientId || !programId) return false;
+    const currentClients = Array.isArray(current?.clients) ? current.clients : [];
+    if (currentClients.some((client) => String(client?.id || "") === paymentClientId)) return true;
+    if (
+      String(selectedClient?.id || "") === paymentClientId
+      && String(getClientProgramId(selectedClient) || selectedClient?.programId || selectedClient?.program_id || "") === programId
+    ) return true;
+    return (Array.isArray(clients) ? clients : []).some((client) => (
+      String(client?.id || "") === paymentClientId
+      && isVisibleScopedProgramClient(client)
+    ));
+  }, [clients, isVisibleScopedProgramClient, program.id, selectedClient]);
+
+  const patchScopedProgramPaymentFromRealtime = React.useCallback((event) => {
+    const programId = String(program.id || "");
+    const payment = event?.payment || null;
+    const oldPayment = event?.oldPayment || null;
+    const paymentId = String(payment?.id || oldPayment?.id || event?.id || "");
+    if (!programId || !paymentId) return;
+
+    setScopedProgramDetail((current) => {
+      if (current.programId !== programId) return current;
+      const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+      const shouldShowPayment = isActiveScopedPayment(payment)
+        && scopedPaymentBelongsToCurrentProgram(payment, current);
+
+      if (!shouldShowPayment) {
+        return {
+          ...current,
+          payments: currentPayments.filter((item) => String(item?.id || "") !== paymentId),
+        };
+      }
+
+      scopedProgramDetailHiddenPaymentIdsRef.current.delete(paymentId);
+      const normalizedPayment = {
+        ...payment,
+        clientId: payment.clientId || payment.client_id,
+        client_id: payment.client_id || payment.clientId,
+      };
+      const paymentExists = currentPayments.some((item) => String(item?.id || "") === paymentId);
+      const payments = paymentExists
+        ? currentPayments.map((item) => (
+            String(item?.id || "") === paymentId ? { ...item, ...normalizedPayment } : item
+          ))
+        : [...currentPayments, normalizedPayment];
+      return { ...current, payments };
+    });
+  }, [isActiveScopedPayment, program.id, scopedPaymentBelongsToCurrentProgram]);
+
+  React.useEffect(() => {
+    if (!store.latestClientRealtimeEvent) return;
+    patchScopedProgramClientFromRealtime(store.latestClientRealtimeEvent);
+  }, [patchScopedProgramClientFromRealtime, store.latestClientRealtimeEvent]);
+
+  React.useEffect(() => {
+    if (!store.latestPaymentRealtimeEvent) return;
+    patchScopedProgramPaymentFromRealtime(store.latestPaymentRealtimeEvent);
+  }, [patchScopedProgramPaymentFromRealtime, store.latestPaymentRealtimeEvent]);
 
   const handleClientDataChanged = React.useCallback((change = {}) => {
     if (change?.payment) upsertScopedProgramPayment(change.payment, change.clientId);
