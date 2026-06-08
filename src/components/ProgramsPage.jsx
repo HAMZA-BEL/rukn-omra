@@ -714,9 +714,6 @@ const ROOMING_LAYOUT_VERTICAL_GAP = 36;
 const ROOMING_LAYOUT_GROUP_VERTICAL_GAP = 96;
 const ROOMING_LAYOUT_MAX_COLUMNS = 6;
 const ROOMING_LARGE_GENERATION_THRESHOLD = 80;
-const ROOMING_CLIENT_DRAG_PAN_EDGE = 82;
-const ROOMING_CLIENT_DRAG_PAN_MIN_SPEED = 2.2;
-const ROOMING_CLIENT_DRAG_PAN_MAX_SPEED = 18;
 const ROOMING_LAYOUT_TYPE_ORDER = ["double", "triple", "quad", "quint"];
 const normalizeRoomingText = (value) => String(value || "")
   .trim()
@@ -5290,8 +5287,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const dragStartPositionRef = React.useRef(new Map());
   const lastValidPositionRef = React.useRef(new Map());
   const dragInvalidRef = React.useRef(new Map());
-  const clientDragPointerRef = React.useRef(null);
-  const clientDragPanFrameRef = React.useRef(0);
   const roomingLoadSeqRef = React.useRef(0);
   const roomingRevisionRef = React.useRef(0);
   const generatedRoomFitPendingRef = React.useRef(null);
@@ -6687,11 +6682,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const clearRoomingDragState = React.useCallback(() => {
     setDraggingClientId(null);
     setHoveredDropRoomId(null);
-    clientDragPointerRef.current = null;
-    if (clientDragPanFrameRef.current) {
-      window.cancelAnimationFrame(clientDragPanFrameRef.current);
-      clientDragPanFrameRef.current = 0;
-    }
   }, []);
 
   const enterRoomingDropHover = React.useCallback((roomId) => {
@@ -6861,111 +6851,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   }, [selectedRoomId, visibleRooms]);
 
   React.useEffect(() => {
-    if (!draggingClientId) {
-      clientDragPointerRef.current = null;
-      if (clientDragPanFrameRef.current) {
-        window.cancelAnimationFrame(clientDragPanFrameRef.current);
-        clientDragPanFrameRef.current = 0;
-      }
-      return undefined;
-    }
-
-    const getPanSpeed = (distanceToEdge) => {
-      const ratio = Math.min(1, Math.max(0, (ROOMING_CLIENT_DRAG_PAN_EDGE - distanceToEdge) / ROOMING_CLIENT_DRAG_PAN_EDGE));
-      if (ratio <= 0) return 0;
-      return ROOMING_CLIENT_DRAG_PAN_MIN_SPEED
-        + (ROOMING_CLIENT_DRAG_PAN_MAX_SPEED - ROOMING_CLIENT_DRAG_PAN_MIN_SPEED) * ratio * ratio;
-    };
-
-    const panLoop = () => {
-      clientDragPanFrameRef.current = window.requestAnimationFrame(panLoop);
-      const pointer = clientDragPointerRef.current;
-      const flow = flowRef.current;
-      if (!pointer || !flow?.getViewport || !flow?.setViewport) return;
-      const canvas = document.querySelector(".rooming-flow-canvas");
-      const rect = canvas?.getBoundingClientRect?.();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-
-      let dx = 0;
-      let dy = 0;
-      if (pointer.x - rect.left < ROOMING_CLIENT_DRAG_PAN_EDGE) {
-        dx = getPanSpeed(pointer.x - rect.left);
-      } else if (rect.right - pointer.x < ROOMING_CLIENT_DRAG_PAN_EDGE) {
-        dx = -getPanSpeed(rect.right - pointer.x);
-      }
-      if (pointer.y - rect.top < ROOMING_CLIENT_DRAG_PAN_EDGE) {
-        dy = getPanSpeed(pointer.y - rect.top);
-      } else if (rect.bottom - pointer.y < ROOMING_CLIENT_DRAG_PAN_EDGE) {
-        dy = -getPanSpeed(rect.bottom - pointer.y);
-      }
-      if (!dx && !dy) return;
-      const viewport = flow.getViewport();
-      flow.setViewport({ x: viewport.x + dx, y: viewport.y + dy, zoom: viewport.zoom });
-    };
-
-    const handleDragOver = (event) => {
-      if (!event.clientX && !event.clientY) return;
-      clientDragPointerRef.current = { x: event.clientX, y: event.clientY };
-    };
+    if (!draggingClientId) return undefined;
     const handleDragEnd = () => clearRoomingDragState();
-    const handleDrop = () => {
-      clientDragPointerRef.current = null;
-      if (clientDragPanFrameRef.current) {
-        window.cancelAnimationFrame(clientDragPanFrameRef.current);
-        clientDragPanFrameRef.current = 0;
-      }
-    };
-    const handleWheel = (event) => {
-      const flow = flowRef.current;
-      if (!flow?.getViewport || !flow?.setViewport) return;
-      const canvas = document.querySelector(".rooming-flow-canvas");
-      const rect = canvas?.getBoundingClientRect?.();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-      const fallbackPoint = clientDragPointerRef.current;
-      const point = event.clientX || event.clientY
-        ? { x: event.clientX, y: event.clientY }
-        : fallbackPoint;
-      if (!point) return;
-      const insideCanvas = point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
-      if (!insideCanvas) return;
 
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
-      clientDragPointerRef.current = point;
-
-      const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? rect.height : 1;
-      let panX = event.deltaX * unit;
-      let panY = event.deltaY * unit;
-      if (event.shiftKey && Math.abs(panX) < 0.5) {
-        panX = panY;
-        panY = 0;
-      }
-      const limitDelta = (value) => Math.max(-180, Math.min(180, value));
-      const viewport = flow.getViewport();
-      flow.setViewport({
-        x: viewport.x - limitDelta(panX),
-        y: viewport.y - limitDelta(panY),
-        zoom: viewport.zoom,
-      });
-    };
-
-    window.addEventListener("dragover", handleDragOver);
     window.addEventListener("dragend", handleDragEnd);
-    window.addEventListener("drop", handleDrop);
-    window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
-    clientDragPanFrameRef.current = window.requestAnimationFrame(panLoop);
+    window.addEventListener("drop", handleDragEnd);
 
     return () => {
-      window.removeEventListener("dragover", handleDragOver);
       window.removeEventListener("dragend", handleDragEnd);
-      window.removeEventListener("drop", handleDrop);
-      window.removeEventListener("wheel", handleWheel, { capture: true });
-      if (clientDragPanFrameRef.current) {
-        window.cancelAnimationFrame(clientDragPanFrameRef.current);
-        clientDragPanFrameRef.current = 0;
-      }
-      clientDragPointerRef.current = null;
+      window.removeEventListener("drop", handleDragEnd);
     };
   }, [clearRoomingDragState, draggingClientId]);
 
@@ -8218,6 +8112,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
                     selectedRoomId={selectedRoomId}
                     panelOpen={panelOpen}
                     nodesDraggable={!roomSelectionMode}
+                    panOnDrag={!draggingClientId}
                     onInit={(flow) => { flowRef.current = flow; }}
                     onNodeClick={(_event, node) => {
                       if (roomSelectionMode) {
@@ -8480,21 +8375,26 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
                         key={item.clientId}
                         className="rooming-unassigned-card"
                         draggable={Boolean(client)}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
                         onDragStart={(event) => {
+                          event.stopPropagation();
                           if (!client) return;
                           const dragIds = unassignedSelected && selectedUnassignedList.length
                             ? selectedUnassignedList
                             : [item.clientId];
                           setDraggingClientId(item.clientId);
                           setHoveredDropRoomId(null);
-                          clientDragPointerRef.current = { x: event.clientX, y: event.clientY };
                           event.dataTransfer.effectAllowed = "move";
                           event.dataTransfer.setData("application/x-rukn-client-id", item.clientId);
                           event.dataTransfer.setData("application/x-rukn-client-ids", JSON.stringify(dragIds));
                           event.dataTransfer.setData("text/plain", dragIds.length > 1 ? `${dragIds.length} ${unassignedSelectionLabels.selected}` : (context.name || item.clientId));
                           setUnassignedGroupDragImage(event, dragIds, context.name);
                         }}
-                        onDragEnd={clearRoomingDragState}
+                        onDragEnd={(event) => {
+                          event.stopPropagation();
+                          clearRoomingDragState();
+                        }}
                         style={{
                           position: "relative",
                           border: draggingClientId === item.clientId || unassignedSelected ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-panel-border)",
@@ -9613,6 +9513,7 @@ function RoomingFlowSurface({
   panelOpen,
   linkMode = false,
   nodesDraggable = true,
+  panOnDrag = true,
 }) {
   const flow = useReactFlow();
 
@@ -9631,7 +9532,7 @@ function RoomingFlowSurface({
       fitViewOptions={ROOMING_FIT_VIEW_OPTIONS}
       minZoom={0.35}
       maxZoom={1.6}
-      panOnDrag
+      panOnDrag={panOnDrag}
       zoomOnScroll
       zoomOnPinch
       nodesDraggable={nodesDraggable}
