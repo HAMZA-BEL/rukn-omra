@@ -1747,7 +1747,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="ghost" disabled={importing} onClick={() => setStage(1)}>{t.back || "رجوع"}</Button>
+          <Button variant="ghost" disabled={importing} onClick={() => setStage(1)}>{t.back}</Button>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button variant="ghost" disabled={importing} onClick={onClose}>{t.cancel}</Button>
             <Button variant="primary" icon="success" disabled={importing || acceptedCount === 0} onClick={doImport}>

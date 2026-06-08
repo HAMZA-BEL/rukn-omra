@@ -310,7 +310,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
                 borderTop:"2px solid #d4af37", borderRadius:"50%",
                 animation:"spin 1s linear infinite", flexShrink:0,
               }} />
-              {lang === "fr" ? "Synchronisation..." : "جاري المزامنة..."}
+              {t.syncSyncing}
             </div>
           )}
           {page !== "dashboard" && (
@@ -1023,6 +1023,7 @@ function detectAuthFromURL() {
 
 // ── Auth gate ─────────────────────────────────────────────────────────────────
 function AuthGate() {
+  const { t } = useLang();
   // Captured synchronously on first render — all three tokens must be present.
   const [authFromURL] = React.useState(() => detectAuthFromURL());
 
@@ -1089,7 +1090,7 @@ function AuthGate() {
               background: "rgba(212,175,55,.1)", color: "#d4af37", fontSize: 14,
               fontFamily: "'Cairo', sans-serif", cursor: "pointer",
             }}
-          >تسجيل الخروج والمحاولة مجدداً</button>
+          >{t.logout}</button>
         </div>
       </div>
     );
@@ -1130,6 +1131,7 @@ function AppLoadingScreen() {
 }
 
 function DisabledAccountScreen({ onLogout }) {
+  const { t } = useLang();
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
@@ -1154,7 +1156,7 @@ function DisabledAccountScreen({ onLogout }) {
             fontFamily: "'Cairo', sans-serif", cursor: "pointer",
           }}
         >
-          تسجيل الخروج
+          {t.logout}
         </button>
       </div>
     </div>

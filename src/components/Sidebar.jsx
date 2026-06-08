@@ -141,8 +141,8 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
             }}>
               {SYNC_DOT[syncStatus]?.label}
             </span>
-              <span style={{ fontSize: 9, color: "var(--rukn-text-muted)" }}>
-              {syncStatus === "synced" ? "مزامن" : syncStatus === "syncing" ? "يزامن..." : "غير متصل"}
+            <span style={{ fontSize: 9, color: "var(--rukn-text-muted)" }}>
+              {syncStatus === "synced" ? t.syncSynced : syncStatus === "syncing" ? t.syncSyncing : t.syncOffline}
             </span>
           </div>
         )}
@@ -154,7 +154,7 @@ export default function Sidebar({ active, onNavigate, stats, onExport, onImport,
             borderRadius: 7, color: "rgba(239,68,68,.6)", fontSize: 10, fontWeight: 600,
             cursor: "pointer", fontFamily: "'Cairo',sans-serif",
           }}>
-            خروج
+            {t.logout}
           </button>
         )}
       </div>

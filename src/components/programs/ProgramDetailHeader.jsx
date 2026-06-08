@@ -23,7 +23,7 @@ export default function ProgramDetailHeader({
     <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:24, flexWrap:"wrap" }}>
       {typeof onBack === "function" && (
         <Button variant="ghost" icon="chevronBack" onClick={onBack}>
-          رجوع
+          {t.back}
         </Button>
       )}
       <div style={{ flex:"1 1 320px", minWidth:0 }}>
