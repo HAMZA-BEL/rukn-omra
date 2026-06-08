@@ -99,6 +99,13 @@ const getPeriodStartIso = (periodKey) => {
   return new Date(now.getTime() - days * 86400000).toISOString();
 };
 
+const matchesActivityFilters = (row, { category = "all", period = "all", search = "" } = {}) => {
+  const q = normalizeText(search);
+  return (category === "all" || getActivityCategory(row) === category)
+    && isWithinPeriod(row, period)
+    && (!q || buildSearchHaystack(row).includes(q));
+};
+
 export default function ActivityLogPage({ store, onToast }) {
   const { t, lang } = useLang();
   const [category, setCategory] = React.useState("all");
@@ -119,12 +126,70 @@ export default function ActivityLogPage({ store, onToast }) {
   const filterButtonRef = React.useRef(null);
   const filterMenuRef = React.useRef(null);
   const loadSeqRef = React.useRef(0);
+  const realtimeFiltersRef = React.useRef({ category, period, search, page });
+  const visibleRowsRef = React.useRef([]);
+  const realtimeAppliedIdsRef = React.useRef(new Set());
   const [filterMenuStyle, setFilterMenuStyle] = React.useState(null);
 
   const fetchActivityLogPage = store.fetchActivityLogPage;
+  const subscribeActivityLog = store.subscribeActivityLog;
   const clearActivityLog = store.clearActivityLog;
   const cachedActivity = store.activityLog || [];
   const canFetchRemoteActivity = Boolean(store.isSupabaseEnabled && fetchActivityLogPage);
+
+  React.useEffect(() => {
+    realtimeFiltersRef.current = { category, period, search, page };
+  }, [category, page, period, search]);
+
+  React.useEffect(() => {
+    visibleRowsRef.current = rows;
+  }, [rows]);
+
+  const applyRealtimeActivityEntry = React.useCallback((entry) => {
+    const entryId = String(entry?.id || "");
+    if (!entryId || realtimeAppliedIdsRef.current.has(entryId)) return;
+
+    const filterState = realtimeFiltersRef.current;
+    if (!matchesActivityFilters(entry, filterState)) return;
+    realtimeAppliedIdsRef.current.add(entryId);
+
+    const alreadyVisible = visibleRowsRef.current.some((row) => String(row?.id || "") === entryId);
+    if (!alreadyVisible) {
+      setTotalCount((current) => Math.max(0, Number(current) || 0) + 1);
+    }
+    if (filterState.page !== 1) return;
+
+    setRows((currentRows) => {
+      const existingIndex = currentRows.findIndex((row) => String(row?.id || "") === entryId);
+      const nextRows = existingIndex >= 0
+        ? currentRows.map((row, index) => (index === existingIndex ? { ...row, ...entry } : row))
+        : [entry, ...currentRows];
+      return nextRows
+        .slice()
+        .sort((a, b) => {
+          const aTime = getActivityTime(a)?.getTime() || 0;
+          const bTime = getActivityTime(b)?.getTime() || 0;
+          return bTime - aTime;
+        })
+        .slice(0, PAGE_SIZE);
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (!canFetchRemoteActivity || typeof subscribeActivityLog !== "function") return undefined;
+    realtimeAppliedIdsRef.current = new Set();
+    const unsubscribe = subscribeActivityLog({
+      updateCache: false,
+      onInsert: applyRealtimeActivityEntry,
+      onError: (err) => {
+        console.error("[ActivityLogPage] realtime subscription failed", err);
+      },
+    });
+    return () => {
+      realtimeAppliedIdsRef.current = new Set();
+      unsubscribe?.();
+    };
+  }, [applyRealtimeActivityEntry, canFetchRemoteActivity, subscribeActivityLog]);
 
   const applyLocalPage = React.useCallback(() => {
     const q = normalizeText(search);

@@ -606,6 +606,7 @@ export function useStore(agencyId, onToast) {
   const {
     activityLog,
     setInitialActivity,
+    subscribeActivityLog,
     fetchActivityLogPage,
     clearActivityLog,
     logActivity,
@@ -3371,6 +3372,6 @@ export function useStore(agencyId, onToast) {
     deleteNotification,
     deleteNotifications,
     deleteAllArchivedNotifications: deleteAllArchived,
-    fetchActivityLogPage, clearActivityLog: clearActivityLogConfirmed, recordActivity: logActivity,
+    fetchActivityLogPage, subscribeActivityLog, clearActivityLog: clearActivityLogConfirmed, recordActivity: logActivity,
   };
 }

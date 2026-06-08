@@ -4,6 +4,7 @@ import {
   fetchActivityPage,
   fetchRecentActivity,
   insertActivityEntry,
+  subscribeActivityEntries,
 } from "../services/activityService";
 
 const DASHBOARD_ACTIVITY_LIMIT = 5;
@@ -13,6 +14,20 @@ const getActivityTimestamp = (entry = {}) => {
   const raw = entry.time || entry.created_at || entry.createdAt || entry.date || entry.timestamp;
   const date = raw ? new Date(raw) : null;
   return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+};
+
+const sortNewestFirst = (entries = []) => (
+  entries.slice().sort((a, b) => getActivityTimestamp(b) - getActivityTimestamp(a))
+);
+
+const upsertActivity = (entries = [], entry) => {
+  if (!entry?.id) return entries;
+  const id = String(entry.id);
+  const existingIndex = entries.findIndex((item) => String(item?.id || "") === id);
+  const next = existingIndex >= 0
+    ? entries.map((item, index) => (index === existingIndex ? { ...item, ...entry } : item))
+    : [entry, ...entries];
+  return sortNewestFirst(next).slice(0, ACTIVITY_CACHE_LIMIT);
 };
 
 export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) {
@@ -61,6 +76,26 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
     [agencyId, isSupabaseEnabled]
   );
 
+  const upsertActivityEntry = useCallback((entry) => {
+    if (!entry?.id) return;
+    setActivityLog((prev) => upsertActivity(prev, entry));
+  }, []);
+
+  const subscribeActivityLog = useCallback(
+    ({ onInsert = () => {}, onError = () => {}, updateCache = true } = {}) => {
+      if (!isSupabaseEnabled || !agencyId) return () => {};
+      return subscribeActivityEntries(agencyId, {
+        onInsert: (entry, payload) => {
+          if (!entry?.id) return;
+          if (updateCache) upsertActivityEntry(entry);
+          onInsert(entry, payload);
+        },
+        onError,
+      });
+    },
+    [agencyId, isSupabaseEnabled, upsertActivityEntry]
+  );
+
   const logActivity = useCallback(
     (type, description, clientName = "", options = {}) => {
       const entry = {
@@ -81,6 +116,8 @@ export function useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID }) 
   return {
     activityLog,
     setInitialActivity,
+    upsertActivityEntry,
+    subscribeActivityLog,
     fetchActivityLogPage,
     clearActivityLog,
     logActivity,

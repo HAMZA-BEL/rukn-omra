@@ -15,3 +15,7 @@ export function insertActivityEntry(agencyId, userId, entry) {
 export function clearActivityEntries(agencyId, days) {
   return db.activityLog.clear(agencyId, days);
 }
+
+export function subscribeActivityEntries(agencyId, handlers) {
+  return db.activityLog.subscribe({ agencyId, ...handlers });
+}

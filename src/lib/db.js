@@ -1976,6 +1976,7 @@ export const db = {
       if (!row) return null;
       return {
         id:          row.id,
+        agencyId:    row.agency_id,
         type:        row.type,
         description: row.description,
         clientName:  row.client_name,
@@ -2068,6 +2069,34 @@ export const db = {
         };
       }
       return { data, error };
+    },
+    subscribe({ agencyId, onInsert = () => {}, onError = () => {} } = {}) {
+      if (!supabase || !agencyId) return () => {};
+      const matchesCurrentAgency = (row) => (
+        row && String(row.agency_id || "") === String(agencyId || "")
+      );
+      const channel = supabase
+        .channel(`activity-log:${agencyId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "activity_log",
+            filter: `agency_id=eq.${agencyId}`,
+          },
+          (payload) => {
+            const row = payload?.new;
+            if (!matchesCurrentAgency(row)) return;
+            onInsert(db.activityLog.mapRow(row), payload);
+          }
+        )
+        .subscribe((status, error) => {
+          if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && error) onError(error);
+        });
+      return () => {
+        supabase.removeChannel(channel);
+      };
     },
   },
 
