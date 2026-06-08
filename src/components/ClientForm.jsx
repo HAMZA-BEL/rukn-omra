@@ -314,9 +314,23 @@ const buildFormState = (client, defaultProgramId, programs) => {
   );
   const programId = clientProgramId || (isEdit ? "" : pickString(defaultProgramId));
   const selectedProgram = programs.find(p => p.id === programId);
-  const firstPackage = selectedProgram ? normalizeProgramPackages(selectedProgram)[0] : null;
-  const packageLevel = pickString(client?.packageLevel, client?.hotelLevel, client?.hotel_level, firstPackage?.level);
-  const packageId = pickString(client?.packageId, client?.package_id, firstPackage?.id);
+  const programPackages = selectedProgram ? normalizeProgramPackages(selectedProgram) : [];
+  const firstPackage = programPackages[0] || null;
+  const savedPackageId = pickString(client?.packageId, client?.package_id);
+  const savedPackageLevel = pickString(client?.packageLevel, client?.hotelLevel, client?.hotel_level);
+  const packageBySavedId = savedPackageId
+    ? programPackages.find(pkg => pkg.id === savedPackageId)
+    : null;
+  const packageBySavedLevel = savedPackageLevel
+    ? programPackages.find(pkg => pkg.level === savedPackageLevel)
+    : null;
+  const initialPackage = isEdit
+    ? (packageBySavedId || packageBySavedLevel || null)
+    : firstPackage;
+  const packageId = initialPackage?.id || "";
+  const packageLevel = isEdit
+    ? (packageBySavedId?.level || savedPackageLevel || initialPackage?.level || "")
+    : (initialPackage?.level || "");
 
   const officialPrice = pickNumber(
     client?.officialPrice,
@@ -745,6 +759,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       skipInitialAutoFillRef.current = false;
       prevLevelRef.current = selectedPackage.id;
       prevRoomRef.current = form.roomType;
+      previousOfficialPriceRef.current = derivedOfficialPrice || 0;
+      return;
     }
     const changed = !(
       prevLevelRef.current === selectedPackage.id &&

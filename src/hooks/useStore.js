@@ -1486,6 +1486,7 @@ export function useStore(agencyId, onToast) {
       nom: row.nom,
       prenom: row.prenom,
       phone: row.phone,
+      address: row.address,
       city: row.city,
       hotelLevel: row.hotel_level,
       packageLevel: row.hotel_level,

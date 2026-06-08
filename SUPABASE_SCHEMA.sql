@@ -101,6 +101,7 @@ create table if not exists public.clients (
   nom                text,
   prenom             text,
   phone              text,
+  address            text,
   city               text,
   hotel_level        text,
   hotel_mecca        text,
