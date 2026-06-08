@@ -5295,11 +5295,24 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingLoadSeqRef = React.useRef(0);
   const roomingRevisionRef = React.useRef(0);
   const generatedRoomFitPendingRef = React.useRef(null);
+  const roomingRealtimeTimerRef = React.useRef(null);
+  const roomingRealtimePendingRef = React.useRef(false);
+  const roomingRealtimeSeqRef = React.useRef(0);
+  const roomingLastRemoteUpdatedAtRef = React.useRef("");
+  const scheduleRoomingRealtimeRefetchRef = React.useRef(null);
+  const dirtyRef = React.useRef(false);
+  const draggingClientIdRef = React.useRef(null);
+  const roomModalOpenRef = React.useRef(false);
+  const pendingDropRef = React.useRef(null);
 
   const fullWorkspace = roomingWorkspaceMode !== "normal";
   const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
   const roomingModalPortalContainer = browserFullscreenMode ? roomingFullscreenRef.current : null;
   const canPersistRoomingRemote = Boolean(supabaseRoomingEnabled && agencyId && program?.id);
+  dirtyRef.current = dirty;
+  draggingClientIdRef.current = draggingClientId;
+  roomModalOpenRef.current = roomModal.open;
+  pendingDropRef.current = pendingDrop;
   const packageByLevel = React.useMemo(() => {
     const map = new Map();
     packages.forEach((pkg) => map.set(pkg.level, pkg));
@@ -5526,20 +5539,21 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     return { rooms: [], unassigned: [], roomLinks: [], version: 4 };
   }, [agencyId, roomingEligibleClients, program.id]);
 
-  React.useEffect(() => {
-    let active = true;
-    const loadSeq = roomingLoadSeqRef.current + 1;
-    roomingLoadSeqRef.current = loadSeq;
-
-    const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
-      if (!active || roomingLoadSeqRef.current !== loadSeq) return;
-      const sanitized = sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
-      setRooms(sanitized.rooms);
-      setUnassigned(sanitized.unassigned);
-      setRoomLinks(normalizeRoomingLinks(sanitized.roomLinks, sanitized.rooms));
-      setDirty(Boolean(sanitized.removedCount));
-      roomingRevisionRef.current += 1;
-      setSavedAt(sourceUpdatedAt ? new Date(sourceUpdatedAt) : null);
+  const applyLoadedRoomingState = React.useCallback((loaded, sourceUpdatedAt = null, options = {}) => {
+    const resetInteraction = options.resetInteraction !== false;
+    const sanitized = sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
+    const normalizedLinks = normalizeRoomingLinks(sanitized.roomLinks, sanitized.rooms);
+    const sourceUpdatedAtMs = Date.parse(sourceUpdatedAt || "");
+    if (Number.isFinite(sourceUpdatedAtMs) && sourceUpdatedAtMs > 0) {
+      roomingLastRemoteUpdatedAtRef.current = sourceUpdatedAt;
+    }
+    setRooms(sanitized.rooms);
+    setUnassigned(sanitized.unassigned);
+    setRoomLinks(normalizedLinks);
+    setDirty(Boolean(sanitized.removedCount));
+    roomingRevisionRef.current += 1;
+    setSavedAt(Number.isFinite(sourceUpdatedAtMs) && sourceUpdatedAtMs > 0 ? new Date(sourceUpdatedAtMs) : null);
+    if (resetInteraction) {
       setSelectedRoomId(null);
       setSelectedUnassignedIds(new Set());
       setSelectedRoomIds(new Set());
@@ -5548,7 +5562,38 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       setLinkStartRoomId(null);
       setSelectedRoomLinkId(null);
       setRoomLinkMenu({ open: false, x: 0, y: 0, linkId: "" });
-      setRoomingSaveStatus(sanitized.removedCount ? "dirty" : "idle");
+    } else {
+      const roomIds = new Set(sanitized.rooms.map((room) => room.id).filter(Boolean));
+      const unassignedIds = new Set(sanitized.unassigned.map((item) => item.clientId).filter(Boolean));
+      const linkIds = new Set(normalizedLinks.map((link) => link.id).filter(Boolean));
+      setSelectedRoomId((current) => (current && !roomIds.has(current) ? null : current));
+      setSelectedRoomIds((current) => {
+        const next = new Set(Array.from(current).filter((roomId) => roomIds.has(roomId)));
+        return next.size === current.size ? current : next;
+      });
+      setSelectedUnassignedIds((current) => {
+        const next = new Set(Array.from(current).filter((clientId) => unassignedIds.has(clientId)));
+        return next.size === current.size ? current : next;
+      });
+      setLinkStartRoomId((current) => (current && !roomIds.has(current) ? null : current));
+      setSelectedRoomLinkId((current) => (current && !linkIds.has(current) ? null : current));
+      setRoomLinkMenu((current) => (
+        current.open && current.linkId && !linkIds.has(current.linkId)
+          ? { open: false, x: 0, y: 0, linkId: "" }
+          : current
+      ));
+    }
+    setRoomingSaveStatus(sanitized.removedCount ? "dirty" : "idle");
+  }, [roomingEligibleClientIds]);
+
+  React.useEffect(() => {
+    let active = true;
+    const loadSeq = roomingLoadSeqRef.current + 1;
+    roomingLoadSeqRef.current = loadSeq;
+
+    const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
+      if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+      applyLoadedRoomingState(loaded, sourceUpdatedAt, { resetInteraction: true });
     };
 
     const loadRooming = async () => {
@@ -5586,7 +5631,110 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     return () => {
       active = false;
     };
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, roomingEligibleClientIds, roomingEligibleClients, t.roomingLoadFailed, writeCanvasCache]);
+  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, roomingEligibleClients, t.roomingLoadFailed, writeCanvasCache]);
+
+  const isRoomingRealtimeUnsafe = React.useCallback(() => (
+    dirtyRef.current
+    || Boolean(draggingClientIdRef.current)
+    || Boolean(roomDragActiveRef.current)
+    || Boolean(roomModalOpenRef.current)
+    || Boolean(pendingDropRef.current)
+  ), []);
+
+  const fetchAndApplyRealtimeRooming = React.useCallback(async () => {
+    if (!canPersistRoomingRemote) return;
+    const requestSeq = roomingRealtimeSeqRef.current + 1;
+    roomingRealtimeSeqRef.current = requestSeq;
+    const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, city);
+    if (roomingRealtimeSeqRef.current !== requestSeq) return;
+    if (error) {
+      console.error("[rooming] realtime refetch failed", error);
+      return;
+    }
+    if (!data) return;
+    const remoteUpdatedAtMs = Date.parse(data.updatedAt || "");
+    const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
+    if (
+      Number.isFinite(remoteUpdatedAtMs)
+      && remoteUpdatedAtMs > 0
+      && Number.isFinite(lastAppliedAtMs)
+      && lastAppliedAtMs > 0
+      && remoteUpdatedAtMs <= lastAppliedAtMs
+    ) {
+      return;
+    }
+    const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
+    writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
+    applyLoadedRoomingState(loaded, data.updatedAt, { resetInteraction: false });
+    setRoomingLoadStatus("remote");
+  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, program.id, roomingEligibleClients, writeCanvasCache]);
+
+  const scheduleRoomingRealtimeRefetch = React.useCallback(() => {
+    if (!canPersistRoomingRemote) return;
+    roomingRealtimePendingRef.current = true;
+    if (roomingRealtimeTimerRef.current) {
+      window.clearTimeout(roomingRealtimeTimerRef.current);
+      roomingRealtimeTimerRef.current = null;
+    }
+    roomingRealtimeTimerRef.current = window.setTimeout(() => {
+      roomingRealtimeTimerRef.current = null;
+      if (!roomingRealtimePendingRef.current) return;
+      if (isRoomingRealtimeUnsafe()) return;
+      roomingRealtimePendingRef.current = false;
+      fetchAndApplyRealtimeRooming();
+    }, 350);
+  }, [canPersistRoomingRemote, fetchAndApplyRealtimeRooming, isRoomingRealtimeUnsafe]);
+  scheduleRoomingRealtimeRefetchRef.current = scheduleRoomingRealtimeRefetch;
+
+  React.useEffect(() => {
+    if (!roomingRealtimePendingRef.current || isRoomingRealtimeUnsafe()) return;
+    scheduleRoomingRealtimeRefetch();
+  }, [dirty, draggingClientId, isRoomingRealtimeUnsafe, pendingDrop, roomModal.open, scheduleRoomingRealtimeRefetch]);
+
+  React.useEffect(() => {
+    roomingRealtimePendingRef.current = false;
+    roomingLastRemoteUpdatedAtRef.current = "";
+    roomingRealtimeSeqRef.current += 1;
+    if (roomingRealtimeTimerRef.current) {
+      window.clearTimeout(roomingRealtimeTimerRef.current);
+      roomingRealtimeTimerRef.current = null;
+    }
+    if (!canPersistRoomingRemote) return undefined;
+
+    const unsubscribe = db.roomingAssignments.subscribe({
+      agencyId,
+      programId: program.id,
+      location: city,
+      onChange: (payload) => {
+        const row = payload?.new || payload?.old;
+        const remoteUpdatedAtMs = Date.parse(row?.updated_at || "");
+        const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
+        if (
+          Number.isFinite(remoteUpdatedAtMs)
+          && remoteUpdatedAtMs > 0
+          && Number.isFinite(lastAppliedAtMs)
+          && lastAppliedAtMs > 0
+          && remoteUpdatedAtMs <= lastAppliedAtMs
+        ) {
+          return;
+        }
+        scheduleRoomingRealtimeRefetchRef.current?.();
+      },
+      onError: (error) => {
+        console.error("[rooming] realtime subscription failed", error);
+      },
+    });
+
+    return () => {
+      roomingRealtimePendingRef.current = false;
+      roomingRealtimeSeqRef.current += 1;
+      if (roomingRealtimeTimerRef.current) {
+        window.clearTimeout(roomingRealtimeTimerRef.current);
+        roomingRealtimeTimerRef.current = null;
+      }
+      unsubscribe?.();
+    };
+  }, [agencyId, canPersistRoomingRemote, city, program.id]);
 
   const exitRoomingWorkspace = React.useCallback(async () => {
     setRoomingWorkspaceMode("normal");
@@ -5680,6 +5828,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           meta: { kind: payload.kind, city, roomLinks: payload.roomLinks },
         }, agencyId);
         if (error) throw error;
+        if (data?.updatedAt) roomingLastRemoteUpdatedAtRef.current = data.updatedAt;
         const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
         if (roomingRevisionRef.current === revision) {
           setDirty(false);

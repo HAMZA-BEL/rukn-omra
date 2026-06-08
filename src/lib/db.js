@@ -1030,6 +1030,38 @@ export const db = {
         .single();
       return { data: data ? fromRoomingAssignment(data) : null, error };
     },
+    subscribe({ agencyId, programId, location, onChange = () => {}, onError = () => {} } = {}) {
+      if (!supabase || !agencyId || !programId || !location) return () => {};
+      const normalizedLocation = normalizeRoomingLocation(location);
+      const matchesCurrentRoomingRow = (row) => (
+        row
+        && String(row.agency_id || "") === String(agencyId || "")
+        && String(row.program_id || "") === String(programId || "")
+        && normalizeRoomingLocation(row.location) === normalizedLocation
+      );
+      const channel = supabase
+        .channel(`rooming-assignments:${agencyId}:${programId}:${normalizedLocation}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "rooming_assignments",
+            filter: `agency_id=eq.${agencyId}`,
+          },
+          (payload) => {
+            const row = payload?.new || payload?.old;
+            if (!matchesCurrentRoomingRow(row)) return;
+            onChange(payload);
+          }
+        )
+        .subscribe((status, error) => {
+          if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && error) onError(error);
+        });
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    },
   },
 
   programs: {
