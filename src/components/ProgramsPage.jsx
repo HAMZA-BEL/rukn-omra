@@ -3739,6 +3739,44 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     setScopedProgramDetailRefreshKey((key) => key + 1);
   }, [program.id]);
 
+  const upsertScopedProgramPayment = React.useCallback((payment, fallbackClientId = "") => {
+    const paymentId = String(payment?.id || "");
+    const paymentClientId = String(payment?.clientId || payment?.client_id || fallbackClientId || "");
+    const programId = String(program.id || "");
+    if (!paymentId || !paymentClientId || !programId) return;
+
+    const normalizedPayment = {
+      ...payment,
+      clientId: payment?.clientId || payment?.client_id || paymentClientId,
+      client_id: payment?.client_id || payment?.clientId || paymentClientId,
+    };
+
+    setScopedProgramDetail((current) => {
+      if (current.programId !== programId) return current;
+      const clientBelongsToProgram = current.clients.some((client) => String(client.id || "") === paymentClientId)
+        || (
+          String(selectedClient?.id || "") === paymentClientId
+          && String(getClientProgramId(selectedClient) || "") === programId
+        );
+      if (!clientBelongsToProgram) return current;
+
+      const currentPayments = Array.isArray(current.payments) ? current.payments : [];
+      const existingPayment = currentPayments.some((item) => String(item?.id || "") === paymentId);
+      const payments = existingPayment
+        ? currentPayments.map((item) => (
+            String(item?.id || "") === paymentId ? { ...item, ...normalizedPayment } : item
+          ))
+        : [...currentPayments, normalizedPayment];
+
+      return { ...current, payments };
+    });
+  }, [program.id, selectedClient]);
+
+  const handleClientDataChanged = React.useCallback((change = {}) => {
+    if (change?.payment) upsertScopedProgramPayment(change.payment, change.clientId);
+    refreshScopedProgramDetail(change);
+  }, [refreshScopedProgramDetail, upsertScopedProgramPayment]);
+
   React.useEffect(() => {
     detailHydrationRequestedRef.current = false;
     scopedProgramDetailHiddenPaymentIdsRef.current = new Set();
@@ -5221,7 +5259,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         programSummaryById={programSummaryById}
         onConfirmTransfer={handleTransferConfirm}
         getClientPayments={getClientPayments}
-        onClientDataChanged={refreshScopedProgramDetail}
+        onClientDataChanged={handleClientDataChanged}
         programOverride={useScopedProgramDetail ? (scopedProgramDetail.program || program) : null}
         programClientsOverride={useScopedProgramDetail ? progClients : null}
         paymentsOverride={useScopedProgramDetail ? scopedProgramDetail.payments : null}

@@ -162,7 +162,7 @@ export default function PaymentForm({
     } finally {
       setSaving(false);
     }
-    if (saved) onSave();
+    if (saved) onSave(saved);
   };
 
   return (

@@ -68,7 +68,7 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
             <span><strong>${escapeHtml(labels.madinah)}:</strong> ${escapeHtml(hotelLabel(level.madinah?.hotelName))} · ${escapeHtml(fmtSar(level.madinah?.roomPriceSar))} · ${escapeHtml(nightsLabel(level, level.madinah?.nights))}</span>
           </div>
         </div>
-        <table>
+        <table class="costing-table">
           <thead>
             <tr>
               <th>${escapeHtml(labels.roomType)}</th>
@@ -112,7 +112,7 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
     .level-head h2{margin:0 0 5px;color:#0d4a1a;font-size:15px}
     .hotel-summary{display:grid;gap:3px;color:#444;font-size:10px}
     table{width:100%;border-collapse:collapse;table-layout:fixed}
-    th{background:#0d4a1a;color:#d4af37;padding:7px 5px;border:1px solid #0a3a15;font-size:10px}
+    .costing-table th{background:#0d4a1a;color:#fff;padding:7px 5px;border:1px solid #0a3a15;font-size:10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     td{padding:7px 5px;border:1px solid #e5e7eb;text-align:center}
     tbody tr:nth-child(even) td{background:#f8fafc}
     tr.loss td{background:#fff1f2;color:#991b1b;font-weight:800}

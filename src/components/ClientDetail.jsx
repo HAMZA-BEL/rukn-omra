@@ -962,7 +962,11 @@ export default function ClientDetail({
           paymentsOverride={scopedPaymentFormReady ? payments : null}
           totalPaidOverride={scopedPaymentFormReady ? totalPaid : undefined}
           paymentsReadyOverride={scopedPaymentFormReady ? true : undefined}
-          onSave={() => { setShowPayForm(false); onToast(t.addSuccess, "success"); onDataChanged?.(); }}
+          onSave={(savedPayment) => {
+            setShowPayForm(false);
+            onToast(t.addSuccess, "success");
+            onDataChanged?.({ payment: savedPayment, clientId: client.id });
+          }}
           onCancel={() => setShowPayForm(false)} />
       )}
 
