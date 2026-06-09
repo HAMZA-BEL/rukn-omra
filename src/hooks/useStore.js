@@ -11,6 +11,7 @@ import {
   deletePayment as deletePaymentRemote,
   deleteTrashedPayment as deleteTrashedPaymentRemote,
   fetchPayments,
+  fetchPaymentGroup as fetchPaymentGroupRemote,
   fetchTrashedPayments,
   restorePayment as restorePaymentRemote,
   savePayment,
@@ -612,6 +613,7 @@ export function useStore(agencyId, onToast) {
     clearActivityLog,
     logActivity,
   } = useActivitySlice({ agencyId, isSupabaseEnabled, generateUUID });
+  const [latestProgramRealtimeEvent, setLatestProgramRealtimeEvent] = useState(null);
   const [latestClientRealtimeEvent, setLatestClientRealtimeEvent] = useState(null);
   const [latestPaymentRealtimeEvent, setLatestPaymentRealtimeEvent] = useState(null);
   const {
@@ -1523,11 +1525,12 @@ export function useStore(agencyId, onToast) {
       deletedBatchId: row.deleted_batch_id ?? null,
     });
 
-    const channel = db.subscribeAll({
+    const unsubscribeRealtime = db.subscribeAll({
       agencyId,
       onProgram: ({ eventType, new: row, old }) => {
         // Extra check: ignore rows that don't belong to this agency
-        if (row?.agency_id && row.agency_id !== agencyId) return;
+        const payloadRow = row || old;
+        if (payloadRow?.agency_id && payloadRow.agency_id !== agencyId) return;
         queueProgramArchiveSuggestionCheck(row?.id || old?.id);
         if ((eventType === "INSERT" || eventType === "UPDATE") && row) {
           const mapped = mapProgramRow(row);
@@ -1539,6 +1542,7 @@ export function useStore(agencyId, onToast) {
                 ? prev.map(p => p.id === mapped.id ? { ...p, ...mapped } : p)
                 : [mapped, ...prev];
             });
+            setLatestProgramRealtimeEvent({ eventType, program: mapped, oldProgram: old?.id ? mapProgramRow(old) : null, id: mapped.id, at: Date.now() });
             return;
           }
           setDeletedPrograms(prev => prev.filter(p => p.id !== mapped.id));
@@ -1548,9 +1552,17 @@ export function useStore(agencyId, onToast) {
               ? prev.map(p => p.id === mapped.id ? { ...p, ...mapped } : p)
               : [...prev, mapped];
           });
+          setLatestProgramRealtimeEvent({ eventType, program: mapped, oldProgram: old?.id ? mapProgramRow(old) : null, id: mapped.id, at: Date.now() });
         } else if (eventType === "DELETE") {
           setPrograms(prev => prev.filter(p => p.id !== old.id));
           setDeletedPrograms(prev => prev.filter(p => p.id !== old.id));
+          setLatestProgramRealtimeEvent({
+            eventType,
+            program: null,
+            oldProgram: old?.id ? mapProgramRow(old) : null,
+            id: old?.id || "",
+            at: Date.now(),
+          });
         }
       },
       onClient: ({ eventType, new: row, old }) => {
@@ -1630,7 +1642,9 @@ export function useStore(agencyId, onToast) {
       },
     });
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      if (typeof unsubscribeRealtime === "function") unsubscribeRealtime();
+    };
   }, [agencyId, invalidateClientPermanentDeletePreflight, mapPaymentRow, queueClientProgramArchiveSuggestionCheck, queueProgramArchiveSuggestionCheck]);
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getClientStatus = useCallback((client) => {
@@ -2850,6 +2864,19 @@ export function useStore(agencyId, onToast) {
     return { paymentGroup, payment_group: paymentGroup, payments: localPayments, receiptNumber: localReceiptNumber, receipt_number: localReceiptNumber };
   }, [addPaymentLocal, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, ns, payments.length, queueClientProgramArchiveSuggestionCheck, setClients]);
 
+  const fetchPaymentGroup = useCallback(async (groupId) => {
+    if (!groupId || !isSupabaseEnabled || !agencyId) return null;
+    try {
+      const result = await fetchPaymentGroupRemote(groupId, agencyId);
+      if (result.error) throw result.error;
+      return result.data || null;
+    } catch (err) {
+      console.error("[Store] Failed to fetch payment group:", err);
+      notify(trKey("storeLocalMode") || "يعمل النظام بالوضع المحلي — تعذّر الاتصال بالسحابة", "error");
+      return null;
+    }
+  }, [agencyId, isSupabaseEnabled, notify]);
+
   const deletePayment = useCallback((id, options = {}) => {
     const p = payments.find(x => x.id === id);
     const clientId = p?.clientId || p?.client_id || options.clientId || options.client_id || "";
@@ -3477,7 +3504,7 @@ export function useStore(agencyId, onToast) {
 
   return {
     programs, clients, payments, agency, agencyId, activityLog, latestRealtimeActivity,
-    latestClientRealtimeEvent, latestPaymentRealtimeEvent, stats,
+    latestProgramRealtimeEvent, latestClientRealtimeEvent, latestPaymentRealtimeEvent, stats,
     agencyUsers,
     deletedPrograms, deletedClients, deletedPayments,
     activeClients, archivedClients,
@@ -3504,7 +3531,7 @@ export function useStore(agencyId, onToast) {
     createAgencyUser,
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
-    addPayment, createSharedReceipt, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
+    addPayment, createSharedReceipt, fetchPaymentGroup, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
     addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,

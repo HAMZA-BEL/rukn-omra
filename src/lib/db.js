@@ -347,6 +347,27 @@ const PAYMENT_SELECT_COLUMNS = [
   "created_at",
 ].join(", ");
 
+const PAYMENT_GROUP_SELECT_COLUMNS = [
+  "id",
+  "agency_id",
+  "program_id",
+  "payer_client_id",
+  "payer_name",
+  "receipt_number",
+  "payment_type",
+  "payment_method",
+  "cheque_number",
+  "paid_by",
+  "payment_date",
+  "total_amount",
+  "notes",
+  "covered_clients",
+  "created_by",
+  "created_at",
+  "updated_at",
+  "deleted_at",
+].join(", ");
+
 const INVOICE_SELECT_COLUMNS = [
   "id",
   "invoice_key",
@@ -1594,6 +1615,16 @@ export const db = {
         error,
       };
     },
+    async fetchPaymentGroup(id, agencyId) {
+      if (!id || !agencyId) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("payment_groups")
+        .select(PAYMENT_GROUP_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .eq("id", id)
+        .maybeSingle();
+      return { data: data ? fromPaymentGroup(data) : null, error };
+    },
     async delete(id, agencyId) {
       if (!agencyId || !id) return { data: null, error: null };
       const { data, error } = await supabase.rpc("trash_payment", {
@@ -2200,6 +2231,14 @@ export const db = {
     onPayment = () => {},
     onNotification = () => {},
   }) {
+    const handleStatus = (channelName) => (status, error) => {
+      if (process.env.NODE_ENV === "development") {
+        console.debug(`[Realtime] ${channelName}: ${status}`, error || "");
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || error) {
+        console.error(`[Realtime] ${channelName} subscription failed: ${status}`, error || "");
+      }
+    };
     const agencyScopedChanges = (table) => ({
       event: "*",
       schema: "public",
@@ -2207,12 +2246,21 @@ export const db = {
       ...(agencyId ? { filter: `agency_id=eq.${agencyId}` } : {}),
     });
 
-    return supabase
-      .channel("db-changes")
+    const mainChannel = supabase
+      .channel(`db-changes:${agencyId || "all"}`)
       .on("postgres_changes", agencyScopedChanges("programs"), onProgram)
       .on("postgres_changes", agencyScopedChanges("clients"), onClient)
       .on("postgres_changes", agencyScopedChanges("payments"), onPayment)
+      .subscribe(handleStatus("programs/clients/payments"));
+
+    const notificationsChannel = supabase
+      .channel(`db-notifications:${agencyId || "all"}`)
       .on("postgres_changes", agencyScopedChanges("notifications"), onNotification)
-      .subscribe();
+      .subscribe(handleStatus("notifications"));
+
+    return () => {
+      supabase.removeChannel(mainChannel);
+      supabase.removeChannel(notificationsChannel);
+    };
   },
 };

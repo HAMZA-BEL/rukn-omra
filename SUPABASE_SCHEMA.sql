@@ -1924,6 +1924,50 @@ grant execute on function public.create_shared_receipt(
   jsonb
 ) to authenticated;
 
+-- ── 5b. Realtime publications for live program views ──────────
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'programs'
+  ) then
+    alter publication supabase_realtime add table public.programs;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'clients'
+  ) then
+    alter publication supabase_realtime add table public.clients;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'payments'
+  ) then
+    alter publication supabase_realtime add table public.payments;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'notifications'
+  ) then
+    alter publication supabase_realtime add table public.notifications;
+  end if;
+end $$;
+
 -- ── 6. Trigger: auto-create user profile on auth signup ───────
 create or replace function public.handle_new_auth_user()
 returns trigger

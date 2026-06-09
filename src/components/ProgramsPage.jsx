@@ -176,6 +176,7 @@ const MENU_OFFSET_PX = 6;
 const PROGRAM_DETAIL_DEFAULT_PAGE_SIZE = 10;
 const PROGRAM_DETAIL_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const PROGRAMS_LIST_DEFAULT_PAGE_SIZE = 12;
+const PROGRAMS_REALTIME_SUMMARY_REFRESH_DEBOUNCE_MS = 250;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
@@ -1818,6 +1819,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const [selectedProgramIds, setSelectedProgramIds] = React.useState(() => new Set());
   const [programSearchOpen, setProgramSearchOpen] = React.useState(false);
   const [highlightProgramId, setHighlightProgramId] = React.useState("");
+  const [programRealtimeRefreshKey, setProgramRealtimeRefreshKey] = React.useState(0);
   const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
   const [programStatusMenuOpen, setProgramStatusMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
@@ -1840,9 +1842,33 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
   const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
+  const programRealtimeSummaryTimerRef = React.useRef(null);
   const serverProgramPageData = store.isSupabaseEnabled && serverProgramPage.status === "ready" ? serverProgramPage.data : null;
   const serverProgramPageReady = Boolean(serverProgramPageData);
   const programMetricsReady = Boolean(serverProgramPageReady) || (clientsReady && paymentsReady);
+
+  React.useEffect(() => () => {
+    if (programRealtimeSummaryTimerRef.current !== null) {
+      window.clearTimeout(programRealtimeSummaryTimerRef.current);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled) return;
+    if (!store.latestProgramRealtimeEvent && !store.latestClientRealtimeEvent && !store.latestPaymentRealtimeEvent) return;
+    if (programRealtimeSummaryTimerRef.current !== null) {
+      window.clearTimeout(programRealtimeSummaryTimerRef.current);
+    }
+    programRealtimeSummaryTimerRef.current = window.setTimeout(() => {
+      programRealtimeSummaryTimerRef.current = null;
+      setProgramRealtimeRefreshKey((key) => key + 1);
+    }, PROGRAMS_REALTIME_SUMMARY_REFRESH_DEBOUNCE_MS);
+  }, [
+    store.isSupabaseEnabled,
+    store.latestProgramRealtimeEvent,
+    store.latestClientRealtimeEvent,
+    store.latestPaymentRealtimeEvent,
+  ]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled) {
@@ -1893,6 +1919,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     programsPageSize,
     programsCurrentPage,
     programs,
+    programRealtimeRefreshKey,
     store.lastSynced,
   ]);
 
@@ -3640,6 +3667,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const serviceTypeFilterRef = React.useRef(null);
   const detailHydrationRequestedRef = React.useRef(false);
   const scopedProgramDetailHiddenPaymentIdsRef = React.useRef(new Set());
+  const scopedRealtimeRefreshTimerRef = React.useRef(null);
   const [scopedProgramDetailRefreshKey, setScopedProgramDetailRefreshKey] = React.useState(0);
   const [scopedProgramDetail, setScopedProgramDetail] = React.useState({
     programId: "",
@@ -3740,6 +3768,23 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         : current
     ));
     setScopedProgramDetailRefreshKey((key) => key + 1);
+  }, [program.id]);
+
+  const scheduleScopedRealtimeRefresh = React.useCallback(() => {
+    if (scopedRealtimeRefreshTimerRef.current !== null) {
+      window.clearTimeout(scopedRealtimeRefreshTimerRef.current);
+    }
+    scopedRealtimeRefreshTimerRef.current = window.setTimeout(() => {
+      scopedRealtimeRefreshTimerRef.current = null;
+      refreshScopedProgramDetail({ realtime: true });
+    }, PROGRAMS_REALTIME_SUMMARY_REFRESH_DEBOUNCE_MS);
+  }, [refreshScopedProgramDetail]);
+
+  React.useEffect(() => () => {
+    if (scopedRealtimeRefreshTimerRef.current !== null) {
+      window.clearTimeout(scopedRealtimeRefreshTimerRef.current);
+      scopedRealtimeRefreshTimerRef.current = null;
+    }
   }, [program.id]);
 
   const upsertScopedProgramPayment = React.useCallback((payment, fallbackClientId = "") => {
@@ -3923,14 +3968,65 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   }, [isActiveScopedPayment, program.id, scopedPaymentBelongsToCurrentProgram]);
 
   React.useEffect(() => {
-    if (!store.latestClientRealtimeEvent) return;
-    patchScopedProgramClientFromRealtime(store.latestClientRealtimeEvent);
-  }, [patchScopedProgramClientFromRealtime, store.latestClientRealtimeEvent]);
+    const event = store.latestProgramRealtimeEvent;
+    if (!event) return;
+    const programId = String(program.id || "");
+    const eventProgramId = String(event.program?.id || event.oldProgram?.id || event.id || "");
+    if (!programId || eventProgramId !== programId) return;
+
+    if (event.program) {
+      setScopedProgramDetail((current) => (
+        current.programId === programId
+          ? { ...current, program: { ...(current.program || {}), ...event.program } }
+          : current
+      ));
+    }
+    scheduleScopedRealtimeRefresh();
+  }, [program.id, scheduleScopedRealtimeRefresh, store.latestProgramRealtimeEvent]);
 
   React.useEffect(() => {
-    if (!store.latestPaymentRealtimeEvent) return;
-    patchScopedProgramPaymentFromRealtime(store.latestPaymentRealtimeEvent);
-  }, [patchScopedProgramPaymentFromRealtime, store.latestPaymentRealtimeEvent]);
+    const event = store.latestClientRealtimeEvent;
+    if (!event) return;
+    const programId = String(program.id || "");
+    const eventProgramIds = [
+      getClientProgramId(event.client || {}),
+      event.client?.programId,
+      event.client?.program_id,
+      getClientProgramId(event.oldClient || {}),
+      event.oldClient?.programId,
+      event.oldClient?.program_id,
+    ].map((id) => String(id || "")).filter(Boolean);
+    patchScopedProgramClientFromRealtime(event);
+    if (programId && eventProgramIds.includes(programId)) scheduleScopedRealtimeRefresh();
+  }, [patchScopedProgramClientFromRealtime, program.id, scheduleScopedRealtimeRefresh, store.latestClientRealtimeEvent]);
+
+  React.useEffect(() => {
+    const event = store.latestPaymentRealtimeEvent;
+    if (!event) return;
+    const paymentClientId = String(event.payment?.clientId || event.payment?.client_id || event.oldPayment?.clientId || event.oldPayment?.client_id || "");
+    const programId = String(program.id || "");
+    const touchesCurrentProgram = Boolean(programId && paymentClientId && (
+      scopedProgramDetail.clients.some((client) => String(client?.id || "") === paymentClientId)
+      || clients.some((client) => (
+        String(client?.id || "") === paymentClientId
+        && String(getClientProgramId(client) || client.programId || client.program_id || "") === programId
+      ))
+      || (
+        String(selectedClient?.id || "") === paymentClientId
+        && String(getClientProgramId(selectedClient) || selectedClient?.programId || selectedClient?.program_id || "") === programId
+      )
+    ));
+    patchScopedProgramPaymentFromRealtime(event);
+    if (touchesCurrentProgram) scheduleScopedRealtimeRefresh();
+  }, [
+    clients,
+    patchScopedProgramPaymentFromRealtime,
+    program.id,
+    scheduleScopedRealtimeRefresh,
+    scopedProgramDetail.clients,
+    selectedClient,
+    store.latestPaymentRealtimeEvent,
+  ]);
 
   const handleClientDataChanged = React.useCallback((change = {}) => {
     if (change?.payment) upsertScopedProgramPayment(change.payment, change.clientId);

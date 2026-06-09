@@ -5,7 +5,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
 import SharedReceiptModal from "./SharedReceiptModal";
-import { printReceipt, printClientCard } from "./PrintTemplates";
+import { printReceipt, printClientCard, printSharedReceipt } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
@@ -62,6 +62,16 @@ const collectClientPaymentRows = (clientId, paymentSources, locallyHiddenPayment
   });
   return rows;
 };
+
+const firstText = (...values) => {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const getSharedPaymentGroupId = (payment = {}) => String(payment.groupPaymentId || payment.group_payment_id || "").trim();
 const completionBadgeStyle = (tone) => ({
   display:"inline-flex",
   alignItems:"center",
@@ -172,6 +182,8 @@ export default function ClientDetail({
   const [badgeBusy, setBadgeBusy] = React.useState(false);
   const [contractBusy, setContractBusy] = React.useState(false);
   const [receiptPayment, setReceiptPayment] = React.useState(null);
+  const [sharedReceiptDraft, setSharedReceiptDraft] = React.useState(null);
+  const [sharedReceiptLoadingId, setSharedReceiptLoadingId] = React.useState("");
   const [notificationHighlightActive, setNotificationHighlightActive] = React.useState(false);
   const [locallyHiddenPaymentIds, setLocallyHiddenPaymentIds] = React.useState(() => new Set());
   const paymentsHydrationRequestedRef = React.useRef(false);
@@ -299,6 +311,14 @@ export default function ClientDetail({
     () => programClientsSource || clients.filter((item) => getClientProgramId(item) === clientProgramId),
     [clients, clientProgramId, programClientsSource]
   );
+  const programClientsById = React.useMemo(() => {
+    const map = new Map();
+    programClients.forEach((item) => {
+      if (item?.id) map.set(String(item.id), item);
+    });
+    if (client?.id) map.set(String(client.id), client);
+    return map;
+  }, [client, programClients]);
   const sharedReceiptPayments = React.useMemo(() => {
     if (scopedPaymentsReady) return Array.isArray(paymentsOverride) ? paymentsOverride : [];
     if (globalPaymentsReady) return Array.isArray(store.payments) ? store.payments : [];
@@ -459,9 +479,102 @@ export default function ClientDetail({
     }
   }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, store]);
 
+  const buildSharedReceiptDraftFromGroup = React.useCallback((paymentGroup = {}) => {
+    const coveredClients = Array.isArray(paymentGroup.coveredClients || paymentGroup.covered_clients)
+      ? (paymentGroup.coveredClients || paymentGroup.covered_clients)
+      : [];
+    const paymentType = paymentGroup.paymentType || paymentGroup.payment_type || "normal";
+    const paymentTypeLabel = paymentType === "previous"
+      ? (t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة"))
+      : (t.normalPayment || (lang === "fr" ? "Paiement normal" : lang === "en" ? "Normal payment" : "دفعة عادية"));
+    const allocations = coveredClients.map((item) => {
+      const clientId = String(item.client_id || item.clientId || item.id || "");
+      const coveredClient = programClientsById.get(clientId) || {};
+      const name = firstText(item.client_name, item.clientName, item.name, getClientDisplayName(coveredClient));
+      const allocatedAmount = Number(item.allocated_amount ?? item.allocatedAmount ?? item.amount ?? 0);
+      const totalPrice = Number(item.total_price ?? item.totalPrice ?? 0);
+      const paidBefore = Number(item.paid_before ?? item.paidBefore ?? 0);
+      const remainingAfter = Number(
+        item.remaining_after
+        ?? item.remainingAfter
+        ?? Math.max(0, totalPrice - paidBefore - allocatedAmount)
+      );
+      return {
+        id: clientId,
+        client: coveredClient?.id ? coveredClient : { id: clientId, name },
+        name,
+        phone: firstText(item.phone, item.phone_number, coveredClient.phone, coveredClient.phoneNumber),
+        passport: firstText(
+          item.passport,
+          item.passport_no,
+          item.passportNumber,
+          item.passport_number,
+          coveredClient.passportNo,
+          coveredClient.passport?.number,
+        ),
+        totalPrice,
+        paidBefore,
+        allocatedAmount,
+        remainingAfter,
+      };
+    });
+    return {
+      receiptNo: firstText(paymentGroup.receiptNumber, paymentGroup.receipt_number),
+      paymentType,
+      paymentTypeLabel,
+      payerName: firstText(paymentGroup.payerName, paymentGroup.payer_name, getClientDisplayName(client)),
+      amount: Number(paymentGroup.totalAmount ?? paymentGroup.total_amount ?? 0),
+      method: firstText(paymentGroup.paymentMethod, paymentGroup.payment_method),
+      date: firstText(paymentGroup.paymentDate, paymentGroup.payment_date),
+      legacyReceiptNumber: paymentType === "previous" ? firstText(paymentGroup.receiptNumber, paymentGroup.receipt_number) : "",
+      paidBy: firstText(paymentGroup.paidBy, paymentGroup.paid_by),
+      chequeNumber: firstText(paymentGroup.chequeNumber, paymentGroup.cheque_number),
+      note: firstText(paymentGroup.notes, paymentGroup.note),
+      allocations,
+    };
+  }, [client, lang, programClientsById, t.normalPayment, t.previousPayment]);
+
   const openReceiptSelector = React.useCallback(async (payment) => {
     if (!canPrintReceipts) {
       onToast?.(addPaymentDisabledMessage, "error");
+      return;
+    }
+    const sharedPaymentGroupId = getSharedPaymentGroupId(payment);
+    if (sharedPaymentGroupId) {
+      if (!store.fetchPaymentGroup) {
+        onToast?.(
+          t.sharedReceiptSaveError || (
+            lang === "fr"
+              ? "Impossible de charger le reçu commun."
+              : lang === "en"
+                ? "Unable to load the shared receipt."
+                : "تعذر تحميل الوصل المشترك."
+          ),
+          "error",
+        );
+        return;
+      }
+      setSharedReceiptLoadingId(sharedPaymentGroupId);
+      try {
+        const paymentGroup = await store.fetchPaymentGroup(sharedPaymentGroupId);
+        if (!paymentGroup) {
+          onToast?.(
+            t.sharedReceiptSaveError || (
+              lang === "fr"
+                ? "Impossible de charger le reçu commun."
+                : lang === "en"
+                  ? "Unable to load the shared receipt."
+                  : "تعذر تحميل الوصل المشترك."
+            ),
+            "error",
+          );
+          return;
+        }
+        setReceiptPayment(null);
+        setSharedReceiptDraft(buildSharedReceiptDraftFromGroup(paymentGroup));
+      } finally {
+        setSharedReceiptLoadingId("");
+      }
       return;
     }
     if (!globalDetailReady) {
@@ -470,13 +583,26 @@ export default function ClientDetail({
     }
     if (isPreviousPaymentRecord(payment)) return;
     if (payment) setReceiptPayment(payment);
-  }, [addPaymentDisabledMessage, canPrintReceipts, globalDetailReady, onToast, requestGlobalDetailDataForAction]);
+  }, [addPaymentDisabledMessage, buildSharedReceiptDraftFromGroup, canPrintReceipts, globalDetailReady, lang, onToast, requestGlobalDetailDataForAction, store, t.sharedReceiptSaveError]);
 
   const closeReceiptSelector = React.useCallback(() => {
     setReceiptPayment(null);
+    setSharedReceiptDraft(null);
   }, []);
 
   const handleReceiptTypeSelect = React.useCallback(async (receiptType) => {
+    if (sharedReceiptDraft) {
+      const printed = printSharedReceipt({
+        receipt: sharedReceiptDraft,
+        program,
+        agency,
+        lang,
+        receiptType,
+      });
+      if (!printed) onToast?.(t.printWindowBlocked || "Unable to open the print window.", "error");
+      setSharedReceiptDraft(null);
+      return;
+    }
     if (!receiptPayment || !canPrintReceipts) return;
     if (!globalDetailReady) {
       await requestGlobalDetailDataForAction();
@@ -484,7 +610,7 @@ export default function ClientDetail({
     }
     printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments: globalPaymentRows });
     setReceiptPayment(null);
-  }, [agency, canPrintReceipts, client, globalDetailReady, globalPaymentRows, lang, program, receiptPayment, requestGlobalDetailDataForAction]);
+  }, [agency, canPrintReceipts, client, globalDetailReady, globalPaymentRows, lang, onToast, program, receiptPayment, requestGlobalDetailDataForAction, sharedReceiptDraft, t.printWindowBlocked]);
 
   const paymentBlockMessage = financialActionsRestricted
     ? addPaymentDisabledMessage
@@ -1049,6 +1175,7 @@ export default function ClientDetail({
             <PaymentRow key={pmt.id} payment={pmt}
               onPrint={() => openReceiptSelector(pmt)}
               canPrint={canPrintReceipts}
+              sharedReceiptLoadingId={sharedReceiptLoadingId}
               showActionsAlways={financialActionsRestricted}
               onDelete={async () => {
                 const ready = await requestGlobalDetailDataForAction();
@@ -1113,7 +1240,7 @@ export default function ClientDetail({
       </div>
 
       <ReceiptTypeSelector
-        open={Boolean(receiptPayment)}
+        open={Boolean(receiptPayment || sharedReceiptDraft)}
         onClose={closeReceiptSelector}
         onSelect={handleReceiptTypeSelect}
         t={t}
@@ -1218,15 +1345,18 @@ function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerm
   );
 }
 
-function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAlways = false }) {
+function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAlways = false, sharedReceiptLoadingId = "" }) {
   const { t, lang } = useLang();
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","إيداع بنكي":"bank","بطاقة بنكية":"payment","وقفة بنك":"bank","وقفة بنكية":"bank"};
   const isPrevious = isPreviousPaymentRecord(payment);
-  const isSharedReceiptPayment = Boolean(payment.groupPaymentId || payment.group_payment_id);
+  const sharedPaymentGroupId = getSharedPaymentGroupId(payment);
+  const isSharedReceiptPayment = Boolean(sharedPaymentGroupId);
+  const sharedReceiptLoading = Boolean(sharedPaymentGroupId && sharedReceiptLoadingId === sharedPaymentGroupId);
   const legacyReceiptNumber = getLegacyReceiptNumber(payment);
   const previousPaymentLabel = t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة");
   const sharedReceiptLabel = t.sharedReceipt || (lang === "fr" ? "Reçu commun" : lang === "en" ? "Shared receipt" : "وصل مشترك");
+  const printSharedReceiptLabel = t.sharedReceiptPrint || (lang === "fr" ? "Imprimer le reçu commun" : lang === "en" ? "Print shared receipt" : "طباعة الوصل المشترك");
   const oldReceiptLabel = t.oldReceipt || (lang === "fr" ? "Ancien reçu" : lang === "en" ? "Old receipt" : "وصل قديم");
   const extraDetails = [
     payment.chequeNumber ? `${t.chequeNumber || "رقم الشيك"}: ${payment.chequeNumber}` : "",
@@ -1306,18 +1436,28 @@ function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAl
           )}
         </div>
       </div>
-      {(hov || showActionsAlways) && (
+      {(hov || showActionsAlways || (isSharedReceiptPayment && canPrint)) && (
         <div style={{ display:"flex", gap:5, flexShrink:0 }}>
-          {!isPrevious && canPrint && (
-            <button onClick={onPrint} style={{ background:"rgba(212,175,55,.1)",
+          {canPrint && (isSharedReceiptPayment || !isPrevious) && (
+            <button
+              onClick={onPrint}
+              disabled={sharedReceiptLoading}
+              title={isSharedReceiptPayment ? printSharedReceiptLabel : undefined}
+              aria-label={isSharedReceiptPayment ? printSharedReceiptLabel : undefined}
+              style={{ background:"rgba(212,175,55,.1)",
               border:"1px solid rgba(212,175,55,.2)", color:theme.colors.gold,
               borderRadius:8, padding:"3px 8px", fontSize:11,
-              cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}><AppIcon name="print" size={13} color={theme.colors.gold} /></button>
+              cursor:sharedReceiptLoading ? "wait" : "pointer", fontFamily:"'Cairo',sans-serif", opacity:sharedReceiptLoading ? 0.65 : 1 }}
+            >
+              <AppIcon name="print" size={13} color={theme.colors.gold} />
+            </button>
           )}
-          <button onClick={onDelete} style={{ background:"rgba(239,68,68,.1)",
-            border:"1px solid rgba(239,68,68,.2)", color:"#ef4444",
-            borderRadius:8, padding:"3px 8px", fontSize:11,
-            cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>{t.delete}</button>
+          {(hov || showActionsAlways) && (
+            <button onClick={onDelete} style={{ background:"rgba(239,68,68,.1)",
+              border:"1px solid rgba(239,68,68,.2)", color:"#ef4444",
+              borderRadius:8, padding:"3px 8px", fontSize:11,
+              cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>{t.delete}</button>
+          )}
         </div>
       )}
     </div>
