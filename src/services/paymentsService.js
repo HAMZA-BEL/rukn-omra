@@ -22,6 +22,10 @@ export function createPreviousPayment(payment, agencyId) {
   return db.payments.createPrevious(payment, agencyId);
 }
 
+export function createSharedReceipt(payload, agencyId) {
+  return db.payments.createSharedReceipt(payload, agencyId);
+}
+
 export function deletePayment(id, agencyId) {
   return db.payments.delete(id, agencyId);
 }

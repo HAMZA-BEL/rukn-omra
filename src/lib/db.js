@@ -340,6 +340,7 @@ const PAYMENT_SELECT_COLUMNS = [
   "note",
   "payment_type",
   "legacy_receipt_number",
+  "group_payment_id",
   "status",
   "trashed_at",
   "deleted_at",
@@ -569,6 +570,7 @@ const toPayment = (p, agencyId) => {
     note:       cleanString(p.note ?? p.notes),
     payment_type: normalized.paymentType,
     legacy_receipt_number: cleanString(normalized.legacyReceiptNumber),
+    group_payment_id: normalizeForeignKey(p.groupPaymentId ?? p.group_payment_id),
     status: p.status ?? "active",
     trashed_at: p.trashedAt ?? p.trashed_at ?? null,
     deleted_at: p.deletedAt ?? p.deleted_at ?? null,
@@ -606,6 +608,8 @@ const fromPayment = (row) => {
     is_previous_payment: normalized.isPreviousPayment,
     legacyReceiptNumber: normalized.legacyReceiptNumber,
     legacy_receipt_number: normalized.legacyReceiptNumber,
+    groupPaymentId: row.group_payment_id || "",
+    group_payment_id: row.group_payment_id || "",
     note: normalized.note,
     notes: normalized.note,
     status: row.status || "active",
@@ -615,6 +619,44 @@ const fromPayment = (row) => {
     deleted_at: row.deleted_at || "",
   };
 };
+
+const fromPaymentGroup = (row = {}) => ({
+  id: row.id,
+  agencyId: row.agency_id,
+  agency_id: row.agency_id,
+  programId: row.program_id,
+  program_id: row.program_id,
+  payerClientId: row.payer_client_id || "",
+  payer_client_id: row.payer_client_id || "",
+  payerName: row.payer_name || "",
+  payer_name: row.payer_name || "",
+  receiptNumber: row.receipt_number || "",
+  receipt_number: row.receipt_number || "",
+  paymentType: row.payment_type || "normal",
+  payment_type: row.payment_type || "normal",
+  paymentMethod: row.payment_method || "",
+  payment_method: row.payment_method || "",
+  chequeNumber: row.cheque_number || "",
+  cheque_number: row.cheque_number || "",
+  paidBy: row.paid_by || "",
+  paid_by: row.paid_by || "",
+  paymentDate: row.payment_date || "",
+  payment_date: row.payment_date || "",
+  totalAmount: Number(row.total_amount || 0),
+  total_amount: Number(row.total_amount || 0),
+  notes: row.notes || "",
+  note: row.notes || "",
+  coveredClients: Array.isArray(row.covered_clients) ? row.covered_clients : [],
+  covered_clients: Array.isArray(row.covered_clients) ? row.covered_clients : [],
+  createdBy: row.created_by || "",
+  created_by: row.created_by || "",
+  createdAt: row.created_at || "",
+  created_at: row.created_at || "",
+  updatedAt: row.updated_at || "",
+  updated_at: row.updated_at || "",
+  deletedAt: row.deleted_at || "",
+  deleted_at: row.deleted_at || "",
+});
 
 const fromInvoice = (row) => ({
   id: row.id,
@@ -1520,6 +1562,37 @@ export const db = {
         p_payment_id: payment.id ?? null,
       });
       return { data: data ? fromPayment(data) : null, error };
+    },
+    async createSharedReceipt(payload = {}, agencyId) {
+      const coveredClients = Array.isArray(payload.coveredClients || payload.covered_clients)
+        ? (payload.coveredClients || payload.covered_clients)
+        : [];
+      const { data, error } = await supabase.rpc("create_shared_receipt", {
+        p_agency_id: agencyId,
+        p_program_id: normalizeForeignKey(payload.programId ?? payload.program_id),
+        p_payer_client_id: normalizeForeignKey(payload.payerClientId ?? payload.payer_client_id),
+        p_payer_name: cleanString(payload.payerName ?? payload.payer_name),
+        p_payment_type: payload.paymentType ?? payload.payment_type ?? "normal",
+        p_payment_method: payload.paymentMethod ?? payload.payment_method ?? payload.method ?? null,
+        p_receipt_number: cleanString(payload.receiptNumber ?? payload.receipt_number ?? payload.legacyReceiptNumber ?? payload.legacy_receipt_number),
+        p_cheque_number: cleanString(payload.chequeNumber ?? payload.cheque_number ?? payload.checkNumber ?? payload.check_number),
+        p_paid_by: cleanString(payload.paidBy ?? payload.paid_by),
+        p_payment_date: payload.paymentDate ?? payload.payment_date ?? payload.date ?? null,
+        p_total_amount: payload.totalAmount ?? payload.total_amount ?? payload.amount ?? null,
+        p_notes: payload.notes ?? payload.note ?? null,
+        p_covered_clients: coveredClients,
+      });
+      const parsed = parseRpcJson(data) || {};
+      return {
+        data: data ? {
+          paymentGroup: parsed.payment_group ? fromPaymentGroup(parsed.payment_group) : null,
+          payment_group: parsed.payment_group ? fromPaymentGroup(parsed.payment_group) : null,
+          payments: Array.isArray(parsed.payments) ? parsed.payments.map(fromPayment) : [],
+          receiptNumber: parsed.receipt_number || "",
+          receipt_number: parsed.receipt_number || "",
+        } : null,
+        error,
+      };
     },
     async delete(id, agencyId) {
       if (!agencyId || !id) return { data: null, error: null };

@@ -3934,6 +3934,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
 
   const handleClientDataChanged = React.useCallback((change = {}) => {
     if (change?.payment) upsertScopedProgramPayment(change.payment, change.clientId);
+    if (Array.isArray(change?.payments)) {
+      change.payments.forEach((payment) => upsertScopedProgramPayment(payment, change.clientId));
+    }
     refreshScopedProgramDetail(change);
   }, [refreshScopedProgramDetail, upsertScopedProgramPayment]);
 

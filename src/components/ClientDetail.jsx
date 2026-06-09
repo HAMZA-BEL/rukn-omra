@@ -1021,8 +1021,16 @@ export default function ClientDetail({
           agency={agency}
           clients={programClients}
           payments={sharedReceiptPayments}
+          store={store}
           onToast={onToast}
           usesServerReceipt={Boolean(store.isSupabaseEnabled && store.agencyId)}
+          onSave={(saved) => {
+            onDataChanged?.({
+              payments: saved?.payments || [],
+              paymentGroup: saved?.paymentGroup || saved?.payment_group || null,
+              clientId: client.id,
+            });
+          }}
         />
       )}
 
@@ -1215,8 +1223,10 @@ function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAl
   const [hov, setHov] = React.useState(false);
   const icons = {"نقدًا":"banknote","تحويل بنكي":"bank","شيك":"file","إيداع بنكي":"bank","بطاقة بنكية":"payment","وقفة بنك":"bank","وقفة بنكية":"bank"};
   const isPrevious = isPreviousPaymentRecord(payment);
+  const isSharedReceiptPayment = Boolean(payment.groupPaymentId || payment.group_payment_id);
   const legacyReceiptNumber = getLegacyReceiptNumber(payment);
   const previousPaymentLabel = t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة");
+  const sharedReceiptLabel = t.sharedReceipt || (lang === "fr" ? "Reçu commun" : lang === "en" ? "Shared receipt" : "وصل مشترك");
   const oldReceiptLabel = t.oldReceipt || (lang === "fr" ? "Ancien reçu" : lang === "en" ? "Old receipt" : "وصل قديم");
   const extraDetails = [
     payment.chequeNumber ? `${t.chequeNumber || "رقم الشيك"}: ${payment.chequeNumber}` : "",
@@ -1256,7 +1266,7 @@ function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAl
               </strong>
             )}
           </div>
-          {(isPrevious || extraDetails || payment.note) && (
+          {(isPrevious || isSharedReceiptPayment || extraDetails || payment.note) && (
             <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginTop:3, lineHeight:1.35 }}>
               {isPrevious && (
                 <span style={{
@@ -1272,6 +1282,22 @@ function PaymentRow({ payment, onPrint, onDelete, canPrint = true, showActionsAl
                   whiteSpace:"nowrap",
                 }}>
                   {previousPaymentLabel}
+                </span>
+              )}
+              {isSharedReceiptPayment && (
+                <span style={{
+                  display:"inline-flex",
+                  alignItems:"center",
+                  padding:"1px 7px",
+                  borderRadius:999,
+                  background:"rgba(212,175,55,.11)",
+                  border:"1px solid rgba(212,175,55,.22)",
+                  color:theme.colors.gold,
+                  fontSize:10,
+                  fontWeight:800,
+                  whiteSpace:"nowrap",
+                }}>
+                  {sharedReceiptLabel}
                 </span>
               )}
               {extraDetails && <span style={{ fontSize:10.8, color:theme.colors.grey }}>{extraDetails}</span>}

@@ -123,7 +123,9 @@ export default function SharedReceiptModal({
   agency,
   clients = [],
   payments = [],
+  store,
   onToast,
+  onSave,
   usesServerReceipt = false,
 }) {
   const { t, lang, dir } = useLang();
@@ -148,6 +150,8 @@ export default function SharedReceiptModal({
   const [search, setSearch] = React.useState("");
   const [selectorOpen, setSelectorOpen] = React.useState(false);
   const [receiptDraft, setReceiptDraft] = React.useState(null);
+  const [savedReceipt, setSavedReceipt] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
   const [errors, setErrors] = React.useState({});
   const selectorRef = React.useRef(null);
 
@@ -186,6 +190,8 @@ export default function SharedReceiptModal({
     setSearch("");
     setSelectorOpen(false);
     setReceiptDraft(null);
+    setSavedReceipt(null);
+    setSaving(false);
     setErrors({});
   }, [open, payerId, t.paymentMethods]);
 
@@ -211,6 +217,7 @@ export default function SharedReceiptModal({
   const setField = (key) => (event) => {
     const value = event?.target?.value ?? "";
     setForm((current) => ({ ...current, [key]: value }));
+    setSavedReceipt(null);
     setErrors((current) => ({ ...current, [key]: "" }));
   };
 
@@ -299,6 +306,7 @@ export default function SharedReceiptModal({
   const toggleClient = (clientId) => {
     const id = String(clientId || "");
     if (!id) return;
+    setSavedReceipt(null);
     setSelectedIds((current) => {
       if (current.includes(id)) {
         if (id === payerId) return current;
@@ -312,17 +320,20 @@ export default function SharedReceiptModal({
   const removeClient = (clientId) => {
     const id = String(clientId || "");
     if (!id || id === payerId) return;
+    setSavedReceipt(null);
     setSelectedIds((current) => current.filter((item) => item !== id));
   };
 
   const setManualAllocation = (clientId) => (event) => {
     const value = event.target.value;
+    setSavedReceipt(null);
     setManualAllocations((current) => ({ ...current, [clientId]: value }));
     setErrors((current) => ({ ...current, allocations: "" }));
   };
 
   const handlePaymentTypeChange = (event) => {
     const nextType = event.target.value;
+    setSavedReceipt(null);
     setForm((current) => ({
       ...current,
       paymentType: nextType,
@@ -363,24 +374,153 @@ export default function SharedReceiptModal({
     return Object.keys(nextErrors).length === 0;
   };
 
-  const buildReceiptDraft = () => ({
-    receiptNo: isPreviousPayment ? form.legacyReceiptNumber.trim() : previewReceiptNumber,
-    paymentType: form.paymentType,
-    paymentTypeLabel: isPreviousPayment ? previousPaymentLabel : normalPaymentLabel,
+  const getPaymentTypeLabel = React.useCallback((paymentType) => (
+    paymentType === PAYMENT_TYPE_PREVIOUS ? previousPaymentLabel : normalPaymentLabel
+  ), [normalPaymentLabel, previousPaymentLabel]);
+
+  const buildReceiptDraftFromGroup = React.useCallback((paymentGroup = {}) => {
+    const groupPaymentType = paymentGroup.paymentType || paymentGroup.payment_type || PAYMENT_TYPE_NORMAL;
+    const coveredClients = Array.isArray(paymentGroup.coveredClients || paymentGroup.covered_clients)
+      ? (paymentGroup.coveredClients || paymentGroup.covered_clients)
+      : [];
+    const allocations = coveredClients.map((item) => {
+      const clientId = String(item.client_id || item.clientId || item.id || "");
+      const client = clientsById.get(clientId) || item.client || {};
+      const name = firstText(item.client_name, item.clientName, item.name, getClientDisplayName(client));
+      const allocatedAmount = Number(item.allocated_amount ?? item.allocatedAmount ?? item.amount ?? 0);
+      const totalPrice = Number(item.total_price ?? item.totalPrice ?? 0);
+      const paidBefore = Number(item.paid_before ?? item.paidBefore ?? 0);
+      const remainingAfter = Number(item.remaining_after ?? item.remainingAfter ?? Math.max(0, totalPrice - paidBefore - allocatedAmount));
+      return {
+        id: clientId,
+        client: client?.id ? client : { id: clientId, name },
+        name,
+        phone: firstText(item.phone, item.phone_number, getClientPhone(client)),
+        passport: firstText(item.passport, item.passport_no, item.passportNumber, item.passport_number, getClientPassport(client)),
+        totalPrice,
+        paidBefore,
+        allocatedAmount,
+        remainingAfter,
+      };
+    });
+    return {
+      receiptNo: firstText(paymentGroup.receiptNumber, paymentGroup.receipt_number),
+      paymentType: groupPaymentType,
+      paymentTypeLabel: getPaymentTypeLabel(groupPaymentType),
+      payerName: firstText(paymentGroup.payerName, paymentGroup.payer_name, getClientDisplayName(payerClient)),
+      amount: Number(paymentGroup.totalAmount ?? paymentGroup.total_amount ?? 0),
+      method: firstText(paymentGroup.paymentMethod, paymentGroup.payment_method),
+      date: firstText(paymentGroup.paymentDate, paymentGroup.payment_date),
+      legacyReceiptNumber: groupPaymentType === PAYMENT_TYPE_PREVIOUS
+        ? firstText(paymentGroup.receiptNumber, paymentGroup.receipt_number)
+        : "",
+      paidBy: firstText(paymentGroup.paidBy, paymentGroup.paid_by),
+      chequeNumber: firstText(paymentGroup.chequeNumber, paymentGroup.cheque_number),
+      note: firstText(paymentGroup.notes, paymentGroup.note),
+      allocations,
+    };
+  }, [clientsById, getPaymentTypeLabel, payerClient]);
+
+  const buildSavePayload = () => ({
+    programId,
+    payerClientId: payerId,
     payerName: getClientDisplayName(payerClient),
-    amount: totalAmount,
-    method: form.method,
-    date: form.date,
-    legacyReceiptNumber: form.legacyReceiptNumber.trim(),
-    paidBy: form.paidBy.trim(),
+    paymentType: form.paymentType,
+    paymentMethod: form.method,
+    receiptNumber: isPreviousPayment ? form.legacyReceiptNumber.trim() : "",
+    legacyReceiptNumber: isPreviousPayment ? form.legacyReceiptNumber.trim() : "",
     chequeNumber: form.chequeNumber.trim(),
-    note: form.note.trim(),
-    allocations: allocationRows,
+    paidBy: form.paidBy.trim(),
+    paymentDate: form.date,
+    totalAmount,
+    notes: form.note.trim(),
+    coveredClients: allocationRows.map((row) => ({
+      client_id: row.id,
+      clientId: row.id,
+      client_name: row.name,
+      clientName: row.name,
+      phone: row.phone,
+      passport: row.passport,
+      total_price: row.totalPrice,
+      totalPrice: row.totalPrice,
+      paid_before: row.paidBefore,
+      paidBefore: row.paidBefore,
+      allocated_amount: row.allocatedAmount,
+      allocatedAmount: row.allocatedAmount,
+      remaining_after: row.remainingAfter,
+      remainingAfter: row.remainingAfter,
+    })),
   });
 
-  const handlePreview = () => {
+  const handleSaveAndPreview = async () => {
+    if (savedReceipt?.paymentGroup || savedReceipt?.payment_group) {
+      setReceiptDraft(buildReceiptDraftFromGroup(savedReceipt.paymentGroup || savedReceipt.payment_group));
+      return;
+    }
     if (!validate()) return;
-    setReceiptDraft(buildReceiptDraft());
+    if (!store?.createSharedReceipt) {
+      onToast?.(
+        t.sharedReceiptSaveError || (
+          lang === "fr"
+            ? "Impossible d'enregistrer le reçu commun."
+            : lang === "en"
+              ? "Unable to save the shared receipt."
+              : "تعذر حفظ الوصل المشترك."
+        ),
+        "error",
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await store.createSharedReceipt(buildSavePayload());
+      const paymentGroup = result?.paymentGroup || result?.payment_group || null;
+      if (!paymentGroup) {
+        onToast?.(
+          t.sharedReceiptSaveError || (
+            lang === "fr"
+              ? "Impossible d'enregistrer le reçu commun."
+              : lang === "en"
+                ? "Unable to save the shared receipt."
+                : "تعذر حفظ الوصل المشترك."
+          ),
+          "error",
+        );
+        return;
+      }
+      const normalized = {
+        paymentGroup,
+        payment_group: paymentGroup,
+        payments: Array.isArray(result?.payments) ? result.payments : [],
+      };
+      setSavedReceipt(normalized);
+      onSave?.(normalized);
+      onToast?.(
+        t.sharedReceiptSaved || (
+          lang === "fr"
+            ? "Reçu commun enregistré"
+            : lang === "en"
+              ? "Shared receipt saved"
+              : "تم حفظ الوصل المشترك"
+        ),
+        "success",
+      );
+      setReceiptDraft(buildReceiptDraftFromGroup(paymentGroup));
+    } catch (error) {
+      console.error("[SharedReceiptModal] Save failed:", error);
+      onToast?.(
+        t.sharedReceiptSaveError || (
+          lang === "fr"
+            ? "Impossible d'enregistrer le reçu commun."
+            : lang === "en"
+              ? "Unable to save the shared receipt."
+              : "تعذر حفظ الوصل المشترك."
+        ),
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeReceiptCopySelector = React.useCallback(() => {
@@ -420,6 +560,8 @@ export default function SharedReceiptModal({
     equal: t.sharedReceiptEqualDistribution || (lang === "fr" ? "Répartition égale" : lang === "en" ? "Equal distribution" : "توزيع بالتساوي"),
     manual: t.sharedReceiptManualDistribution || (lang === "fr" ? "Répartition manuelle" : lang === "en" ? "Manual distribution" : "توزيع يدوي"),
     preview: t.sharedReceiptPreview || (lang === "fr" ? "Prévisualiser le reçu" : lang === "en" ? "Preview receipt" : "معاينة الوصل"),
+    save: t.sharedReceiptSave || (lang === "fr" ? "Enregistrer le reçu" : lang === "en" ? "Save receipt" : "حفظ الوصل"),
+    print: t.sharedReceiptPrint || (lang === "fr" ? "Imprimer le reçu" : lang === "en" ? "Print receipt" : "طباعة الوصل"),
   };
 
   if (!open) return null;
@@ -723,7 +865,10 @@ export default function SharedReceiptModal({
               <button
                 key={value}
                 type="button"
-                onClick={() => setForm((current) => ({ ...current, distributionMode: value }))}
+                onClick={() => {
+                  setSavedReceipt(null);
+                  setForm((current) => ({ ...current, distributionMode: value }));
+                }}
                 style={{
                   border: `1px solid ${form.distributionMode === value ? tc.gold : "var(--rukn-border-input)"}`,
                   borderRadius: 10,
@@ -805,17 +950,22 @@ export default function SharedReceiptModal({
         <p style={{ fontSize: 11.5, color: tc.grey, lineHeight: 1.6 }}>
           {t.sharedReceiptNoPersistenceNote || (
             lang === "fr"
-              ? "Phase 1 : ce reçu est une prévisualisation imprimable. Aucun paiement n’est enregistré."
+              ? "L’enregistrement crée un reçu commun et un paiement pour chaque pèlerin couvert."
               : lang === "en"
-                ? "Phase 1: this is a printable preview only. No payments are saved."
-                : "المرحلة الأولى: هذا وصل للمعاينة والطباعة فقط، ولا يتم حفظ أي دفعات."
+                ? "Saving creates one shared receipt and one payment for each covered pilgrim."
+                : "سيتم إنشاء وصل مشترك وحفظ دفعة لكل معتمر مشمول عند الضغط على حفظ الوصل."
           )}
         </p>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
-          <Button variant="primary" icon="print" onClick={handlePreview}>
-            {labels.preview}
+          <Button variant="ghost" onClick={onClose} disabled={saving}>{t.cancel}</Button>
+          <Button
+            variant="primary"
+            icon={savedReceipt ? "print" : "save"}
+            onClick={handleSaveAndPreview}
+            disabled={saving}
+          >
+            {saving ? (t.loading || "Loading...") : (savedReceipt ? labels.print : labels.save)}
           </Button>
         </div>
       </div>

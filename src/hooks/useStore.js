@@ -7,6 +7,7 @@ import { fetchNotifications } from "../services/notificationsService";
 import {
   createPreviousPayment,
   createPaymentWithReceipt,
+  createSharedReceipt as createSharedReceiptRemote,
   deletePayment as deletePaymentRemote,
   deleteTrashedPayment as deleteTrashedPaymentRemote,
   fetchPayments,
@@ -2744,6 +2745,111 @@ export function useStore(agencyId, onToast) {
     return pmt;
   }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, queueClientProgramArchiveSuggestionCheck, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
+  const createSharedReceipt = useCallback(async (payload = {}) => {
+    const coveredClients = Array.isArray(payload.coveredClients || payload.covered_clients)
+      ? (payload.coveredClients || payload.covered_clients)
+      : [];
+    const date = payload.paymentDate || payload.payment_date || payload.date || new Date().toISOString().split("T")[0];
+    const paymentType = payload.paymentType || payload.payment_type || "normal";
+    const receiptNumber = payload.receiptNumber || payload.receipt_number || payload.legacyReceiptNumber || payload.legacy_receipt_number || "";
+
+    if (isSupabaseEnabled && agencyId) {
+      setSyncStatus("syncing");
+      try {
+        const result = await createSharedReceiptRemote(payload, agencyId);
+        if (result.error) throw result.error;
+        if (!result.data?.paymentGroup) throw new Error("Shared receipt creation did not return a payment group");
+        const savedPayments = Array.isArray(result.data.payments) ? result.data.payments : [];
+        savedPayments.forEach((payment) => {
+          addPaymentLocal(payment);
+          const clientId = payment.clientId || payment.client_id;
+          invalidateClientPermanentDeletePreflight(clientId);
+          queueClientProgramArchiveSuggestionCheck(clientId);
+        });
+        const touchedClientIds = new Set(savedPayments.map((payment) => payment.clientId || payment.client_id).filter(Boolean));
+        const now = new Date().toISOString().split("T")[0];
+        if (touchedClientIds.size) {
+          setClients((prev) => prev.map((client) => (
+            touchedClientIds.has(client.id) ? { ...client, lastModified: now } : client
+          )));
+        }
+        const syncedAt = new Date();
+        setLastSynced(syncedAt);
+        try { localStorage.setItem(`umrah_last_synced_${ns}`, syncedAt.toISOString()); } catch {}
+        setSyncStatus("synced");
+        return result.data;
+      } catch (err) {
+        console.error("[Store] Shared receipt RPC failed:", err);
+        setSyncStatus("offline");
+        notify(trKey("storeLocalMode") || "يعمل النظام بالوضع المحلي — تعذّر الاتصال بالسحابة", "error");
+        return null;
+      }
+    }
+
+    const groupId = genId();
+    const localReceiptNumber = paymentType === PAYMENT_TYPE_PREVIOUS
+      ? receiptNumber
+      : `REC-${String(payments.length + 1).padStart(3, "0")}`;
+    const localPayments = coveredClients.map((item) => {
+      const clientId = item.client_id || item.clientId || item.id;
+      const amount = Number(item.allocated_amount ?? item.allocatedAmount ?? 0);
+      return normalizePaymentRecord({
+        id: genId(),
+        clientId,
+        client_id: clientId,
+        amount,
+        date,
+        method: payload.paymentMethod || payload.payment_method || payload.method || "",
+        payment_method: payload.paymentMethod || payload.payment_method || payload.method || "",
+        receiptNo: localReceiptNumber,
+        receipt_no: localReceiptNumber,
+        receiptNumber: localReceiptNumber,
+        receipt_number: localReceiptNumber,
+        paymentType,
+        payment_type: paymentType,
+        isPreviousPayment: paymentType === PAYMENT_TYPE_PREVIOUS,
+        is_previous_payment: paymentType === PAYMENT_TYPE_PREVIOUS,
+        legacyReceiptNumber: paymentType === PAYMENT_TYPE_PREVIOUS ? localReceiptNumber : "",
+        legacy_receipt_number: paymentType === PAYMENT_TYPE_PREVIOUS ? localReceiptNumber : "",
+        chequeNumber: payload.chequeNumber || payload.cheque_number || "",
+        cheque_number: payload.chequeNumber || payload.cheque_number || "",
+        paidBy: payload.paidBy || payload.paid_by || "",
+        paid_by: payload.paidBy || payload.paid_by || "",
+        note: payload.notes || payload.note || "",
+        notes: payload.notes || payload.note || "",
+        groupPaymentId: groupId,
+        group_payment_id: groupId,
+      });
+    });
+    localPayments.forEach(addPaymentLocal);
+    const paymentGroup = {
+      id: groupId,
+      programId: payload.programId || payload.program_id || "",
+      payerClientId: payload.payerClientId || payload.payer_client_id || "",
+      payerName: payload.payerName || payload.payer_name || "",
+      receiptNumber: localReceiptNumber,
+      receipt_number: localReceiptNumber,
+      paymentType,
+      payment_type: paymentType,
+      paymentMethod: payload.paymentMethod || payload.payment_method || payload.method || "",
+      payment_method: payload.paymentMethod || payload.payment_method || payload.method || "",
+      chequeNumber: payload.chequeNumber || payload.cheque_number || "",
+      paidBy: payload.paidBy || payload.paid_by || "",
+      paymentDate: date,
+      totalAmount: Number(payload.totalAmount || payload.total_amount || payload.amount || 0),
+      notes: payload.notes || payload.note || "",
+      coveredClients,
+      covered_clients: coveredClients,
+    };
+    logActivity(
+      "shared_receipt_create",
+      translateActivityDescription(`تم إنشاء وصل مشترك بقيمة ${formatCurrency(paymentGroup.totalAmount, getUiLang())} عن ${coveredClients.length} معتمرين — الدافع: ${paymentGroup.payerName}`),
+      paymentGroup.payerName,
+      { skipRemote: isSupabaseEnabled }
+    );
+    return { paymentGroup, payment_group: paymentGroup, payments: localPayments, receiptNumber: localReceiptNumber, receipt_number: localReceiptNumber };
+  }, [addPaymentLocal, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, ns, payments.length, queueClientProgramArchiveSuggestionCheck, setClients]);
+
   const deletePayment = useCallback((id, options = {}) => {
     const p = payments.find(x => x.id === id);
     const clientId = p?.clientId || p?.client_id || options.clientId || options.client_id || "";
@@ -3398,7 +3504,7 @@ export function useStore(agencyId, onToast) {
     createAgencyUser,
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
-    addPayment, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
+    addPayment, createSharedReceipt, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
     addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,

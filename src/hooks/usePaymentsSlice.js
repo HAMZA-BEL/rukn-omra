@@ -45,6 +45,8 @@ export function usePaymentsSlice() {
       is_previous_payment: noteMeta.isPreviousPayment,
       legacyReceiptNumber: noteMeta.legacyReceiptNumber,
       legacy_receipt_number: noteMeta.legacyReceiptNumber,
+      groupPaymentId: row.group_payment_id || row.groupPaymentId || "",
+      group_payment_id: row.group_payment_id || row.groupPaymentId || "",
       note: noteMeta.note,
       notes: noteMeta.note,
       chequeNumber,
