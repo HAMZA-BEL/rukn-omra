@@ -688,6 +688,7 @@ const ROOMING_CITY_LABELS = {
   makkah: "تسكين مكة",
   madinah: "تسكين المدينة",
 };
+const getOppositeRoomingCity = (city) => (city === "madinah" ? "makkah" : "madinah");
 const ROOMING_COLORS = ["#fef3c7", "#dcfce7", "#e0f2fe", "#fce7f3", "#ede9fe", "#fee2e2"];
 const ROOMING_ROOM_OPTIONS = [
   { value: "single", label: "فردية", capacity: 1 },
@@ -5480,6 +5481,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
   const [roomingLoadStatus, setRoomingLoadStatus] = React.useState("idle");
   const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
+  const [roomingCopyBusy, setRoomingCopyBusy] = React.useState(false);
+  const [roomingCopyModal, setRoomingCopyModal] = React.useState({
+    open: false,
+    sourceCity: "",
+    targetCity: "",
+    sourceRooms: [],
+    sourceRoomLinks: [],
+    mode: "rooms",
+    targetAction: "append",
+    useTargetHotels: true,
+    replaceConfirmed: false,
+  });
   const [draggingClientId, setDraggingClientId] = React.useState(null);
   const [hoveredDropRoomId, setHoveredDropRoomId] = React.useState(null);
   const flowRef = React.useRef(null);
@@ -5501,6 +5514,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const draggingClientIdRef = React.useRef(null);
   const roomModalOpenRef = React.useRef(false);
   const pendingDropRef = React.useRef(null);
+  const roomingCopyModalOpenRef = React.useRef(false);
 
   const fullWorkspace = roomingWorkspaceMode !== "normal";
   const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
@@ -5510,6 +5524,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   draggingClientIdRef.current = draggingClientId;
   roomModalOpenRef.current = roomModal.open;
   pendingDropRef.current = pendingDrop;
+  roomingCopyModalOpenRef.current = roomingCopyModal.open;
   const packageByLevel = React.useMemo(() => {
     const map = new Map();
     packages.forEach((pkg) => map.set(pkg.level, pkg));
@@ -5658,6 +5673,33 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     { value: "default", label: roomingPrintLabels.defaultLayout },
     { value: "arranged", label: roomingPrintLabels.arrangedLayout },
   ]), [roomingPrintLabels]);
+  const roomingCopySourceCity = getOppositeRoomingCity(city);
+  const roomingCityShortLabels = React.useMemo(() => ({
+    makkah: t.makkah || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
+    madinah: t.madinah || (lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة"),
+  }), [lang, t]);
+  const roomingCopyPeopleTerm = React.useMemo(() => {
+    const isHajj = getProgramKind(program) === "hajj";
+    if (isHajj) return t.roomingCopyPeopleHajj || (lang === "fr" ? "pèlerins du Hajj" : lang === "en" ? "hajj pilgrims" : "الحجاج");
+    return t.roomingCopyPeopleUmrah || (lang === "fr" ? "pèlerins" : lang === "en" ? "pilgrims" : "المعتمرون");
+  }, [lang, program, t]);
+  const roomingCopyButtonLabel = React.useMemo(() => (
+    tr("roomingCopyFromCity", { city: roomingCityShortLabels[roomingCopySourceCity] })
+      || (lang === "fr"
+        ? `Copier depuis ${roomingCityShortLabels[roomingCopySourceCity]}`
+        : lang === "en"
+          ? `Copy from ${roomingCityShortLabels[roomingCopySourceCity]}`
+          : `نسخ من ${roomingCityShortLabels[roomingCopySourceCity]}`)
+  ), [lang, roomingCityShortLabels, roomingCopySourceCity, tr]);
+  const roomingCopyModalTitle = React.useMemo(() => {
+    const sourceCity = roomingCopyModal.sourceCity || roomingCopySourceCity;
+    return tr("roomingCopyTitle", { city: roomingCityShortLabels[sourceCity] })
+      || (lang === "fr"
+        ? `Copier l’hébergement depuis ${roomingCityShortLabels[sourceCity]}`
+        : lang === "en"
+          ? `Copy rooming from ${roomingCityShortLabels[sourceCity]}`
+          : `نسخ التسكين من ${roomingCityShortLabels[sourceCity]}`);
+  }, [lang, roomingCityShortLabels, roomingCopyModal.sourceCity, roomingCopySourceCity, tr]);
 
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
@@ -5735,6 +5777,56 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
     return { rooms: [], unassigned: [], roomLinks: [], version: 4 };
   }, [agencyId, roomingEligibleClients, program.id]);
+
+  const loadRoomingStateForCopy = React.useCallback(async (targetCity) => {
+    if (canPersistRoomingRemote) {
+      const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, targetCity);
+      if (error) {
+        console.error("[rooming] copy source load failed", error);
+      } else if (data) {
+        const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
+        const payload = buildCanvasPayload(targetCity, loaded.rooms, loaded.unassigned, loaded.roomLinks);
+        writeCanvasCache(targetCity, payload);
+        return sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
+      }
+    }
+    return sanitizeRoomingStateForEligibleClients(readCanvasStateFromStorage(targetCity), roomingEligibleClientIds);
+  }, [
+    agencyId,
+    buildCanvasPayload,
+    canPersistRoomingRemote,
+    program.id,
+    readCanvasStateFromStorage,
+    roomingEligibleClients,
+    roomingEligibleClientIds,
+    writeCanvasCache,
+  ]);
+
+  const getTargetHotelOptionsForCopy = React.useCallback((targetCity) => {
+    const values = new Set(getProgramHotelsForCity(program, packages, targetCity));
+    if (targetCity === city) {
+      hotelOptions.forEach((hotel) => {
+        if (String(hotel || "").trim()) values.add(String(hotel).trim());
+      });
+    }
+    return Array.from(values);
+  }, [city, hotelOptions, packages, program]);
+
+  const resolveCopiedRoomHotel = React.useCallback((room, sourceCity, targetCity, useTargetHotels) => {
+    const sourceHotel = String(room?.hotel || "").trim();
+    const targetHotels = getTargetHotelOptionsForCopy(targetCity);
+    const targetHotelByKey = new Map(targetHotels.map((hotel) => [normalizeRoomingHotel(hotel), hotel]));
+    const sameTargetHotel = sourceHotel ? targetHotelByKey.get(normalizeRoomingHotel(sourceHotel)) : "";
+    if (sameTargetHotel) return sameTargetHotel;
+
+    if (useTargetHotels) {
+      const sourcePackage = findRoomingPackageFromRoom(room, packages, sourceCity);
+      const targetPackageHotel = String(getRoomingPackageHotel(sourcePackage, targetCity) || "").trim();
+      if (targetPackageHotel) return targetPackageHotel;
+    }
+
+    return "";
+  }, [getTargetHotelOptionsForCopy, packages]);
 
   const applyLoadedRoomingState = React.useCallback((loaded, sourceUpdatedAt = null, options = {}) => {
     const resetInteraction = options.resetInteraction !== false;
@@ -5836,6 +5928,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     || Boolean(roomDragActiveRef.current)
     || Boolean(roomModalOpenRef.current)
     || Boolean(pendingDropRef.current)
+    || Boolean(roomingCopyModalOpenRef.current)
   ), []);
 
   const fetchAndApplyRealtimeRooming = React.useCallback(async () => {
@@ -5996,7 +6089,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const previousOverflow = document.body.style.overflow;
     const onKeyDown = (event) => {
       if (event.key !== "Escape") return;
-      const modalOpen = roomModal.open || pickerOpen || Boolean(pendingDrop) || roomingPrintSettingsOpen;
+      const modalOpen = roomModal.open || pickerOpen || Boolean(pendingDrop) || roomingPrintSettingsOpen || roomingCopyModal.open;
       if (!modalOpen) exitRoomingWorkspace();
     };
     document.body.style.overflow = "hidden";
@@ -6005,7 +6098,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [exitRoomingWorkspace, fullWorkspace, pendingDrop, pickerOpen, roomModal.open, roomingPrintSettingsOpen]);
+  }, [exitRoomingWorkspace, fullWorkspace, pendingDrop, pickerOpen, roomModal.open, roomingCopyModal.open, roomingPrintSettingsOpen]);
 
   const saveCanvas = React.useCallback(async (notify = true) => {
     const revision = roomingRevisionRef.current;
@@ -6849,6 +6942,215 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     markDirty();
     onToast?.(t.roomingRoomCopied || "تم نسخ الغرفة بدون المعتمرين", "success");
   }, [rooms, getNextRoomNumber, findFreePositionForRoom, markDirty, onToast]);
+
+  const openCopyRoomingModal = React.useCallback(async () => {
+    const sourceCity = getOppositeRoomingCity(city);
+    setRoomingCopyBusy(true);
+    try {
+      const sourceState = await loadRoomingStateForCopy(sourceCity);
+      const sourceRooms = Array.isArray(sourceState.rooms) ? sourceState.rooms : [];
+      if (!sourceRooms.length) {
+        onToast?.(
+          tr("roomingCopyNoDataFromCity", { city: roomingCityShortLabels[sourceCity] })
+            || (lang === "fr"
+              ? `Aucune donnée d’hébergement trouvée à ${roomingCityShortLabels[sourceCity]} à copier.`
+              : lang === "en"
+                ? `No rooming data found in ${roomingCityShortLabels[sourceCity]} to copy from.`
+                : `لا توجد بيانات تسكين في ${roomingCityShortLabels[sourceCity]} لنسخها.`),
+          "warning"
+        );
+        return;
+      }
+      setRoomingCopyModal({
+        open: true,
+        sourceCity,
+        targetCity: city,
+        sourceRooms,
+        sourceRoomLinks: Array.isArray(sourceState.roomLinks) ? sourceState.roomLinks : [],
+        mode: "rooms",
+        targetAction: rooms.length ? "append" : "replace",
+        useTargetHotels: true,
+        replaceConfirmed: false,
+      });
+    } catch (error) {
+      console.error("[rooming] copy open failed", error);
+      onToast?.(t.roomingCopyFailed || (lang === "fr" ? "Impossible de copier l’hébergement." : lang === "en" ? "Unable to copy rooming." : "تعذر نسخ التسكين."), "error");
+    } finally {
+      setRoomingCopyBusy(false);
+    }
+  }, [city, lang, loadRoomingStateForCopy, onToast, rooms.length, roomingCityShortLabels, t.roomingCopyFailed, tr]);
+
+  const closeCopyRoomingModal = React.useCallback(() => {
+    setRoomingCopyModal((current) => ({ ...current, open: false }));
+  }, []);
+
+  const buildCopiedRoomingState = React.useCallback((copyOptions) => {
+    const {
+      sourceCity,
+      targetCity,
+      sourceRooms = [],
+      sourceRoomLinks = [],
+      mode = "rooms",
+      targetAction = "append",
+      useTargetHotels = true,
+    } = copyOptions || {};
+    const replaceTarget = targetAction === "replace";
+    const existingRooms = replaceTarget ? [] : rooms;
+    const copiedRoomIdBySourceId = new Map();
+    const copiedRooms = [];
+    const now = new Date().toISOString();
+    const assignedIds = new Set(existingRooms.flatMap((room) => Array.isArray(room.occupantIds) ? room.occupantIds : []));
+    const existingRoomNumbers = existingRooms
+      .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const firstAppendRoomNumber = (existingRoomNumbers.length ? Math.max(...existingRoomNumbers) : 0) + 1;
+    let skippedAlreadyAssigned = 0;
+    let skippedUnavailable = 0;
+    let skippedCapacity = 0;
+
+    sourceRooms.forEach((sourceRoom, index) => {
+      const newRoomId = createRoomId();
+      copiedRoomIdBySourceId.set(sourceRoom.id, newRoomId);
+      const roomType = normalizeRoomingRoomType(sourceRoom.roomType) || sourceRoom.roomType || getRoomingRoomTypeFromCapacity(sourceRoom.capacity);
+      const capacity = Math.max(1, Number(sourceRoom.capacity) || getRoomingCapacity(roomType));
+      const occupantIds = [];
+
+      if (mode === "distribution") {
+        (Array.isArray(sourceRoom.occupantIds) ? sourceRoom.occupantIds : []).forEach((clientId) => {
+          if (!clientsById[clientId]) {
+            skippedUnavailable += 1;
+            return;
+          }
+          if (assignedIds.has(clientId)) {
+            skippedAlreadyAssigned += 1;
+            return;
+          }
+          if (occupantIds.length >= capacity) {
+            skippedCapacity += 1;
+            return;
+          }
+          occupantIds.push(clientId);
+          assignedIds.add(clientId);
+        });
+      }
+
+      const occupantIdSet = new Set(occupantIds);
+      const gridFallback = getRoomingGeneratedGridPosition(index, Math.min(ROOMING_LAYOUT_MAX_COLUMNS, Math.max(1, sourceRooms.length)), {
+        x: ROOMING_LAYOUT_START_X,
+        y: ROOMING_LAYOUT_START_Y,
+      });
+      const preferredPosition = {
+        x: Number.isFinite(Number(sourceRoom.x)) ? Number(sourceRoom.x) : gridFallback.x,
+        y: Number.isFinite(Number(sourceRoom.y)) ? Number(sourceRoom.y) : gridFallback.y,
+      };
+      const copiedRoom = {
+        ...sourceRoom,
+        id: newRoomId,
+        city: targetCity,
+        order: existingRooms.length + index,
+        roomNumber: replaceTarget
+          ? (sourceRoom.roomNumber || String(index + 1).padStart(2, "0"))
+          : String(firstAppendRoomNumber + index).padStart(2, "0"),
+        roomType,
+        category: sourceRoom.category || "male_only",
+        hotel: resolveCopiedRoomHotel(sourceRoom, sourceCity, targetCity, useTargetHotels),
+        capacity,
+        occupantIds,
+        genderOverrides: mode === "distribution" ? filterRoomingMapByClientIds(sourceRoom.genderOverrides, occupantIdSet) : {},
+        priceOverrides: mode === "distribution" ? filterRoomingMapByClientIds(sourceRoom.priceOverrides, occupantIdSet) : {},
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (replaceTarget) {
+        copiedRooms.push({ ...copiedRoom, x: preferredPosition.x, y: preferredPosition.y });
+        return;
+      }
+
+      const collisionNodes = [
+        ...existingRooms.map((room) => roomToCollisionNode(room)),
+        ...copiedRooms.map((room) => roomToCollisionNode(room)),
+      ];
+      const node = { ...roomToCollisionNode(copiedRoom), position: preferredPosition };
+      const position = findNearestFreeRoomingPosition(node, collisionNodes, preferredPosition);
+      copiedRooms.push({ ...copiedRoom, x: position.x, y: position.y });
+    });
+
+    const copiedRoomLinks = normalizeRoomingLinks(
+      (Array.isArray(sourceRoomLinks) ? sourceRoomLinks : []).map((link) => ({
+        sourceRoomId: copiedRoomIdBySourceId.get(link.sourceRoomId),
+        targetRoomId: copiedRoomIdBySourceId.get(link.targetRoomId),
+      })),
+      copiedRooms
+    );
+    const nextRooms = [...existingRooms, ...copiedRooms];
+    const nextRoomLinks = replaceTarget
+      ? copiedRoomLinks
+      : normalizeRoomingLinks([...roomLinks, ...copiedRoomLinks], nextRooms);
+    const nextAssignedIds = new Set(nextRooms.flatMap((room) => Array.isArray(room.occupantIds) ? room.occupantIds : []));
+    const nextUnassigned = roomingEligibleClients
+      .filter((client) => !nextAssignedIds.has(client.id))
+      .map((client) => ({ clientId: client.id, reason: "" }));
+
+    return {
+      rooms: nextRooms,
+      unassigned: nextUnassigned,
+      roomLinks: nextRoomLinks,
+      copiedRoomIds: copiedRooms.map((room) => room.id),
+      skippedAlreadyAssigned,
+      skippedUnavailable,
+      skippedCapacity,
+    };
+  }, [clientsById, resolveCopiedRoomHotel, roomLinks, roomToCollisionNode, roomingEligibleClients, rooms]);
+
+  const confirmCopyRooming = React.useCallback(() => {
+    const modal = roomingCopyModal;
+    if (!modal.open || !modal.sourceRooms.length) return;
+    const targetHasRooms = rooms.length > 0;
+    const replaceNeedsConfirmation = targetHasRooms && modal.targetAction === "replace" && !modal.replaceConfirmed;
+    if (replaceNeedsConfirmation) return;
+    if (modal.targetCity !== city) {
+      onToast?.(t.roomingCopyFailed || (lang === "fr" ? "Impossible de copier l’hébergement." : lang === "en" ? "Unable to copy rooming." : "تعذر نسخ التسكين."), "error");
+      return;
+    }
+
+    try {
+      const copied = buildCopiedRoomingState(modal);
+      setRooms(copied.rooms);
+      setUnassigned(copied.unassigned);
+      setRoomLinks(copied.roomLinks);
+      setSelectedRoomId(copied.copiedRoomIds[0] || null);
+      setSelectedRoomIds(new Set());
+      setSelectedUnassignedIds(new Set());
+      setRoomSelectionMode(false);
+      setLinkMode(false);
+      setLinkStartRoomId(null);
+      setSelectedRoomLinkId(null);
+      setRoomingCopyModal((current) => ({ ...current, open: false }));
+      markDirty();
+
+      if (modal.mode === "distribution") {
+        onToast?.(t.roomingCopyDistributionSuccess || (lang === "fr" ? "Chambres et répartition des pèlerins copiées avec succès." : lang === "en" ? "Rooms and pilgrim distribution copied successfully." : "تم نسخ الغرف وتوزيع المعتمرين بنجاح."), "success");
+      } else {
+        onToast?.(t.roomingCopyRoomsSuccess || (lang === "fr" ? "Chambres copiées avec succès." : lang === "en" ? "Rooms copied successfully." : "تم نسخ الغرف بنجاح."), "success");
+      }
+
+      if (copied.skippedAlreadyAssigned || copied.skippedUnavailable || copied.skippedCapacity) {
+        onToast?.(
+          tr("roomingCopySkippedPilgrims", { people: roomingCopyPeopleTerm })
+            || (lang === "fr"
+              ? `Certains ${roomingCopyPeopleTerm} ont été ignorés car ils sont déjà affectés dans cet hébergement.`
+              : lang === "en"
+                ? `Some ${roomingCopyPeopleTerm} were skipped because they were already assigned in this rooming.`
+                : `تم تخطي بعض ${roomingCopyPeopleTerm} لأنهم مسكنون مسبقًا في هذا التسكين.`),
+          "warning"
+        );
+      }
+    } catch (error) {
+      console.error("[rooming] copy failed", error);
+      onToast?.(t.roomingCopyFailed || (lang === "fr" ? "Impossible de copier l’hébergement." : lang === "en" ? "Unable to copy rooming." : "تعذر نسخ التسكين."), "error");
+    }
+  }, [buildCopiedRoomingState, city, lang, markDirty, onToast, roomingCopyModal, roomingCopyPeopleTerm, rooms.length, t, tr]);
 
   const toggleRoomLock = React.useCallback((roomId) => {
     setRooms((prev) => prev.map((room) => room.id === roomId
@@ -8203,6 +8505,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             <span>{t.addRooms || t.addRoom || "إضافة غرف"}</span>
           </RoomingToolbarButton>
           <RoomingToolbarButton
+            title={roomingCopyButtonLabel}
+            onClick={openCopyRoomingModal}
+            disabled={roomingCopyBusy || roomingLoadStatus === "loading"}
+            active={roomingCopyModal.open}
+            icon={<Copy size={15} />}
+          >
+            <span>{roomingCopyBusy ? (t.loading || "جاري التحميل...") : roomingCopyButtonLabel}</span>
+          </RoomingToolbarButton>
+          <RoomingToolbarButton
             title={roomingPrintLabels.title}
             onClick={() => setRoomingPrintSettingsOpen(true)}
             active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource || roomingPrintSettings.showBedNumbers}
@@ -8843,6 +9154,237 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             </aside>
           )}
         </div>
+
+        <Modal
+          open={roomingCopyModal.open}
+          onClose={closeCopyRoomingModal}
+          title={roomingCopyModalTitle}
+          width={560}
+          portalContainer={roomingModalPortalContainer}
+        >
+          <div className="rooming-modal-surface" style={{ display: "grid", gap: 14 }}>
+            <p style={{ color: "var(--rooming-text-soft)", fontSize: 13, lineHeight: 1.8, margin: 0 }}>
+              {tr("roomingCopyIntro", { people: roomingCopyPeopleTerm })
+                || (lang === "fr"
+                  ? `Vous pouvez copier uniquement la structure des chambres ou conserver la même répartition des ${roomingCopyPeopleTerm}.`
+                  : lang === "en"
+                    ? `You can copy the room structure only or keep the same ${roomingCopyPeopleTerm} distribution.`
+                    : `يمكنك نسخ هيكلة الغرف فقط أو الاحتفاظ بنفس توزيع ${roomingCopyPeopleTerm}.`)}
+            </p>
+
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              gap: 8,
+            }}>
+              <div style={{ padding: 10, borderRadius: 12, border: "1px solid var(--rooming-modal-section-border)", background: "var(--rooming-modal-section-bg)" }}>
+                <p style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 900, margin: 0 }}>{t.roomingCopySource || (lang === "fr" ? "Source" : lang === "en" ? "Source" : "المصدر")}</p>
+                <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 13, marginTop: 3 }}>
+                  {roomingCityShortLabels[roomingCopyModal.sourceCity] || "—"} · {roomingCopyModal.sourceRooms.length} {t.roomingRoomsUnit || "غرف"}
+                </strong>
+              </div>
+              <div style={{ padding: 10, borderRadius: 12, border: "1px solid var(--rooming-modal-section-border)", background: "var(--rooming-modal-section-bg)" }}>
+                <p style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 900, margin: 0 }}>{t.roomingCopyTarget || (lang === "fr" ? "Destination" : lang === "en" ? "Target" : "الوجهة")}</p>
+                <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 13, marginTop: 3 }}>
+                  {roomingCityShortLabels[roomingCopyModal.targetCity] || roomingCityShortLabels[city]} · {rooms.length} {t.roomingRoomsUnit || "غرف"}
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 9 }}>
+              {[
+                {
+                  value: "rooms",
+                  title: t.roomingCopyRoomsOnly || (lang === "fr" ? "Copier les chambres seulement" : lang === "en" ? "Copy rooms only" : "نسخ الغرف فقط"),
+                  description: tr("roomingCopyRoomsOnlyDesc", { people: roomingCopyPeopleTerm })
+                    || (lang === "fr"
+                      ? `Crée les mêmes chambres sans affecter de ${roomingCopyPeopleTerm}.`
+                      : lang === "en"
+                        ? `Creates the same rooms without assigning any ${roomingCopyPeopleTerm}.`
+                        : `ينشئ نفس الغرف دون تسكين أي من ${roomingCopyPeopleTerm}.`),
+                },
+                {
+                  value: "distribution",
+                  title: t.roomingCopyWithDistribution || (lang === "fr" ? "Copier avec la même répartition" : lang === "en" ? "Copy with same distribution" : "نسخ الغرف مع نفس التوزيع"),
+                  description: tr("roomingCopyWithDistributionDesc", { people: roomingCopyPeopleTerm })
+                    || (lang === "fr"
+                      ? `Préserve les groupes de ${roomingCopyPeopleTerm} dans chaque chambre, sans doublons.`
+                      : lang === "en"
+                        ? `Preserves the same ${roomingCopyPeopleTerm} grouping in each room without duplicates.`
+                        : `يحافظ على نفس مجموعات ${roomingCopyPeopleTerm} داخل كل غرفة بدون تكرار.`),
+                },
+              ].map((option) => {
+                const active = roomingCopyModal.mode === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setRoomingCopyModal((current) => ({ ...current, mode: option.value }))}
+                    style={{
+                      textAlign: "inherit",
+                      border: active ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-modal-section-border)",
+                      background: active ? "var(--rooming-button-active-bg)" : "var(--rooming-modal-section-bg)",
+                      color: "var(--rooming-text)",
+                      borderRadius: 12,
+                      padding: "11px 12px",
+                      cursor: "pointer",
+                      fontFamily: "'Cairo',sans-serif",
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 999,
+                        border: active ? "5px solid var(--rooming-button-active-text)" : "2px solid var(--rooming-input-border)",
+                        background: "var(--rooming-button-bg)",
+                        flexShrink: 0,
+                      }} />
+                      <strong style={{ color: active ? "var(--rooming-button-active-text)" : "var(--rooming-text)", fontSize: 13 }}>{option.title}</strong>
+                    </span>
+                    <small style={{ display: "block", color: "var(--rooming-muted)", fontSize: 11.5, lineHeight: 1.7, marginTop: 5 }}>{option.description}</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            <label style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              padding: "10px 12px",
+              border: "1px solid var(--rooming-modal-section-border)",
+              borderRadius: 12,
+              background: "var(--rooming-modal-section-bg)",
+              cursor: "pointer",
+            }}>
+              <input
+                type="checkbox"
+                checked={roomingCopyModal.useTargetHotels}
+                onChange={(event) => setRoomingCopyModal((current) => ({ ...current, useTargetHotels: event.target.checked }))}
+                style={{ marginTop: 4 }}
+              />
+              <span>
+                <strong style={{ display: "block", color: "var(--rooming-text)", fontSize: 13 }}>
+                  {t.roomingCopyUseTargetHotels || (lang === "fr" ? "Utiliser les hôtels de l’hébergement actuel quand c’est possible" : lang === "en" ? "Use hotels from the current rooming when possible" : "استعمال فنادق التسكين الحالي عند الإمكان")}
+                </strong>
+                <small style={{ display: "block", color: "var(--rooming-muted)", fontSize: 11.5, lineHeight: 1.7, marginTop: 3 }}>
+                  {t.roomingCopyUseTargetHotelsDesc || (lang === "fr"
+                    ? "La structure et la répartition sont conservées, avec correspondance vers les hôtels de la destination si une correspondance sûre existe."
+                    : lang === "en"
+                      ? "The structure and distribution are preserved while safely matching rooms to target-location hotels when possible."
+                      : "سيتم الحفاظ على الهيكلة والتوزيع مع مطابقة الغرف مع فنادق الوجهة فقط عند وجود تطابق آمن.")}
+                </small>
+              </span>
+            </label>
+
+            {rooms.length > 0 && (
+              <div style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid rgba(245,158,11,.30)",
+                background: "rgba(245,158,11,.10)",
+                color: "var(--rooming-text)",
+              }}>
+                <strong style={{ display: "block", fontSize: 12.5, marginBottom: 4 }}>
+                  {t.roomingCopyExistingWarningTitle || (lang === "fr" ? "Cet hébergement contient déjà des chambres" : lang === "en" ? "This rooming already contains rooms" : "هذا التسكين يحتوي على غرف مسبقًا")}
+                </strong>
+                <span style={{ display: "block", color: "var(--rooming-text-soft)", fontSize: 11.5, lineHeight: 1.7 }}>
+                  {t.roomingCopyExistingWarning || (lang === "fr"
+                    ? "Choisissez comment continuer avant de copier."
+                    : lang === "en"
+                      ? "Choose how you want to continue before copying."
+                      : "اختر كيف تريد المتابعة قبل النسخ.")}
+                </span>
+              </div>
+            )}
+
+            {rooms.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+                {[
+                  { value: "append", label: t.roomingCopyAppend || (lang === "fr" ? "Ajouter comme nouvelles chambres" : lang === "en" ? "Add as new rooms" : "إضافة كغرف جديدة") },
+                  { value: "replace", label: t.roomingCopyReplace || (lang === "fr" ? "Remplacer l’hébergement actuel" : lang === "en" ? "Replace current rooming" : "استبدال التسكين الحالي") },
+                ].map((action) => {
+                  const active = roomingCopyModal.targetAction === action.value;
+                  return (
+                    <button
+                      key={action.value}
+                      type="button"
+                      onClick={() => setRoomingCopyModal((current) => ({ ...current, targetAction: action.value, replaceConfirmed: action.value === "replace" ? current.replaceConfirmed : false }))}
+                      style={{
+                        border: active ? "1px solid rgba(37,99,235,.42)" : "1px solid var(--rooming-modal-section-border)",
+                        background: active ? "var(--rooming-button-active-bg)" : "var(--rooming-button-bg)",
+                        color: active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
+                        borderRadius: 11,
+                        padding: "9px 10px",
+                        cursor: "pointer",
+                        fontFamily: "'Cairo',sans-serif",
+                        fontSize: 12,
+                        fontWeight: 900,
+                      }}
+                    >
+                      {action.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {rooms.length > 0 && roomingCopyModal.targetAction === "replace" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 9, color: "var(--rooming-danger-text)", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={roomingCopyModal.replaceConfirmed}
+                  onChange={(event) => setRoomingCopyModal((current) => ({ ...current, replaceConfirmed: event.target.checked }))}
+                />
+                <span>{t.roomingCopyReplaceConfirm || (lang === "fr" ? "Je confirme le remplacement des chambres actuelles." : lang === "en" ? "I confirm replacing the current rooms." : "أؤكد استبدال الغرف الحالية.")}</span>
+              </label>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+              <button
+                type="button"
+                onClick={closeCopyRoomingModal}
+                style={{
+                  border: "1px solid var(--rooming-modal-section-border)",
+                  background: "var(--rooming-button-bg)",
+                  color: "var(--rooming-button-text)",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  cursor: "pointer",
+                  fontFamily: "'Cairo',sans-serif",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء")}
+              </button>
+              <button
+                type="button"
+                disabled={rooms.length > 0 && roomingCopyModal.targetAction === "replace" && !roomingCopyModal.replaceConfirmed}
+                onClick={confirmCopyRooming}
+                style={{
+                  border: "1px solid rgba(212,175,55,.48)",
+                  background: "linear-gradient(135deg,#d4af37,#f7d774)",
+                  color: "#111827",
+                  borderRadius: 10,
+                  padding: "8px 14px",
+                  cursor: rooms.length > 0 && roomingCopyModal.targetAction === "replace" && !roomingCopyModal.replaceConfirmed ? "not-allowed" : "pointer",
+                  opacity: rooms.length > 0 && roomingCopyModal.targetAction === "replace" && !roomingCopyModal.replaceConfirmed ? 0.55 : 1,
+                  fontFamily: "'Cairo',sans-serif",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {rooms.length > 0
+                  ? (roomingCopyModal.targetAction === "replace"
+                    ? (t.roomingCopyReplace || (lang === "fr" ? "Remplacer l’hébergement actuel" : lang === "en" ? "Replace current rooming" : "استبدال التسكين الحالي"))
+                    : (t.roomingCopyAppend || (lang === "fr" ? "Ajouter comme nouvelles chambres" : lang === "en" ? "Add as new rooms" : "إضافة كغرف جديدة")))
+                  : (t.roomingCopyAction || (lang === "fr" ? "Copier l’hébergement" : lang === "en" ? "Copy rooming" : "نسخ التسكين"))}
+              </button>
+            </div>
+          </div>
+        </Modal>
 
         <Modal
           open={roomingPrintSettingsOpen}

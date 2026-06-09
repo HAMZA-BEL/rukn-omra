@@ -4,6 +4,7 @@ import { StatusBadge, Button, GlassCard, Divider } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
+import SharedReceiptModal from "./SharedReceiptModal";
 import { printReceipt, printClientCard } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
@@ -166,6 +167,7 @@ export default function ClientDetail({
   const paymentDataLoading = Boolean(store.isSupabaseEnabled && !paymentsReady);
   const loadingLabel = t.loading || "Loading...";
   const [showPayForm, setShowPayForm] = React.useState(false);
+  const [showSharedReceiptModal, setShowSharedReceiptModal] = React.useState(false);
   const [badgePhotoUrl, setBadgePhotoUrl] = React.useState("");
   const [badgeBusy, setBadgeBusy] = React.useState(false);
   const [contractBusy, setContractBusy] = React.useState(false);
@@ -297,6 +299,11 @@ export default function ClientDetail({
     () => programClientsSource || clients.filter((item) => getClientProgramId(item) === clientProgramId),
     [clients, clientProgramId, programClientsSource]
   );
+  const sharedReceiptPayments = React.useMemo(() => {
+    if (scopedPaymentsReady) return Array.isArray(paymentsOverride) ? paymentsOverride : [];
+    if (globalPaymentsReady) return Array.isArray(store.payments) ? store.payments : [];
+    return [];
+  }, [globalPaymentsReady, paymentsOverride, scopedPaymentsReady, store.payments]);
   const badgeFileNumber = React.useMemo(() => {
     const index = programClients.findIndex((item) => item.id === client.id);
     return String(index >= 0 ? index + 1 : 1).padStart(3, "0");
@@ -508,8 +515,26 @@ export default function ClientDetail({
       await requestGlobalDetailDataForAction();
       return;
     }
+    setShowSharedReceiptModal(false);
     setShowPayForm(true);
   }, [canAddPayment, loadingLabel, onToast, paymentBlockMessage, paymentFormDataReady, paymentsReady, requestGlobalDetailDataForAction]);
+
+  const handleSharedReceiptClick = React.useCallback(async () => {
+    if (!paymentsReady) {
+      onToast?.(loadingLabel, "info");
+      return;
+    }
+    if (!canPrintReceipts) {
+      onToast?.(addPaymentDisabledMessage, "error");
+      return;
+    }
+    if (!paymentFormDataReady) {
+      await requestGlobalDetailDataForAction();
+      return;
+    }
+    setShowPayForm(false);
+    setShowSharedReceiptModal(true);
+  }, [addPaymentDisabledMessage, canPrintReceipts, loadingLabel, onToast, paymentFormDataReady, paymentsReady, requestGlobalDetailDataForAction]);
 
   React.useEffect(() => {
     if (canAddPayment || !showPayForm) return;
@@ -520,6 +545,11 @@ export default function ClientDetail({
     if (canPrintReceipts || !receiptPayment) return;
     setReceiptPayment(null);
   }, [canPrintReceipts, receiptPayment]);
+
+  React.useEffect(() => {
+    if (canPrintReceipts || !showSharedReceiptModal) return;
+    setShowSharedReceiptModal(false);
+  }, [canPrintReceipts, showSharedReceiptModal]);
 
   React.useEffect(() => {
     if (scopedPaymentsReady) return;
@@ -941,19 +971,32 @@ export default function ClientDetail({
         </div>
       )}
 
-      {paymentsReady && (financialActionsRestricted || displayStatus !== "cleared") && !showPayForm && (
-        <span title={financialActionsRestricted ? addPaymentDisabledMessage : undefined} style={{ display:"inline-flex", marginBottom:12 }}>
-          <Button
-            variant={canAddPayment ? "success" : "warning"}
-            icon={canAddPayment ? "plus" : "alert"}
-            disabled={financialActionsRestricted}
-            onClick={handleAddPaymentClick}
-          >
-            {financialActionsRestricted
-              ? t.addPayment
-              : canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
-          </Button>
-        </span>
+      {paymentsReady && !showPayForm && !showSharedReceiptModal && (financialActionsRestricted || displayStatus !== "cleared" || canPrintReceipts) && (
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:12 }}>
+          {(financialActionsRestricted || displayStatus !== "cleared") && (
+            <span title={financialActionsRestricted ? addPaymentDisabledMessage : undefined} style={{ display:"inline-flex" }}>
+              <Button
+                variant={canAddPayment ? "success" : "warning"}
+                icon={canAddPayment ? "plus" : "alert"}
+                disabled={financialActionsRestricted}
+                onClick={handleAddPaymentClick}
+              >
+                {financialActionsRestricted
+                  ? t.addPayment
+                  : canAddPayment ? t.addPayment : (t.paymentNotEligible || completionLabels.paymentNotEligible)}
+              </Button>
+            </span>
+          )}
+          {canPrintReceipts && (
+            <Button
+              variant="secondary"
+              icon="receipt"
+              onClick={handleSharedReceiptClick}
+            >
+              {t.sharedReceipt || (lang === "fr" ? "Reçu commun" : lang === "en" ? "Shared receipt" : "وصل مشترك")}
+            </Button>
+          )}
+        </div>
       )}
       {paymentsReady && paymentFormDataReady && showPayForm && canAddPayment && (
         <PaymentForm clientId={client.id} clientName={client.name} store={store}
@@ -968,6 +1011,19 @@ export default function ClientDetail({
             onDataChanged?.({ payment: savedPayment, clientId: client.id });
           }}
           onCancel={() => setShowPayForm(false)} />
+      )}
+      {paymentsReady && paymentFormDataReady && showSharedReceiptModal && canPrintReceipts && (
+        <SharedReceiptModal
+          open={showSharedReceiptModal}
+          onClose={() => setShowSharedReceiptModal(false)}
+          payerClient={client}
+          program={program}
+          agency={agency}
+          clients={programClients}
+          payments={sharedReceiptPayments}
+          onToast={onToast}
+          usesServerReceipt={Boolean(store.isSupabaseEnabled && store.agencyId)}
+        />
       )}
 
       {/* Payments */}

@@ -425,6 +425,122 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   return true;
 }
 
+export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, lang = "ar", receiptType = "agency" }) {
+  const isAr = lang === "ar";
+  const isAgencyReceipt = receiptType === "agency";
+  const money = (value) => formatCurrency(value, lang);
+  const receiptNo = cleanDisplay(receipt.receiptNo, "PREVIEW");
+  const receiptDate = formatPrintDate(receipt.date);
+  const payerName = cleanDisplay(receipt.payerName);
+  const paymentTypeLabel = cleanDisplay(receipt.paymentTypeLabel, "");
+  const paidBy = cleanDisplay(receipt.paidBy, "");
+  const agencyLogoUrl = cleanDisplay(agency?.logoUrl || agency?.logo_url, "");
+  const allocations = Array.isArray(receipt.allocations) ? receipt.allocations : [];
+  const terms = getParticipantTerminology(program, allocations[0]?.client || null, lang);
+  const title = isAgencyReceipt
+    ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
+    : terms.receiptTitle;
+  const totalAllocated = allocations.reduce((sum, row) => sum + toAmount(row.allocatedAmount), 0);
+  const coveredNames = allocations
+    .map((row) => cleanDisplay(row.name || getClientDisplayName(row.client), ""))
+    .filter(Boolean)
+    .join(isAr ? "، " : ", ");
+  const rowsHtml = allocations.map((row, index) => {
+    const name = cleanDisplay(row.name || getClientDisplayName(row.client));
+    const phone = cleanDisplay(row.phone || row.client?.phone || row.client?.phoneNumber, "");
+    const passport = cleanDisplay(row.passport || row.client?.passportNo || row.client?.passport?.number, "");
+    const details = [phone, passport].filter(Boolean).join(" / ");
+    return `
+      <tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(name)}${details ? `<div class="muted">${escapeHtml(details)}</div>` : ""}</td>
+        <td>${escapeHtml(money(row.totalPrice))}</td>
+        <td>${escapeHtml(money(row.paidBefore))}</td>
+        <td class="amount">${escapeHtml(money(row.allocatedAmount))}</td>
+        <td>${escapeHtml(money(row.remainingAfter))}</td>
+      </tr>`;
+  }).join("");
+  const detailsTableHtml = isAgencyReceipt ? `
+  <table class="covered">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>${label(lang, "الاسم", "Nom", "Name")}</th>
+        <th>${label(lang, "إجمالي السعر", "Prix total", "Total price")}</th>
+        <th>${label(lang, "المدفوع قبل الوصل", "Payé avant reçu", "Paid before")}</th>
+        <th>${label(lang, "المبلغ الموزع", "Montant réparti", "Allocated amount")}</th>
+        <th>${label(lang, "المتبقي بعد الدفع", "Restant après paiement", "Remaining after payment")}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+      <tr class="total-row">
+        <td colspan="4">${label(lang, "مجموع التوزيع", "Total réparti", "Total allocated")}</td>
+        <td colspan="2">${escapeHtml(money(totalAllocated))}</td>
+      </tr>
+    </tbody>
+  </table>` : "";
+  const signatureHtml = isAgencyReceipt ? `
+  <div class="signature">
+    <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
+    <div style="text-align:center"><div class="signature-box"></div>${label(lang, "توقيع الدافع", "Signature du payeur", "Payer signature")}</div>
+  </div>` : "";
+  const html = `<!DOCTYPE html>
+<html dir="${isAr?"rtl":"ltr"}" lang="${escapeHtml(lang)}">
+<head>
+<meta charset="UTF-8"/>
+<title>${escapeHtml(title)}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:Arial,sans-serif; font-size:12px; color:#111; background:#fff; }
+  .page { width:190mm; min-height:297mm; margin:0 auto; padding:${isAgencyReceipt ? "38mm 18mm 28mm" : "44mm 22mm 34mm"}; }
+  .receipt-logo { display:flex; justify-content:center; align-items:center; margin:-13mm 0 7mm; min-height:18mm; }
+  .receipt-logo img { display:block; max-width:42mm; max-height:18mm; object-fit:contain; }
+  .receipt-title { font-size:20px; font-weight:800; margin-bottom:8px; text-align:center; color:#111; }
+  .receipt-no { text-align:center; font-size:13px; color:#333; margin-bottom:16px; }
+  table { width:100%; border-collapse:collapse; }
+  .meta td { padding:7px 9px; border:1px solid #d8d8d8; font-size:12px; vertical-align:top; }
+  .meta td:first-child { font-weight:800; background:#f5f5f5; width:30%; }
+  .covered { margin-top:14px; }
+  .covered th, .covered td { padding:7px 8px; border:1px solid #d8d8d8; font-size:11px; vertical-align:top; }
+  .covered th { background:#1f2937; color:#fff; font-weight:800; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .covered td:first-child { text-align:center; width:8mm; color:#555; }
+  .covered .amount { font-weight:900; color:#111; white-space:nowrap; }
+  .muted { color:#555; font-size:10px; margin-top:2px; }
+  .total-row td { background:#f5f5f5; font-weight:900; color:#111; }
+  .signature { margin-top:28px; display:flex; justify-content:space-between; gap:24px; font-size:11px; }
+  .signature-box { border:1px dashed #777; width:155px; height:76px; margin-bottom:7px; }
+  @media print { @page { size:A4 portrait; margin:0; } }
+</style>
+</head>
+<body>
+<div class="page">
+  ${agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
+  <div class="receipt-title">${escapeHtml(title)}</div>
+  <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${escapeHtml(receiptNo)}</strong></div>
+  <table class="meta">
+    <tr><td>${label(lang, "الدافع", "Payeur", "Payer")}</td><td>${escapeHtml(payerName)}</td></tr>
+    <tr><td>${label(lang, "البرنامج", "Programme", "Program")}</td><td>${escapeHtml(program?.name || "—")}</td></tr>
+    <tr><td>${label(lang, "المعتمرون المشمولون", "Pèlerins couverts", "Covered pilgrims")}</td><td>${escapeHtml(coveredNames || "—")}</td></tr>
+    ${isAgencyReceipt && paymentTypeLabel ? `<tr><td>${label(lang, "نوع الدفعة", "Type de paiement", "Payment type")}</td><td>${escapeHtml(paymentTypeLabel)}</td></tr>` : ""}
+    <tr><td>${label(lang, "طريقة الدفع", "Mode de paiement", "Payment Method")}</td><td>${escapeHtml(translatePaymentMethod(receipt.method, lang))}</td></tr>
+    ${receipt.chequeNumber ? `<tr><td>${label(lang, "رقم الشيك", "N° chèque", "Cheque number")}</td><td>${escapeHtml(receipt.chequeNumber)}</td></tr>` : ""}
+    ${paidBy ? `<tr><td>${label(lang, "من طرف", "Payé par", "Paid by")}</td><td>${escapeHtml(paidBy)}</td></tr>` : ""}
+    <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${escapeHtml(receiptDate)}</td></tr>
+    ${receipt.note ? `<tr><td>${label(lang, "ملاحظات", "Notes", "Notes")}</td><td>${escapeHtml(receipt.note)}</td></tr>` : ""}
+    <tr><td>${label(lang, "المبلغ الإجمالي", "Montant total", "Total amount")}</td><td><strong>${escapeHtml(money(receipt.amount))}</strong></td></tr>
+  </table>
+  ${detailsTableHtml}
+  ${signatureHtml}
+</div>
+<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
+</body></html>`;
+  const w = openPrintWindow("width=900,height=700", lang);
+  if (!w) return false;
+  w.document.write(html); w.document.close();
+  return true;
+}
+
 export function printClientCard({ client, program, agency, lang = "ar", programClients = [] }) {
   const isAr = lang === "ar";  const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;  const p = client.passport || {};
   const terms = getParticipantTerminology(program, client, lang);
