@@ -99,6 +99,8 @@ const EMPTY_DASHBOARD_STATS = {
   unreadNotificationsCount: 0,
 };
 
+const DASHBOARD_REALTIME_REFRESH_DEBOUNCE_MS = 250;
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const generateUUID = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -706,6 +708,7 @@ export function useStore(agencyId, onToast) {
   const usersLoadPromiseRef = useRef(null);
   const backgroundHydrationStartedRef = useRef(false);
   const dashboardStatsPromiseRef = useRef(null);
+  const dashboardRealtimeRefreshTimerRef = useRef(null);
   const clientPermanentDeletePreflightCacheRef = useRef(new Map());
   const pendingArchiveSuggestionProgramIdsRef = useRef(new Set());
   const archiveSuggestionInitialScanDoneRef = useRef(false);
@@ -789,6 +792,35 @@ export function useStore(agencyId, onToast) {
   useEffect(() => {
     refreshDashboardStats();
   }, [refreshDashboardStats, lastSynced]);
+
+  useEffect(() => {
+    if (!isSupabaseEnabled || !agencyId) return undefined;
+    if (!latestProgramRealtimeEvent && !latestClientRealtimeEvent && !latestPaymentRealtimeEvent) return undefined;
+
+    if (dashboardRealtimeRefreshTimerRef.current !== null) {
+      window.clearTimeout(dashboardRealtimeRefreshTimerRef.current);
+    }
+    dashboardRealtimeRefreshTimerRef.current = window.setTimeout(() => {
+      dashboardRealtimeRefreshTimerRef.current = null;
+      refreshDashboardStats();
+    }, DASHBOARD_REALTIME_REFRESH_DEBOUNCE_MS);
+
+    return undefined;
+  }, [
+    agencyId,
+    isSupabaseEnabled,
+    latestProgramRealtimeEvent,
+    latestClientRealtimeEvent,
+    latestPaymentRealtimeEvent,
+    refreshDashboardStats,
+  ]);
+
+  useEffect(() => () => {
+    if (dashboardRealtimeRefreshTimerRef.current !== null) {
+      window.clearTimeout(dashboardRealtimeRefreshTimerRef.current);
+      dashboardRealtimeRefreshTimerRef.current = null;
+    }
+  }, [agencyId]);
 
   // ── Archived / Active split ───────────────────────────────────────────────
   const archivedClients      = useMemo(() => clients.filter(c => !!c.archived),  [clients]);
