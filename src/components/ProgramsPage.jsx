@@ -42,6 +42,7 @@ import { downloadAmadeusExcel } from "../utils/amadeus";
 import { escapeHtml } from "../utils/escapeHtml";
 import { printProgramPDF } from "../utils/exportPdf";
 import { createCombinedRoomingSection, createRoomingPrintHtml, downloadRoomingPdf } from "../utils/roomingPdf";
+import { buildRoomingPrintModel, downloadRoomingExcel } from "../utils/roomingExport";
 import {
   calculateHotelStayDates,
   formatDateForExcel,
@@ -88,7 +89,6 @@ import {
 } from "../utils/i18nValues";
 import {
   INCOMPLETE_INFO_FILTER,
-  clientNeedsCompletion,
   getClientCompletionLabels,
   getClientCompletionTooltip,
   getClientDisplayStatus,
@@ -138,6 +138,7 @@ import {
   Columns3,
   Copy,
   Filter,
+  FileText,
   FileSpreadsheet,
   Italic,
   LayoutGrid,
@@ -659,6 +660,44 @@ const getProgramClientOverpaidAmount = (program, client, paid) => (
     program,
   })
 );
+
+const getClientCreatedSortTime = (client = {}) => {
+  const candidates = [
+    client.createdAt,
+    client.created_at,
+    client.registrationDate,
+    client.registration_date,
+    client.lastModified,
+    client.last_modified,
+  ];
+  for (const value of candidates) {
+    const time = Date.parse(value || "");
+    if (Number.isFinite(time)) return time;
+  }
+  return 0;
+};
+
+const sortProgramClientsNewestFirst = (items = []) => (
+  [...items]
+    .map((client, index) => ({ client, index, createdTime: getClientCreatedSortTime(client) }))
+    .sort((a, b) => (b.createdTime - a.createdTime) || (a.index - b.index))
+    .map(({ client }) => client)
+);
+
+const upsertProgramClientsNewestFirst = (currentClients = [], incomingClients = []) => {
+  const currentById = new Map((Array.isArray(currentClients) ? currentClients : [])
+    .map((client) => [String(client?.id || ""), client])
+    .filter(([id]) => Boolean(id)));
+  const incoming = (Array.isArray(incomingClients) ? incomingClients : [incomingClients]).filter((client) => client?.id);
+  const incomingIds = new Set(incoming.map((client) => String(client.id)));
+  const mergedIncoming = incoming.map((client) => ({
+    ...(currentById.get(String(client.id)) || {}),
+    ...client,
+  }));
+  const rest = (Array.isArray(currentClients) ? currentClients : [])
+    .filter((client) => !incomingIds.has(String(client?.id || "")));
+  return sortProgramClientsNewestFirst([...mergedIncoming, ...rest]);
+};
 
 const getProgramClientPaymentStatus = (program, client, paid) => {
   const price = getProgramClientSalePrice(program, client);
@@ -3853,11 +3892,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       const currentPayments = Array.isArray(current.payments) ? current.payments : [];
 
       if (shouldShowClient) {
-        const clients = clientExists
-          ? currentClients.map((item) => (
-              String(item?.id || "") === clientId ? { ...item, ...client } : item
-            ))
-          : [...currentClients, client];
+        const clients = upsertProgramClientsNewestFirst(currentClients, client);
         const isActivePaymentRow = (payment) => {
           const status = String(payment?.status || "active").toLowerCase();
           return status !== "trashed"
@@ -3903,6 +3938,20 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       });
     }
   }, [globalPayments, isVisibleScopedProgramClient, program.id]);
+
+  const upsertScopedProgramClients = React.useCallback((nextClients = []) => {
+    const incomingClients = (Array.isArray(nextClients) ? nextClients : [nextClients])
+      .filter(isVisibleScopedProgramClient);
+    if (!incomingClients.length) return;
+    const programId = String(program.id || "");
+    setScopedProgramDetail((current) => {
+      if (current.programId !== programId) return current;
+      return {
+        ...current,
+        clients: upsertProgramClientsNewestFirst(current.clients || [], incomingClients),
+      };
+    });
+  }, [isVisibleScopedProgramClient, program.id]);
 
   const isActiveScopedPayment = React.useCallback((payment) => {
     if (!payment) return false;
@@ -4110,7 +4159,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
             programId,
             status: "ready",
             program: result.program,
-            clients: Array.isArray(result?.clients) ? result.clients : [],
+            clients: sortProgramClientsNewestFirst(Array.isArray(result?.clients) ? result.clients : []),
             payments: filterHiddenPayments(resultPayments),
             error: null,
           });
@@ -4182,18 +4231,20 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   ), [getScopedClientPayments]);
 
   const getListClientTotalPaid = useScopedProgramDetail ? getScopedClientTotalPaid : getClientTotalPaid;
-  const progClients = React.useMemo(() =>
-    useScopedProgramDetail
-      ? scopedProgramDetail.clients
-      : clients.filter(c => c.programId === program.id),
-    [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
+  const progClients = React.useMemo(() => (
+    sortProgramClientsNewestFirst(
+      useScopedProgramDetail
+        ? scopedProgramDetail.clients
+        : clients.filter(c => c.programId === program.id)
+    )
+  ), [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
 
   const filtered = React.useMemo(() => progClients.filter(c => {
     const status = getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id));
     const matchesFilter = filter === "all" || status === filter;
     const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
     const matchesPackage = packageFilter === "all"
-      || (packageFilter === INCOMPLETE_INFO_FILTER && clientNeedsCompletion(c, program))
+      || (packageFilter === INCOMPLETE_INFO_FILTER && status === "information_incomplete")
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
     const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(c) === serviceTypeFilter;
@@ -4512,6 +4563,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     cleared: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="cleared").length,
     partial: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="partial").length,
     unpaid:  progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="unpaid").length,
+    information_incomplete: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="information_incomplete").length,
   }), [progClients, getListClientTotalPaid, program]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
 
@@ -4520,6 +4572,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     { key:"cleared", label:t.clearedFilter, count:statusCounts.cleared },
     { key:"partial", label:t.partialFilter, count:statusCounts.partial },
     { key:"unpaid",  label:t.unpaidFilter,  count:statusCounts.unpaid },
+    { key:"information_incomplete", label:t.incompleteInfoFilter, count:statusCounts.information_incomplete },
   ];
   const activeStatusFilter = filters.find(f => f.key === filter) || filters[0];
   const serviceTypeFilters = React.useMemo(() => {
@@ -4544,14 +4597,16 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const packageChips = React.useMemo(() => {
     const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
     const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
-    const incompleteCount = progClients.filter((client) => clientNeedsCompletion(client, program)).length;
+    const incompleteCount = progClients.filter((client) => (
+      getProgramClientDisplayStatus(program, client, getListClientTotalPaid(client.id)) === "information_incomplete"
+    )).length;
     return [
       { key: "all", label: t.all, count: progClients.length },
       ...(incompleteCount ? [{ key: INCOMPLETE_INFO_FILTER, label: completionLabels.incompleteFilter, count: incompleteCount }] : []),
       ...packages.map(pkg => ({ key: pkg.level, label: translateHotelLevel(pkg.level, lang) || pkg.level, count: countForLevel(pkg.level) })),
       ...(unassignedCount ? [{ key: "__unassigned", label: t.noHotel || "غير محدد", count: unassignedCount }] : []),
     ];
-  }, [completionLabels.incompleteFilter, packages, progClients, program, t, lang]);
+  }, [completionLabels.incompleteFilter, getListClientTotalPaid, packages, progClients, program, t, lang]);
   const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned" || packageFilter === INCOMPLETE_INFO_FILTER
     ? null
     : packages.find(pkg => pkg.level === packageFilter) || null;
@@ -5483,8 +5538,11 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         }}
         isAddClientOpen={showAddClient}
         onCloseAddClient={() => setShowAddClient(false)}
-        onSaveAddClient={() => {
+        onSaveAddClient={(createdClient) => {
+          upsertScopedProgramClients(createdClient);
           setShowAddClient(false);
+          setProgramClientPage(1);
+          setCheckedIds(new Set());
           refreshScopedProgramDetail();
           onToast(t.addSuccess, "success");
         }}
@@ -5577,7 +5635,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     layoutMode: "default",
   });
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
-  const [roomingPdfBusy, setRoomingPdfBusy] = React.useState("");
+  const [roomingExportBusy, setRoomingExportBusy] = React.useState("");
   const [roomingLoadStatus, setRoomingLoadStatus] = React.useState("idle");
   const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
   const [roomingCopyBusy, setRoomingCopyBusy] = React.useState(false);
@@ -7723,27 +7781,6 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     flowRef.current?.zoomTo?.(nextZoom / 100, { duration: 250 });
   }, []);
 
-  const exportExcel = React.useCallback(async () => {
-    const XLSX = await import("xlsx");
-    const rows = [["hotel", "room type", "category", "room", "client name", "gender"]];
-    rooms.forEach((room) => {
-      (room.occupantIds || []).forEach((clientId) => {
-        const client = clientsById[clientId];
-        rows.push([
-          room.hotel || "",
-          getLocalizedRoomTypeLabel(room.roomType),
-          getLocalizedCategoryLabel(room.category),
-          room.roomNumber || "",
-          client ? getClientDisplayName(client) : "",
-          client?.gender === "male" ? t.male : client?.gender === "female" ? t.female : "",
-        ]);
-      });
-    });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), "rooming");
-    XLSX.writeFile(wb, `rooming-canvas-${city}-${slugifyFilePart(program.name)}.xlsx`);
-  }, [rooms, clientsById, city, program.name, getLocalizedRoomTypeLabel, getLocalizedCategoryLabel, t]);
-
   const resolveAgencyLogoUrlForRooming = React.useCallback(async () => {
     const directUrl = agency?.logoUrl || agency?.logo_url || "";
     if (directUrl) return directUrl;
@@ -7859,90 +7896,131 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     return cityRooms.find((room) => String(room.hotel || "").trim())?.hotel || fallbackHotel || "";
   }, [program]);
 
-  const buildRoomingPdfRows = React.useCallback((targetCities = [city]) => {
-    const cityLabels = {
-      makkah: t.makkah || "مكة",
-      madinah: t.madinah || "المدينة",
-    };
-    return targetCities.flatMap((targetCity) => {
-      const cityRooms = getStoredCanvasRooms(targetCity);
-      const fallbackHotel = getRoomingHotelForCity(targetCity, cityRooms);
-      return cityRooms.map((room, index) => {
-        const occupantIds = Array.isArray(room.occupantIds) ? room.occupantIds : [];
-        const pilgrims = occupantIds
-          .map((clientId) => clientsById[clientId])
-          .filter(Boolean)
-          .map((client) => ({
-            name: getClientDisplayName(client),
-            source: getClientRegistrationSource(client),
-          }));
-        const names = pilgrims.map((pilgrim) => pilgrim.name);
-        const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
-        const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(roomTypeKey), names.length || 1);
-        const stayDates = getRoomingStayDates(targetCity, room);
-        return {
-          id: room.id,
-          city: targetCity,
-          cityLabel: cityLabels[targetCity],
-          hotel: room.hotel || fallbackHotel || (t.roomingMissingHotel || "فندق غير محدد"),
-          checkIn: stayDates.checkIn,
-          checkOut: stayDates.checkOut,
-          roomTypeKey,
-          roomTypeLabel: getLocalizedRoomTypeLabel(roomTypeKey),
-          capacity,
-          pilgrims,
-          names,
-          order: Number(room.order ?? index),
-          x: Number(room.x) || 0,
-          y: Number(room.y) || 0,
-        };
-      });
+  const roomingExportLabels = React.useMemo(() => ({
+    title: t.roomingPrintTitle || (lang === "fr" ? "Feuille d’hébergement" : lang === "en" ? "Rooming sheet" : "ورقة التسكين"),
+    rooming: t.roomingPrintTitle || (lang === "fr" ? "Feuille d’hébergement" : lang === "en" ? "Rooming sheet" : "ورقة التسكين"),
+    checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
+    checkOut: t.checkOut || (lang === "fr" ? "Départ" : lang === "en" ? "Check-out" : "الخروج"),
+    roomsCount: t.roomingRoomsCount || (lang === "fr" ? "Chambres" : lang === "en" ? "Rooms" : "عدد الغرف"),
+    unknownHotel: t.roomingMissingHotel || (lang === "fr" ? "Hôtel non défini" : lang === "en" ? "Unspecified hotel" : "فندق غير محدد"),
+    noRooms: t.noRoomingRooms || (lang === "fr" ? "Aucune chambre d'hébergement." : lang === "en" ? "No rooming rooms." : "لا توجد غرف للتسكين."),
+    otherRoomType: t.other || (lang === "fr" ? "Autre" : lang === "en" ? "Other" : "أخرى"),
+    generatedAt: t.generatedAt || (lang === "fr" ? "Généré le" : lang === "en" ? "Generated at" : "تاريخ الإنشاء"),
+    generatedAtValue: new Date().toLocaleDateString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US"),
+    makkah: t.makkah || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
+    madinah: t.madinah || (lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة"),
+    agency: t.agency || (lang === "fr" ? "Agence" : lang === "en" ? "Agency" : "الوكالة"),
+    program: t.program || t.programs || (lang === "fr" ? "Programme" : lang === "en" ? "Program" : "البرنامج"),
+    location: t.location || (lang === "fr" ? "Lieu" : lang === "en" ? "Location" : "الموقع"),
+    hotel: t.hotel || (lang === "fr" ? "Hôtel" : lang === "en" ? "Hotel" : "الفندق"),
+    room: t.room || (lang === "fr" ? "Chambre" : lang === "en" ? "Room" : "الغرفة"),
+    roomType: t.roomType || (lang === "fr" ? "Type de chambre" : lang === "en" ? "Room type" : "نوع الغرفة"),
+    classification: t.roomingClassification || (lang === "fr" ? "Classification" : lang === "en" ? "Classification" : "التصنيف"),
+    capacity: t.capacity || (lang === "fr" ? "Capacité" : lang === "en" ? "Capacity" : "السعة"),
+    bedNumber: t.roomingBedNumber || (lang === "fr" ? "Lit" : lang === "en" ? "Bed" : "السرير"),
+    pilgrimName: roomingParticipantTerms.singular || t.fullName || (lang === "fr" ? "Pèlerin" : lang === "en" ? "Pilgrim" : "المعتمر"),
+    assignedPilgrims: roomingParticipantTerms.plural || t.clients || (lang === "fr" ? "Pèlerins" : lang === "en" ? "Pilgrims" : "المعتمرون"),
+    gender: t.gender || (lang === "fr" ? "Sexe" : lang === "en" ? "Gender" : "الجنس"),
+    registrationSource: t.registrationSource || (lang === "fr" ? "Source d’inscription" : lang === "en" ? "Registration source" : "جهة التسجيل"),
+    totalRooms: t.roomingRoomsCount || (lang === "fr" ? "Nombre de chambres" : lang === "en" ? "Rooms" : "عدد الغرف"),
+    totalCapacity: t.roomingTotalCapacity || (lang === "fr" ? "Capacité totale" : lang === "en" ? "Total capacity" : "إجمالي السعة"),
+    emptyBeds: t.roomingEmptyBeds || (lang === "fr" ? "Lits vides" : lang === "en" ? "Empty beds" : "أسرة فارغة"),
+    emptyBed: t.roomingEmptyBed || (lang === "fr" ? "Lit vide" : lang === "en" ? "Empty bed" : "سرير فارغ"),
+    total: t.total || (lang === "fr" ? "Total" : lang === "en" ? "Total" : "الإجمالي"),
+    summarySheet: t.summary || (lang === "fr" ? "Résumé" : lang === "en" ? "Summary" : "ملخص"),
+  }), [lang, roomingParticipantTerms.plural, roomingParticipantTerms.singular, t]);
+
+  const getRoomingExportGenderLabel = React.useCallback((client = {}) => {
+    const gender = normalizeRoomingGender(client.gender || client.passport?.gender);
+    if (gender === "male") return t.male || (lang === "fr" ? "Homme" : lang === "en" ? "Male" : "ذكر");
+    if (gender === "female") return t.female || (lang === "fr" ? "Femme" : lang === "en" ? "Female" : "أنثى");
+    return "";
+  }, [lang, t]);
+
+  const buildRoomingExportPayload = React.useCallback(async (mode = "single") => {
+    const combined = mode === "combined";
+    const targetCities = combined ? ["makkah", "madinah"] : [city];
+    const roomsByCity = Object.fromEntries(targetCities.map((targetCity) => [targetCity, getStoredCanvasRooms(targetCity)]));
+    const roomLinksByCity = Object.fromEntries(targetCities.map((targetCity) => [targetCity, getStoredCanvasLinks(targetCity)]));
+    const hotelsByCity = Object.fromEntries(targetCities.map((targetCity) => [
+      targetCity,
+      getRoomingHotelForCity(targetCity, roomsByCity[targetCity]),
+    ]));
+    const datesByCity = Object.fromEntries(targetCities.map((targetCity) => [
+      targetCity,
+      getRoomingStayDates(targetCity, { occupantIds: roomsByCity[targetCity]?.[0]?.occupantIds || [] }),
+    ]));
+    const agencyLogoUrl = await resolveAgencyLogoUrlForRooming();
+    return buildRoomingPrintModel({
+      program,
+      agencyName: getLocalizedAgencyName(agency, lang),
+      agencyLogoUrl,
+      lang,
+      targetCities,
+      cityLabels: {
+        makkah: roomingExportLabels.makkah,
+        madinah: roomingExportLabels.madinah,
+      },
+      roomsByCity,
+      roomLinksByCity,
+      hotelsByCity,
+      datesByCity,
+      getRoomDates: getRoomingStayDates,
+      clientsById,
+      labels: roomingExportLabels,
+      settings: roomingPrintSettings,
+      getRoomTypeLabel: getLocalizedRoomTypeLabel,
+      getRoomCategoryLabel: getLocalizedCategoryLabel,
+      getRoomTypeKey: (roomType) => normalizeRoomingRoomType(roomType) || roomType || "other",
+      getCapacity: getRoomingCapacity,
+      getClientName: getClientDisplayName,
+      getClientRegistrationSource,
+      getClientGenderLabel: getRoomingExportGenderLabel,
     });
-  }, [city, clientsById, getLocalizedRoomTypeLabel, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasRooms, t]);
+  }, [
+    agency,
+    city,
+    clientsById,
+    getLocalizedCategoryLabel,
+    getLocalizedRoomTypeLabel,
+    getRoomingExportGenderLabel,
+    getRoomingHotelForCity,
+    getRoomingStayDates,
+    getStoredCanvasLinks,
+    getStoredCanvasRooms,
+    lang,
+    program,
+    resolveAgencyLogoUrlForRooming,
+    roomingExportLabels,
+    roomingPrintSettings,
+  ]);
 
   const handleDownloadRoomingPdf = React.useCallback(async (mode = "single") => {
-    if (roomingPdfBusy) return;
+    if (roomingExportBusy) return;
     try {
-      setRoomingPdfBusy(mode);
+      setRoomingExportBusy(`${mode}:pdf`);
       const combined = mode === "combined";
-      const targetCities = combined ? ["makkah", "madinah"] : [city];
-      const pdfRooms = buildRoomingPdfRows(targetCities);
-      const pdfRoomLinks = targetCities.flatMap((targetCity) => getStoredCanvasLinks(targetCity));
-      const makkahRooms = combined ? getStoredCanvasRooms("makkah") : [];
-      const madinahRooms = combined ? getStoredCanvasRooms("madinah") : [];
-      const makkahHotel = getRoomingHotelForCity("makkah", makkahRooms);
-      const madinahHotel = getRoomingHotelForCity("madinah", madinahRooms);
-      const makkahDates = getRoomingStayDates("makkah", { occupantIds: makkahRooms[0]?.occupantIds || [] });
-      const madinahDates = getRoomingStayDates("madinah", { occupantIds: madinahRooms[0]?.occupantIds || [] });
-      const agencyLogoUrl = await resolveAgencyLogoUrlForRooming();
-      const sharedLabels = {
-        checkIn: t.checkIn || (lang === "fr" ? "Arrivée" : lang === "en" ? "Check-in" : "الدخول"),
-        checkOut: t.checkOut || (lang === "fr" ? "Départ" : lang === "en" ? "Check-out" : "الخروج"),
-        roomsCount: t.roomingRoomsCount || (lang === "fr" ? "Chambres" : lang === "en" ? "Rooms" : "عدد الغرف"),
-        unknownHotel: t.roomingMissingHotel || (lang === "fr" ? "Hôtel non défini" : lang === "en" ? "Unspecified hotel" : "فندق غير محدد"),
-        noRooms: t.noRoomingRooms || (lang === "fr" ? "Aucune chambre d'hébergement." : lang === "en" ? "No rooming rooms." : "لا توجد غرف للتسكين."),
-        otherRoomType: t.other || (lang === "fr" ? "Autre" : lang === "en" ? "Other" : "أخرى"),
-        generatedAt: new Date().toLocaleDateString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US"),
-        makkah: t.makkah || "مكة",
-        madinah: t.madinah || "المدينة",
-      };
+      const exportData = await buildRoomingExportPayload(mode);
+      const locationByKey = new Map(exportData.locations.map((location) => [location.key, location]));
+      const makkahLocation = locationByKey.get("makkah") || {};
+      const madinahLocation = locationByKey.get("madinah") || {};
       await downloadRoomingPdf({
-        rooms: pdfRooms,
+        rooms: exportData.pdfRooms,
         lang,
-        programName: program.name || "program",
-        agencyName: getLocalizedAgencyName(agency, lang),
-        agencyLogoUrl,
+        programName: exportData.programInfo.name || "program",
+        agencyName: exportData.agencyInfo.name,
+        agencyLogoUrl: exportData.agencyInfo.logoUrl,
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
-        labels: sharedLabels,
+        labels: exportData.labels,
         printSettings: roomingPrintSettings,
-        roomLinks: pdfRoomLinks,
+        roomLinks: exportData.roomLinks,
         sectionOverride: combined ? createCombinedRoomingSection({
-          rooms: pdfRooms,
-          makkahHotel,
-          madinahHotel,
-          makkahDates,
-          madinahDates,
-          labels: sharedLabels,
+          rooms: exportData.pdfRooms,
+          makkahHotel: makkahLocation.hotelName,
+          madinahHotel: madinahLocation.hotelName,
+          makkahDates: { checkIn: makkahLocation.checkIn, checkOut: makkahLocation.checkOut },
+          madinahDates: { checkIn: madinahLocation.checkIn, checkOut: madinahLocation.checkOut },
+          labels: exportData.labels,
         }) : null,
       });
       onToast?.(t.roomingPdfReady || (lang === "fr" ? "PDF d'hébergement téléchargé" : lang === "en" ? "Rooming PDF downloaded" : "تم تنزيل PDF التسكين"), "success");
@@ -7950,9 +8028,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       console.error("[rooming pdf export]", error);
       onToast?.(t.roomingPdfFailed || (lang === "fr" ? "Impossible de générer le PDF" : lang === "en" ? "Unable to generate PDF" : "تعذر إنشاء ملف PDF"), "error");
     } finally {
-      setRoomingPdfBusy("");
+      setRoomingExportBusy("");
     }
-  }, [agency, buildRoomingPdfRows, city, getRoomingHotelForCity, getRoomingStayDates, getStoredCanvasLinks, getStoredCanvasRooms, lang, onToast, program.name, resolveAgencyLogoUrlForRooming, roomingPdfBusy, roomingPrintSettings, t]);
+  }, [buildRoomingExportPayload, city, lang, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
+
+  const handleDownloadRoomingExcel = React.useCallback(async (mode = "single") => {
+    if (roomingExportBusy) return;
+    try {
+      setRoomingExportBusy(`${mode}:excel`);
+      const exportData = await buildRoomingExportPayload(mode);
+      await downloadRoomingExcel(exportData);
+      onToast?.(t.roomingExcelReady || (lang === "fr" ? "Fichier Excel d’hébergement téléchargé" : lang === "en" ? "Rooming Excel downloaded" : "تم تنزيل Excel التسكين"), "success");
+    } catch (error) {
+      console.error("[rooming excel export]", error);
+      onToast?.(t.roomingExcelFailed || (lang === "fr" ? "Impossible de générer Excel" : lang === "en" ? "Unable to generate Excel" : "تعذر إنشاء ملف Excel"), "error");
+    } finally {
+      setRoomingExportBusy("");
+    }
+  }, [buildRoomingExportPayload, lang, onToast, roomingExportBusy, t]);
+
+  const handleRoomingExport = React.useCallback((mode, format) => {
+    if (format === "excel") {
+      handleDownloadRoomingExcel(mode);
+      return;
+    }
+    handleDownloadRoomingPdf(mode);
+  }, [handleDownloadRoomingExcel, handleDownloadRoomingPdf]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullWorkspace ? "100%" : "min(72vh, 720px)";
@@ -8221,6 +8322,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const cancelPendingDrop = React.useCallback(() => {
     setPendingDrop(null);
   }, []);
+
+  const roomingExportMenuLabels = React.useMemo(() => ({
+    pdf: t.exportAsPdf || (lang === "fr" ? "Exporter en PDF" : lang === "en" ? "Export as PDF" : "تصدير كـ PDF"),
+    excel: t.exportAsExcel || (lang === "fr" ? "Exporter en Excel" : lang === "en" ? "Export as Excel" : "تصدير كـ Excel"),
+    loading: t.loading || (lang === "fr" ? "Chargement..." : lang === "en" ? "Loading..." : "جاري التحميل..."),
+  }), [lang, t]);
 
   return (
     <div ref={roomingFullscreenRef} className="rooming-designer-root" style={fullWorkspace ? { position: "fixed", inset: 0, zIndex: 90, background: "var(--rooming-page-bg)" } : undefined}>
@@ -8679,23 +8786,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             icon={<AppIcon name="save" size={15} />}
           />
           <RoomingToolbarButton title={t.roomingPrint || "طباعة"} onClick={printCanvas} icon={<AppIcon name="print" size={15} />} />
-          <RoomingToolbarButton
-            title={t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF")}
-            onClick={() => handleDownloadRoomingPdf("single")}
-            disabled={Boolean(roomingPdfBusy)}
-            icon={<AppIcon name="download" size={15} />}
-          >
-            <span>{roomingPdfBusy === "single" ? (t.loading || "جاري التحميل...") : (t.roomingDownloadPdf || (lang === "fr" ? "Télécharger PDF" : lang === "en" ? "Download PDF" : "تنزيل PDF"))}</span>
-          </RoomingToolbarButton>
-          <RoomingToolbarButton
-            title={t.roomingCombinedPdf || (lang === "fr" ? "PDF combiné" : lang === "en" ? "Combined PDF" : "PDF مكة والمدينة")}
-            onClick={() => handleDownloadRoomingPdf("combined")}
-            disabled={Boolean(roomingPdfBusy)}
-            icon={<AppIcon name="download" size={15} />}
-          >
-            <span>{roomingPdfBusy === "combined" ? (t.loading || "جاري التحميل...") : (t.roomingCombinedPdf || (lang === "fr" ? "PDF combiné" : lang === "en" ? "Combined PDF" : "PDF مكة والمدينة"))}</span>
-          </RoomingToolbarButton>
-          <RoomingToolbarButton title={t.roomingExportExcel || "تصدير Excel"} onClick={exportExcel} icon={<FileSpreadsheet size={15} />} />
+          <RoomingExportMenuButton
+            title={t.roomingExportRooming || (lang === "fr" ? "Exporter l’hébergement" : lang === "en" ? "Export rooming" : "تصدير التسكين")}
+            label={t.roomingExportRooming || (lang === "fr" ? "Exporter" : lang === "en" ? "Export" : "تصدير")}
+            disabled={Boolean(roomingExportBusy)}
+            busy={roomingExportBusy.startsWith("single:")}
+            menuLabels={roomingExportMenuLabels}
+            onExport={(format) => handleRoomingExport("single", format)}
+          />
+          <RoomingExportMenuButton
+            title={t.roomingCombinedExport || (lang === "fr" ? "Exporter La Mecque + Médine" : lang === "en" ? "Export Makkah + Madinah" : "تصدير مكة والمدينة")}
+            label={t.roomingCombinedExport || (lang === "fr" ? "La Mecque + Médine" : lang === "en" ? "Makkah + Madinah" : "مكة والمدينة")}
+            disabled={Boolean(roomingExportBusy)}
+            busy={roomingExportBusy.startsWith("combined:")}
+            menuLabels={roomingExportMenuLabels}
+            onExport={(format) => handleRoomingExport("combined", format)}
+          />
           <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
             <RoomingToolbarButton
               title={t.roomingRoomFilter || "فلترة الغرف"}
@@ -9900,6 +10006,77 @@ function RoomingToolbarButton({
       {icon}
       {children}
     </button>
+  );
+}
+
+function RoomingExportMenuButton({
+  title,
+  label,
+  disabled = false,
+  busy = false,
+  menuLabels = {},
+  onExport,
+}) {
+  const [open, setOpen] = React.useState(false);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (menuRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  React.useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  const handleSelect = React.useCallback((format) => {
+    setOpen(false);
+    onExport?.(format);
+  }, [onExport]);
+
+  return (
+    <div
+      ref={menuRef}
+      onPointerDown={(event) => event.stopPropagation()}
+      style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}
+    >
+      <RoomingToolbarButton
+        title={title}
+        onClick={() => {
+          if (!disabled) setOpen((value) => !value);
+        }}
+        active={open}
+        disabled={disabled}
+        icon={<AppIcon name="download" size={15} />}
+      >
+        <span>{busy ? menuLabels.loading : label}</span>
+        <ChevronDown size={13} />
+      </RoomingToolbarButton>
+      <RoomingMenu open={open} align="end" width={190}>
+        <RoomingMenuItem
+          label={menuLabels.pdf || "PDF"}
+          icon={<FileText size={14} />}
+          onClick={() => handleSelect("pdf")}
+        />
+        <RoomingMenuItem
+          label={menuLabels.excel || "Excel"}
+          icon={<FileSpreadsheet size={14} />}
+          onClick={() => handleSelect("excel")}
+        />
+      </RoomingMenu>
+    </div>
   );
 }
 

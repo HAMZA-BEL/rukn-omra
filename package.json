@@ -7,6 +7,7 @@
     "@xyflow/react": "^12.10.2",
     "angular-expressions": "^1.5.1",
     "docxtemplater": "^3.68.6",
+    "exceljs": "^4.4.0",
     "jspreadsheet-ce": "^5.0.4",
     "lucide-react": "^0.383.0",
     "pizzip": "^3.2.0",

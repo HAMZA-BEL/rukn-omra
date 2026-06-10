@@ -537,7 +537,7 @@ export function StatusBadge({ status }) {
     : statusKey === "deleted_program"
       ? (t.deletedProgramBadge || t.deletedProgram || status)
     : statusKey === "information_incomplete"
-      ? (t.informationIncompleteBadge || status)
+      ? (t.informationIncompleteStatusBadge || t.informationIncompleteBadge || status)
       : statusKey ? t[`status_${statusKey}`] : status;
 
   const map = {

@@ -1,4 +1,4 @@
-export const PROGRAM_ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint"];
+export const PROGRAM_ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint", "kamal"];
 const LEGACY_NON_ROOM_PRICE_KEYS = ["child", "infant"];
 const ROOM_TYPE_LABELS = {
   single: "فردية",
@@ -6,6 +6,7 @@ const ROOM_TYPE_LABELS = {
   triple: "ثلاثية",
   quad: "رباعية",
   quint: "خماسية",
+  kamal: "كمال",
   child: "طفل",
   infant: "رضيع",
 };
@@ -23,6 +24,7 @@ const LEGACY_ROOM_TYPE_KEYS = {
   "رضيع": "infant",
   "غرفة خماسية": "quint",
   "خماسية": "quint",
+  "كمال": "kamal",
 };
 
 const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);

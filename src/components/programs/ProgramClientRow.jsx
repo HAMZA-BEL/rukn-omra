@@ -96,7 +96,13 @@ export default function ProgramClientRow({
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
   const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
-  const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
+  const completionBadges = getClientCompletionBadges(client, lang, program);
+  const incompleteBadge = completionBadges.find((badge) => badge.key === "information_incomplete");
+  const secondaryBadges = completionBadges.filter((badge) => (
+    badge.key !== status && badge.key !== "information_incomplete"
+  ));
+  const showIdentityIncompleteNote = Boolean(incompleteBadge);
+  const identityIncompleteLabel = incompleteBadge?.label || t.informationIncompleteBadge || "";
   const incompleteTooltip = status === "information_incomplete"
     ? completionTooltip || getClientCompletionTooltip(client, lang, program)
     : "";
@@ -226,6 +232,14 @@ export default function ProgramClientRow({
               <p style={{ fontWeight: 700, fontSize: 12.5, color: tc.white, margin: 0, minWidth: 0 }}>
                 {fallbackName || "—"}
               </p>
+              {showIdentityIncompleteNote && (
+                <span
+                  title={incompleteBadge?.title || identityIncompleteLabel}
+                  style={completionBadgeStyle(incompleteBadge?.tone || "warning")}
+                >
+                  {identityIncompleteLabel}
+                </span>
+              )}
               {minorClient && (
                 <span style={{
                   fontSize: 9.5,
@@ -247,7 +261,7 @@ export default function ProgramClientRow({
                 </span>
               ))}
             </div>
-            <p style={{ fontSize: 10.5, color: tc.grey }}>{infoLine || "—"}</p>
+            <p style={{ fontSize: 10.5, color: tc.grey, margin: 0 }}>{infoLine || "—"}</p>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 11 }}>
             {displayedRoomLabel || "—"}

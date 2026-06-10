@@ -296,8 +296,14 @@ export default function ClientDetail({
     [client, lang, program, pricingOptions],
   );
   const secondaryCompletionBadges = React.useMemo(
-    () => completionBadges.filter((badge) => badge.key !== displayStatus),
+    () => completionBadges.filter((badge) => (
+      badge.key !== displayStatus && badge.key !== "information_incomplete"
+    )),
     [completionBadges, displayStatus],
+  );
+  const incompleteCompletionBadge = React.useMemo(
+    () => completionBadges.find((badge) => badge.key === "information_incomplete") || null,
+    [completionBadges],
   );
   const hasIncompleteCompletionBadge = completionBadges.some((badge) => badge.key === "information_incomplete");
   const showMissingInfoWarning = missingCompletionItems.length > 0
@@ -763,6 +769,11 @@ export default function ClientDetail({
         <div style={{ flex:1 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4, flexWrap:"wrap" }}>
             <h2 style={{ fontSize:18, fontWeight:800, color:tc.white }}>{displayName}</h2>
+            {incompleteCompletionBadge && (
+              <span title={incompleteCompletionBadge.title || incompleteCompletionBadge.label} style={completionBadgeStyle(incompleteCompletionBadge.tone)}>
+                {incompleteCompletionBadge.label}
+              </span>
+            )}
             {client.archived && (
               <span style={{
                 fontSize:11, fontWeight:700, padding:"2px 10px", borderRadius:20,

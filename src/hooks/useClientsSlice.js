@@ -14,7 +14,7 @@ export function useClientsSlice() {
 
   const addClientLocal = useCallback((client) => {
     if (!client || !client.id) return;
-    setClientsState((prev) => [...prev, client]);
+    setClientsState((prev) => [client, ...prev.filter((item) => item.id !== client.id)]);
   }, []);
 
   const updateClientLocal = useCallback((id, patch) => {
@@ -31,7 +31,7 @@ export function useClientsSlice() {
       if (exists) {
         return prev.map((item) => (item.id === client.id ? { ...item, ...client } : item));
       }
-      return [...prev, client];
+      return [client, ...prev];
     });
   }, []);
 

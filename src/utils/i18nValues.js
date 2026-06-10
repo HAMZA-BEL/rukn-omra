@@ -48,6 +48,8 @@ const ROOM_TYPE_KEY_BY_VALUE = {
   "خماسية": "roomQuintShort",
   "خماسي": "roomQuintShort",
   "غرفة خماسية": "roomQuintShort",
+  kamal: "roomKamalShort",
+  "كمال": "roomKamalShort",
 };
 
 const CATEGORY_KEY_BY_VALUE = {

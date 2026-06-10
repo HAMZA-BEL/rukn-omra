@@ -80,6 +80,7 @@ const ROOM_CAPACITY = {
   triple: 3,
   quad: 4,
   quint: 5,
+  kamal: 1,
 };
 
 const getProgramAddLabel = (program, lang, fallback) => {
@@ -315,7 +316,6 @@ const buildFormState = (client, defaultProgramId, programs) => {
   const programId = clientProgramId || (isEdit ? "" : pickString(defaultProgramId));
   const selectedProgram = programs.find(p => p.id === programId);
   const programPackages = selectedProgram ? normalizeProgramPackages(selectedProgram) : [];
-  const firstPackage = programPackages[0] || null;
   const savedPackageId = pickString(client?.packageId, client?.package_id);
   const savedPackageLevel = pickString(client?.packageLevel, client?.hotelLevel, client?.hotel_level);
   const packageBySavedId = savedPackageId
@@ -326,7 +326,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
     : null;
   const initialPackage = isEdit
     ? (packageBySavedId || packageBySavedLevel || null)
-    : firstPackage;
+    : null;
   const packageId = initialPackage?.id || "";
   const packageLevel = isEdit
     ? (packageBySavedId?.level || savedPackageLevel || initialPackage?.level || "")
@@ -361,7 +361,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
       client?.price,
       officialPrice
     );
-  const normalizedRoomType = normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type, selectedProgram ? "double" : ""));
+  const normalizedRoomType = normalizeRoomTypeKey(pickString(client?.roomType, client?.room_type));
   const supportedRoomType = selectedProgram && PROGRAM_ROOM_PRICE_KEYS.includes(normalizedRoomType) ? normalizedRoomType : "";
 
   const passport = client?.passport || {};
@@ -428,8 +428,11 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const formatPrice = (value) => (typeof value === "number" ? value.toLocaleString(numberLocale) : (value ?? "—"));
   const programPlaceholder = React.useMemo(() => getProgramPlaceholder(lang), [lang]);
   const localizedRoomTypeOptions = React.useMemo(
-    () => getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
-    [lang]
+    () => [
+      { value: "", label: t.selectRoomPlaceholder },
+      ...getRoomTypeOptions().map((option) => ({ ...option, label: translateRoomType(option.value, lang) || option.label })),
+    ],
+    [lang, t.selectRoomPlaceholder]
   );
   const serviceTypeOptions = React.useMemo(
     () => getClientServiceTypeOptions(t, lang),
@@ -803,20 +806,19 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       skipProgramResetRef.current = false;
       return;
     }
-    const firstPackage = programPackages[0];
     salePriceManualRef.current = false;
     setAutoPriceNote("");
     setForm(f => ({
       ...f,
-      packageId: firstPackage?.id || "",
-      hotelLevel: firstPackage?.level || "",
-      packageLevel: firstPackage?.level || "",
-      hotelMecca: firstPackage?.hotelMecca || "",
-      hotelMadina: firstPackage?.hotelMadina || "",
-      roomType: firstPackage ? "double" : "",
-      roomTypeLabel: firstPackage ? getRoomTypeLabel("double") : "",
+      packageId: "",
+      hotelLevel: "",
+      packageLevel: "",
+      hotelMecca: "",
+      hotelMadina: "",
+      roomType: "",
+      roomTypeLabel: "",
       officialPrice: 0,
-      salePrice: firstPackage ? f.salePrice : "",
+      salePrice: "",
     }));
   }, [form.programId, programPackages]);
 
@@ -946,9 +948,10 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         representedByClientId: "",
         representedByRelationship: "",
       };
+      const addedClients = [];
       groupPeople.forEach((person, index) => {
         const personName = buildGroupPersonName(person);
-        addClient({
+        const addedClient = addClient({
           ...sharedBase,
           firstName: pickString(person.firstName),
           lastName: pickString(person.lastName),
@@ -983,8 +986,9 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
           ticketNo: "",
           notes: form.notes,
         });
+        if (addedClient) addedClients.push(addedClient);
       });
-      onSave();
+      onSave(addedClients);
       return;
     }
     setSaving(true);
@@ -1021,8 +1025,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       const photoResult = await resolveBadgePhotoPath(targetId || client?.id, form.badgePhotoPath);
       if (!photoResult.ok) return;
       const data = withBadgePhotoPath(baseData, photoResult.path);
-      isEdit ? updateClient(client.id, data) : addClient(targetId ? { ...data, id: targetId } : data);
-      onSave();
+      let savedClient;
+      if (isEdit) {
+        updateClient(client.id, data);
+        savedClient = { ...client, ...data, id: client.id };
+      } else {
+        savedClient = addClient(targetId ? { ...data, id: targetId } : data);
+      }
+      onSave(savedClient);
     } finally {
       setSaving(false);
     }
@@ -1143,7 +1153,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             label={t.roomType}
             value={form.roomType}
             onChange={handleRoomTypeChange}
-            options={hasSelectedProgram ? localizedRoomTypeOptions : [{ value:"", label:t.roomType || "نوع الغرفة" }]}
+            options={hasSelectedProgram ? localizedRoomTypeOptions : [{ value:"", label:t.selectRoomPlaceholder }]}
             disabled={!hasSelectedProgram || !serviceNeedsAccommodation}
           />
           <Select

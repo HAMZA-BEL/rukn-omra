@@ -1550,6 +1550,8 @@ export function useStore(agencyId, onToast) {
       notes: row.notes,
       registrationDate: row.registration_date,
       lastModified: row.last_modified,
+      createdAt: row.created_at || row.createdAt || "",
+      created_at: row.created_at || row.createdAt || "",
       archived: row.archived ?? false,
       archivedAt: row.archived_at ?? null,
       deleted: row.deleted ?? false,
@@ -1623,7 +1625,7 @@ export function useStore(agencyId, onToast) {
             const exists = prev.find(c => c.id === mapped.id);
             return exists
               ? prev.map(c => c.id === mapped.id ? { ...c, ...mapped } : c)
-              : [...prev, mapped];
+              : [mapped, ...prev];
           });
           setLatestClientRealtimeEvent({ eventType, client: mapped, oldClient: oldMapped, id: mapped.id, at: Date.now() });
         } else if (eventType === "DELETE") {
@@ -2352,11 +2354,15 @@ export function useStore(agencyId, onToast) {
 
   const addClient = useCallback((data) => {
     const id  = trimString(data.id) || genId("CL");
-    const now = new Date().toISOString().split("T")[0];
+    const nowIso = new Date().toISOString();
+    const now = nowIso.split("T")[0];
     const prepared = prepareClientForSave(data);
+    const createdAt = prepared.createdAt || prepared.created_at || nowIso;
     const newClient = {
       ...prepared,
       id,
+      createdAt,
+      created_at: createdAt,
       registrationDate: now,
       lastModified:     now,
       archived:         false,
@@ -2366,16 +2372,20 @@ export function useStore(agencyId, onToast) {
     queueProgramArchiveSuggestionCheck(getClientProgramId(newClient));
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     sync(() => saveClient(newClient, agencyId));
-    return id;
+    return newClient;
   }, [addClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const addClientFromPassportImport = useCallback(async (data) => {
     const id  = trimString(data.id) || genId("CL");
-    const now = new Date().toISOString().split("T")[0];
+    const nowIso = new Date().toISOString();
+    const now = nowIso.split("T")[0];
     const prepared = prepareClientForSave(data);
+    const createdAt = prepared.createdAt || prepared.created_at || nowIso;
     const newClient = {
       ...prepared,
       id,
+      createdAt,
+      created_at: createdAt,
       registrationDate: now,
       lastModified:     now,
       archived:         false,

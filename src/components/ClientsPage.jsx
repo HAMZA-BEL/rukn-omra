@@ -385,8 +385,8 @@ export default function ClientsPage({ store, onToast }) {
     { key:"cleared", label:t.status_cleared || t.clearedFilter, icon:"success" },
     { key:"partial", label:t.status_partial || t.partialFilter, icon:"partial" },
     { key:"unpaid", label:t.status_unpaid || t.unpaidFilter, icon:"unpaid" },
-    { key:"information_incomplete", label:t.informationIncompleteBadge || completionLabels.informationIncomplete, icon:"alert" },
-  ]), [completionLabels.informationIncomplete, t]);
+    { key:"information_incomplete", label:t.incompleteInfoFilter || t.informationIncompleteStatusBadge || completionLabels.incompleteFilter, icon:"alert" },
+  ]), [completionLabels.incompleteFilter, t]);
   const activeStatusFilter = statusFilters.find((item) => item.key === filter) || statusFilters[0];
   const typeFilters = React.useMemo(() => ([
     { key:CLIENT_TYPE_FILTERS.ALL, label:typeFilterLabels.all, icon:"users" },
@@ -1164,8 +1164,13 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
-  const secondaryBadges = getClientCompletionBadges(client, lang, program).filter((badge) => badge.key !== status);
-  const rowLabels = getClientCompletionLabels(lang);
+  const completionBadges = getClientCompletionBadges(client, lang, program);
+  const incompleteBadge = completionBadges.find((badge) => badge.key === "information_incomplete");
+  const secondaryBadges = completionBadges.filter((badge) => (
+    badge.key !== status && badge.key !== "information_incomplete"
+  ));
+  const showIdentityIncompleteNote = Boolean(incompleteBadge);
+  const identityIncompleteLabel = incompleteBadge?.label || t.informationIncompleteBadge || "";
   const programName = String(program?.name || "").trim();
   const genericProgramLabels = new Set(["—", "غير محدد", "Non défini", "Not specified"]);
   const contextLabel = status === "unassigned_program"
@@ -1265,9 +1270,19 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 {(displayName || "?")[0]}
               </div>
               <div className="client-card-mobile-texts">
-                <p className="client-card-mobile-name-text" title={displayName}>
-                  {displayName}
-                </p>
+                <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", minWidth:0, direction:isRTL ? "rtl" : "ltr" }}>
+                  <p className="client-card-mobile-name-text" title={displayName}>
+                    {displayName}
+                  </p>
+                  {showIdentityIncompleteNote && (
+                    <span
+                      title={incompleteBadge?.title || identityIncompleteLabel}
+                      style={clientCompletionBadgeStyle(incompleteBadge?.tone || "warning")}
+                    >
+                      {identityIncompleteLabel}
+                    </span>
+                  )}
+                </div>
                 {isHajjRecord && (
                   <div style={{ display:"flex", marginTop:3 }}>
                     <span style={hajjBadgeStyle}>{hajjBadgeLabel}</span>
@@ -1397,8 +1412,16 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
           style={{ display:"flex", alignItems:"center", gap:10, flex:1, cursor:"pointer", minWidth:0 }}
         >
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", minWidth:0 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:5, flexWrap:"wrap", minWidth:0, direction:isRTL ? "rtl" : "ltr" }}>
               <p style={{ fontWeight:700, fontSize:13, color:tc.white, margin:0 }}>{displayName}</p>
+              {showIdentityIncompleteNote && (
+                <span
+                  title={incompleteBadge?.title || identityIncompleteLabel}
+                  style={clientCompletionBadgeStyle(incompleteBadge?.tone || "warning")}
+                >
+                  {identityIncompleteLabel}
+                </span>
+              )}
               {isHajjRecord && <span style={hajjBadgeStyle}>{hajjBadgeLabel}</span>}
               {secondaryBadges.map((badge) => (
                 <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>

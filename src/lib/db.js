@@ -567,6 +567,8 @@ const fromClient = (row) => {
   notes:            row.notes,
   registrationDate: row.registration_date,
   lastModified:     row.last_modified,
+  createdAt:        row.created_at || row.createdAt || "",
+  created_at:       row.created_at || row.createdAt || "",
   archived:         row.archived   ?? false,
   archivedAt:       row.archived_at ?? null,
   deleted:          row.deleted ?? false,
@@ -1272,7 +1274,8 @@ export const db = {
         .select("*")
         .eq("agency_id", agencyId)
         .or("deleted.is.null,deleted.eq.false")
-        .order("registration_date", { ascending: true });
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .order("registration_date", { ascending: false, nullsFirst: false });
       return { data: data?.map(fromClient) ?? null, error };
     },
     async fetchForProgram(agencyId, programId) {
@@ -1284,8 +1287,8 @@ export const db = {
         .eq("program_id", programId)
         .or("deleted.is.null,deleted.eq.false")
         .or("archived.is.null,archived.eq.false")
-        .order("registration_date", { ascending: true, nullsFirst: false })
-        .order("created_at", { ascending: true });
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .order("registration_date", { ascending: false, nullsFirst: false });
       return { data: data?.map(fromClient) ?? [], error };
     },
     async fetchPage(agencyId, {
@@ -1333,8 +1336,8 @@ export const db = {
       }
 
       const { data, error, count } = await query
-        .order("registration_date", { ascending: true, nullsFirst: false })
-        .order("created_at", { ascending: true })
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .order("registration_date", { ascending: false, nullsFirst: false })
         .range(from, to);
 
       return {
