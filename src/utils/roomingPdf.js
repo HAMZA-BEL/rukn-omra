@@ -89,17 +89,18 @@ const DENSITY_CONFIGS = {
     chipGap: 0,
     chipMinHeight: 19,
     chipHorizontalPad: 5,
-    fontLarge: 9.2,
-    fontNormal: 8.8,
-    fontSmall: 7.4,
-    fontTiny: 7.2,
-    nameFontMin: 7.35,
-    nameFontMax: 9.6,
+    fontLarge: 9.8,
+    fontNormal: 9.4,
+    fontSmall: 8.1,
+    fontTiny: 7.5,
+    nameFontScale: 0.78,
+    nameFontMin: 7.8,
+    nameFontMax: 10.2,
     nameLineRatio: 1.07,
     nameVerticalPad: 3,
     sourceFontOffset: 2.2,
-    sourceFontMin: 5.3,
-    sourceFontMax: 6.1,
+    sourceFontMin: 5.8,
+    sourceFontMax: 6.8,
     minCardHeight: 86,
     rowMaxHeight: 170,
     maxCardWidth: 132,
@@ -111,12 +112,15 @@ const DENSITY_CONFIGS = {
       writeMargin: "0",
       itemPadding: ".5mm 1.3mm",
       itemGap: "0",
-      itemMinHeight: "6.4mm",
-      nameFont: "11.6px",
+      itemMinHeight: "6.7mm",
+      nameFont: "12.1px",
       nameLine: "1.08",
-      nameFontMin: "9.8px",
-      nameFontMax: "13px",
-      sourceFont: "6.4px",
+      nameFontMin: "10.3px",
+      nameFontMax: "13.6px",
+      nameHardMax: "10.8px",
+      sourceFont: "7.2px",
+      headerFont: "8.8px",
+      bedFont: "8.8px",
     },
   },
   compact: {
@@ -177,6 +181,34 @@ const formatDate = (value) => {
   return text || "—";
 };
 
+const text = (value, fallback = "—") => {
+  const clean = String(value || "").trim();
+  return clean || fallback;
+};
+
+const fillTemplate = (template = "", values = {}) => String(template || "").replace(/\{(\w+)\}/g, (_, key) => (
+  values[key] ?? ""
+));
+
+const formatDateRangeLine = (range = {}, labels = {}) => {
+  const label = text(range.label, "");
+  const hotel = text(range.hotel, "");
+  const checkIn = formatDate(range.checkIn);
+  const checkOut = formatDate(range.checkOut);
+  if (range.infoTemplate) {
+    return fillTemplate(range.infoTemplate, {
+      label,
+      hotel: hotel || labels.unknownHotel || "—",
+      checkIn,
+      checkOut,
+    });
+  }
+  const details = [];
+  if (hotel) details.push(`${labels.hotel || "Hotel"} ${hotel}`);
+  details.push(`${labels.checkIn || "Check-in"} ${checkIn} / ${labels.checkOut || "Check-out"} ${checkOut}`);
+  return `${label}: ${details.join(" — ")}`;
+};
+
 const parseIsoDate = (value) => {
   const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
@@ -195,21 +227,28 @@ const maxDateValue = (...values) => {
 
 const getDirection = (lang) => (lang === "ar" ? "rtl" : "ltr");
 
-const text = (value, fallback = "—") => {
-  const clean = String(value || "").trim();
-  return clean || fallback;
-};
-
 const normalizePrintSettings = (settings = {}) => {
-  const density = ["comfortable", "normal", "compact"].includes(settings.density)
-    ? settings.density
+  const defaultSettings = {
+    density: "normal",
+    layoutMode: "default",
+    showRegistrationSource: true,
+    showBedNumbers: false,
+    unifyMakkahMadinahRooming: true,
+  };
+  const mergedSettings = {
+    ...defaultSettings,
+    ...(settings && typeof settings === "object" ? settings : {}),
+  };
+  const density = ["comfortable", "normal", "compact"].includes(mergedSettings.density)
+    ? mergedSettings.density
     : "normal";
-  const layoutMode = settings.layoutMode === "arranged" ? "arranged" : "default";
+  const layoutMode = mergedSettings.layoutMode === "arranged" ? "arranged" : "default";
   return {
     density,
     layoutMode,
-    showRegistrationSource: settings.showRegistrationSource !== false,
-    showBedNumbers: settings.showBedNumbers === true,
+    showRegistrationSource: mergedSettings.showRegistrationSource !== false,
+    showBedNumbers: mergedSettings.showBedNumbers === true,
+    unifyMakkahMadinahRooming: mergedSettings.unifyMakkahMadinahRooming !== false,
   };
 };
 
@@ -384,9 +423,10 @@ const getAdaptiveNameFontMetrics = ({
 }) => {
   const html = unit === "px";
   const htmlConfig = density?.html || {};
+  const fontScale = Number(density?.nameFontScale) || OCCUPANT_NAME_FONT_SCALE;
   const base = (html
     ? Number.parseFloat(String(htmlConfig.nameFont || "10px")) || 10
-    : Number(density?.fontNormal) || 8) * OCCUPANT_NAME_FONT_SCALE;
+    : Number(density?.fontNormal) || 8) * fontScale;
   const configuredMin = html
     ? Number.parseFloat(String(htmlConfig.nameFontMin || "")) || Math.max(8.8, base - 1.8)
     : Number(density?.nameFontMin) || Math.max(6.8, base - 1.4);
@@ -394,7 +434,12 @@ const getAdaptiveNameFontMetrics = ({
   const densityMax = html
     ? Number.parseFloat(String(htmlConfig.nameFontMax || "")) || base + 1.6
     : Number(density?.nameFontMax) || base + 1.1;
-  const hardMax = html ? OCCUPANT_NAME_MAX_PX : OCCUPANT_NAME_MAX_PT;
+  const configuredHardMax = html
+    ? Number.parseFloat(String(htmlConfig.nameHardMax || ""))
+    : Number(density?.nameHardMax);
+  const hardMax = Number.isFinite(configuredHardMax) && configuredHardMax > 0
+    ? configuredHardMax
+    : (html ? OCCUPANT_NAME_MAX_PX : OCCUPANT_NAME_MAX_PT);
   const max = Math.max(min, Math.min(densityMax, chipHeight * 0.74, hardMax));
   const length = String(name || "").trim().length;
   let fontSize = base;
@@ -692,7 +737,7 @@ const drawHeader = (ctx, page, { section, logoImage, agencyName, labels, lang, p
   if (section.combined && Array.isArray(section.dateRanges)) {
     const dateStartY = Math.max(47, hotelStartY + hotelLines.length * hotelLineHeight + 6);
     section.dateRanges.slice(0, 2).forEach((range, index) => {
-      const line = `${range.label}: ${labels.checkIn} ${formatDate(range.checkIn)} / ${labels.checkOut} ${formatDate(range.checkOut)}`;
+      const line = formatDateRangeLine(range, labels);
       drawText(ctx, line, titleCenter, dateStartY + index * 9.8, {
         size: 7.2,
         weight: 800,
@@ -993,6 +1038,8 @@ const compareRoomCanvasPosition = (a, b, lang = "ar") => {
   return (Number(a.order) || 0) - (Number(b.order) || 0);
 };
 
+const isRoomPrintEmpty = (room = {}) => getOccupiedNameCount(getRoomPilgrims(room, { showRegistrationSource: false })) === 0;
+
 const sortRoomsForDefaultPrint = (rooms = []) => rooms.slice().sort((a, b) => {
   const city = CITY_ORDER.indexOf(a.city) - CITY_ORDER.indexOf(b.city);
   if (city) return city;
@@ -1002,6 +1049,8 @@ const sortRoomsForDefaultPrint = (rooms = []) => rooms.slice().sort((a, b) => {
   const bTypeOrder = ROOM_TYPE_ORDER.includes(b.roomTypeKey) ? ROOM_TYPE_ORDER.indexOf(b.roomTypeKey) : 99;
   const type = aTypeOrder - bTypeOrder;
   if (type) return type;
+  const empty = Number(isRoomPrintEmpty(a)) - Number(isRoomPrintEmpty(b));
+  if (empty) return empty;
   return (Number(a.order) || 0) - (Number(b.order) || 0);
 });
 
@@ -1010,6 +1059,8 @@ const sortRoomsForDefaultSectionOverride = (rooms = []) => rooms.slice().sort((a
   const bTypeOrder = ROOM_TYPE_ORDER.includes(b.roomTypeKey) ? ROOM_TYPE_ORDER.indexOf(b.roomTypeKey) : 99;
   const type = aTypeOrder - bTypeOrder;
   if (type) return type;
+  const empty = Number(isRoomPrintEmpty(a)) - Number(isRoomPrintEmpty(b));
+  if (empty) return empty;
   return (Number(a.order) || 0) - (Number(b.order) || 0);
 });
 
@@ -1519,7 +1570,7 @@ export const createRoomingPrintHtml = ({
             <p class="hotel-title" style="--hotel-title-font:${hotelTitleSize}">${escapeHtml(hotelTitle)}</p>
             ${section.combined && Array.isArray(section.dateRanges)
               ? `<div class="date-lines">${section.dateRanges.slice(0, 2).map((range) => (
-                `<p class="date-line">${escapeHtml(range.label)}: ${escapeHtml(labels.checkIn || "Check-in")} ${escapeHtml(formatDate(range.checkIn))} / ${escapeHtml(labels.checkOut || "Check-out")} ${escapeHtml(formatDate(range.checkOut))}</p>`
+                `<p class="date-line">${escapeHtml(formatDateRangeLine(range, labels))}</p>`
               )).join("")}</div>`
               : ""}
           </div>
@@ -1578,8 +1629,12 @@ export const createRoomingPrintHtml = ({
       --name-font:${density.html.nameFont};
       --name-line:${density.html.nameLine};
       --source-font:${density.html.sourceFont};
+      --name-hard-max:${density.html.nameHardMax || "10px"};
+      --room-header-font:${density.html.headerFont || "8px"};
+      --bed-font:${density.html.bedFont || "8px"};
+      --bed-number-width:5.2mm;
     }
-    *{box-sizing:border-box}
+    *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     html,body{margin:0;background:#fff;color:#0f172a}
     body{font-family:${ROOMING_PRINT_FONT_FAMILY};font-size:9px;line-height:1.25}
     .rooming-section{break-after:page;page-break-after:always}
@@ -1609,16 +1664,16 @@ export const createRoomingPrintHtml = ({
     .type-title span{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6dcc2;background:#fbfaf7;border-radius:999px;padding:1.2mm 5mm;font-size:8.5px;line-height:1}
     .rooms-grid{display:grid;grid-template-columns:repeat(var(--rooms-columns),minmax(0,var(--room-card-max-width)));gap:var(--room-card-gap);align-items:start;justify-content:center}
     .room-card{border:1px solid #334155;border-radius:0;background:#fff;padding:0;break-inside:avoid;page-break-inside:avoid;display:block}
-    .manual-room-row{height:var(--write-height);border-bottom:1px solid #334155;background:#f8fafc;display:flex;align-items:center;justify-content:flex-start;direction:rtl;text-align:right;padding:0 1.5mm;color:#0f172a;font-size:8px;font-weight:900}
+    .manual-room-row{height:var(--write-height);border-bottom:1px solid #334155;background:#f8fafc;display:flex;align-items:center;justify-content:flex-start;direction:rtl;text-align:right;padding:0 1.5mm;color:#0f172a;font-size:var(--room-header-font);font-weight:900}
     .manual-room-row span{white-space:nowrap}
-    ol{list-style:none;margin:0;padding:0;display:block}
+    ol{list-style:none;margin:0;padding:0;display:block;width:100%}
     li{display:flex;flex-direction:column;justify-content:center;height:var(--item-min-height);border-top:1px solid #94a3b8;padding:var(--item-padding);min-width:0;overflow:hidden;background:#fff;direction:rtl;text-align:right}
     ol li:first-child{border-top:0}
-    li.numbered{display:grid;grid-template-columns:5.2mm minmax(0,1fr);gap:0;align-items:stretch;justify-content:stretch;padding:0;direction:rtl;text-align:initial}
-    .bed-number{display:flex;align-items:center;justify-content:center;height:100%;min-width:0;background:#fef3c7;border-inline-end:1px solid #b99235;color:#111827;font-size:8px;font-weight:900;line-height:1;direction:ltr;text-align:center}
-    .bed-name-cell{display:flex;flex-direction:column;justify-content:center;min-width:0;overflow:hidden;padding:var(--item-padding);direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
+    li.numbered{display:table;width:100%;table-layout:fixed;border-collapse:collapse;border-spacing:0;padding:0;direction:rtl;text-align:initial}
+    .bed-number{display:table-cell;width:var(--bed-number-width);min-width:var(--bed-number-width);max-width:var(--bed-number-width);height:var(--item-min-height);vertical-align:middle;background:#fef3c7;border-left:1px solid #b99235;color:#111827;font-size:var(--bed-font);font-weight:900;line-height:1;direction:ltr;text-align:center}
+    .bed-name-cell{display:table-cell;width:auto;height:var(--item-min-height);vertical-align:middle;min-width:0;overflow:hidden;padding:var(--item-padding);direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
     .occupant-line{display:flex;align-items:center;gap:1.1mm;width:100%;min-width:0;overflow:hidden;white-space:nowrap;direction:ltr;text-align:left}
-    .rooming-section .room-card .pilgrim-name{display:block;flex:1 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#111827;font-size:min(var(--smart-name-font,var(--name-font)),10px) !important;line-height:1.2 !important;font-weight:600;direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
+    .rooming-section .room-card .pilgrim-name{display:block;flex:1 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#111827;font-size:min(var(--smart-name-font,var(--name-font)),var(--name-hard-max)) !important;line-height:1.2 !important;font-weight:600;direction:${direction};text-align:${direction === "rtl" ? "right" : "left"}}
     .source-label{display:block;flex:0 1 var(--source-max,28%);max-width:var(--source-max,28%);min-width:0;overflow:hidden;text-overflow:clip;white-space:nowrap;color:#64748b;font-size:var(--smart-source-font,var(--source-font));font-weight:500;line-height:1;margin:0;text-align:left;direction:${direction}}
     li.empty{background:#fff}
     .empty-state{margin:18mm 0 0;text-align:center;color:#64748b;font-size:12px;font-weight:800}
@@ -1626,6 +1681,9 @@ export const createRoomingPrintHtml = ({
       html,body{background:#fff !important}
       .room-card,.type-title,.print-header{break-inside:avoid;page-break-inside:avoid}
       .rooms-grid{grid-template-columns:repeat(var(--rooms-columns),minmax(0,var(--room-card-max-width)))}
+      li.numbered{display:table !important;width:100% !important;table-layout:fixed !important;border-collapse:collapse !important;border-spacing:0 !important}
+      .bed-number{display:table-cell !important;width:var(--bed-number-width) !important;min-width:var(--bed-number-width) !important;max-width:var(--bed-number-width) !important;border-left:1px solid #b99235 !important}
+      .bed-name-cell{display:table-cell !important;width:auto !important}
     }
   </style>
 </head>
@@ -1703,8 +1761,48 @@ export const createCombinedRoomingSection = ({
     checkOut: maxDateValue(makkahDates.checkOut, madinahDates.checkOut),
     rooms,
     dateRanges: [
-      { label: makkahLabel, checkIn: makkahDates.checkIn, checkOut: makkahDates.checkOut },
-      { label: madinahLabel, checkIn: madinahDates.checkIn, checkOut: madinahDates.checkOut },
+      { key: "makkah", label: makkahLabel, hotel: makkahHotel, checkIn: makkahDates.checkIn, checkOut: makkahDates.checkOut },
+      { key: "madinah", label: madinahLabel, hotel: madinahHotel, checkIn: madinahDates.checkIn, checkOut: madinahDates.checkOut },
+    ],
+  };
+};
+
+export const createUnifiedRoomingSection = ({
+  rooms = [],
+  makkahHotel = "",
+  madinahHotel = "",
+  makkahDates = {},
+  madinahDates = {},
+  labels = {},
+} = {}) => {
+  const makkahLabel = labels.makkah || "مكة";
+  const madinahLabel = labels.madinah || "المدينة";
+  return {
+    combined: true,
+    unified: true,
+    city: "combined",
+    cityLabel: labels.roomingUnifiedTitle || `${makkahLabel} + ${madinahLabel}`,
+    hotel: "",
+    checkIn: minDateValue(makkahDates.checkIn, madinahDates.checkIn),
+    checkOut: maxDateValue(makkahDates.checkOut, madinahDates.checkOut),
+    rooms,
+    dateRanges: [
+      {
+        key: "makkah",
+        label: makkahLabel,
+        hotel: makkahHotel,
+        checkIn: makkahDates.checkIn,
+        checkOut: makkahDates.checkOut,
+        infoTemplate: labels.roomingUnifiedMakkahInfo,
+      },
+      {
+        key: "madinah",
+        label: madinahLabel,
+        hotel: madinahHotel,
+        checkIn: madinahDates.checkIn,
+        checkOut: madinahDates.checkOut,
+        infoTemplate: labels.roomingUnifiedMadinahInfo,
+      },
     ],
   };
 };

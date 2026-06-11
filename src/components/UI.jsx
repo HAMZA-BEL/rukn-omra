@@ -239,7 +239,7 @@ const getNextEnabledIndex = (options, currentIndex, direction) => {
 };
 
 // ── Select ────────────────────────────────────────────────────────────────────
-export function Select({ label, value, onChange, options = [], required, style, disabled = false, portalContainer = null }) {
+export function Select({ label, value, onChange, options = [], required, error = "", style, disabled = false, portalContainer = null }) {
   const triggerRef = React.useRef(null);
   const menuRef = React.useRef(null);
   const [focused, setFocused] = React.useState(false);
@@ -380,7 +380,11 @@ export function Select({ label, value, onChange, options = [], required, style, 
     }
   }, [activeIndex, disabled, firstEnabledIndex, normalizedOptions, open, openMenu, selectOption, selectedIndex]);
 
-  const borderColor = disabled
+  const hasError = Boolean(error);
+  const errorColor = t.danger || "#dc2626";
+  const borderColor = hasError
+    ? errorColor
+    : disabled
     ? v.borderInput
     : focused
       ? v.gold
@@ -479,6 +483,7 @@ export function Select({ label, value, onChange, options = [], required, style, 
         aria-controls={open ? listboxId : undefined}
         aria-activedescendant={open && activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
         aria-required={required || undefined}
+        aria-invalid={hasError || undefined}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         onMouseEnter={() => setHovered(true)}
@@ -504,7 +509,9 @@ export function Select({ label, value, onChange, options = [], required, style, 
           direction: dir,
           outline: "none",
           transition: "border-color .2s, box-shadow .2s, background .2s",
-          boxShadow: focused ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
+          boxShadow: hasError
+            ? "0 0 0 3px rgba(220,38,38,.10)"
+            : focused ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
           cursor: disabled ? "not-allowed" : "pointer",
           opacity: disabled ? 0.6 : 1,
         }}
@@ -523,6 +530,11 @@ export function Select({ label, value, onChange, options = [], required, style, 
           }}
         />
       </button>
+      {hasError && (
+        <p style={{ margin: "0 2px", color: errorColor, fontSize: 11, fontWeight: 700, lineHeight: 1.4 }}>
+          {error}
+        </p>
+      )}
       {menu}
     </div>
   );

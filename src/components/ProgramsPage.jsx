@@ -41,7 +41,7 @@ import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
 import { escapeHtml } from "../utils/escapeHtml";
 import { printProgramPDF } from "../utils/exportPdf";
-import { createCombinedRoomingSection, createRoomingPrintHtml, downloadRoomingPdf } from "../utils/roomingPdf";
+import { createCombinedRoomingSection, createRoomingPrintHtml, createUnifiedRoomingSection, downloadRoomingPdf } from "../utils/roomingPdf";
 import { buildRoomingPrintModel, downloadRoomingExcel } from "../utils/roomingExport";
 import {
   calculateHotelStayDates,
@@ -876,6 +876,47 @@ const getProgramHotelsForCity = (program, packages, city) => {
   return Array.from(values);
 };
 
+const getRoomHotelName = (room = {}, program = {}, packages = [], location = "makkah") => {
+  const city = location === "madinah" ? "madinah" : "makkah";
+  const getPackageHotel = (pkg) => (city === "madinah"
+    ? (pkg?.hotelMadina || pkg?.hotel_madina || "")
+    : (pkg?.hotelMecca || pkg?.hotel_mecca || ""));
+  const getPackageHotelId = (pkg) => (city === "madinah"
+    ? (pkg?.hotelMadinaId || pkg?.hotel_madina_id || pkg?.madinahHotelId || pkg?.madinaHotelId || pkg?.medinaHotelId || "")
+    : (pkg?.hotelMeccaId || pkg?.hotel_mecca_id || pkg?.makkahHotelId || pkg?.meccaHotelId || ""));
+  const cityHotels = getProgramHotelsForCity(program, packages, city);
+  const hotelId = String(room.hotel_id || room.hotelId || "").trim();
+  if (hotelId) {
+    const byPackageId = packages.find((pkg) => (
+      String(pkg?.id || "") === hotelId
+      || String(getPackageHotelId(pkg) || "") === hotelId
+    ));
+    const packageHotel = byPackageId ? String(getPackageHotel(byPackageId) || "").trim() : "";
+    if (packageHotel) return packageHotel;
+
+    const byHotelValue = cityHotels.find((hotel) => normalizeRoomingHotel(hotel) === normalizeRoomingHotel(hotelId));
+    if (byHotelValue) return byHotelValue;
+  }
+
+  const explicitHotelName = String(room.hotel_name || room.hotelName || "").trim();
+  if (!isMissingRoomingValue(explicitHotelName)) return explicitHotelName;
+
+  const directHotel = String(room.hotel || "").trim();
+  if (!isMissingRoomingValue(directHotel)) {
+    const byPackageId = packages.find((pkg) => (
+      String(pkg?.id || "") === directHotel
+      || String(getPackageHotelId(pkg) || "") === directHotel
+    ));
+    const packageHotel = byPackageId ? String(getPackageHotel(byPackageId) || "").trim() : "";
+    if (packageHotel) return packageHotel;
+
+    const byHotelValue = cityHotels.find((hotel) => normalizeRoomingHotel(hotel) === normalizeRoomingHotel(directHotel));
+    return byHotelValue || directHotel;
+  }
+
+  return "";
+};
+
 const createRoomId = () => `room-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
 const getRoomingStorageKey = (programId, city, agencyId = null) => (
@@ -885,6 +926,91 @@ const getRoomingStorageKey = (programId, city, agencyId = null) => (
 );
 
 const getLegacyRoomingStorageKey = (programId, city) => `rukn_rooming_sheet_${programId}_${city}`;
+
+const ROOMING_PRINT_DEFAULT_SETTINGS = {
+  showRegistrationSource: true,
+  showBedNumbers: false,
+  unifyMakkahMadinahRooming: true,
+  density: "normal",
+  layoutMode: "default",
+};
+
+const normalizeRoomingPrintSettingsValue = (settings = {}) => {
+  const mergedSettings = {
+    ...ROOMING_PRINT_DEFAULT_SETTINGS,
+    ...(settings && typeof settings === "object" ? settings : {}),
+  };
+  return {
+    ...ROOMING_PRINT_DEFAULT_SETTINGS,
+    showRegistrationSource: mergedSettings.showRegistrationSource !== false,
+    showBedNumbers: mergedSettings.showBedNumbers === true,
+    unifyMakkahMadinahRooming: mergedSettings.unifyMakkahMadinahRooming !== false,
+    density: ["comfortable", "normal", "compact"].includes(mergedSettings.density)
+      ? mergedSettings.density
+      : ROOMING_PRINT_DEFAULT_SETTINGS.density,
+    layoutMode: mergedSettings.layoutMode === "arranged"
+      ? "arranged"
+      : ROOMING_PRINT_DEFAULT_SETTINGS.layoutMode,
+  };
+};
+
+const getRoomingPrintSettingsStorageKey = (agencyId = null) => (
+  agencyId
+    ? `rukn_rooming_print_settings_${agencyId}`
+    : "rukn_rooming_print_settings"
+);
+
+const readRoomingPrintSettingsFromStorage = (agencyId = null) => {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return { ...ROOMING_PRINT_DEFAULT_SETTINGS };
+  }
+  try {
+    const raw = window.localStorage.getItem(getRoomingPrintSettingsStorageKey(agencyId));
+    if (!raw) return { ...ROOMING_PRINT_DEFAULT_SETTINGS };
+    return normalizeRoomingPrintSettingsValue(JSON.parse(raw));
+  } catch (error) {
+    console.warn("[rooming] print settings read failed", error);
+    return { ...ROOMING_PRINT_DEFAULT_SETTINGS };
+  }
+};
+
+const writeRoomingPrintSettingsToStorage = (agencyId = null, settings = {}) => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      getRoomingPrintSettingsStorageKey(agencyId),
+      JSON.stringify(normalizeRoomingPrintSettingsValue(settings))
+    );
+  } catch (error) {
+    console.warn("[rooming] print settings write failed", error);
+  }
+};
+
+const getRoomingDistributionSignature = (rooms = []) => JSON.stringify(
+  (Array.isArray(rooms) ? rooms : []).map((room = {}) => {
+    const roomType = normalizeRoomingRoomType(room.roomTypeKey || room.roomType) || String(room.roomTypeKey || room.roomType || "").trim();
+    const occupantIds = Array.isArray(room.occupantIds)
+      ? room.occupantIds
+      : Array.isArray(room.occupants)
+        ? room.occupants.map((occupant) => occupant?.id)
+        : [];
+    const capacity = Math.max(
+      1,
+      Number(room.capacity) || getRoomingCapacity(roomType),
+      occupantIds.length || 0
+    );
+    return [
+      roomType || "other",
+      String(room.category || "").trim(),
+      String(capacity),
+      occupantIds.map((id) => String(id || "").trim()).join(","),
+    ].join("|");
+  }).sort((a, b) => a.localeCompare(b, "ar"))
+);
+
+const areRoomingDistributionsEquivalent = (firstRooms = [], secondRooms = []) => (
+  getRoomingDistributionSignature(firstRooms) === getRoomingDistributionSignature(secondRooms)
+);
 
 const createRoomLinkId = (sourceRoomId, targetRoomId) => {
   const [source, target] = [String(sourceRoomId || ""), String(targetRoomId || "")].sort();
@@ -1053,9 +1179,9 @@ const getRoomingPackageHotel = (pkg, city) => (
 );
 
 const findRoomingPackageFromRoom = (room = {}, packages = [], city = "makkah") => {
-  const packageId = String(room.packageId || room.package_id || "").trim();
+  const packageId = String(room.packageId || room.package_id || room.hotel_id || room.hotelId || "").trim();
   if (packageId) {
-    const byId = packages.find((pkg) => pkg.id === packageId);
+    const byId = packages.find((pkg) => String(pkg.id || "") === packageId);
     if (byId) return byId;
   }
   const explicitLevel = String(room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
@@ -1063,7 +1189,7 @@ const findRoomingPackageFromRoom = (room = {}, packages = [], city = "makkah") =
     const byLevel = packages.find((pkg) => String(pkg.level || "").trim() === explicitLevel);
     if (byLevel) return byLevel;
   }
-  const roomHotel = normalizeRoomingHotel(room.hotel);
+  const roomHotel = normalizeRoomingHotel(getRoomHotelName(room, {}, packages, city) || room.hotel);
   if (!roomHotel) return null;
   const matches = packages.filter((pkg) => normalizeRoomingHotel(getRoomingPackageHotel(pkg, city)) === roomHotel);
   const uniqueLevels = new Set(matches.map((pkg) => String(pkg.level || "").trim()).filter(Boolean));
@@ -1159,7 +1285,7 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
     const roomingGroupId = String(room.roomingGroupId || room.id || "").trim();
     const roomingGroupName = String(room.roomingGroupName || (room.roomNumber ? `غرفة ${room.roomNumber}` : "")).trim();
     const genderOverrides = room.genderOverrides && typeof room.genderOverrides === "object" ? room.genderOverrides : {};
-    const roomHotel = String(room.hotel || "").trim();
+    const roomHotel = String(getRoomHotelName(room, {}, packages, city) || room.hotel || "").trim();
     const roomPackage = findRoomingPackageFromRoom(room, packages, city);
     const roomLevel = String(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
     const priceOverrides = room.priceOverrides && typeof room.priceOverrides === "object" ? room.priceOverrides : {};
@@ -5606,7 +5732,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const [savedAt, setSavedAt] = React.useState(null);
   const [selectedRoomId, setSelectedRoomId] = React.useState(null);
   const [roomModal, setRoomModal] = React.useState({ open: false, mode: "edit", roomId: null });
-  const [roomDraft, setRoomDraft] = React.useState({ roomType: "double", category: "male_only", hotel: "", roomCount: "1" });
+  const [roomDraft, setRoomDraft] = React.useState({ roomType: "", category: "", hotel: "", roomCount: "1" });
+  const [roomDraftErrors, setRoomDraftErrors] = React.useState({});
   const [roomCreatePosition, setRoomCreatePosition] = React.useState({ x: 0, y: 0 });
   const [canvasMenu, setCanvasMenu] = React.useState({ open: false, x: 0, y: 0, position: { x: 0, y: 0 } });
   const [pickerOpen, setPickerOpen] = React.useState(false);
@@ -5629,12 +5756,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const [roomNeedsOpen, setRoomNeedsOpen] = React.useState(false);
   const [largeRoomGenerationConfirm, setLargeRoomGenerationConfirm] = React.useState(null);
   const [roomingPrintSettingsOpen, setRoomingPrintSettingsOpen] = React.useState(false);
-  const [roomingPrintSettings, setRoomingPrintSettings] = React.useState({
-    showRegistrationSource: true,
-    showBedNumbers: false,
-    density: "normal",
-    layoutMode: "default",
-  });
+  const [roomingPrintSettings, setRoomingPrintSettings] = React.useState(() => readRoomingPrintSettingsFromStorage(agencyId));
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [roomingExportBusy, setRoomingExportBusy] = React.useState("");
   const [roomingPrintBusy, setRoomingPrintBusy] = React.useState("");
@@ -5798,6 +5920,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         defaultLayout: "Organisation par défaut",
         arrangedLayout: "Selon l’agencement du rooming",
         layoutHelp: "L’organisation par défaut regroupe les chambres par type. L’agencement du rooming respecte la proximité des chambres que vous avez organisée, tout en les compactant proprement pour l’impression.",
+        unifiedBoth: t.roomingPrintUnifiedBoth || "Imprimer un hébergement unifié Makkah + Madinah",
+        unifiedBothDescription: t.roomingPrintUnifiedBothDescription || "Si l’hébergement de Makkah et Madinah est identique, une seule feuille sera imprimée au lieu de répéter les mêmes chambres.",
         done: "Terminé",
       };
     }
@@ -5814,6 +5938,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         defaultLayout: "Default layout",
         arrangedLayout: "Rooming arrangement",
         layoutHelp: "Default layout groups rooms by type. Rooming arrangement keeps rooms close to how you arranged them, while packing them cleanly for print.",
+        unifiedBoth: t.roomingPrintUnifiedBoth || "Print unified Makkah + Madinah rooming",
+        unifiedBothDescription: t.roomingPrintUnifiedBothDescription || "If Makkah and Madinah rooming are identical, print one unified sheet instead of repeating the same rooms.",
         done: "Done",
       };
     }
@@ -5829,9 +5955,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       defaultLayout: "الترتيب الافتراضي",
       arrangedLayout: "حسب ترتيب التسكين",
       layoutHelp: "الترتيب الافتراضي يجمع الغرف حسب النوع، أما ترتيب التسكين فيحافظ على قرب الغرف كما رتبتها مع ضغطها للطباعة باحترافية.",
+      unifiedBoth: t.roomingPrintUnifiedBoth || "طباعة تسكين موحد لمكة والمدينة",
+      unifiedBothDescription: t.roomingPrintUnifiedBothDescription || "إذا كان تسكين مكة والمدينة متطابقا، تتم طباعة ورقة واحدة فقط بدل تكرار نفس الغرف.",
       done: "تطبيق",
     };
-  }, [lang]);
+  }, [lang, t]);
   const roomingDensityOptions = React.useMemo(() => ([
     { value: "comfortable", label: roomingPrintLabels.comfortable },
     { value: "normal", label: roomingPrintLabels.normal },
@@ -5841,6 +5969,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     { value: "default", label: roomingPrintLabels.defaultLayout },
     { value: "arranged", label: roomingPrintLabels.arrangedLayout },
   ]), [roomingPrintLabels]);
+  React.useEffect(() => {
+    setRoomingPrintSettings(readRoomingPrintSettingsFromStorage(agencyId));
+  }, [agencyId]);
+  const applyRoomingPrintSettings = React.useCallback(() => {
+    setRoomingPrintSettings((current) => {
+      const normalized = normalizeRoomingPrintSettingsValue(current);
+      writeRoomingPrintSettingsToStorage(agencyId, normalized);
+      return normalized;
+    });
+    setRoomingPrintSettingsOpen(false);
+  }, [agencyId]);
   const roomingCopySourceCity = getOppositeRoomingCity(city);
   const roomingCityShortLabels = React.useMemo(() => ({
     makkah: t.makkah || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
@@ -5920,6 +6059,60 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     });
     return Array.from(values);
   }, [program, packages, city, roomingEligibleClients, getClientContext]);
+  const resolveRoomHotelName = React.useCallback(
+    (room, targetCity = city) => getRoomHotelName(room, program, packages, targetCity),
+    [city, packages, program]
+  );
+  const roomModalLabels = React.useMemo(() => ({
+    selectHotel: t.roomingSelectHotelPlaceholder || (lang === "fr" ? "Choisir un hôtel…" : lang === "en" ? "Select hotel…" : "اختيار فندق…"),
+    selectRoomType: t.roomingSelectRoomTypePlaceholder || (lang === "fr" ? "Type de chambre…" : lang === "en" ? "Room type…" : "نوع الغرفة…"),
+    selectCategory: t.roomingSelectRoomCategoryPlaceholder || (lang === "fr" ? "Classification de chambre…" : lang === "en" ? "Room classification…" : "تصنيف الغرفة…"),
+    hotelRequired: t.roomingHotelRequired || (lang === "fr" ? "L’hôtel est obligatoire" : lang === "en" ? "Hotel is required" : "الفندق مطلوب"),
+    roomTypeRequired: t.roomingRoomTypeRequired || (lang === "fr" ? "Le type de chambre est obligatoire" : lang === "en" ? "Room type is required" : "نوع الغرفة مطلوب"),
+    categoryRequired: t.roomingRoomCategoryRequired || (lang === "fr" ? "La classification de la chambre est obligatoire" : lang === "en" ? "Room classification is required" : "تصنيف الغرفة مطلوب"),
+  }), [lang, t]);
+  const roomHotelSelectOptions = React.useMemo(() => {
+    const values = [];
+    const addHotel = (hotel) => {
+      const value = String(hotel || "").trim();
+      if (!value) return;
+      if (values.some((item) => normalizeRoomingHotel(item) === normalizeRoomingHotel(value))) return;
+      values.push(value);
+    };
+    hotelOptions.forEach(addHotel);
+    addHotel(roomDraft.hotel);
+    return [
+      { value: "", label: roomModalLabels.selectHotel, disabled: true },
+      ...values.map((hotel) => ({ value: hotel, label: hotel })),
+    ];
+  }, [hotelOptions, roomDraft.hotel, roomModalLabels.selectHotel]);
+  const roomTypeSelectOptions = React.useMemo(() => [
+    { value: "", label: roomModalLabels.selectRoomType, disabled: true },
+    ...roomingRoomOptions.map((option) => ({ value: option.value, label: option.label })),
+  ], [roomModalLabels.selectRoomType, roomingRoomOptions]);
+  const roomCategorySelectOptions = React.useMemo(() => [
+    { value: "", label: roomModalLabels.selectCategory, disabled: true },
+    ...roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label })),
+  ], [roomModalLabels.selectCategory, roomingCategoryOptions]);
+  const setRoomDraftField = React.useCallback((field, value) => {
+    setRoomDraft((prev) => ({ ...prev, [field]: value }));
+    setRoomDraftErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+  const validateRoomDraft = React.useCallback((draft) => {
+    const errors = {};
+    const hotel = String(draft.hotel || "").trim();
+    const roomType = normalizeRoomingRoomType(draft.roomType);
+    const category = String(draft.category || "").trim();
+    if (!hotel) errors.hotel = roomModalLabels.hotelRequired;
+    if (!roomType) errors.roomType = roomModalLabels.roomTypeRequired;
+    if (!["male_only", "female_only", "family"].includes(category)) errors.category = roomModalLabels.categoryRequired;
+    return errors;
+  }, [roomModalLabels.categoryRequired, roomModalLabels.hotelRequired, roomModalLabels.roomTypeRequired]);
 
   const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = [], nextRoomLinks = []) => ({
     kind: "rooming-canvas",
@@ -6459,7 +6652,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   const groupedRooms = React.useMemo(() => {
     const sorted = rooms.slice().sort((a, b) => {
-      const hotel = String(a.hotel || "").localeCompare(String(b.hotel || ""), "ar");
+      const hotel = String(resolveRoomHotelName(a) || "").localeCompare(String(resolveRoomHotelName(b) || ""), "ar");
       if (hotel) return hotel;
       const type = String(a.roomType || "").localeCompare(String(b.roomType || ""), "ar");
       if (type) return type;
@@ -6469,7 +6662,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     });
     const hotels = new Map();
     sorted.forEach((room) => {
-      const hotelKey = room.hotel || (t.roomingMissingHotel || "فندق غير محدد");
+      const hotelKey = resolveRoomHotelName(room) || (t.roomingMissingHotel || "فندق غير محدد");
       const typeKey = room.roomType || (t.noHotel || "غير محدد");
       if (!hotels.has(hotelKey)) hotels.set(hotelKey, new Map());
       const byType = hotels.get(hotelKey);
@@ -6477,7 +6670,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       byType.get(typeKey).push(room);
     });
     return hotels;
-  }, [rooms]);
+  }, [resolveRoomHotelName, rooms, t.noHotel, t.roomingMissingHotel]);
 
   const getCompatibilityResult = React.useCallback((client, room) => {
     if (!client || !room) return { ok: false, reason: t.roomingMissingPilgrimData || "بيانات المعتمر ناقصة" };
@@ -6499,7 +6692,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (!client || !room) return null;
     const targetRoomType = normalizeRoomingRoomType(room.roomType);
     const currentRoomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room);
-    const targetHotel = isMissingRoomingValue(room.hotel) ? "" : String(room.hotel).trim();
+    const resolvedRoomHotel = resolveRoomHotelName(room);
+    const targetHotel = isMissingRoomingValue(resolvedRoomHotel) ? "" : String(resolvedRoomHotel).trim();
     const currentHotel = getExplicitClientHotelForRoomingCity(client, city);
     const clientGender = normalizeRoomingGender(client.gender);
     const occupantGenders = (room.occupantIds || [])
@@ -6541,7 +6735,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       targetHotel,
       priceSync,
     };
-  }, [city, clientsById, getLocalizedRoomTypeLabel, packages]);
+  }, [city, clientsById, getLocalizedRoomTypeLabel, packages, resolveRoomHotelName]);
 
   const getCompatibilityReason = React.useCallback((client, room) => {
     const result = getCompatibilityResult(client, room);
@@ -6676,8 +6870,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   ], [t]);
 
   const visibleRooms = React.useMemo(() => rooms.filter((room) => {
+    const roomHotelName = resolveRoomHotelName(room);
     const hotelMatch = panelHotel === "all"
-      || normalizeRoomingHotel(room.hotel) === normalizeRoomingHotel(panelHotel);
+      || normalizeRoomingHotel(roomHotelName) === normalizeRoomingHotel(panelHotel);
     const roomTypeMatch = panelRoomType === "all"
       || normalizeRoomingRoomType(room.roomType) === normalizeRoomingRoomType(panelRoomType);
     const capacity = Math.max(1, Number(room.capacity) || getRoomingCapacity(room.roomType));
@@ -6687,7 +6882,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       || (roomOccupancyFilter === "incomplete" && count > 0 && count < capacity)
       || (roomOccupancyFilter === "full" && count === capacity);
     return hotelMatch && roomTypeMatch && occupancyMatch;
-  }), [rooms, panelHotel, panelRoomType, roomOccupancyFilter]);
+  }), [rooms, panelHotel, panelRoomType, roomOccupancyFilter, resolveRoomHotelName]);
 
   const getRoomingProgressForCity = React.useCallback((targetCity) => {
     const sourceRooms = targetCity === city ? rooms : readCanvasStateFromStorage(targetCity).rooms;
@@ -6924,31 +7119,47 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     t,
   ]);
 
+  const closeRoomModal = React.useCallback(() => {
+    setRoomModal({ open: false, mode: "edit", roomId: null });
+    setRoomDraftErrors({});
+  }, []);
+
   const openCreateRoom = React.useCallback((position = { x: 0, y: 0 }) => {
     setRoomDraft({
-      roomType: "double",
-      category: "male_only",
-      hotel: hotelOptions[0] || (city === "makkah" ? program.hotelMecca || "" : program.hotelMadina || ""),
+      roomType: "",
+      category: "",
+      hotel: "",
       roomCount: "1",
     });
+    setRoomDraftErrors({});
     setRoomCreatePosition(position);
     setRoomModal({ open: true, mode: "create", roomId: null });
-  }, [hotelOptions, city, program.hotelMecca, program.hotelMadina]);
+  }, []);
 
   const openEditRoom = React.useCallback((room) => {
+    const hotelName = resolveRoomHotelName(room);
     setSelectedRoomId(room.id);
     setRoomDraft({
-      roomType: room.roomType || "double",
-      category: room.category || "male_only",
-      hotel: room.hotel || hotelOptions[0] || "",
+      roomType: normalizeRoomingRoomType(room.roomType) || "",
+      category: ["male_only", "female_only", "family"].includes(room.category) ? room.category : "",
+      hotel: hotelName || "",
       roomCount: "1",
     });
+    setRoomDraftErrors({});
     setRoomModal({ open: true, mode: "edit", roomId: room.id });
-  }, [hotelOptions]);
+  }, [resolveRoomHotelName]);
 
   const saveRoomEdit = React.useCallback((options = {}) => {
     const skipLargeConfirm = Boolean(options?.skipLargeConfirm);
-    const capacity = getRoomingCapacity(roomDraft.roomType);
+    const validationErrors = validateRoomDraft(roomDraft);
+    if (Object.keys(validationErrors).length) {
+      setRoomDraftErrors(validationErrors);
+      return;
+    }
+    const selectedRoomType = normalizeRoomingRoomType(roomDraft.roomType);
+    const selectedCategory = String(roomDraft.category || "").trim();
+    const selectedHotel = String(roomDraft.hotel || "").trim();
+    const capacity = getRoomingCapacity(selectedRoomType);
     if (roomModal.mode === "create") {
       const roomCount = normalizeRoomCreateCount(roomDraft.roomCount);
       if (!skipLargeConfirm && roomCount >= ROOMING_LARGE_GENERATION_THRESHOLD) {
@@ -6972,9 +7183,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           id: createRoomId(),
           order: rooms.length + index,
           roomNumber: String(firstRoomNumber + index).padStart(2, "0"),
-          roomType: roomDraft.roomType,
-          category: roomDraft.category,
-          hotel: roomDraft.hotel || hotelOptions[0] || "",
+          roomType: selectedRoomType,
+          category: selectedCategory,
+          hotel: selectedHotel,
+          hotelName: selectedHotel,
+          hotel_name: selectedHotel,
+          hotelId: "",
+          hotel_id: "",
           capacity,
           occupantIds: [],
           locked: false,
@@ -6990,7 +7205,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       if (roomCount > 1) generatedRoomFitPendingRef.current = getRoomingGeneratedLayoutSummary(rooms.length + createdRooms.length);
       setRooms((prev) => [...prev, ...createdRooms]);
       setSelectedRoomId(createdRooms[createdRooms.length - 1]?.id || null);
-      setRoomModal({ open: false, mode: "edit", roomId: null });
+      closeRoomModal();
       markDirty();
       onToast?.(roomCount > 1 ? (t.roomingRoomsAdded || t.roomingRoomAdded || "تمت إضافة الغرف") : (t.roomingRoomAdded || "تمت إضافة الغرفة"), "success");
       return;
@@ -7003,7 +7218,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     (room.occupantIds || []).forEach((clientId) => {
       const client = clientsById[clientId];
       if (!client) return;
-      const nextRoom = { ...room, ...roomDraft, capacity, occupantIds: kept };
+      const nextRoom = { ...room, ...roomDraft, roomType: selectedRoomType, category: selectedCategory, hotel: selectedHotel, capacity, occupantIds: kept };
       const reason = getCompatibilityReason(client, nextRoom);
       if (reason || kept.length >= capacity) removed.push({ clientId, reason: reason || t.roomingCapacityExceeded || "تجاوز سعة الغرفة" });
       else kept.push(clientId);
@@ -7011,6 +7226,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     setRooms((prev) => prev.map((item) => item.id === room.id ? {
       ...item,
       ...roomDraft,
+      roomType: selectedRoomType,
+      category: selectedCategory,
+      hotel: selectedHotel,
+      hotelName: selectedHotel,
+      hotel_name: selectedHotel,
+      hotelId: "",
+      hotel_id: "",
       capacity,
       occupantIds: kept,
       genderOverrides: Object.fromEntries(Object.entries(item.genderOverrides || {}).filter(([id]) => kept.includes(id))),
@@ -7018,13 +7240,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     } : item));
     if (removed.length) {
       setUnassigned((prev) => [...prev, ...removed]);
-      if (roomDraft.category === "male_only") onToast?.(t.roomingMovedIncompatibleWomen || "تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
-      else if (roomDraft.category === "female_only") onToast?.(t.roomingMovedIncompatibleMen || "تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
+      if (selectedCategory === "male_only") onToast?.(t.roomingMovedIncompatibleWomen || "تم نقل المعتمرات غير المتوافقات إلى غير المدرجين", "info");
+      else if (selectedCategory === "female_only") onToast?.(t.roomingMovedIncompatibleMen || "تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
       else onToast?.(t.roomingMovedIncompatible || "تم نقل المعتمرين غير المتوافقين إلى غير المدرجين", "info");
     }
-    setRoomModal({ open: false, mode: "edit", roomId: null });
+    closeRoomModal();
     markDirty();
-  }, [rooms, roomModal.mode, roomModal.roomId, roomDraft, hotelOptions, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast, roomToCollisionNode, t]);
+  }, [closeRoomModal, rooms, roomModal.mode, roomModal.roomId, roomDraft, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast, roomToCollisionNode, t, validateRoomDraft]);
 
   const cancelLargeRoomGeneration = React.useCallback(() => {
     setLargeRoomGenerationConfirm(null);
@@ -7647,7 +7869,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
 
     const context = getClientContext(client);
-    const targetHotel = isMissingRoomingValue(room.hotel) ? "" : String(room.hotel).trim();
+    const resolvedRoomHotel = resolveRoomHotelName(room);
+    const targetHotel = isMissingRoomingValue(resolvedRoomHotel) ? "" : String(resolvedRoomHotel).trim();
     const currentHotel = isMissingRoomingValue(context.hotel) ? "" : String(context.hotel).trim();
     if (targetHotel && currentHotel && normalizeRoomingHotel(targetHotel) !== normalizeRoomingHotel(currentHotel)) {
       return {
@@ -7667,7 +7890,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
 
     return { state: "match", message: t.canInsertPilgrimHere || "يمكن إدراج المعتمر هنا" };
-  }, [city, clientsById, getClientContext, getCompatibilityReason, getRoomingDropConflicts, lang, packages, t]);
+  }, [city, clientsById, getClientContext, getCompatibilityReason, getRoomingDropConflicts, lang, packages, resolveRoomHotelName, t]);
 
   const roomFlowNodes = React.useMemo(() => visibleRooms.map((room) => ({
     id: room.id,
@@ -7675,6 +7898,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     position: { x: Number(room.x) || 0, y: Number(room.y) || 0 },
     data: {
       room,
+      hotelName: resolveRoomHotelName(room),
       clientsById,
       draggingClientId,
       draggingClient: draggingClientId ? clientsById[draggingClientId] : null,
@@ -7700,7 +7924,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     },
     draggable: !room.locked && !roomSelectionMode,
     selected: room.id === selectedRoomId,
-  })), [visibleRooms, clientsById, draggingClientId, hoveredDropRoomId, getCompatibilityReason, getRoomingDropVisualStatus, insertClientIntoRoom, insertClientsIntoRoom, clearRoomingDragState, enterRoomingDropHover, leaveRoomingDropHover, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, linkMode, linkStartRoomId, selectedRoomId]);
+  })), [visibleRooms, clientsById, draggingClientId, hoveredDropRoomId, getCompatibilityReason, getRoomingDropVisualStatus, insertClientIntoRoom, insertClientsIntoRoom, clearRoomingDragState, enterRoomingDropHover, leaveRoomingDropHover, openPickerForRoom, openEditRoomById, copyRoom, toggleRoomLock, deleteRoom, removeClientFromRoom, roomSelectionMode, selectedRoomIds, linkMode, linkStartRoomId, selectedRoomId, resolveRoomHotelName]);
 
   const roomLinkDeleteLabel = t.roomingDeleteLink || (lang === "fr" ? "Supprimer le lien" : lang === "en" ? "Delete link" : "حذف الرابط");
   const roomFlowEdges = React.useMemo(() => {
@@ -7924,11 +8148,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           source: getClientRegistrationSource(client),
         }));
       const roomTypeKey = normalizeRoomingRoomType(room.roomType) || room.roomType || "other";
+      const hotelName = resolveRoomHotelName(room);
       return {
         id: room.id,
         city,
         cityLabel,
-        hotel: room.hotel || (t.roomingMissingHotel || "فندق غير محدد"),
+        hotel: hotelName || (t.roomingMissingHotel || "فندق غير محدد"),
         checkIn: program.departure || "",
         checkOut: program.returnDate || "",
         roomTypeKey,
@@ -7961,7 +8186,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }));
     win.document.close();
     return true;
-  }, [rooms, roomLinks, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings, resolveAgencyLogoUrlForRooming]);
+  }, [rooms, roomLinks, clientsById, program, city, agency, lang, t, getLocalizedRoomTypeLabel, roomingPrintSettings, resolveAgencyLogoUrlForRooming, resolveRoomHotelName]);
 
   const getStoredCanvasRooms = React.useCallback((targetCity) => {
     if (targetCity === city) return rooms;
@@ -8009,8 +8234,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const fallbackHotel = targetCity === "makkah"
       ? (program.hotelMecca || program.hotel_mecca || "")
       : (program.hotelMadina || program.hotel_madina || "");
-    return cityRooms.find((room) => String(room.hotel || "").trim())?.hotel || fallbackHotel || "";
-  }, [program]);
+    return cityRooms.map((room) => resolveRoomHotelName(room, targetCity)).find((hotel) => String(hotel || "").trim()) || fallbackHotel || "";
+  }, [program, resolveRoomHotelName]);
 
   const roomingExportLabels = React.useMemo(() => ({
     title: t.roomingPrintTitle || (lang === "fr" ? "Feuille d’hébergement" : lang === "en" ? "Rooming sheet" : "ورقة التسكين"),
@@ -8025,6 +8250,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     generatedAtValue: new Date().toLocaleDateString(lang === "ar" ? "ar-MA" : lang === "fr" ? "fr-FR" : "en-US"),
     makkah: t.makkah || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
     madinah: t.madinah || (lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة"),
+    roomingUnifiedTitle: t.roomingUnifiedTitle || (lang === "fr" ? "Hébergement Makkah et Madinah" : lang === "en" ? "Makkah and Madinah Rooming" : "تسكين مكة والمدينة"),
+    roomingUnifiedMakkahInfo: t.roomingUnifiedMakkahInfo || (lang === "fr" ? "Makkah : hôtel {hotel} — arrivée {checkIn} / départ {checkOut}" : lang === "en" ? "Makkah: hotel {hotel} — check-in {checkIn} / check-out {checkOut}" : "مكة: الفندق {hotel} — الدخول {checkIn} / الخروج {checkOut}"),
+    roomingUnifiedMadinahInfo: t.roomingUnifiedMadinahInfo || (lang === "fr" ? "Madinah : hôtel {hotel} — arrivée {checkIn} / départ {checkOut}" : lang === "en" ? "Madinah: hotel {hotel} — check-in {checkIn} / check-out {checkOut}" : "المدينة: الفندق {hotel} — الدخول {checkIn} / الخروج {checkOut}"),
     agency: t.agency || (lang === "fr" ? "Agence" : lang === "en" ? "Agency" : "الوكالة"),
     program: t.program || t.programs || (lang === "fr" ? "Programme" : lang === "en" ? "Program" : "البرنامج"),
     location: t.location || (lang === "fr" ? "Lieu" : lang === "en" ? "Location" : "الموقع"),
@@ -8111,17 +8339,50 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     roomingPrintSettings,
   ]);
 
+  const buildFullRoomingPrintSection = React.useCallback((exportData, { allowUnified = false } = {}) => {
+    const locationByKey = new Map((exportData.locations || []).map((location) => [location.key, location]));
+    const makkahLocation = locationByKey.get("makkah") || {};
+    const madinahLocation = locationByKey.get("madinah") || {};
+    const shouldUnify = Boolean(
+      allowUnified
+      && roomingPrintSettings.unifyMakkahMadinahRooming
+      && areRoomingDistributionsEquivalent(makkahLocation.rooms || [], madinahLocation.rooms || [])
+    );
+    const rooms = shouldUnify
+      ? (exportData.pdfRooms || []).filter((room) => room.city === "makkah")
+      : (exportData.pdfRooms || []);
+    const roomLinks = shouldUnify
+      ? (Array.isArray(makkahLocation.roomLinks) ? makkahLocation.roomLinks : [])
+      : (exportData.roomLinks || []);
+    const commonSectionProps = {
+      rooms,
+      makkahHotel: makkahLocation.hotelName,
+      madinahHotel: madinahLocation.hotelName,
+      makkahDates: { checkIn: makkahLocation.checkIn, checkOut: makkahLocation.checkOut },
+      madinahDates: { checkIn: madinahLocation.checkIn, checkOut: madinahLocation.checkOut },
+      labels: exportData.labels,
+    };
+    return {
+      unified: shouldUnify,
+      rooms,
+      roomLinks,
+      section: shouldUnify
+        ? createUnifiedRoomingSection(commonSectionProps)
+        : createCombinedRoomingSection(commonSectionProps),
+    };
+  }, [roomingPrintSettings.unifyMakkahMadinahRooming]);
+
   const handleDownloadRoomingPdf = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
     try {
       setRoomingExportBusy(`${mode}:pdf`);
       const combined = mode === "combined";
       const exportData = await buildRoomingExportPayload(mode);
-      const locationByKey = new Map(exportData.locations.map((location) => [location.key, location]));
-      const makkahLocation = locationByKey.get("makkah") || {};
-      const madinahLocation = locationByKey.get("madinah") || {};
+      const fullPrintSection = combined
+        ? buildFullRoomingPrintSection(exportData, { allowUnified: true })
+        : null;
       await downloadRoomingPdf({
-        rooms: exportData.pdfRooms,
+        rooms: fullPrintSection?.rooms || exportData.pdfRooms,
         lang,
         programName: exportData.programInfo.name || "program",
         agencyName: exportData.agencyInfo.name,
@@ -8129,15 +8390,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
         labels: exportData.labels,
         printSettings: roomingPrintSettings,
-        roomLinks: exportData.roomLinks,
-        sectionOverride: combined ? createCombinedRoomingSection({
-          rooms: exportData.pdfRooms,
-          makkahHotel: makkahLocation.hotelName,
-          madinahHotel: madinahLocation.hotelName,
-          makkahDates: { checkIn: makkahLocation.checkIn, checkOut: makkahLocation.checkOut },
-          madinahDates: { checkIn: madinahLocation.checkIn, checkOut: madinahLocation.checkOut },
-          labels: exportData.labels,
-        }) : null,
+        roomLinks: fullPrintSection?.roomLinks || exportData.roomLinks,
+        sectionOverride: fullPrintSection?.section || null,
       });
       onToast?.(t.roomingPdfReady || (lang === "fr" ? "PDF d'hébergement téléchargé" : lang === "en" ? "Rooming PDF downloaded" : "تم تنزيل PDF التسكين"), "success");
     } catch (error) {
@@ -8146,7 +8400,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     } finally {
       setRoomingExportBusy("");
     }
-  }, [buildRoomingExportPayload, city, lang, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
+  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, city, lang, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
 
   const handleDownloadRoomingExcel = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
@@ -8176,26 +8430,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (!win) return false;
     try {
       const exportData = await buildRoomingExportPayload("combined");
-      const locationByKey = new Map(exportData.locations.map((location) => [location.key, location]));
-      const makkahLocation = locationByKey.get("makkah") || {};
-      const madinahLocation = locationByKey.get("madinah") || {};
+      const fullPrintSection = buildFullRoomingPrintSection(exportData, { allowUnified: true });
       win.document.write(createRoomingPrintHtml({
-        rooms: exportData.pdfRooms,
-        roomLinks: exportData.roomLinks,
+        rooms: fullPrintSection.rooms,
+        roomLinks: fullPrintSection.roomLinks,
         lang,
         programName: exportData.programInfo.name || "",
         agencyName: exportData.agencyInfo.name,
         agencyLogoUrl: exportData.agencyInfo.logoUrl,
         printSettings: roomingPrintSettings,
         labels: exportData.labels,
-        sectionOverride: createCombinedRoomingSection({
-          rooms: exportData.pdfRooms,
-          makkahHotel: makkahLocation.hotelName,
-          madinahHotel: madinahLocation.hotelName,
-          makkahDates: { checkIn: makkahLocation.checkIn, checkOut: makkahLocation.checkOut },
-          madinahDates: { checkIn: madinahLocation.checkIn, checkOut: madinahLocation.checkOut },
-          labels: exportData.labels,
-        }),
+        sectionOverride: fullPrintSection.section,
       }));
       win.document.close();
       return true;
@@ -8203,7 +8448,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       try { win.close(); } catch {}
       throw error;
     }
-  }, [buildRoomingExportPayload, lang, roomingPrintSettings]);
+  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, lang, roomingPrintSettings]);
 
   const handleRoomingPrintChoice = React.useCallback(async (mode = "single") => {
     if (roomingPrintBusy) return;
@@ -8898,7 +9143,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           <RoomingToolbarButton
             title={roomingPrintLabels.title}
             onClick={() => setRoomingPrintSettingsOpen(true)}
-            active={roomingPrintSettingsOpen || roomingPrintSettings.density !== "normal" || roomingPrintSettings.layoutMode !== "default" || !roomingPrintSettings.showRegistrationSource || roomingPrintSettings.showBedNumbers}
+            active={
+              roomingPrintSettingsOpen
+              || roomingPrintSettings.density !== ROOMING_PRINT_DEFAULT_SETTINGS.density
+              || roomingPrintSettings.layoutMode !== ROOMING_PRINT_DEFAULT_SETTINGS.layoutMode
+              || roomingPrintSettings.showRegistrationSource !== ROOMING_PRINT_DEFAULT_SETTINGS.showRegistrationSource
+              || roomingPrintSettings.showBedNumbers !== ROOMING_PRINT_DEFAULT_SETTINGS.showBedNumbers
+              || roomingPrintSettings.unifyMakkahMadinahRooming !== ROOMING_PRINT_DEFAULT_SETTINGS.unifyMakkahMadinahRooming
+            }
             icon={<Settings size={15} />}
           >
             <span>{roomingPrintLabels.title}</span>
@@ -9847,6 +10099,37 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               />
             </label>
 
+            <label style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "10px 12px",
+              border: "1px solid var(--rooming-modal-section-border)",
+              borderRadius: 12,
+              background: "var(--rooming-modal-section-bg)",
+              color: "var(--rooming-text)",
+              cursor: "pointer",
+            }}>
+              <span style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                <strong style={{ fontSize: 13, fontWeight: 900, lineHeight: 1.35 }}>
+                  {roomingPrintLabels.unifiedBoth}
+                </strong>
+                <small style={{ color: "var(--rooming-muted)", fontSize: 11, fontWeight: 800, lineHeight: 1.55 }}>
+                  {roomingPrintLabels.unifiedBothDescription}
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                checked={roomingPrintSettings.unifyMakkahMadinahRooming}
+                onChange={(event) => setRoomingPrintSettings((prev) => ({
+                  ...prev,
+                  unifyMakkahMadinahRooming: event.target.checked,
+                }))}
+                style={{ width: 18, height: 18, flex: "0 0 auto", marginTop: 2, accentColor: "#b99235" }}
+              />
+            </label>
+
             <div style={{ display: "grid", gap: 8 }}>
               <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>{roomingPrintLabels.density}</p>
               <div style={{
@@ -9927,7 +10210,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Button variant="primary" onClick={() => setRoomingPrintSettingsOpen(false)}>
+              <Button variant="primary" onClick={applyRoomingPrintSettings}>
                 {roomingPrintLabels.done}
               </Button>
             </div>
@@ -10091,11 +10374,35 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           )}
         </Modal>
 
-        <Modal open={roomModal.open} onClose={() => setRoomModal({ open: false, mode: "edit", roomId: null })} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420} portalContainer={roomingModalPortalContainer}>
+        <Modal open={roomModal.open} onClose={closeRoomModal} title={roomModal.mode === "create" ? (t.addRooms || t.addRoom || "إضافة غرف") : (t.editRoom || "تعديل الغرفة")} width={420} portalContainer={roomingModalPortalContainer}>
           <div className="rooming-modal-surface" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Select label={t.hotel || "الفندق"} value={roomDraft.hotel} onChange={(event) => setRoomDraft((prev) => ({ ...prev, hotel: event.target.value }))} options={(hotelOptions.length ? hotelOptions : [roomDraft.hotel || ""]).map((hotel) => ({ value: hotel, label: hotel || t.noHotel || "غير محدد" }))} portalContainer={roomingModalPortalContainer} />
-            <Select label={t.roomType} value={roomDraft.roomType} onChange={(event) => setRoomDraft((prev) => ({ ...prev, roomType: event.target.value }))} options={roomingRoomOptions.map((option) => ({ value: option.value, label: option.label }))} portalContainer={roomingModalPortalContainer} />
-            <Select label={t.roomCategory || "تصنيف الغرفة"} value={roomDraft.category} onChange={(event) => setRoomDraft((prev) => ({ ...prev, category: event.target.value }))} options={roomingCategoryOptions.map((option) => ({ value: option.value, label: option.label }))} portalContainer={roomingModalPortalContainer} />
+            <Select
+              label={t.hotel || "الفندق"}
+              value={roomDraft.hotel}
+              onChange={(event) => setRoomDraftField("hotel", event.target.value)}
+              options={roomHotelSelectOptions}
+              error={roomDraftErrors.hotel}
+              required
+              portalContainer={roomingModalPortalContainer}
+            />
+            <Select
+              label={t.roomType}
+              value={roomDraft.roomType}
+              onChange={(event) => setRoomDraftField("roomType", event.target.value)}
+              options={roomTypeSelectOptions}
+              error={roomDraftErrors.roomType}
+              required
+              portalContainer={roomingModalPortalContainer}
+            />
+            <Select
+              label={t.roomCategory || "تصنيف الغرفة"}
+              value={roomDraft.category}
+              onChange={(event) => setRoomDraftField("category", event.target.value)}
+              options={roomCategorySelectOptions}
+              error={roomDraftErrors.category}
+              required
+              portalContainer={roomingModalPortalContainer}
+            />
             {roomModal.mode === "create" && (
               <Input
                 label={t.roomingRoomCountInput || "عدد الغرف"}
@@ -10117,7 +10424,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               />
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <Button variant="ghost" onClick={() => setRoomModal({ open: false, mode: "edit", roomId: null })}>{t.cancel}</Button>
+              <Button variant="ghost" onClick={closeRoomModal}>{t.cancel}</Button>
               <Button onClick={saveRoomEdit}>{roomModal.mode === "create" ? (t.addRooms || t.add || "إضافة غرف") : t.save}</Button>
             </div>
           </div>
@@ -10707,7 +11014,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
       <p style={{ color: "var(--rooming-text)", fontSize: 13, fontWeight: 900, marginBottom: 4 }}>
         {translateRoomType(room.roomType, lang) || getRoomingRoomLabel(room.roomType)}
       </p>
-      <p style={{ color: "var(--rooming-muted)", fontSize: 11, marginBottom: 10 }}>{room.hotel || t.roomingMissingHotel || "فندق غير محدد"}</p>
+      <p style={{ color: "var(--rooming-muted)", fontSize: 11, marginBottom: 10 }}>{data.hotelName || t.roomingMissingHotel || "فندق غير محدد"}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, minHeight: 54 }}>
         {occupantIds.map((clientId) => {
           const client = data.clientsById[clientId];
