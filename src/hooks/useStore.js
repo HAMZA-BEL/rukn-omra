@@ -52,9 +52,13 @@ import {
 } from "../services/agencyBackupArchiveService";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
-import { getClientProgramId } from "../utils/clientCompletionStatus";
+import { getClientAssignmentStatus, getClientProgramId } from "../utils/clientCompletionStatus";
 import { getClientServiceType } from "../utils/clientServiceTypes";
 import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "../components/programs/programCosting";
 import { formatCurrency } from "../utils/currency";
 import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
@@ -2713,6 +2717,21 @@ export function useStore(agencyId, onToast) {
     logActivity("program_archive", translateActivityDescription(`تم أرشفة برنامج ${program?.name || programId}`), "");
   }, [activeClients, programs, archiveClientLocal, logActivity, sync, agencyId]);
 
+  const getClientPaymentAssignmentStatus = useCallback((client = {}, programOverride = null) => {
+    const program = programOverride || programs.find((item) => item.id === getClientProgramId(client)) || null;
+    const serviceType = getClientServiceType(client);
+    return getClientAssignmentStatus(client, program, {
+      referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+      standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+      program,
+    });
+  }, [programs]);
+
+  const isClientPaymentAssignmentComplete = useCallback((client = {}, programOverride = null) => {
+    const assignmentStatus = getClientPaymentAssignmentStatus(client, programOverride);
+    return assignmentStatus.isComplete && assignmentStatus.shouldCalculatePrice;
+  }, [getClientPaymentAssignmentStatus]);
+
   const addPayment = useCallback(async (data) => {
     const id          = genId("PMT");
     const incomingPaymentType = data.paymentType || data.payment_type || (data.isPreviousPayment ? PAYMENT_TYPE_PREVIOUS : "");
@@ -2748,6 +2767,11 @@ export function useStore(agencyId, onToast) {
     });
     const c   = clients.find(x => x.id === data.clientId);
     const now = new Date().toISOString().split("T")[0];
+
+    if (!isClientPaymentAssignmentComplete(c)) {
+      notify(trKey("incompleteProgramPaymentBlocked") || "يرجى إكمال معلومات المعتمر أولًا، مثل الفندق والمستوى ونوع الغرفة، قبل إضافة دفعة.", "error");
+      return null;
+    }
 
     if (isSupabaseEnabled && agencyId) {
       setSyncStatus("syncing");
@@ -2799,7 +2823,7 @@ export function useStore(agencyId, onToast) {
     );
     sync(() => savePayment(pmt, agencyId));
     return pmt;
-  }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, queueClientProgramArchiveSuggestionCheck, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
+  }, [clients, addPaymentLocal, invalidateClientPermanentDeletePreflight, isClientPaymentAssignmentComplete, queueClientProgramArchiveSuggestionCheck, setClients, logActivity, sync, agencyId, isSupabaseEnabled, ns, notify]);
 
   const createSharedReceipt = useCallback(async (payload = {}) => {
     const coveredClients = Array.isArray(payload.coveredClients || payload.covered_clients)
@@ -2808,6 +2832,23 @@ export function useStore(agencyId, onToast) {
     const date = payload.paymentDate || payload.payment_date || payload.date || new Date().toISOString().split("T")[0];
     const paymentType = payload.paymentType || payload.payment_type || "normal";
     const receiptNumber = payload.receiptNumber || payload.receipt_number || payload.legacyReceiptNumber || payload.legacy_receipt_number || "";
+    const programId = payload.programId || payload.program_id || "";
+    const program = programs.find((item) => item.id === programId) || null;
+    const invalidCoveredClients = coveredClients.filter((item) => {
+      const clientId = item.client_id || item.clientId || item.id;
+      const client = clients.find((record) => record.id === clientId);
+      return !client || !isClientPaymentAssignmentComplete(client, program);
+    });
+
+    if (invalidCoveredClients.length) {
+      notify(
+        invalidCoveredClients.length === 1
+          ? (trKey("sharedReceiptIncompleteClientBlocked") || "لا يمكن إنشاء دفعة لهذا المعتمر لأن معلوماته غير مكتملة")
+          : (trKey("sharedReceiptIncompleteClientsBlocked") || "لا يمكن إنشاء وصل مشترك لأن بعض المعتمرين معلوماتهم غير مكتملة"),
+        "error"
+      );
+      return null;
+    }
 
     if (isSupabaseEnabled && agencyId) {
       setSyncStatus("syncing");
@@ -2880,7 +2921,7 @@ export function useStore(agencyId, onToast) {
     localPayments.forEach(addPaymentLocal);
     const paymentGroup = {
       id: groupId,
-      programId: payload.programId || payload.program_id || "",
+      programId,
       payerClientId: payload.payerClientId || payload.payer_client_id || "",
       payerName: payload.payerName || payload.payer_name || "",
       receiptNumber: localReceiptNumber,
@@ -2904,7 +2945,7 @@ export function useStore(agencyId, onToast) {
       { skipRemote: isSupabaseEnabled }
     );
     return { paymentGroup, payment_group: paymentGroup, payments: localPayments, receiptNumber: localReceiptNumber, receipt_number: localReceiptNumber };
-  }, [addPaymentLocal, agencyId, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, logActivity, notify, ns, payments.length, queueClientProgramArchiveSuggestionCheck, setClients]);
+  }, [addPaymentLocal, agencyId, clients, invalidateClientPermanentDeletePreflight, isClientPaymentAssignmentComplete, isSupabaseEnabled, logActivity, notify, ns, payments.length, programs, queueClientProgramArchiveSuggestionCheck, setClients]);
 
   const fetchPaymentGroup = useCallback(async (groupId) => {
     if (!groupId || !isSupabaseEnabled || !agencyId) return null;

@@ -656,8 +656,8 @@ export default function ClientDetail({
       onToast?.(loadingLabel, "info");
       return;
     }
-    if (!canPrintReceipts) {
-      onToast?.(addPaymentDisabledMessage, "error");
+    if (!canAddPayment) {
+      onToast?.(paymentBlockMessage, "error");
       return;
     }
     if (!paymentFormDataReady) {
@@ -666,12 +666,17 @@ export default function ClientDetail({
     }
     setShowPayForm(false);
     setShowSharedReceiptModal(true);
-  }, [addPaymentDisabledMessage, canPrintReceipts, loadingLabel, onToast, paymentFormDataReady, paymentsReady, requestGlobalDetailDataForAction]);
+  }, [canAddPayment, loadingLabel, onToast, paymentBlockMessage, paymentFormDataReady, paymentsReady, requestGlobalDetailDataForAction]);
 
   React.useEffect(() => {
     if (canAddPayment || !showPayForm) return;
     setShowPayForm(false);
   }, [canAddPayment, showPayForm]);
+
+  React.useEffect(() => {
+    if (canAddPayment || !showSharedReceiptModal) return;
+    setShowSharedReceiptModal(false);
+  }, [canAddPayment, showSharedReceiptModal]);
 
   React.useEffect(() => {
     if (canPrintReceipts || !receiptPayment) return;
@@ -1053,10 +1058,7 @@ export default function ClientDetail({
         <p style={{ fontSize:11, color:tc.grey, fontWeight:700, marginBottom:10, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="documents" size={14} color={tc.gold} /> {t.documents}</p>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {[
-            ["passportCopy", t.passportCopy],
             ["photo",        t.photo],
-            ["vaccine",      t.vaccine],
-            ["contract",     t.contract],
           ].map(([key, label]) => (
             <span key={key} style={{
               padding:"4px 12px", borderRadius:20, fontSize:12, fontWeight:700,
@@ -1149,7 +1151,7 @@ export default function ClientDetail({
           }}
           onCancel={() => setShowPayForm(false)} />
       )}
-      {paymentsReady && paymentFormDataReady && showSharedReceiptModal && canPrintReceipts && (
+      {paymentsReady && paymentFormDataReady && showSharedReceiptModal && canAddPayment && (
         <SharedReceiptModal
           open={showSharedReceiptModal}
           onClose={() => setShowSharedReceiptModal(false)}

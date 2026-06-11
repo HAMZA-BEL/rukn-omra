@@ -7,7 +7,11 @@ import { useLang } from "../hooks/useLang";
 import { PAYMENT_METHODS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
-import { getClientProgramId } from "../utils/clientCompletionStatus";
+import {
+  getClientAssignmentStatus,
+  getClientCompletionLabels,
+  getClientProgramId,
+} from "../utils/clientCompletionStatus";
 import { getClientServiceType } from "../utils/clientServiceTypes";
 import {
   getClientEffectiveSalePrice,
@@ -113,6 +117,25 @@ const getServerReceiptNotice = (lang) => {
   if (lang === "fr") return "Le numéro de reçu sera généré automatiquement après l’enregistrement du paiement";
   if (lang === "en") return "Receipt number will be generated automatically after saving the payment";
   return "سيتم توليد رقم الوصل تلقائيًا بعد حفظ الدفعة";
+};
+
+const getSharedReceiptIncompleteMessage = (lang, multiple = true, t = {}) => {
+  if (multiple) {
+    return t.sharedReceiptIncompleteClientsBlocked || (
+      lang === "fr"
+        ? "Impossible de créer un reçu partagé car certains clients ont des informations incomplètes"
+        : lang === "en"
+          ? "Cannot create a shared receipt because some clients have incomplete information"
+          : "لا يمكن إنشاء وصل مشترك لأن بعض المعتمرين معلوماتهم غير مكتملة"
+    );
+  }
+  return t.sharedReceiptIncompleteClientBlocked || (
+    lang === "fr"
+      ? "Impossible d’ajouter un paiement pour ce client car ses informations sont incomplètes"
+      : lang === "en"
+        ? "Cannot add a payment for this client because their information is incomplete"
+        : "لا يمكن إنشاء دفعة لهذا المعتمر لأن معلوماته غير مكتملة"
+  );
 };
 
 export default function SharedReceiptModal({
@@ -230,6 +253,8 @@ export default function SharedReceiptModal({
   const previousPaymentLabel = t.previousPayment || (lang === "fr" ? "Paiement antérieur" : lang === "en" ? "Previous payment" : "دفعة سابقة");
   const oldReceiptNumberLabel = t.oldReceiptNumber || (lang === "fr" ? "Ancien numéro de reçu" : lang === "en" ? "Old receipt number" : "رقم الوصل القديم");
   const previewReceiptNumber = t.sharedReceiptPreviewNumber || "PREVIEW";
+  const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
+  const incompleteClientMessage = getSharedReceiptIncompleteMessage(lang, false, t);
   const paymentTypeOptions = [
     { value: PAYMENT_TYPE_NORMAL, label: normalPaymentLabel },
     { value: PAYMENT_TYPE_PREVIOUS, label: previousPaymentLabel },
@@ -263,6 +288,19 @@ export default function SharedReceiptModal({
   const selectedClients = React.useMemo(
     () => selectedIds.map((id) => clientsById.get(id)).filter(Boolean),
     [clientsById, selectedIds],
+  );
+
+  const getClientSharedReceiptStatus = React.useCallback((client) => {
+    const assignmentStatus = getClientAssignmentStatus(client, program, getPricingOptions(client));
+    return {
+      ...assignmentStatus,
+      canUseSharedReceipt: assignmentStatus.isComplete && assignmentStatus.shouldCalculatePrice,
+    };
+  }, [getPricingOptions, program]);
+
+  const invalidSelectedClients = React.useMemo(
+    () => selectedClients.filter((client) => !getClientSharedReceiptStatus(client).canUseSharedReceipt),
+    [getClientSharedReceiptStatus, selectedClients],
   );
 
   const allocationRows = React.useMemo(() => (
@@ -306,6 +344,12 @@ export default function SharedReceiptModal({
   const toggleClient = (clientId) => {
     const id = String(clientId || "");
     if (!id) return;
+    const client = clientsById.get(id);
+    if (client && !selectedIds.includes(id) && !getClientSharedReceiptStatus(client).canUseSharedReceipt) {
+      setErrors((current) => ({ ...current, covered: incompleteClientMessage }));
+      onToast?.(incompleteClientMessage, "error");
+      return;
+    }
     setSavedReceipt(null);
     setSelectedIds((current) => {
       if (current.includes(id)) {
@@ -364,6 +408,8 @@ export default function SharedReceiptModal({
     }
     if (!selectedIds.length) {
       nextErrors.covered = t.sharedReceiptCoveredRequired || "Select at least one pilgrim";
+    } else if (invalidSelectedClients.length) {
+      nextErrors.covered = getSharedReceiptIncompleteMessage(lang, invalidSelectedClients.length > 1, t);
     }
     if (allocationRows.some((row) => Number(row.allocatedAmount) < 0)) {
       nextErrors.allocations = t.sharedReceiptNegativeAllocation || "Allocated amounts cannot be negative";
@@ -458,6 +504,10 @@ export default function SharedReceiptModal({
       return;
     }
     if (!validate()) return;
+    if (invalidSelectedClients.length) {
+      onToast?.(getSharedReceiptIncompleteMessage(lang, invalidSelectedClients.length > 1, t), "error");
+      return;
+    }
     if (!store?.createSharedReceipt) {
       onToast?.(
         t.sharedReceiptSaveError || (
@@ -808,6 +858,8 @@ export default function SharedReceiptModal({
                   const selected = selectedIds.includes(id);
                   const paid = getClientPaidTotal(id, payments);
                   const pricingOptions = getPricingOptions(client);
+                  const assignmentStatus = getClientSharedReceiptStatus(client);
+                  const disabled = !selected && !assignmentStatus.canUseSharedReceipt;
                   const totalPrice = getClientEffectiveSalePrice(client, pricingOptions);
                   const remaining = getClientRemainingAmount(client, paid, pricingOptions);
                   return (
@@ -815,6 +867,8 @@ export default function SharedReceiptModal({
                       key={id}
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
+                      aria-disabled={disabled}
+                      title={disabled ? incompleteClientMessage : undefined}
                       onClick={() => toggleClient(id)}
                       style={{
                         width: "100%",
@@ -826,19 +880,22 @@ export default function SharedReceiptModal({
                         borderRadius: 10,
                         padding: "8px 9px",
                         background: selected ? "var(--rukn-gold-dim)" : "transparent",
-                        color: "var(--rukn-text-strong)",
-                        cursor: "pointer",
+                        color: disabled ? tc.grey : "var(--rukn-text-strong)",
+                        cursor: disabled ? "not-allowed" : "pointer",
                         fontFamily: "'Cairo',sans-serif",
                         textAlign: "start",
+                        opacity: disabled ? 0.62 : 1,
                       }}
                     >
-                      <AppIcon name={selected ? "checked" : "user"} size={16} color={selected ? tc.gold : tc.grey} />
+                      <AppIcon name={disabled ? "alert" : selected ? "checked" : "user"} size={16} color={disabled ? tc.warning : selected ? tc.gold : tc.grey} />
                       <span style={{ minWidth: 0 }}>
                         <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {getClientDisplayName(client)}
                         </span>
                         <span style={{ display: "block", fontSize: 11, color: tc.grey, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {[getClientPhone(client), getClientPassport(client)].filter(Boolean).join(" · ")}
+                          {disabled
+                            ? completionLabels.informationIncomplete
+                            : [getClientPhone(client), getClientPassport(client)].filter(Boolean).join(" · ")}
                         </span>
                       </span>
                       <span style={{ fontSize: 11, color: tc.grey, lineHeight: 1.45, textAlign: isRTL ? "left" : "right" }}>

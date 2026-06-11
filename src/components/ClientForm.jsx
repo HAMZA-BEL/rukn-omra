@@ -40,10 +40,7 @@ import {
 const tc = theme.colors;
 
 const DOCUMENT_FIELDS = [
-  ["passportCopy", "passportCopy"],
   ["photo", "photo"],
-  ["vaccine", "vaccine"],
-  ["contract", "contract"],
 ];
 
 const HOTEL_LEVEL_KEYS = {
