@@ -5478,6 +5478,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
                 program={program}
                 amount={amount} paid={paid} remaining={rem} overpaid={overpaid} status={stat}
                 completionTooltip={completionTooltip}
+                badgePhotoApi={store.badgePhotoApi}
                 onClick={()=>setSelectedClient(c)}
                 onEdit={()=>runWithGlobalDetailData(() => setEditingClient(c))}
                 selectMode={selectMode}

@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { StatusBadge } from "../UI";
+import ClientAvatar from "../ClientAvatar";
 import { theme } from "../styles";
 import { AppIcon } from "../Icon";
 import { useLang } from "../../hooks/useLang";
@@ -60,6 +61,7 @@ export default function ProgramClientRow({
   onCheck,
   gridTemplate,
   completionTooltip = "",
+  badgePhotoApi = null,
 }) {
   const [hov, setHov] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -201,23 +203,13 @@ export default function ProgramClientRow({
               {index + 1}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 9,
-                  background: "linear-gradient(135deg,rgba(212,175,55,.25),rgba(212,175,55,.08))",
-                  border: "1px solid rgba(212,175,55,.2)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: tc.gold,
-                }}
-              >
-                {avatarInitial}
-              </div>
+              <ClientAvatar
+                client={client}
+                name={fallbackName}
+                fallbackLetter={avatarInitial}
+                size={30}
+                badgePhotoApi={badgePhotoApi}
+              />
             </div>
           </div>
           <div style={{ minWidth: 0 }}>
