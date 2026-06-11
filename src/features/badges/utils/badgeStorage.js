@@ -8,11 +8,17 @@ import {
 
 export const canUseBadgePhotoStorage = () => Boolean(isSupabaseEnabled && supabase);
 
+const imageExtensionFromType = (type = "") => {
+  if (type === "image/png") return "png";
+  if (type === "image/jpeg") return "jpg";
+  return "webp";
+};
+
 export async function uploadPilgrimPhoto({ agencyId, clientId, file }) {
   if (!canUseBadgePhotoStorage()) {
     return { data: null, error: new Error("Supabase Storage is unavailable") };
   }
-  const extension = file?.type === "image/jpeg" ? "jpg" : "webp";
+  const extension = imageExtensionFromType(file?.type);
   const path = buildBadgePhotoPath({ agencyId, clientId, extension });
   if (!path || !file) {
     return { data: null, error: new Error("Missing badge photo upload data") };
@@ -47,7 +53,7 @@ export async function uploadBadgeTemplateImage({ agencyId, templateId, file }) {
   if (!canUseBadgePhotoStorage()) {
     return { data: null, error: new Error("Supabase Storage is unavailable") };
   }
-  const extension = file?.type === "image/jpeg" ? "jpg" : "webp";
+  const extension = imageExtensionFromType(file?.type);
   const path = buildBadgeTemplatePath({ agencyId, templateId, extension });
   if (!path || !file) {
     return { data: null, error: new Error("Missing badge template upload data") };

@@ -1,13 +1,27 @@
 import React from "react";
 import { Button, Input, Modal } from "../../../components/UI";
 import { isSupabaseEnabled } from "../../../lib/supabase";
-import { compressBadgeTemplateImage } from "../utils/badgeImageCompression";
-import { DEFAULT_BADGE_SIZE, DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
+import { compressBadgeTemplateImage, getBadgeImageDimensions } from "../utils/badgeImageCompression";
+import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_SIZE, DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
 import { createDefaultBadgeLayout } from "../utils/badgeLayout";
 import { createBadgeTemplateId } from "../services/badgeTemplatesApi";
 import { uploadBadgeTemplateImage } from "../utils/badgeStorage";
 import { validateBadgeTemplateImageFile } from "../utils/badgeValidation";
 import { useLang } from "../../../hooks/useLang";
+
+const lowTemplateQualityMessage = (lang = "ar") => (
+  lang === "fr"
+    ? "La qualité du modèle est faible pour l’impression. Il est recommandé d’utiliser une image plus haute résolution."
+    : lang === "en"
+      ? "Template quality is low for printing. Please upload a higher-resolution image."
+      : "جودة القالب منخفضة للطباعة، يفضل رفع صورة بدقة أعلى"
+);
+
+const hasLowPrintResolution = ({ imageWidth = 0, imageHeight = 0, widthMm = 90, heightMm = 140 } = {}) => {
+  const requiredWidth = Number(widthMm || DEFAULT_BADGE_SIZE.widthMm) * BADGE_TEMPLATE_PRINT_DPI / 25.4;
+  const requiredHeight = Number(heightMm || DEFAULT_BADGE_SIZE.heightMm) * BADGE_TEMPLATE_PRINT_DPI / 25.4;
+  return imageWidth > 0 && imageHeight > 0 && (imageWidth < requiredWidth || imageHeight < requiredHeight);
+};
 
 export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, onToast }) {
   const { t, lang } = useLang();
@@ -18,6 +32,7 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
   const [heightMm, setHeightMm] = React.useState(DEFAULT_BADGE_SIZE.heightMm);
   const [file, setFile] = React.useState(null);
   const [fileError, setFileError] = React.useState("");
+  const [qualityWarning, setQualityWarning] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [designPromptOpen, setDesignPromptOpen] = React.useState(false);
 
@@ -29,9 +44,28 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
     setHeightMm(DEFAULT_BADGE_SIZE.heightMm);
     setFile(null);
     setFileError("");
+    setQualityWarning("");
     setBusy(false);
     setDesignPromptOpen(false);
   }, [open, t.badgeDefaultTemplateName]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setQualityWarning("");
+    if (!file) return undefined;
+    getBadgeImageDimensions(file).then((dimensions) => {
+      if (cancelled) return;
+      setQualityWarning(hasLowPrintResolution({
+        imageWidth: dimensions.width,
+        imageHeight: dimensions.height,
+        widthMm,
+        heightMm,
+      }) ? lowTemplateQualityMessage(lang) : "");
+    }).catch(() => {
+      if (!cancelled) setQualityWarning("");
+    });
+    return () => { cancelled = true; };
+  }, [file, heightMm, lang, widthMm]);
 
   const createTemplate = async ({ useDefaultDesign = false } = {}) => {
     if (!name.trim()) return;
@@ -87,6 +121,7 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
     const selectedFile = event.target.files?.[0] || null;
     event.target.value = "";
     setFileError("");
+    setQualityWarning("");
     if (!selectedFile) {
       setFile(null);
       return;
@@ -146,6 +181,17 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
         {fileError && (
           <p style={{ fontSize: 12, color: "var(--rukn-danger)", fontWeight: 700, margin: 0 }}>
             {fileError}
+          </p>
+        )}
+        {qualityWarning && !fileError && (
+          <p style={{
+            fontSize: 12,
+            color: "var(--rukn-warning, #b45309)",
+            fontWeight: 800,
+            margin: 0,
+            lineHeight: 1.6,
+          }}>
+            {qualityWarning}
           </p>
         )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>

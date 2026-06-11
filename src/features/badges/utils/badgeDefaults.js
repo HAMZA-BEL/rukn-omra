@@ -6,6 +6,9 @@ export const BADGE_PHOTO_MAX_DIMENSION = 720;
 export const BADGE_PHOTO_QUALITY = 0.82;
 export const BADGE_PHOTO_MAX_BYTES = 3 * 1024 * 1024;
 export const BADGE_TEMPLATE_MAX_BYTES = 8 * 1024 * 1024;
+export const BADGE_TEMPLATE_MAX_DIMENSION = 3600;
+export const BADGE_TEMPLATE_PRINT_DPI = 300;
+export const BADGE_TEMPLATE_QUALITY = 0.98;
 
 export const buildBadgePhotoPath = ({ agencyId, clientId, extension = "webp" } = {}) => {
   const safeAgencyId = String(agencyId || "").trim();
@@ -38,7 +41,7 @@ export const DEFAULT_BADGE_SIZE = {
 };
 
 export const BADGE_FIELD_DEFINITIONS = [
-  { key: "photo", labelKey: "badgeFieldPhoto", labelAr: "الصورة", type: "image", wPct: 28, hPct: 28, fit: "cover" },
+  { key: "photo", labelKey: "badgeFieldPhoto", labelAr: "الصورة", type: "image", wPct: 28, hPct: 28, fit: "contain" },
   { key: "fullName", labelKey: "badgeFieldFullName", labelAr: "الاسم الكامل", type: "text", wPct: 62, hPct: 9, fontSize: 16, fontWeight: 800, align: "center", color: "#111111", maxLines: 2 },
   { key: "passportNumber", labelKey: "badgeFieldPassport", labelAr: "رقم جواز السفر", type: "text", wPct: 52, hPct: 7, fontSize: 12, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "primaryPhone", labelKey: "badgeFieldPrimaryPhone", labelAr: "رقم المؤطر / الرقم السعودي", type: "text", wPct: 66, hPct: 7, fontSize: 11, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },

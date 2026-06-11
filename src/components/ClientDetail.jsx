@@ -766,7 +766,18 @@ export default function ClientDetail({
           fontSize:24, fontWeight:900, color:"#060d1a",
           boxShadow:"0 8px 24px rgba(212,175,55,.3)", overflow:"hidden" }}>
           {badgePhotoUrl ? (
-            <img src={badgePhotoUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+            <img
+              src={badgePhotoUrl}
+              alt=""
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "center",
+                borderRadius: 10,
+                display: "block",
+              }}
+            />
           ) : (
             (displayName || "?")[0]
           )}

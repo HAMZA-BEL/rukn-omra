@@ -15,7 +15,6 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
     { value: "end", label: t.badgeAlignEnd || "نهاية" },
   ];
   const fitOptions = [
-    { value: "cover", label: t.badgeFitCover || "ملء وقص" },
     { value: "contain", label: t.badgeFitContain || "احتواء" },
   ];
 
@@ -104,7 +103,7 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
       ) : (
         <Select
           label={t.badgeImageFit || "ملاءمة الصورة"}
-          value={field.fit || "cover"}
+          value="contain"
           onChange={(event) => onChange?.(field.id, { fit: event.target.value })}
           options={fitOptions}
         />

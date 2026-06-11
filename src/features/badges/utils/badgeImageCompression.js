@@ -1,6 +1,8 @@
 import {
   BADGE_PHOTO_MAX_DIMENSION,
   BADGE_PHOTO_QUALITY,
+  BADGE_TEMPLATE_MAX_DIMENSION,
+  BADGE_TEMPLATE_QUALITY,
 } from "./badgeDefaults";
 
 const canvasToBlob = (canvas, type, quality) => new Promise((resolve, reject) => {
@@ -27,10 +29,12 @@ const loadImage = (file) => new Promise((resolve, reject) => {
 export async function compressBadgeImage(file, {
   maxDimension = BADGE_PHOTO_MAX_DIMENSION,
   quality = BADGE_PHOTO_QUALITY,
+  preserveOriginal = false,
 } = {}) {
   if (!file) throw new Error("Missing image file");
   const image = await loadImage(file);
   const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  if (preserveOriginal && scale >= 1) return file;
   const width = Math.max(1, Math.round(image.width * scale));
   const height = Math.max(1, Math.round(image.height * scale));
 
@@ -41,10 +45,18 @@ export async function compressBadgeImage(file, {
   if (!context) throw new Error("Canvas is unavailable");
   context.drawImage(image, 0, 0, width, height);
 
+  const preferredType = preserveOriginal
+    ? file.type === "image/png"
+      ? "image/png"
+      : file.type === "image/jpeg"
+        ? "image/jpeg"
+        : "image/webp"
+    : "image/webp";
   try {
-    const type = "image/webp";
+    const type = preferredType;
     const blob = await canvasToBlob(canvas, type, quality);
-    return new File([blob], "photo.webp", { type, lastModified: Date.now() });
+    const extension = type === "image/png" ? "png" : type === "image/jpeg" ? "jpg" : "webp";
+    return new File([blob], `photo.${extension}`, { type, lastModified: Date.now() });
   } catch {
     const type = "image/jpeg";
     const blob = await canvasToBlob(canvas, type, quality);
@@ -53,5 +65,17 @@ export async function compressBadgeImage(file, {
 }
 
 export const compressBadgeTemplateImage = (file) => (
-  compressBadgeImage(file, { maxDimension: 1800, quality: 0.9 })
+  compressBadgeImage(file, {
+    maxDimension: BADGE_TEMPLATE_MAX_DIMENSION,
+    quality: BADGE_TEMPLATE_QUALITY,
+    preserveOriginal: true,
+  })
 );
+
+export const getBadgeImageDimensions = async (file) => {
+  const image = await loadImage(file);
+  return {
+    width: image.naturalWidth || image.width || 0,
+    height: image.naturalHeight || image.height || 0,
+  };
+};

@@ -49,6 +49,7 @@ export const normalizeBadgeLayout = (layout = {}) => {
         color: field.color || fallback.color || "#111111",
         align: field.align || fallback.align || "center",
         maxLines: Number(field.maxLines ?? fallback.maxLines ?? 1),
+        fit: fallback.type === "image" ? "contain" : field.fit,
         visible: field.visible !== false,
       };
     }),

@@ -94,7 +94,14 @@ export function PilgrimPhotoUploader({
           <img
             src={visibleUrl}
             alt=""
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              objectPosition: "center",
+              borderRadius: 12,
+              display: "block",
+            }}
           />
         ) : (
           <span style={{ textAlign: "center", padding: 10, lineHeight: 1.6 }}>
