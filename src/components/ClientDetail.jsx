@@ -5,6 +5,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import PaymentForm from "./PaymentForm";
 import SharedReceiptModal from "./SharedReceiptModal";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { printReceipt, printClientCard, printSharedReceipt } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
@@ -1276,6 +1277,8 @@ export default function ClientDetail({
 }
 
 function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerms }) {
+  useBodyScrollLock(open);
+
   React.useEffect(() => {
     if (!open) return undefined;
     const handleKeyDown = (event) => {

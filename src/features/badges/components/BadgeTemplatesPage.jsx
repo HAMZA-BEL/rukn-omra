@@ -2,6 +2,7 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { Button, GlassCard } from "../../../components/UI";
 import { useLang } from "../../../hooks/useLang";
+import { useBodyScrollLock } from "../../../hooks/useBodyScrollLock";
 import { BadgeTemplateCreatorModal } from "./BadgeTemplateCreatorModal";
 import { BadgeTemplateMapper } from "./BadgeTemplateMapper";
 import { useBadgeTemplates } from "../hooks/useBadgeTemplates";
@@ -32,6 +33,7 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
 
   const activeTemplate = templates.find((template) => template.id === activeId) || null;
   const editorTemplate = templates.find((template) => template.id === editorId) || null;
+  useBodyScrollLock(Boolean(editorTemplate));
   const closeEditorNow = React.useCallback(() => {
     setEditorId("");
     setEditorDirty(false);
@@ -118,6 +120,7 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
           padding: 12,
           display: "grid",
           placeItems: "center",
+          overscrollBehavior: "contain",
         }}
       >
         <div style={{

@@ -4,6 +4,7 @@ import { Input, Select, Button, GlassCard } from "./UI";
 import { AppIcon } from "./Icon";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { PAYMENT_METHODS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
@@ -1038,6 +1039,8 @@ export default function SharedReceiptModal({
 }
 
 function SharedReceiptCopySelector({ open, onClose, onSelect, t, lang }) {
+  useBodyScrollLock(open);
+
   React.useEffect(() => {
     if (!open) return undefined;
     const handleKeyDown = (event) => {

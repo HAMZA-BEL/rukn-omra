@@ -7,6 +7,7 @@ import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import {
   formatProgramCapacityValue,
   getCapacityProgramId as getProgramId,
@@ -136,6 +137,7 @@ export default function TransferSheet({
   invoiceApi,
 }) {
   const { t, dir, lang } = useLang();
+  useBodyScrollLock(open);
   const isRTL = dir === "rtl";
   const [search, setSearch] = React.useState("");
   const [selectedProgramId, setSelectedProgramId] = React.useState(null);
@@ -408,6 +410,8 @@ export default function TransferSheet({
               flex: "1 1 auto",
               minHeight: 0,
               overflowY: "auto",
+              overscrollBehavior: "contain",
+              WebkitOverflowScrolling: "touch",
               padding: "0 18px 16px",
             }}
           >

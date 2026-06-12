@@ -5,6 +5,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon, IconBubble } from "./Icon";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
 const t = theme.colors;
 const v = {
@@ -629,6 +630,8 @@ export function Modal({
   closeOnBackdrop = true,
   closeOnEscape = true,
 }) {
+  useBodyScrollLock(open);
+
   React.useEffect(() => {
     const handler = (e) => {
       if (e.key === "Escape" && closeOnEscape) onClose?.();
@@ -652,10 +655,15 @@ export function Modal({
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: "16px max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))",
         overflowY: "auto",
+        overscrollBehavior: "contain",
+        WebkitOverflowScrolling: "touch",
       }}
     >
       <div
         className="animate-scaleIn"
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
         style={{
           background: v.bgModal,
           border: "1px solid rgba(212,175,55,.3)",
@@ -701,6 +709,8 @@ export function Modal({
         {/* body */}
         <div style={{
           overflowY: "auto",
+          overscrollBehavior: "contain",
+          WebkitOverflowScrolling: "touch",
           padding: "24px",
           paddingBottom: "calc(32px + env(safe-area-inset-bottom, 0px))",
           flex: 1,
