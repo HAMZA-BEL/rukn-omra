@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import jspreadsheet from "jspreadsheet-ce";
 import "jspreadsheet-ce/dist/jspreadsheet.css";
 import "jsuites/dist/jsuites.css";
@@ -1019,32 +1020,6 @@ const writeRoomingPrintSettingsToStorage = (agencyId = null, settings = {}) => {
     console.warn("[rooming] print settings write failed", error);
   }
 };
-
-const getRoomingDistributionSignature = (rooms = []) => JSON.stringify(
-  (Array.isArray(rooms) ? rooms : []).map((room = {}) => {
-    const roomType = normalizeRoomingRoomType(room.roomTypeKey || room.roomType) || String(room.roomTypeKey || room.roomType || "").trim();
-    const occupantIds = Array.isArray(room.occupantIds)
-      ? room.occupantIds
-      : Array.isArray(room.occupants)
-        ? room.occupants.map((occupant) => occupant?.id)
-        : [];
-    const capacity = Math.max(
-      1,
-      Number(room.capacity) || getRoomingCapacity(roomType),
-      occupantIds.length || 0
-    );
-    return [
-      roomType || "other",
-      String(room.category || "").trim(),
-      String(capacity),
-      occupantIds.map((id) => String(id || "").trim()).join(","),
-    ].join("|");
-  }).sort((a, b) => a.localeCompare(b, "ar"))
-);
-
-const areRoomingDistributionsEquivalent = (firstRooms = [], secondRooms = []) => (
-  getRoomingDistributionSignature(firstRooms) === getRoomingDistributionSignature(secondRooms)
-);
 
 const createRoomLinkId = (sourceRoomId, targetRoomId) => {
   const [source, target] = [String(sourceRoomId || ""), String(targetRoomId || "")].sort();
@@ -5930,6 +5905,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomModalOpenRef = React.useRef(false);
   const pendingDropRef = React.useRef(null);
   const roomingCopyModalOpenRef = React.useRef(false);
+  const roomFilterMenuRef = React.useRef(null);
+  const roomNeedsMenuRef = React.useRef(null);
 
   const fullWorkspace = roomingWorkspaceMode !== "normal";
   const browserFullscreenMode = roomingWorkspaceMode === "browserFullscreen";
@@ -8477,12 +8454,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const madinahLocation = locationByKey.get("madinah") || {};
     const shouldUnify = Boolean(
       allowUnified
-      && roomingPrintSettings.unifyMakkahMadinahRooming
-      && areRoomingDistributionsEquivalent(makkahLocation.rooms || [], madinahLocation.rooms || [])
+      && exportData.roomingPrintDebug?.unifyMakkahMadinah
     );
-    const rooms = shouldUnify
-      ? (exportData.pdfRooms || []).filter((room) => room.city === "makkah")
-      : (exportData.pdfRooms || []);
+    const rooms = exportData.pdfRooms || [];
     const roomLinks = shouldUnify
       ? (Array.isArray(makkahLocation.roomLinks) ? makkahLocation.roomLinks : [])
       : (exportData.roomLinks || []);
@@ -8502,7 +8476,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         ? createUnifiedRoomingSection(commonSectionProps)
         : createCombinedRoomingSection(commonSectionProps),
     };
-  }, [roomingPrintSettings.unifyMakkahMadinahRooming]);
+  }, []);
+
+  const logRoomingUnifiedPrintDebug = React.useCallback((exportData, rooms = []) => {
+    const debug = exportData?.roomingPrintDebug || {};
+    console.log("unified rooming print debug", {
+      unifyMakkahMadinah: Boolean(debug.unifyMakkahMadinah),
+      orderMode: roomingPrintSettings.layoutMode || "default",
+      rawRoomCount: Number(debug.rawRoomCount || 0),
+      uniqueRoomCount: Number(debug.uniqueRoomCount || rooms.length || 0),
+      sharedRoomsCount: Number(debug.sharedRoomsCount || 0),
+      extraRoomsCount: Number(debug.extraRoomsCount || 0),
+      changedPilgrimRoomsCount: Number(debug.changedPilgrimRoomsCount || 0),
+      duplicateKeys: Array.isArray(debug.duplicateKeys) ? debug.duplicateKeys : [],
+      rooms: (Array.isArray(rooms) ? rooms : []).map((room) => ({
+        key: room.key,
+        badgeText: room.badgeText || null,
+        badgeReason: room.badgeReason || "shared",
+        hotelName: room.hotelName || room.hotel,
+        location: room.location || room.city,
+        roomNumber: room.roomNumber || room.roomName || "",
+        roomType: room.roomTypeLabel || room.roomTypeKey || room.roomType,
+        capacity: room.capacity,
+        occupantsCount: room.occupants?.length ?? room.pilgrims?.length ?? room.names?.length ?? 0,
+      })),
+    });
+  }, [roomingPrintSettings.layoutMode]);
 
   const handleDownloadRoomingPdf = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
@@ -8513,6 +8512,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       const fullPrintSection = combined
         ? buildFullRoomingPrintSection(exportData, { allowUnified: true })
         : null;
+      logRoomingUnifiedPrintDebug(exportData, fullPrintSection?.rooms || exportData.pdfRooms);
       await downloadRoomingPdf({
         rooms: fullPrintSection?.rooms || exportData.pdfRooms,
         lang,
@@ -8532,7 +8532,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     } finally {
       setRoomingExportBusy("");
     }
-  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, city, lang, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
+  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, city, lang, logRoomingUnifiedPrintDebug, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
 
   const handleDownloadRoomingExcel = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
@@ -8563,6 +8563,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     try {
       const exportData = await buildRoomingExportPayload("combined");
       const fullPrintSection = buildFullRoomingPrintSection(exportData, { allowUnified: true });
+      logRoomingUnifiedPrintDebug(exportData, fullPrintSection.rooms);
       win.document.write(createRoomingPrintHtml({
         rooms: fullPrintSection.rooms,
         roomLinks: fullPrintSection.roomLinks,
@@ -8580,7 +8581,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       try { win.close(); } catch {}
       throw error;
     }
-  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, lang, roomingPrintSettings]);
+  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, lang, logRoomingUnifiedPrintDebug, roomingPrintSettings]);
 
   const handleRoomingPrintChoice = React.useCallback(async (mode = "single") => {
     if (roomingPrintBusy) return;
@@ -9059,8 +9060,46 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         .rooming-menu-item:hover {
           background: rgba(37,99,235,.08) !important;
         }
+        .rooming-menu-panel {
+          --rooming-popover-bg: #ffffff;
+          --rooming-popover-border: rgba(148,163,184,.22);
+          --rooming-popover-shadow: 0 18px 42px rgba(15,23,42,.16);
+          --rooming-button-bg: #ffffff;
+          --rooming-button-active-bg: rgba(37,99,235,.08);
+          --rooming-button-text: #334155;
+          --rooming-button-active-text: #2563eb;
+          --rooming-danger-text: #b91c1c;
+          background: var(--rooming-popover-bg);
+          border: 1px solid var(--rooming-popover-border);
+          box-shadow: var(--rooming-popover-shadow);
+          backdrop-filter: blur(14px);
+        }
+        .rooming-menu-panel .rooming-menu-item {
+          transition: background .16s ease, color .16s ease;
+        }
+        .rooming-menu-panel .rooming-menu-item svg {
+          flex: 0 0 auto;
+          color: currentColor;
+          stroke: currentColor;
+        }
+        .rooming-menu-panel .rooming-menu-item span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         html[data-theme="dark"] .rooming-menu-item:hover {
           background: rgba(96,165,250,.16) !important;
+        }
+        html[data-theme="dark"] .rooming-menu-panel {
+          --rooming-popover-bg: rgba(15,23,42,.98);
+          --rooming-popover-border: rgba(148,163,184,.28);
+          --rooming-popover-shadow: 0 22px 52px rgba(0,0,0,.48);
+          --rooming-button-bg: rgba(30,41,59,.88);
+          --rooming-button-active-bg: rgba(37,99,235,.22);
+          --rooming-button-text: #dbeafe;
+          --rooming-button-active-text: #93c5fd;
+          --rooming-danger-text: #fca5a5;
         }
         html[data-theme="dark"] .rooming-menu-item svg {
           color: currentColor;
@@ -9370,7 +9409,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             menuLabels={roomingExportMenuLabels}
             onExport={(format) => handleRoomingExport("combined", format)}
           />
-          <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
+          <div ref={roomFilterMenuRef} onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
             <RoomingToolbarButton
               title={t.roomingRoomFilter || "فلترة الغرف"}
               onClick={() => {
@@ -9380,7 +9419,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               active={roomOccupancyFilter !== "all" || roomFilterOpen}
               icon={<Filter size={15} />}
             />
-            <RoomingMenu open={roomFilterOpen} align="start" width={190}>
+            <RoomingMenu open={roomFilterOpen} align="start" width={190} anchorRef={roomFilterMenuRef} portal={fullWorkspace}>
               {roomOccupancyOptions.map((option) => (
                 <RoomingMenuItem
                   key={option.value}
@@ -9401,7 +9440,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               ))}
             </RoomingMenu>
           </div>
-          <div onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
+          <div ref={roomNeedsMenuRef} onPointerDown={(event) => event.stopPropagation()} style={{ position: "relative" }}>
             <RoomingToolbarButton
               title={t.roomNeeds || "احتياج الغرف"}
               onClick={() => {
@@ -9413,7 +9452,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             >
               {roomNeeds.totalRooms ? `${t.roomNeeds || "احتياج الغرف"} · ${roomNeeds.totalRooms}` : (t.roomNeeds || "احتياج الغرف")}
             </RoomingToolbarButton>
-            <RoomingMenu open={roomNeedsOpen} align="start" width={260}>
+            <RoomingMenu open={roomNeedsOpen} align="start" width={260} anchorRef={roomNeedsMenuRef} portal={fullWorkspace}>
               <div style={{ padding: "6px 8px 8px" }}>
                 <p style={{ color: "var(--rooming-text)", fontSize: 12, fontWeight: 900, marginBottom: 8 }}>{t.roomNeeds || "احتياج الغرف"}</p>
                 {!roomNeeds.details.length ? (
@@ -10702,7 +10741,7 @@ function RoomingPrintMenuButton({
         <span>{busy ? loadingLabel : title}</span>
         <ChevronDown size={13} />
       </RoomingToolbarButton>
-      <RoomingMenu open={open} align="end" width={210}>
+      <RoomingMenu open={open} align="end" width={210} anchorRef={menuRef} portal>
         <RoomingMenuItem
           label={currentLabel}
           icon={<AppIcon name="print" size={14} />}
@@ -10773,7 +10812,7 @@ function RoomingExportMenuButton({
         <span>{busy ? menuLabels.loading : label}</span>
         <ChevronDown size={13} />
       </RoomingToolbarButton>
-      <RoomingMenu open={open} align="end" width={190}>
+      <RoomingMenu open={open} align="end" width={190} anchorRef={menuRef} portal>
         <RoomingMenuItem
           label={menuLabels.pdf || "PDF"}
           icon={<FileText size={14} />}
@@ -11319,26 +11358,93 @@ const ROOMING_EDGES = Object.freeze([]);
 const ROOMING_FIT_VIEW_OPTIONS = Object.freeze({ padding: 0.18 });
 const ROOMING_PRO_OPTIONS = Object.freeze({ hideAttribution: true });
 
-function RoomingMenu({ open, children, align = "start", width = 220 }) {
+function getRoomingMenuPortalContainer() {
+  if (typeof document === "undefined") return null;
+  return document.fullscreenElement
+    || document.webkitFullscreenElement
+    || document.msFullscreenElement
+    || document.body;
+}
+
+function RoomingMenu({ open, children, align = "start", width = 220, anchorRef = null, portal = false }) {
+  const [position, setPosition] = React.useState(null);
+  const menuWidth = Number(width) || 220;
+
+  const updatePosition = React.useCallback(() => {
+    if (!portal || !anchorRef?.current || typeof window === "undefined" || typeof document === "undefined") return;
+    const portalContainer = getRoomingMenuPortalContainer() || document.body;
+    const containerIsBody = portalContainer === document.body;
+    const rect = anchorRef.current.getBoundingClientRect();
+    const containerRect = containerIsBody
+      ? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight }
+      : portalContainer.getBoundingClientRect();
+    const direction = window.getComputedStyle(anchorRef.current).direction || "ltr";
+    const alignsToInlineEnd = align === "end";
+    const rawLeft = alignsToInlineEnd
+      ? (direction === "rtl" ? rect.left : rect.right - menuWidth)
+      : (direction === "rtl" ? rect.right - menuWidth : rect.left);
+    const minLeft = containerRect.left + 8;
+    const maxLeft = Math.max(minLeft, containerRect.right - menuWidth - 8);
+    const left = Math.min(
+      Math.max(minLeft, rawLeft),
+      maxLeft
+    );
+    const top = Math.max(containerRect.top + 8, rect.bottom + 8);
+    setPosition({
+      left: containerIsBody ? left : left - containerRect.left,
+      top: containerIsBody ? top : top - containerRect.top,
+      direction,
+      strategy: containerIsBody ? "fixed" : "absolute",
+    });
+  }, [align, anchorRef, menuWidth, portal]);
+
+  React.useLayoutEffect(() => {
+    if (!open || !portal) return undefined;
+    updatePosition();
+    const handleUpdate = () => updatePosition();
+    window.addEventListener("resize", handleUpdate);
+    window.addEventListener("scroll", handleUpdate, true);
+    document.addEventListener("fullscreenchange", handleUpdate);
+    document.addEventListener("webkitfullscreenchange", handleUpdate);
+    return () => {
+      window.removeEventListener("resize", handleUpdate);
+      window.removeEventListener("scroll", handleUpdate, true);
+      document.removeEventListener("fullscreenchange", handleUpdate);
+      document.removeEventListener("webkitfullscreenchange", handleUpdate);
+    };
+  }, [open, portal, updatePosition]);
+
   if (!open) return null;
-  return (
+  const menu = (
     <div
+      className="rooming-menu-panel"
+      onPointerDown={(event) => event.stopPropagation()}
       style={{
-        position: "absolute",
-        top: "calc(100% + 8px)",
-        [align === "end" ? "insetInlineEnd" : "insetInlineStart"]: 0,
-        width,
-        background: "var(--rooming-popover-bg)",
-        border: "1px solid var(--rooming-popover-border)",
+        position: portal ? (position?.strategy || "fixed") : "absolute",
+        ...(portal
+          ? {
+            top: position?.top ?? -9999,
+            left: position?.left ?? -9999,
+            direction: position?.direction || undefined,
+          }
+          : {
+            top: "calc(100% + 8px)",
+            [align === "end" ? "insetInlineEnd" : "insetInlineStart"]: 0,
+          }),
+        width: menuWidth,
+        background: "var(--rooming-popover-bg, #ffffff)",
+        border: "1px solid var(--rooming-popover-border, rgba(148,163,184,.22))",
         borderRadius: 12,
-        boxShadow: "var(--rooming-popover-shadow)",
+        boxShadow: "var(--rooming-popover-shadow, 0 18px 42px rgba(15,23,42,.16))",
         padding: 6,
-        zIndex: 30,
+        zIndex: portal ? 2147483600 : 30,
       }}
     >
       {children}
     </div>
   );
+  if (!portal || !anchorRef?.current || typeof document === "undefined") return menu;
+  return createPortal(menu, getRoomingMenuPortalContainer() || document.body);
 }
 
 function RoomingMenuItem({ label, onClick, icon, destructive = false, active = false }) {
@@ -11354,8 +11460,8 @@ function RoomingMenuItem({ label, onClick, icon, destructive = false, active = f
         gap: 8,
         border: 0,
         borderRadius: 8,
-        background: active ? "var(--rooming-button-active-bg)" : "transparent",
-        color: destructive ? "var(--rooming-danger-text)" : active ? "var(--rooming-button-active-text)" : "var(--rooming-button-text)",
+        background: active ? "var(--rooming-button-active-bg, rgba(37,99,235,.08))" : "transparent",
+        color: destructive ? "var(--rooming-danger-text, #b91c1c)" : active ? "var(--rooming-button-active-text, #2563eb)" : "var(--rooming-button-text, #334155)",
         padding: "8px 9px",
         cursor: "pointer",
         textAlign: "start",

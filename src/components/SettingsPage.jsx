@@ -6,6 +6,7 @@ import { isSupabaseEnabled, supabase } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
 import { BadgeTemplatesPage } from "../features/badges";
+import { setDefaultBadgeTemplate } from "../features/badges/services/badgeTemplatesApi";
 import { ContractTemplatesSettings } from "../features/contracts";
 import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
@@ -105,6 +106,7 @@ const parseDefaultPosterTemplateValue = (value = OFFICIAL_POSTER_TEMPLATE_VALUE)
 
 export default function SettingsPage({ store, onToast, currentUserRole, currentUserId }) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
+  const agencyId = store?.agencyId || agency?.id || "";
   const { lang, setLang, t } = useLang();
   const [form,       setForm]      = React.useState({ ...agency });
   const [selectedDefaultPosterTemplateValue, setSelectedDefaultPosterTemplateValue] = React.useState(() => (
@@ -117,6 +119,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
   const [contractTemplatesOpen, setContractTemplatesOpen] = React.useState(false);
   const [posterTemplatesOpen, setPosterTemplatesOpen] = React.useState(false);
+  const [selectedBadgeTemplateId, setSelectedBadgeTemplateId] = React.useState("");
   const [logoPreviewUrl, setLogoPreviewUrl] = React.useState(agency?.logoUrl || "");
   const [logoBusy, setLogoBusy] = React.useState(false);
   const [backupConfirmMode, setBackupConfirmMode] = React.useState(null);
@@ -127,6 +130,13 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const [passwordMessage, setPasswordMessage] = React.useState({ type: "", text: "" });
   const logoInputRef = React.useRef(null);
   const backupInputRef = React.useRef(null);
+  const badgeTemplateSettingsSaveRef = React.useRef(null);
+  const registerBadgeTemplateSettingsSave = React.useCallback((handler) => {
+    badgeTemplateSettingsSaveRef.current = typeof handler === "function" ? handler : null;
+  }, []);
+  const handleSelectedBadgeTemplateChange = React.useCallback((templateId) => {
+    setSelectedBadgeTemplateId(String(templateId || ""));
+  }, []);
   React.useEffect(() => {
     setForm({ ...agency });
     setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(agency));
@@ -183,6 +193,15 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     };
     setSettingsSaving(true);
     try {
+      if (badgeTemplateSettingsSaveRef.current) {
+        await badgeTemplateSettingsSaveRef.current();
+      } else if (selectedBadgeTemplateId) {
+        const { error: badgeTemplateError } = await setDefaultBadgeTemplate({
+          agencyId,
+          id: selectedBadgeTemplateId,
+        });
+        if (badgeTemplateError) throw badgeTemplateError;
+      }
       const result = await updateAgency(nextForm);
       if (result?.error) throw result.error;
       setForm(nextForm);
@@ -810,17 +829,19 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
         </div>
       </SettingsSectionCard>
 
-      <div className="page-actions" style={{ marginBottom:20 }}>
-        <Button variant="primary" icon="save" onClick={handleSave} disabled={settingsSaving}>{t.saveSettingsLabel}</Button>
-      </div>
-
       <SettingsSectionCard
         title={badgeTemplatesTitle}
         description={badgeTemplatesDesc}
         open={badgeTemplatesOpen}
         onToggle={() => setBadgeTemplatesOpen((current) => !current)}
       >
-        <BadgeTemplatesPage store={store} onToast={onToast} embedded />
+        <BadgeTemplatesPage
+          store={store}
+          onToast={onToast}
+          embedded
+          onRegisterSettingsSave={registerBadgeTemplateSettingsSave}
+          onSelectedTemplateChange={handleSelectedBadgeTemplateChange}
+        />
       </SettingsSectionCard>
 
       {canManageContractTemplates && (

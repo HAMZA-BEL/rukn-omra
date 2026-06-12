@@ -759,14 +759,19 @@ const isActiveLinkedInvoiceRecord = (invoice = {}) => {
 const toBadgeTemplate = (template, agencyId) => {
   const widthMm = toDecimalNumber(template.widthMm, 90);
   const heightMm = toDecimalNumber(template.heightMm, 140);
+  const templatePath = template.templatePath
+    || template.template_path
+    || template.backgroundImagePath
+    || template.background_image_path
+    || "";
 
   return {
     id: template.id,
     agency_id: agencyId,
     name: cleanString(template.name) || "قالب الشارة",
     description: cleanString(template.description),
-    template_path: cleanString(template.templatePath),
-    thumbnail_path: cleanString(template.thumbnailPath),
+    template_path: cleanString(templatePath),
+    thumbnail_path: cleanString(template.thumbnailPath || template.thumbnail_path),
     width_mm: widthMm > 0 ? widthMm : 90,
     height_mm: heightMm > 0 ? heightMm : 140,
     layout: sanitizeJsonValue(template.layout || {}),
@@ -779,8 +784,10 @@ const fromBadgeTemplate = (row) => ({
   id: row.id,
   name: row.name || "قالب الشارة",
   description: row.description || "",
-  templatePath: row.template_path || "",
+  templatePath: row.template_path || row.background_image_path || "",
   thumbnailPath: row.thumbnail_path || "",
+  backgroundImagePath: row.background_image_path || row.template_path || "",
+  backgroundImageUrl: row.background_image_url || "",
   widthMm: toDecimalNumber(row.width_mm, 90) || 90,
   heightMm: toDecimalNumber(row.height_mm, 140) || 140,
   layout: row.layout || {},

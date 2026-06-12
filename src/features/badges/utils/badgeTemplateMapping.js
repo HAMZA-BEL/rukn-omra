@@ -38,19 +38,34 @@ export const programFieldsFromBadgePhones = (phones = []) => {
   };
 };
 
-export const normalizeBadgeTemplate = (template = {}) => ({
-  id: template.id || "",
-  name: template.name || "Badge template",
-  description: template.description || "",
-  templatePath: template.templatePath || template.template_path || "",
-  thumbnailPath: template.thumbnailPath || template.thumbnail_path || "",
-  widthMm: normalizeBadgeNumber(template.widthMm ?? template.width_mm, 90) || 90,
-  heightMm: normalizeBadgeNumber(template.heightMm ?? template.height_mm, 140) || 140,
-  layout: normalizeBadgeLayout(template.layout && typeof template.layout === "object" ? template.layout : {}),
-  isDefault: Boolean(template.isDefault ?? template.is_default),
-  createdAt: template.createdAt || template.created_at || "",
-  updatedAt: template.updatedAt || template.updated_at || "",
-});
+export const normalizeBadgeTemplate = (template = {}) => {
+  const templatePath = template.templatePath
+    || template.template_path
+    || template.backgroundImagePath
+    || template.background_image_path
+    || "";
+  const backgroundImagePath = template.backgroundImagePath
+    || template.background_image_path
+    || templatePath
+    || "";
+  const backgroundImageUrl = template.backgroundImageUrl || template.background_image_url || "";
+
+  return {
+    id: template.id || "",
+    name: template.name || "Badge template",
+    description: template.description || "",
+    templatePath,
+    thumbnailPath: template.thumbnailPath || template.thumbnail_path || "",
+    backgroundImagePath,
+    backgroundImageUrl,
+    widthMm: normalizeBadgeNumber(template.widthMm ?? template.width_mm, 90) || 90,
+    heightMm: normalizeBadgeNumber(template.heightMm ?? template.height_mm, 140) || 140,
+    layout: normalizeBadgeLayout(template.layout && typeof template.layout === "object" ? template.layout : {}),
+    isDefault: Boolean(template.isDefault ?? template.is_default),
+    createdAt: template.createdAt || template.created_at || "",
+    updatedAt: template.updatedAt || template.updated_at || "",
+  };
+};
 
 export const toBadgeTemplatePayload = (template = {}) => {
   const normalized = normalizeBadgeTemplate(template);

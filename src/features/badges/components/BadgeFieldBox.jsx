@@ -1,13 +1,30 @@
 import React from "react";
+import {
+  BADGE_TEXT_FIT_DEFAULTS,
+  fitTextBox,
+  getBadgeTextPadding,
+  resolveBadgeTextDirection,
+} from "../utils/badgeTextFit";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const BADGE_FIELD_FONT_FAMILY = "\"Tajawal\", \"Cairo\", \"Noto Sans Arabic\", Arial, sans-serif";
 const pointToPct = (event, box) => ({
   xPct: ((event.clientX - box.left) / box.width) * 100,
   yPct: ((event.clientY - box.top) / box.height) * 100,
 });
 
+const alignItemsForField = (align = "center") => {
+  if (align === "start") return "flex-start";
+  if (align === "end") return "flex-end";
+  return "center";
+};
+
 export function BadgeFieldBox({ field, selected, value, label, onSelect, onChange, onRemove }) {
+  const boxRef = React.useRef(null);
   const interactionRef = React.useRef(null);
+  const measureCanvasRef = React.useRef(null);
+  const displayValue = String(value || label || field.labelAr || "");
+  const [textFit, setTextFit] = React.useState(null);
 
   const beginInteraction = (event, mode) => {
     event.preventDefault();
@@ -84,8 +101,71 @@ export function BadgeFieldBox({ field, selected, value, label, onSelect, onChang
     window.removeEventListener("pointermove", handlePointerMove);
   }, []);
 
+  React.useLayoutEffect(() => {
+    if (field.type !== "text") return undefined;
+    const element = boxRef.current;
+    if (!element) return undefined;
+    const measure = () => {
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      if (!width || !height) return;
+      const canvas = measureCanvasRef.current || document.createElement("canvas");
+      measureCanvasRef.current = canvas;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const padding = getBadgeTextPadding({ width, height });
+      const fitted = fitTextBox(ctx, displayValue, { width, height }, {
+        autoFit: field.autoFitText === true,
+        fontSize: Number(field.fontSize) || 12,
+        fontWeight: field.fontWeight || 700,
+        fontFamily: BADGE_FIELD_FONT_FAMILY,
+        minFontSize: field.autoFitText === true
+          ? Number(field.minFontSize || BADGE_TEXT_FIT_DEFAULTS.minFontSize)
+          : Math.max(6, Number(field.minFontSize || 7)),
+        maxFontSize: Number(field.maxFontSize || BADGE_TEXT_FIT_DEFAULTS.maxFontSize),
+        maxLines: Math.max(1, Number(field.maxLines || 1)),
+        paddingX: padding.x,
+        paddingY: padding.y,
+      });
+      setTextFit({
+        ...fitted,
+        direction: resolveBadgeTextDirection(displayValue, field.textDirection || "auto", "rtl"),
+      });
+    };
+    measure();
+    let cancelled = false;
+    document.fonts?.ready?.then(() => {
+      if (!cancelled) measure();
+    }).catch(() => {});
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => {
+        cancelled = true;
+        window.removeEventListener("resize", measure);
+      };
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [
+    displayValue,
+    field.align,
+    field.autoFitText,
+    field.fontSize,
+    field.fontWeight,
+    field.maxFontSize,
+    field.maxLines,
+    field.minFontSize,
+    field.textDirection,
+    field.type,
+  ]);
+
   return (
     <div
+      ref={boxRef}
       onPointerDown={(event) => beginInteraction(event, "move")}
       onClick={(event) => { event.stopPropagation(); onSelect?.(field.id); }}
       style={{
@@ -104,12 +184,17 @@ export function BadgeFieldBox({ field, selected, value, label, onSelect, onChang
         userSelect: "none",
         display: "flex",
         alignItems: "center",
-        justifyContent: field.align === "start" ? "flex-start" : field.align === "end" ? "flex-end" : "center",
+        justifyContent: field.type === "image"
+          ? "center"
+          : alignItemsForField(field.align),
         textAlign: field.align || "center",
-        fontSize: `${field.fontSize || 12}px`,
-        fontWeight: 800,
+        fontSize: `${textFit?.fontSize || field.fontSize || 12}px`,
+        fontWeight: field.fontWeight || 700,
+        fontFamily: BADGE_FIELD_FONT_FAMILY,
         overflow: "hidden",
-        padding: 4,
+        padding: field.type === "text"
+          ? `${textFit?.paddingY ?? 4}px ${textFit?.paddingX ?? 6}px`
+          : 4,
         boxShadow: selected ? "0 8px 24px rgba(0,0,0,.18)" : "none",
         backdropFilter: "blur(2px)",
         zIndex: selected ? 3 : 2,
@@ -164,7 +249,38 @@ export function BadgeFieldBox({ field, selected, value, label, onSelect, onChang
           {label || field.labelAr}
         </div>
       ) : (
-        value || label || field.labelAr
+        <div
+          dir={textFit?.direction || resolveBadgeTextDirection(displayValue, field.textDirection || "auto", "rtl")}
+          style={{
+            width: "100%",
+            minWidth: 0,
+            height: "100%",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: alignItemsForField(field.align),
+            gap: 0,
+            lineHeight: textFit ? `${textFit.lineHeight}px` : 1.18,
+            textAlign: field.align || "center",
+            unicodeBidi: "plaintext",
+            pointerEvents: "none",
+          }}
+        >
+          {(textFit?.lines?.length ? textFit.lines : [displayValue]).map((line, index) => (
+            <span
+              key={`${line}-${index}`}
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "clip",
+              }}
+            >
+              {line}
+            </span>
+          ))}
+        </div>
       )}
       <span
         onPointerDown={(event) => beginInteraction(event, "resize")}

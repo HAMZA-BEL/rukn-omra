@@ -91,10 +91,13 @@ export async function uploadBadgeTemplateThumbnail({ agencyId, templateId, file 
 }
 
 export async function getBadgeTemplateImageUrl(path) {
-  if (!canUseBadgePhotoStorage() || !path) return "";
+  const cleanPath = String(path || "").trim()
+    .replace(/^\/+/, "")
+    .replace(new RegExp(`^${BADGE_TEMPLATE_BUCKET}/+`), "");
+  if (!canUseBadgePhotoStorage() || !cleanPath) return "";
   const { data, error } = await supabase.storage
     .from(BADGE_TEMPLATE_BUCKET)
-    .createSignedUrl(path, 60 * 30);
+    .createSignedUrl(cleanPath, 60 * 30);
   if (error) return "";
   return data?.signedUrl || "";
 }

@@ -18,6 +18,11 @@ export function BadgeTemplateForm({
     { value: "start", label: t.badgeAlignStart || "Start" },
     { value: "end", label: t.badgeAlignEnd || "End" },
   ];
+  const directionOptions = [
+    { value: "auto", label: t.badgeTextDirectionAuto || "Auto" },
+    { value: "rtl", label: t.badgeTextDirectionRtl || "RTL" },
+    { value: "ltr", label: t.badgeTextDirectionLtr || "LTR" },
+  ];
   const selectedFieldLabel = selectedField
     ? (t[selectedField.labelKey] || selectedField.label || selectedField.key)
     : "";
@@ -67,21 +72,48 @@ export function BadgeTemplateForm({
               {(t.badgeSelectedField || "Selected field")}: {selectedFieldLabel}
             </p>
             {selectedField.type === "text" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <Input
-                  label={t.badgeFontSize || "Font size"}
-                  type="number"
-                  min={6}
-                  value={selectedField.fontSize || 12}
-                  onChange={(event) => onFieldChange(selectedField.key, { fontSize: Number(event.target.value) || 12 })}
-                />
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <Input
+                    label={t.badgeFontSize || "Font size"}
+                    type="number"
+                    min={6}
+                    value={selectedField.fontSize || 12}
+                    onChange={(event) => onFieldChange(selectedField.key, {
+                      fontSize: Number(event.target.value) || 12,
+                      autoFitText: false,
+                    })}
+                  />
+                  <Select
+                    label={t.badgeAlignment || "Alignment"}
+                    value={selectedField.align || "center"}
+                    onChange={(event) => onFieldChange(selectedField.key, { align: event.target.value })}
+                    options={alignOptions}
+                  />
+                </div>
+                <label style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 9,
+                  color: "var(--rukn-text)",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedField.autoFitText === true}
+                    onChange={(event) => onFieldChange(selectedField.key, { autoFitText: event.target.checked })}
+                  />
+                  <span>{t.badgeAutoFitText || "Auto fit text"}</span>
+                </label>
                 <Select
-                  label={t.badgeAlignment || "Alignment"}
-                  value={selectedField.align || "center"}
-                  onChange={(event) => onFieldChange(selectedField.key, { align: event.target.value })}
-                  options={alignOptions}
+                  label={t.badgeTextDirection || "Text direction"}
+                  value={selectedField.textDirection || "auto"}
+                  onChange={(event) => onFieldChange(selectedField.key, { textDirection: event.target.value })}
+                  options={directionOptions}
                 />
-              </div>
+              </>
             )}
           </div>
         )}

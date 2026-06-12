@@ -3,7 +3,12 @@ import { badgePhonesFromProgram, normalizeBadgeNumber } from "./badgeTemplateMap
 import { normalizeBadgeLayout } from "./badgeLayout";
 import { drawBadgeBackgroundImage, hasStoredBadgeBackgroundTransform } from "./badgeBackground";
 import { getBadgeTemplateImageUrl, getPilgrimPhotoUrl } from "./badgeStorage";
-import { fitTextBox } from "./badgeTextFit";
+import {
+  BADGE_TEXT_FIT_DEFAULTS,
+  fitTextBox,
+  getBadgeTextPadding,
+  resolveBadgeTextDirection,
+} from "./badgeTextFit";
 import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_TEMPLATE_PATH } from "./badgeDefaults";
 import { getParticipantTerminology } from "../../../utils/participantTerminology";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
@@ -281,12 +286,20 @@ const prepareFieldLayout = (field, pixelWidth, pixelHeight, scale) => {
     };
   }
 
-  const padding = Math.max(3, 1.2 * scale);
+  const renderScale = scale / BADGE_FONT_SCALE_DIVISOR;
+  const textPadding = getBadgeTextPadding(box, { scale: renderScale });
   const requestedFontSize = scaledFieldValue(field.fontSize || 12, scale, 12);
   const minFontSize = scaledFieldValue(
-    field.minFontSize || Math.max(6, Number(field.fontSize || 12) * 0.62),
+    field.autoFitText === true
+      ? (field.minFontSize || BADGE_TEXT_FIT_DEFAULTS.minFontSize)
+      : field.minFontSize || Math.max(6, Number(field.fontSize || 12) * 0.62),
     scale,
     Math.max(7, requestedFontSize * 0.62)
+  );
+  const maxFontSize = scaledFieldValue(
+    field.maxFontSize || BADGE_TEXT_FIT_DEFAULTS.maxFontSize,
+    scale,
+    Math.max(requestedFontSize, minFontSize)
   );
   return {
     field,
@@ -294,14 +307,13 @@ const prepareFieldLayout = (field, pixelWidth, pixelHeight, scale) => {
     key: field.key,
     box,
     opacity,
-    textBox: {
-      x: box.x + padding,
-      y: box.y,
-      width: Math.max(1, box.width - padding * 2),
-      height: box.height,
-    },
+    textBox: box,
+    paddingX: textPadding.x,
+    paddingY: textPadding.y,
+    autoFitText: field.autoFitText === true,
     requestedFontSize,
     minFontSize,
+    maxFontSize,
     fontWeight: field.fontWeight || 700,
     maxLines: Math.max(1, Number(field.maxLines || field.lineCount || 1)),
   };
@@ -520,7 +532,7 @@ const renderBadgeCanvas = async ({
     );
     if (photo !== rawPhoto) disposeDrawable(rawPhoto);
   }
-  const direction = textDirectionForLang(lang);
+  const fallbackDirection = textDirectionForLang(lang);
 
   for (const item of fieldLayouts) {
     const { field, box, opacity } = item;
@@ -549,12 +561,18 @@ const renderBadgeCanvas = async ({
     if (!text) continue;
     const textBox = item.textBox;
     const fitted = fitTextBox(ctx, text, textBox, {
+      autoFit: item.autoFitText,
       fontSize: item.requestedFontSize,
       minFontSize: item.minFontSize,
+      maxFontSize: item.maxFontSize,
       fontWeight: item.fontWeight,
       fontFamily: BADGE_FONT_FAMILY,
       maxLines: item.maxLines,
+      paddingX: item.paddingX,
+      paddingY: item.paddingY,
     });
+    const fittedBox = fitted.box || textBox;
+    const direction = resolveBadgeTextDirection(text, field.textDirection || "auto", fallbackDirection);
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.fillStyle = field.color || "#111111";
@@ -563,10 +581,10 @@ const renderBadgeCanvas = async ({
     ctx.textBaseline = "middle";
     ctx.font = `${item.fontWeight} ${fitted.fontSize}px ${BADGE_FONT_FAMILY}`;
     if ("fontKerning" in ctx) ctx.fontKerning = "normal";
-    const x = textAnchorForField(textBox, field.align, direction, 0);
+    const x = textAnchorForField(fittedBox, field.align, direction, 0);
     const totalHeight = fitted.lines.length * fitted.lineHeight;
     fitted.lines.forEach((line, index) => {
-      ctx.fillText(line, x, textBox.y + textBox.height / 2 - totalHeight / 2 + fitted.lineHeight * (index + .5));
+      ctx.fillText(line, x, fittedBox.y + fittedBox.height / 2 - totalHeight / 2 + fitted.lineHeight * (index + .5));
     });
     ctx.restore();
   }

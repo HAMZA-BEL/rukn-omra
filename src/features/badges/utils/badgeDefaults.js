@@ -51,10 +51,10 @@ export const DEFAULT_BADGE_SIZE = {
 
 export const BADGE_FIELD_DEFINITIONS = [
   { key: "photo", labelKey: "badgeFieldPhoto", labelAr: "الصورة", type: "image", wPct: 28, hPct: 28, fit: "contain" },
-  { key: "fullName", labelKey: "badgeFieldFullName", labelAr: "الاسم الكامل", type: "text", wPct: 62, hPct: 9, fontSize: 16, fontWeight: 800, align: "center", color: "#111111", maxLines: 2 },
-  { key: "passportNumber", labelKey: "badgeFieldPassport", labelAr: "رقم جواز السفر", type: "text", wPct: 52, hPct: 7, fontSize: 12, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
-  { key: "primaryPhone", labelKey: "badgeFieldPrimaryPhone", labelAr: "رقم المؤطر / الرقم السعودي", type: "text", wPct: 66, hPct: 7, fontSize: 11, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
-  { key: "extraPhone", labelKey: "badgeFieldExtraPhone", labelAr: "رقم سعودي إضافي", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1, repeatable: true },
+  { key: "fullName", labelKey: "badgeFieldFullName", labelAr: "الاسم الكامل", type: "text", wPct: 62, hPct: 9, fontSize: 16, fontWeight: 800, align: "center", color: "#111111", maxLines: 2, autoFitText: true, textDirection: "auto" },
+  { key: "passportNumber", labelKey: "badgeFieldPassport", labelAr: "رقم جواز السفر", type: "text", wPct: 52, hPct: 7, fontSize: 12, fontWeight: 700, align: "center", color: "#111111", maxLines: 1, autoFitText: true, textDirection: "ltr" },
+  { key: "primaryPhone", labelKey: "badgeFieldPrimaryPhone", labelAr: "رقم المؤطر / الرقم السعودي", type: "text", wPct: 66, hPct: 7, fontSize: 11, fontWeight: 700, align: "center", color: "#111111", maxLines: 1, autoFitText: true, textDirection: "ltr" },
+  { key: "extraPhone", labelKey: "badgeFieldExtraPhone", labelAr: "رقم سعودي إضافي", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1, repeatable: true, autoFitText: true, textDirection: "ltr" },
   { key: "hotelMecca", labelKey: "badgeFieldHotelMecca", labelAr: "فندق مكة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "hotelMadina", labelKey: "badgeFieldHotelMadina", labelAr: "فندق المدينة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },
   { key: "agencyName", labelKey: "badgeFieldAgencyName", labelAr: "اسم الوكالة", type: "text", wPct: 62, hPct: 6, fontSize: 10, fontWeight: 700, align: "center", color: "#111111", maxLines: 1 },

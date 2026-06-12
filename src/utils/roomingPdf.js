@@ -514,6 +514,21 @@ const drawText = (ctx, value, x, y, {
   ctx.restore();
 };
 
+const drawRoundedRectPath = (ctx, x, y, width, height, radius) => {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+};
+
 const drawFitText = (ctx, value, x, y, {
   size = 10,
   minSize = 7,
@@ -833,13 +848,42 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
   ctx.lineTo(x + width, rowAreaTop);
   ctx.stroke();
 
+  const badgeText = text(room.badgeText, "");
+  let badgeWidth = 0;
+  if (badgeText) {
+    const badgeHeight = Math.min(10, Math.max(8.2, topRowHeight - 4));
+    const badgeY = y + Math.max(2, (topRowHeight - badgeHeight) / 2);
+    const badgeX = left;
+    const badgeFontSize = 5.8;
+    ctx.save();
+    ctx.font = `800 ${badgeFontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
+    const measured = ctx.measureText(badgeText).width + 10;
+    badgeWidth = Math.min(Math.max(22, measured), Math.max(24, width * 0.42));
+    ctx.fillStyle = room.badgeReason === "changed-pilgrim-rooming" ? "#eff6ff" : "#fffbeb";
+    ctx.strokeStyle = room.badgeReason === "changed-pilgrim-rooming" ? "#93c5fd" : "#d9b861";
+    ctx.lineWidth = 0.65;
+    drawRoundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight / 2);
+    ctx.fill();
+    ctx.stroke();
+    drawFitText(ctx, badgeText, badgeX + badgeWidth / 2, badgeY + 1.75, {
+      size: badgeFontSize,
+      minSize: 4.8,
+      weight: 800,
+      color: room.badgeReason === "changed-pilgrim-rooming" ? "#1d4ed8" : "#7c641f",
+      align: "center",
+      direction,
+      maxWidth: badgeWidth - 7,
+    });
+    ctx.restore();
+  }
+
   drawText(ctx, MANUAL_ROOM_NUMBER_LABEL, right, y + Math.max(2.2, (topRowHeight - density.fontSmall) / 2), {
     size: Math.max(7.2, density.fontSmall),
     weight: 900,
     color: "#0f172a",
     align: "right",
     direction: "rtl",
-    maxWidth: width - density.cardPadX * 2,
+    maxWidth: width - density.cardPadX * 2 - badgeWidth - (badgeWidth ? 5 : 0),
   });
 
   rows.forEach((pilgrim, index) => {
@@ -1483,11 +1527,14 @@ export const createRoomingPrintHtml = ({
     const { pilgrims, rowCount, rows } = getRoomPrintRows(room, normalizedPrintSettings);
     const occupiedCount = getOccupiedNameCount(pilgrims);
     const showBedNumbers = normalizedPrintSettings.showBedNumbers;
+    const badgeText = text(room.badgeText, "");
+    const badgeClass = room.badgeReason === "changed-pilgrim-rooming" ? " city" : "";
+    const badgeHtml = badgeText ? `<span class="room-badge${badgeClass}">${escapeHtml(badgeText)}</span>` : "";
     const contentWidth = Math.max(32, getHtmlContentWidth(density) - (showBedNumbers ? 22 : 0));
     const chipHeight = parseCssLengthToPx(density.html.itemMinHeight || "0") || density.chipMinHeight * (96 / 72);
     return `
       <article class="room-card">
-        <div class="manual-room-row"><span>${MANUAL_ROOM_NUMBER_LABEL}</span></div>
+        <div class="manual-room-row"><span>${MANUAL_ROOM_NUMBER_LABEL}</span>${badgeHtml}</div>
         <ol>
           ${rows.map((pilgrim, index) => {
             const empty = !pilgrim.name || pilgrim.name === "—";
@@ -1664,8 +1711,10 @@ export const createRoomingPrintHtml = ({
     .type-title span{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e6dcc2;background:#fbfaf7;border-radius:999px;padding:1.2mm 5mm;font-size:8.5px;line-height:1}
     .rooms-grid{display:grid;grid-template-columns:repeat(var(--rooms-columns),minmax(0,var(--room-card-max-width)));gap:var(--room-card-gap);align-items:start;justify-content:center}
     .room-card{border:1px solid #334155;border-radius:0;background:#fff;padding:0;break-inside:avoid;page-break-inside:avoid;display:block}
-    .manual-room-row{height:var(--write-height);border-bottom:1px solid #334155;background:#f8fafc;display:flex;align-items:center;justify-content:flex-start;direction:rtl;text-align:right;padding:0 1.5mm;color:#0f172a;font-size:var(--room-header-font);font-weight:900}
+    .manual-room-row{height:var(--write-height);border-bottom:1px solid #334155;background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:1.2mm;direction:rtl;text-align:right;padding:0 1.5mm;color:#0f172a;font-size:var(--room-header-font);font-weight:900}
     .manual-room-row span{white-space:nowrap}
+    .room-badge{display:inline-flex;align-items:center;justify-content:center;max-width:44%;min-width:14mm;height:4.2mm;padding:0 2.2mm;border-radius:999px;border:1px solid #d9b861;background:#fffbeb;color:#7c641f;font-size:6.7px;font-weight:900;line-height:1;overflow:hidden;text-overflow:ellipsis;direction:${direction};text-align:center}
+    .room-badge.city{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}
     ol{list-style:none;margin:0;padding:0;display:block;width:100%}
     li{display:flex;flex-direction:column;justify-content:center;height:var(--item-min-height);border-top:1px solid #94a3b8;padding:var(--item-padding);min-width:0;overflow:hidden;background:#fff;direction:rtl;text-align:right}
     ol li:first-child{border-top:0}

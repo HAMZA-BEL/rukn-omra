@@ -2,7 +2,7 @@ import { db } from "../../../lib/db";
 import { isSupabaseEnabled } from "../../../lib/supabase";
 import { DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
 import { removeBadgeTemplateImages } from "../utils/badgeStorage";
-import { toBadgeTemplatePayload } from "../utils/badgeTemplateMapping";
+import { normalizeBadgeTemplate, toBadgeTemplatePayload } from "../utils/badgeTemplateMapping";
 
 const LOCAL_KEY = "rukn_badge_templates_local_v1";
 
@@ -31,7 +31,7 @@ export const createBadgeTemplateId = () => (
 
 export async function fetchBadgeTemplates({ agencyId } = {}) {
   if (isSupabaseEnabled && agencyId) return db.badgeTemplates.fetchAll(agencyId);
-  return { data: readLocal(), error: null };
+  return { data: readLocal().map(normalizeBadgeTemplate), error: null };
 }
 
 export async function saveBadgeTemplate({ agencyId, template } = {}) {

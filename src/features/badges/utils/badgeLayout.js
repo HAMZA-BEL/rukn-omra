@@ -54,6 +54,10 @@ export const normalizeBadgeLayout = (layout = {}) => {
         color: field.color || fallback.color || "#111111",
         align: field.align || fallback.align || "center",
         maxLines: Number(field.maxLines ?? fallback.maxLines ?? 1),
+        autoFitText: fallback.type === "text" ? Boolean(field.autoFitText ?? fallback.autoFitText ?? false) : false,
+        textDirection: ["auto", "rtl", "ltr"].includes(field.textDirection || fallback.textDirection)
+          ? (field.textDirection || fallback.textDirection)
+          : "auto",
         fit: fallback.type === "image" ? "contain" : field.fit,
         visible: field.visible !== false,
       };

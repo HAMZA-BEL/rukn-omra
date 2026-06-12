@@ -58,6 +58,268 @@ const makeRoomDisplayName = (room) => cleanText(
   ""
 );
 
+const normalizeRoomKeyPart = (value) => cleanText(value)
+  .toLowerCase()
+  .replace(/[\u064B-\u065F\u0670]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const getNestedText = (source, paths = []) => {
+  for (const path of paths) {
+    const value = path.split(".").reduce((current, key) => (
+      current && typeof current === "object" ? current[key] : undefined
+    ), source);
+    const text = cleanText(value);
+    if (text) return text;
+  }
+  return "";
+};
+
+const getClientStableKey = (client = {}, fallbackId = "", fallbackName = "") => {
+  const id = cleanText(client.id || fallbackId);
+  if (id) return `id:${id}`;
+  const passport = getNestedText(client, [
+    "passportNumber",
+    "passportNo",
+    "passport_number",
+    "passport.number",
+    "passport.passportNumber",
+    "passport.passport_number",
+    "docs.passport.number",
+    "docs.passport.passportNumber",
+  ]);
+  if (passport) return `passport:${normalizeRoomKeyPart(passport)}`;
+  const name = cleanText(
+    client.fullName
+    || client.full_name
+    || client.name
+    || client.nom
+    || fallbackName
+  );
+  return name ? `name:${normalizeRoomKeyPart(name)}` : `unknown:${cleanText(fallbackId)}`;
+};
+
+const dedupeOccupants = (occupants = []) => {
+  const byKey = new Map();
+  occupants.forEach((occupant) => {
+    const key = occupant?.key || getClientStableKey(occupant, occupant?.id, occupant?.name);
+    if (!key || byKey.has(key)) return;
+    byKey.set(key, { ...occupant, key });
+  });
+  return Array.from(byKey.values()).map((occupant, index) => ({
+    ...occupant,
+    bedNumber: index + 1,
+  }));
+};
+
+const getRoomOccupantsKey = (room = {}) => (
+  Array.isArray(room.occupants) ? room.occupants : []
+).map((occupant) => occupant?.key || getClientStableKey(occupant, occupant?.id, occupant?.name))
+  .filter(Boolean)
+  .sort()
+  .join(",");
+
+const getRoomNumberKey = (room = {}) => normalizeRoomKeyPart(room.roomName || room.roomNumber || room.name);
+
+const getRoomArrangementKey = (room = {}) => {
+  const occupantsKey = getRoomOccupantsKey(room);
+  const identityKey = occupantsKey || `empty:${getRoomNumberKey(room)}`;
+  return [
+    identityKey,
+    normalizeRoomKeyPart(room.roomTypeKey || room.roomTypeLabel || room.roomType),
+    normalizeRoomKeyPart(room.category || room.categoryLabel),
+    String(Math.max(1, Number(room.capacity) || 0, (room.occupants || []).length || 0)),
+  ].join("|");
+};
+
+const getRoomStableLocalKey = (room = {}) => [
+  normalizeRoomKeyPart(room.city || room.location),
+  normalizeRoomKeyPart(room.hotelName || room.hotel),
+  getRoomNumberKey(room),
+  normalizeRoomKeyPart(room.roomTypeKey || room.roomTypeLabel || room.roomType),
+  normalizeRoomKeyPart(room.category || room.categoryLabel),
+  String(Math.max(1, Number(room.capacity) || 0, (room.occupants || []).length || 0)),
+  getRoomOccupantsKey(room),
+].join("|");
+
+const makePrintableRoomKey = (room = {}, { ignoreLocation = false, unifiedHotelKey = "" } = {}) => {
+  const hotelKey = ignoreLocation
+    ? (unifiedHotelKey || normalizeRoomKeyPart(room.hotelName || room.hotel))
+    : normalizeRoomKeyPart(room.hotelName || room.hotel);
+  return [
+    ignoreLocation ? "unified" : normalizeRoomKeyPart(room.city || room.location),
+    hotelKey,
+    normalizeRoomKeyPart(room.roomName || room.roomNumber || room.name),
+    normalizeRoomKeyPart(room.roomTypeKey || room.roomTypeLabel || room.roomType),
+    normalizeRoomKeyPart(room.category || room.categoryLabel),
+    String(Math.max(1, Number(room.capacity) || 0, (room.occupants || []).length || 0)),
+    getRoomOccupantsKey(room),
+  ].join("|");
+};
+
+const normalizePrintableRoomForGrouping = (room = {}) => {
+  const occupants = dedupeOccupants(room.occupants);
+  const capacity = Math.max(1, Number(room.capacity) || 0, occupants.length || 0);
+  return {
+    ...room,
+    capacity,
+    occupants,
+    emptyBeds: Math.max(0, capacity - occupants.length),
+  };
+};
+
+const hasOccupantOverlap = (room = {}, otherRooms = []) => {
+  const occupantKeys = new Set((room.occupants || []).map((occupant) => occupant?.key).filter(Boolean));
+  if (!occupantKeys.size) return false;
+  return otherRooms.some((otherRoom) => (
+    (otherRoom.occupants || []).some((occupant) => occupantKeys.has(occupant?.key))
+  ));
+};
+
+const makeDebugSummary = (rooms = [], duplicateKeys = [], { unifyMakkahMadinah = false, rawRoomCount = rooms.length } = {}) => {
+  const sharedRoomsCount = unifyMakkahMadinah ? rooms.filter((room) => room.badgeReason === "shared").length : 0;
+  const extraRoomsCount = unifyMakkahMadinah ? rooms.filter((room) => room.badgeReason === "extra-room").length : 0;
+  const changedPilgrimRoomsCount = unifyMakkahMadinah ? rooms.filter((room) => room.badgeReason === "changed-pilgrim-rooming").length : 0;
+  return {
+    rooms,
+    rawRoomCount,
+    uniqueRoomCount: rooms.length,
+    duplicateKeys: Array.from(new Set(duplicateKeys)),
+    unifyMakkahMadinah,
+    sharedRoomsCount,
+    extraRoomsCount,
+    changedPilgrimRoomsCount,
+  };
+};
+
+export function buildUniquePrintableRoomGroups({
+  locations = [],
+  settings = {},
+  targetCities = [],
+} = {}) {
+  const normalizedLocations = (Array.isArray(locations) ? locations : []).map((location) => ({
+    ...location,
+    rooms: (Array.isArray(location.rooms) ? location.rooms : []).map(normalizePrintableRoomForGrouping),
+  }));
+  const rawRooms = normalizedLocations.flatMap((location) => (
+    Array.isArray(location.rooms) ? location.rooms : []
+  ));
+  const locationByKey = new Map(normalizedLocations.map((location) => [location.key, location]));
+  const makkahRooms = (locationByKey.get("makkah")?.rooms || []).map((room, index) => ({ ...room, __rawIndex: index }));
+  const madinahRooms = (locationByKey.get("madinah")?.rooms || []).map((room, index) => ({ ...room, __rawIndex: index }));
+  const canCompareBothCities = targetCities.includes("makkah")
+    && targetCities.includes("madinah")
+    && makkahRooms.length > 0
+    && madinahRooms.length > 0;
+  const shouldUnifyMakkahMadinah = settings?.unifyMakkahMadinahRooming !== false && canCompareBothCities;
+  const duplicateKeys = [];
+
+  if (shouldUnifyMakkahMadinah) {
+    const madinahByArrangement = new Map();
+    madinahRooms.forEach((room, index) => {
+      const key = getRoomArrangementKey(room);
+      if (!madinahByArrangement.has(key)) madinahByArrangement.set(key, []);
+      madinahByArrangement.get(key).push(index);
+    });
+
+    const sharedMakkahIndexes = new Set();
+    const sharedMadinahIndexes = new Set();
+    const sharedRoomsByMakkahIndex = new Map();
+    makkahRooms.forEach((room, index) => {
+      const arrangementKey = getRoomArrangementKey(room);
+      const candidates = madinahByArrangement.get(arrangementKey) || [];
+      const matchIndex = candidates.find((candidateIndex) => !sharedMadinahIndexes.has(candidateIndex));
+      if (matchIndex === undefined) return;
+      sharedMakkahIndexes.add(index);
+      sharedMadinahIndexes.add(matchIndex);
+      const key = `shared|${arrangementKey}`;
+      sharedRoomsByMakkahIndex.set(index, {
+        ...room,
+        key,
+        badgeText: "",
+        badgeReason: "shared",
+        location: "unified",
+        city: room.city || "makkah",
+      });
+      duplicateKeys.push(key);
+    });
+
+    const unmatchedMakkahRooms = makkahRooms.filter((_, index) => !sharedMakkahIndexes.has(index));
+    const unmatchedMadinahRooms = madinahRooms.filter((_, index) => !sharedMadinahIndexes.has(index));
+    const classifyRoom = (room, otherUnmatchedRooms = []) => {
+      const changed = hasOccupantOverlap(room, otherUnmatchedRooms);
+      const cityLabel = cleanText(room.cityLabel, room.city === "madinah" ? "المدينة" : "مكة");
+      const hotelName = cleanText(room.hotelName || room.hotel, cityLabel);
+      const badgeReason = changed ? "changed-pilgrim-rooming" : "extra-room";
+      return {
+        ...room,
+        key: `${badgeReason}|${getRoomStableLocalKey(room)}`,
+        badgeText: changed ? cityLabel : hotelName,
+        badgeReason,
+        location: room.city,
+      };
+    };
+
+    const uniqueRoomsByKey = new Map();
+    const pushUnique = (room) => {
+      if (!room?.key) return;
+      if (uniqueRoomsByKey.has(room.key)) {
+        duplicateKeys.push(room.key);
+        return;
+      }
+      uniqueRoomsByKey.set(room.key, room);
+    };
+
+    makkahRooms.forEach((room, index) => {
+      if (sharedRoomsByMakkahIndex.has(index)) {
+        pushUnique(sharedRoomsByMakkahIndex.get(index));
+        return;
+      }
+      pushUnique(classifyRoom(room, unmatchedMadinahRooms));
+    });
+    madinahRooms.forEach((room, index) => {
+      if (sharedMadinahIndexes.has(index)) return;
+      pushUnique(classifyRoom(room, unmatchedMakkahRooms));
+    });
+
+    const otherCityRooms = rawRooms.filter((room) => room.city !== "makkah" && room.city !== "madinah");
+    otherCityRooms.forEach((room) => {
+      pushUnique({
+        ...room,
+        key: getRoomStableLocalKey(room),
+        badgeText: "",
+        badgeReason: "shared",
+        location: room.city,
+      });
+    });
+
+    return makeDebugSummary(Array.from(uniqueRoomsByKey.values()), duplicateKeys, {
+      unifyMakkahMadinah: true,
+      rawRoomCount: rawRooms.length,
+    });
+  }
+
+  const roomsByKey = new Map();
+  rawRooms.forEach((room) => {
+    const key = makePrintableRoomKey(room, { ignoreLocation: false });
+    if (roomsByKey.has(key)) {
+      duplicateKeys.push(key);
+      return;
+    }
+    roomsByKey.set(key, {
+      ...room,
+      key,
+      badgeText: "",
+      badgeReason: "shared",
+      location: room.city,
+    });
+  });
+  return makeDebugSummary(Array.from(roomsByKey.values()), duplicateKeys, {
+    unifyMakkahMadinah: false,
+    rawRoomCount: rawRooms.length,
+  });
+}
+
 export function buildRoomingPrintModel({
   program = {},
   agencyName = "",
@@ -98,9 +360,11 @@ export function buildRoomingPrintModel({
         .map((clientId, occupantIndex) => {
           const client = clientsById[clientId];
           if (!client) return null;
+          const name = cleanText(getClientName(client));
           return {
             id: client.id || clientId,
-            name: cleanText(getClientName(client)),
+            key: getClientStableKey(client, clientId, name),
+            name,
             registrationSource: cleanText(getClientRegistrationSource(client)),
             genderLabel: cleanText(getClientGenderLabel(client)),
             bedNumber: occupantIndex + 1,
@@ -123,6 +387,7 @@ export function buildRoomingPrintModel({
         checkIn: roomDates.checkIn || dateInfo.checkIn || "",
         checkOut: roomDates.checkOut || dateInfo.checkOut || "",
         roomName: makeRoomDisplayName(room),
+        roomNumber: makeRoomDisplayName(room),
         roomTypeKey,
         roomTypeLabel: cleanText(getRoomTypeLabel(roomTypeKey), roomTypeKey),
         category: room.category || "",
@@ -149,15 +414,31 @@ export function buildRoomingPrintModel({
     };
   });
 
-  const pdfRooms = locations.flatMap((location) => location.rooms.map((room) => ({
+  const printableRoomGroups = buildUniquePrintableRoomGroups({
+    locations,
+    settings,
+    targetCities,
+  });
+
+  const pdfRooms = printableRoomGroups.rooms.map((room) => ({
+    key: room.key,
     id: room.id,
     city: room.city,
     cityLabel: room.cityLabel,
     hotel: room.hotelName,
+    hotelName: room.hotelName,
     checkIn: room.checkIn,
     checkOut: room.checkOut,
+    roomNumber: room.roomNumber || room.roomName || "",
+    roomName: room.roomName || room.roomNumber || "",
     roomTypeKey: room.roomTypeKey,
     roomTypeLabel: room.roomTypeLabel,
+    roomType: room.roomTypeLabel,
+    category: room.category || "",
+    categoryLabel: room.categoryLabel || "",
+    badgeText: room.badgeText || "",
+    badgeReason: room.badgeReason || "shared",
+    location: room.location || room.city,
     capacity: room.capacity,
     pilgrims: room.occupants.map((occupant) => ({
       name: occupant.name,
@@ -167,7 +448,7 @@ export function buildRoomingPrintModel({
     order: room.order,
     x: room.x,
     y: room.y,
-  })));
+  }));
 
   return {
     lang,
@@ -188,6 +469,8 @@ export function buildRoomingPrintModel({
     locations,
     roomLinks: locations.flatMap((location) => location.roomLinks),
     pdfRooms,
+    printableRooms: printableRoomGroups.rooms,
+    roomingPrintDebug: printableRoomGroups,
     globalTotals: sumGlobalTotals(locations),
     filenameBase: `rooming-${targetCities.join("-")}-${slugifyExportPart(program.name)}-${ROOMING_EXPORT_DATE()}`,
   };

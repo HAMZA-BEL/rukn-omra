@@ -24,6 +24,11 @@ export function BadgePropertiesPanel({
     { value: "center", label: t.badgeAlignCenter || "وسط" },
     { value: "end", label: t.badgeAlignEnd || "نهاية" },
   ];
+  const directionOptions = [
+    { value: "auto", label: t.badgeTextDirectionAuto || "تلقائي" },
+    { value: "rtl", label: t.badgeTextDirectionRtl || "يمين إلى يسار" },
+    { value: "ltr", label: t.badgeTextDirectionLtr || "يسار إلى يمين" },
+  ];
   const imageFitOptions = [
     { value: "contain", label: t.badgeFitContain || "احتواء" },
   ];
@@ -124,7 +129,10 @@ export function BadgePropertiesPanel({
               type="number"
               min={6}
               value={field.fontSize || 12}
-              onChange={(event) => onChange?.(field.id, { fontSize: Number(event.target.value) || 12 })}
+              onChange={(event) => onChange?.(field.id, {
+                fontSize: Number(event.target.value) || 12,
+                autoFitText: false,
+              })}
             />
             <Input
               label={t.badgeFontWeight || "السماكة"}
@@ -136,6 +144,26 @@ export function BadgePropertiesPanel({
               onChange={(event) => onChange?.(field.id, { fontWeight: Number(event.target.value) || 700 })}
             />
           </div>
+          <label style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            padding: "9px 10px",
+            border: "1px solid var(--rukn-border-soft)",
+            borderRadius: 10,
+            background: "var(--rukn-bg-soft)",
+            color: "var(--rukn-text)",
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}>
+            <input
+              type="checkbox"
+              checked={field.autoFitText === true}
+              onChange={(event) => onChange?.(field.id, { autoFitText: event.target.checked })}
+            />
+            <span>{t.badgeAutoFitText || "ضبط تلقائي للنص"}</span>
+          </label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
             <Select
               label={t.badgeAlignment || "المحاذاة"}
@@ -151,14 +179,22 @@ export function BadgePropertiesPanel({
               inputStyle={{ minHeight: 42, padding: 4 }}
             />
           </div>
-          <Input
-            label={t.badgeMaxLines || "عدد الأسطر"}
-            type="number"
-            min={1}
-            max={3}
-            value={field.maxLines || 1}
-            onChange={(event) => onChange?.(field.id, { maxLines: Number(event.target.value) || 1 })}
-          />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+            <Input
+              label={t.badgeMaxLines || "عدد الأسطر"}
+              type="number"
+              min={1}
+              max={3}
+              value={field.maxLines || 1}
+              onChange={(event) => onChange?.(field.id, { maxLines: Number(event.target.value) || 1 })}
+            />
+            <Select
+              label={t.badgeTextDirection || "اتجاه النص"}
+              value={field.textDirection || "auto"}
+              onChange={(event) => onChange?.(field.id, { textDirection: event.target.value })}
+              options={directionOptions}
+            />
+          </div>
         </>
       ) : (
         <Select
