@@ -12,6 +12,11 @@ import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
 import { validateLatinName } from "../utils/passportMrzEngine";
 import { normalizeProgramPackages } from "../utils/programPackages";
+import {
+  getProgramCapacityDeltaForClientChange,
+  getProgramCapacityInfo,
+  getProgramCapacityMessage,
+} from "../utils/programCapacity";
 
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
@@ -1749,6 +1754,11 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
+  const capacityClientSource = React.useMemo(() => {
+    if (store?.isSupabaseEnabled && !store?.clientsLoaded) return undefined;
+    if (Array.isArray(store?.activeClients)) return store.activeClients;
+    return clients;
+  }, [clients, store?.activeClients, store?.clientsLoaded, store?.isSupabaseEnabled]);
   const importProgramOptions = React.useMemo(
     () => (Array.isArray(store?.programs) ? store.programs : [])
       .filter((program) => program?.id && !program.deleted && !program.archived)
@@ -2324,6 +2334,32 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       onToast?.(l.requiredFieldsHardBlock, "error");
       return;
     }
+    const capacityDelta = effectiveImportProgramId
+      ? accepted.reduce((count, row) => {
+          if (!row.existingClientId) return count + 1;
+          if (row.duplicateAction !== "update") return count;
+          const existing = clients.find((client) => client.id === row.existingClientId) || null;
+          return count + getProgramCapacityDeltaForClientChange({
+            targetProgramId: effectiveImportProgramId,
+            previousClient: existing,
+            nextClient: { programId: effectiveImportProgramId },
+          });
+        }, 0)
+      : 0;
+    if (capacityDelta > 0 && effectiveImportProgram) {
+      const capacityInfo = getProgramCapacityInfo(effectiveImportProgram, capacityClientSource, capacityDelta);
+      if (!capacityInfo.canAddRequested) {
+        onToast?.(getProgramCapacityMessage({
+          program: effectiveImportProgram,
+          lang,
+          messages: t,
+          action: "import",
+          countToAdd: capacityDelta,
+          remainingSeats: capacityInfo.remainingSeats || 0,
+        }), "error");
+        return;
+      }
+    }
     setSaving(true);
     const failures = [];
     for (const row of accepted) {
@@ -2378,7 +2414,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     }
     onToast?.(l.saved, "success");
     onClose?.();
-  }, [clients, effectiveImportProgramId, l, onClose, onToast, rows, store, toClientPayload]);
+  }, [capacityClientSource, clients, effectiveImportProgram, effectiveImportProgramId, l, lang, onClose, onToast, rows, store, t, toClientPayload]);
 
   const firstAccepted = rows.find((row) => row.accepted && !row.existingClientId);
   const applySingleToForm = React.useCallback(() => {

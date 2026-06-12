@@ -7,6 +7,11 @@ import { formatCurrency } from "../utils/currency";
 import { getClientDisplayName } from "../utils/clientNames";
 import { translatePaymentMethod } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
+import {
+  formatProgramCapacityValue,
+  getCapacityProgramId as getProgramId,
+  getProgramCapacityInfo,
+} from "../utils/programCapacity";
 
 const getPaymentReceiptNo = (payment = {}) => (
   payment.receiptNo || payment.receipt_no || payment.receiptNumber || payment.receipt_number || ""
@@ -17,12 +22,7 @@ const getPaymentMethod = (payment = {}) => (
 );
 
 const getClientProgramId = (client = {}) => client.programId || client.program_id || "";
-const getProgramId = (program = {}) => String(program.id || program.programId || program.program_id || "");
 const normalizeSearchText = (value) => String(value || "").trim().toLowerCase();
-const getProgramCapacity = (program = {}) => {
-  const capacity = Number(program.seats ?? program.capacity ?? 0);
-  return Number.isFinite(capacity) ? capacity : 0;
-};
 const isActiveDestinationProgram = (program = {}) => (
   Boolean(getProgramId(program))
   && program.deleted !== true
@@ -229,12 +229,40 @@ export default function TransferSheet({
     return occupancyByProgramId.get(programId) || 0;
   };
 
-  const filteredPrograms = programs
+  const destinationProgramRows = programs
     .filter(isActiveDestinationProgram)
     .filter((program) => !excludedIds.has(getProgramId(program)))
-    .filter((program) => !q || getProgramSearchTerms(program).includes(q));
+    .map((program) => {
+      const registered = getRegisteredCount(program);
+      const programId = getProgramId(program);
+      const incomingCount = clients.filter((client) => String(getClientProgramId(client) || "") !== programId).length;
+      const capacityInfo = getProgramCapacityInfo(program, registered, incomingCount);
+      return {
+        program,
+        programId,
+        registered,
+        capacityInfo,
+        capacityValue: formatProgramCapacityValue(program, registered),
+      };
+    });
+  const availableProgramRows = destinationProgramRows.filter((row) => row.capacityInfo.canAddRequested);
+  const filteredProgramRows = availableProgramRows
+    .filter(({ program }) => !q || getProgramSearchTerms(program).includes(q));
+  const emptyTransferMessage = availableProgramRows.length === 0
+    ? (
+        t.transferNoAvailablePrograms
+        || (lang === "fr"
+          ? "Aucun programme disponible pour le transfert. Augmentez d’abord le nombre de places dans l’un des programmes."
+          : lang === "en"
+            ? "No programs available for transfer. Increase the number of seats in one of the programs first."
+            : "لا توجد برامج متاحة للنقل. زد عدد المقاعد في أحد البرامج أولا.")
+      )
+    : (t.noResults || t.noProgramsTitle || "لا توجد برامج متاحة");
+  const selectedProgramRow = selectedProgramId
+    ? availableProgramRows.find((row) => row.programId === String(selectedProgramId))
+    : null;
+  const selectedProgram = selectedProgramRow?.program || null;
   const programById = new Map(programs.map((program) => [getProgramId(program), program]));
-  const selectedProgram = selectedProgramId ? programById.get(String(selectedProgramId)) : null;
   const labels = transferPaymentLabels(lang, t);
   const paymentSummary = clients.reduce((summary, client) => {
     const payments = typeof getClientPayments === "function" ? getClientPayments(client.id) : [];
@@ -285,7 +313,7 @@ export default function TransferSheet({
     : `${clients.length} selected`;
 
   const handleConfirm = async () => {
-    if (!selectedProgramId) return;
+    if (!selectedProgramId || !selectedProgram) return;
     if (hasPayments && !paymentConfirmationVisible) {
       setInvoiceCheckBusy(true);
       try {
@@ -403,7 +431,7 @@ export default function TransferSheet({
                   paddingInline: 4,
                 }}
               >
-                {filteredPrograms.length === 0 ? (
+                {filteredProgramRows.length === 0 ? (
                   <p
                     style={{
                       textAlign: "center",
@@ -412,27 +440,20 @@ export default function TransferSheet({
                       padding: "24px 0",
                     }}
                   >
-                    {t.noProgramsTitle || "لا توجد برامج متاحة"}
+                    {emptyTransferMessage}
                   </p>
                 ) : (
-                  filteredPrograms.map((program) => {
-                    const registered = getRegisteredCount(program);
-                    const capacity = getProgramCapacity(program);
-                    const willOverflow =
-                      capacity > 0 ? registered + clients.length > capacity : false;
-                    const isDisabled = willOverflow;
-                    const selected = String(selectedProgramId || "") === getProgramId(program);
+                  filteredProgramRows.map(({ program, programId, capacityValue }) => {
+                    const selected = String(selectedProgramId || "") === programId;
                     return (
                       <GlassCard
                         key={program.id}
                         role="button"
-                        tabIndex={isDisabled ? -1 : 0}
-                        aria-disabled={isDisabled}
+                        tabIndex={0}
                         aria-pressed={selected}
                         style={{
                           padding: 14,
-                          cursor: isDisabled ? "not-allowed" : "pointer",
-                          opacity: isDisabled ? 0.55 : 1,
+                          cursor: "pointer",
                           border: selected
                             ? "1px solid var(--rukn-border-hover)"
                             : "1px solid var(--rukn-border-soft)",
@@ -440,12 +461,11 @@ export default function TransferSheet({
                           transform: selected ? "translateY(-2px)" : "none",
                           outline: selected ? "2px solid var(--rukn-gold-dim)" : "none",
                         }}
-                        onClick={() => handleProgramPick(program.id, isDisabled)}
+                        onClick={() => handleProgramPick(programId, false)}
                         onKeyDown={(event) => {
-                          if (isDisabled) return;
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            handleProgramPick(program.id, false);
+                            handleProgramPick(programId, false);
                           }
                         }}
                       >
@@ -495,15 +515,10 @@ export default function TransferSheet({
                               {t.registered || "Registered"}
                             </p>
                             <p style={{ fontSize: 15, fontWeight: 800, color: "var(--rukn-gold)" }}>
-                              {registered}/{capacity || "∞"}
+                              {capacityValue}
                             </p>
                           </div>
                         </div>
-                        {isDisabled && (
-                          <p style={{ marginTop: 8, fontSize: 12, color: "var(--rukn-danger)" }}>
-                            {t.programFull || "البرنامج ممتلئ"}
-                          </p>
-                        )}
                       </GlassCard>
                     );
                   })
@@ -591,7 +606,7 @@ export default function TransferSheet({
                   variant="primary"
                   size="md"
                   style={{ flex: 1, minWidth: 160 }}
-                  disabled={!selectedProgramId || invoiceCheckBusy}
+                  disabled={!selectedProgram || invoiceCheckBusy}
                   onClick={handleConfirm}
                 >
                   {invoiceCheckBusy

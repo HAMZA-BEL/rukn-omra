@@ -9,6 +9,7 @@ import {
   normalizeProgramPackages,
 } from "../../utils/programPackages";
 import { translateProgramType } from "../../utils/i18nValues";
+import { formatProgramCapacityValue } from "../../utils/programCapacity";
 
 const tc = theme.colors;
 
@@ -62,6 +63,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const primaryHotelMecca = hasProgramSummary ? programSummary.primaryHotelMecca : packages[0]?.hotelMecca;
   const primaryHotelMadina = hasProgramSummary ? programSummary.primaryHotelMadina : packages[0]?.hotelMadina;
   const remainingLabel = formatCurrencyForLang(totalRemaining);
+  const seatFillValue = formatProgramCapacityValue(program, registered);
   const infoRows = [
     ["hotel", t.hotelMecca, hotelSummary || primaryHotelMecca || program.hotelMecca],
     ["building", t.hotelMadina, hotelSummary || primaryHotelMadina || program.hotelMadina],
@@ -296,7 +298,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
           <div style={{ marginBottom:14 }}>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, fontSize:12 }}>
             <span style={{ color:tc.grey }}>{t.seatFill}</span>
-            <span style={{ color:pct>80?tc.danger:tc.gold, fontWeight:700 }}>{registered}/{program.seats}</span>
+            <span style={{ color:pct>80?tc.danger:tc.gold, fontWeight:700 }}>{seatFillValue}</span>
           </div>
           <div style={{ height:5, background:"var(--rukn-border-soft)", borderRadius:3, overflow:"hidden" }}>
             <div style={{ height:"100%", width:`${pct}%`, borderRadius:3, transition:"width 1.2s",

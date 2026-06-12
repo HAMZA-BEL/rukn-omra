@@ -36,6 +36,11 @@ import {
   isClientMinorWithoutCin,
   normalizeRepresentativeRelationship,
 } from "../utils/clientRepresentation";
+import {
+  getProgramCapacityDeltaForClientChange,
+  getProgramCapacityInfo,
+  getProgramCapacityMessage,
+} from "../utils/programCapacity";
 
 const tc = theme.colors;
 
@@ -415,9 +420,10 @@ const buildFormState = (client, defaultProgramId, programs) => {
   };
 };
 
-export default function ClientForm({ client, store, onSave, onCancel, defaultProgramId, lockProgramId = "" }) {
+export default function ClientForm({ client, store, onSave, onCancel, onToast, defaultProgramId, lockProgramId = "" }) {
   const { t, tr, dir, lang } = useLang();
-  const { programs = [], clients = [], addClient, updateClient } = store;
+  const { programs = [], clients = [], activeClients = [], addClient, updateClient } = store;
+  const storeNotify = typeof store.notify === "function" ? store.notify : null;
   const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
@@ -440,6 +446,8 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const skipProgramResetRef = React.useRef(true);
   const salePriceManualRef = React.useRef(isEdit);
   const previousOfficialPriceRef = React.useRef(0);
+  const formRef = React.useRef(null);
+  const lastValidationToastAtRef = React.useRef(0);
 
   const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs));
   const selectablePrograms = React.useMemo(() => {
@@ -504,6 +512,15 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   }, [lang]);
   const manualSellingPriceHelpText = React.useMemo(() => getManualSellingPriceHelpText(lang), [lang]);
   const missingCostingHint = React.useMemo(() => getMissingCostingHint(lang), [lang]);
+  const requiredValidationMessage = React.useMemo(() => {
+    if (lang === "fr") return "Veuillez compléter les informations obligatoires";
+    if (lang === "en") return "Please complete the required information";
+    return "يرجى إكمال المعلومات المطلوبة";
+  }, [lang]);
+  const capacityClients = React.useMemo(
+    () => (Array.isArray(activeClients) && activeClients.length ? activeClients : clients),
+    [activeClients, clients]
+  );
   const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
     ...option,
     label: option.value === "male_only"
@@ -867,6 +884,66 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
     return e;
   };
 
+  const getFirstValidationField = React.useCallback((validationErrors = {}) => {
+    if (entryMode === ROOM_ENTRY_MODES.GROUP && Array.isArray(validationErrors.groupPeople)) {
+      for (let index = 0; index < validationErrors.groupPeople.length; index += 1) {
+        const rowErrors = validationErrors.groupPeople[index] || {};
+        if (rowErrors.lastName) return `groupPeople.${index}.lastName`;
+        if (rowErrors.firstName) return `groupPeople.${index}.firstName`;
+        if (rowErrors.gender) return `groupPeople.${index}.gender`;
+      }
+    }
+    const orderedFields = ["firstName", "phone", "gender", "salePrice", "birthDate", "issueDate", "representedByClientId"];
+    return orderedFields.find((field) => validationErrors[field]) || "";
+  }, [entryMode]);
+
+  const focusFirstValidationField = React.useCallback((validationErrors = {}) => {
+    const field = getFirstValidationField(validationErrors);
+    if (!field || typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      const target = formRef.current?.querySelector(`[data-client-field="${field}"]`);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (typeof target.focus === "function") {
+        try {
+          target.focus({ preventScroll: true });
+        } catch {
+          target.focus();
+        }
+      }
+    });
+  }, [getFirstValidationField]);
+
+  const notifyValidationFailure = React.useCallback((validationErrors = {}) => {
+    const now = Date.now();
+    if (now - lastValidationToastAtRef.current > 2500) {
+      lastValidationToastAtRef.current = now;
+      const notify = typeof onToast === "function" ? onToast : storeNotify;
+      notify?.(requiredValidationMessage, "error");
+    }
+    focusFirstValidationField(validationErrors);
+  }, [focusFirstValidationField, onToast, requiredValidationMessage, storeNotify]);
+
+  const notifyCapacityFailure = React.useCallback((targetProgram, capacityInfo, countToAdd = 1) => {
+    const notify = typeof onToast === "function" ? onToast : storeNotify;
+    notify?.(getProgramCapacityMessage({
+      program: targetProgram,
+      lang,
+      messages: t,
+      action: "add",
+      countToAdd,
+      remainingSeats: capacityInfo.remainingSeats || 0,
+    }), "error");
+  }, [lang, onToast, storeNotify, t]);
+
+  const ensureProgramCanAdd = React.useCallback((targetProgram, countToAdd = 1) => {
+    if (!targetProgram?.id || countToAdd <= 0) return true;
+    const capacityInfo = getProgramCapacityInfo(targetProgram, capacityClients, countToAdd);
+    if (capacityInfo.canAddRequested) return true;
+    notifyCapacityFailure(targetProgram, capacityInfo, countToAdd);
+    return false;
+  }, [capacityClients, notifyCapacityFailure]);
+
   const createClientId = () => (
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -918,8 +995,15 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   const handleSave = async () => {
     if (saving) return;
     const e = validate();
-    if (Object.keys(e).length) { setErrors(e); return; }
+    if (Object.keys(e).length) {
+      setErrors(e);
+      notifyValidationFailure(e);
+      return;
+    }
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
+      const targetProgramId = lockProgramId || form.programId || "";
+      const targetProgram = programs.find((item) => item.id === targetProgramId) || selectedProgram;
+      if (!ensureProgramCanAdd(targetProgram, groupPeople.length)) return;
       if (groupPeople.length > roomCapacity && !window.confirm(t.confirmOverCapacity || "عدد الأشخاص أكبر من سعة نوع الغرفة المحدد. هل تريد المتابعة؟")) {
         return;
       }
@@ -988,6 +1072,17 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       onSave(addedClients);
       return;
     }
+    const targetProgramId = lockProgramId || form.programId || "";
+    const targetProgram = programs.find((item) => item.id === targetProgramId) || selectedProgram;
+    const nextClientProgram = { programId: targetProgramId };
+    const capacityDelta = isEdit
+      ? getProgramCapacityDeltaForClientChange({
+          targetProgramId,
+          previousClient: client,
+          nextClient: nextClientProgram,
+        })
+      : (targetProgramId ? 1 : 0);
+    if (!ensureProgramCanAdd(targetProgram, capacityDelta)) return;
     setSaving(true);
     setBadgePhotoError("");
     const baseData = {
@@ -1024,10 +1119,12 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
       const data = withBadgePhotoPath(baseData, photoResult.path);
       let savedClient;
       if (isEdit) {
-        updateClient(client.id, data);
+        const updateResult = updateClient(client.id, data);
+        if (updateResult === null) return;
         savedClient = { ...client, ...data, id: client.id };
       } else {
         savedClient = addClient(targetId ? { ...data, id: targetId } : data);
+        if (!savedClient) return;
       }
       onSave(savedClient);
     } finally {
@@ -1038,7 +1135,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
   // Apply MRZ data
 
   return (
-    <div>
+    <div ref={formRef}>
       <style>{`
         .client-form-pricing-grid {
           display: grid;
@@ -1219,6 +1316,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
               value={form.lastName} onChange={set("lastName")}
               placeholder={t.lastNamePlaceholder}
               error={errors.firstName}
+              data-client-field="firstName"
             />
             <Input
               label={t.firstName}
@@ -1257,12 +1355,14 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                       value={person.lastName}
                       onChange={(e) => updateGroupPerson(person.id, { lastName: e.target.value })}
                       error={rowErrors.lastName}
+                      data-client-field={`groupPeople.${index}.lastName`}
                     />
                     <Input
                       label={t.firstName}
                       value={person.firstName}
                       onChange={(e) => updateGroupPerson(person.id, { firstName: e.target.value })}
                       error={rowErrors.firstName}
+                      data-client-field={`groupPeople.${index}.firstName`}
                     />
                     <Input
                       label={t.phone}
@@ -1285,6 +1385,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                           <button
                             key={option.value}
                             type="button"
+                            data-client-field={`groupPeople.${index}.gender`}
                             onClick={() => updateGroupPerson(person.id, { gender: option.value })}
                             style={{
                               minWidth: 92,
@@ -1356,7 +1457,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="phone" size={14} color={tc.gold} /> {t.contactInfo}</p>
         <div className="form-grid form-grid--two">
           <Input label={entryMode === ROOM_ENTRY_MODES.GROUP ? (t.sharedPhoneOptional || "هاتف مشترك اختياري") : t.phone} value={form.phone} onChange={set("phone")}
-            placeholder={t.phonePlaceholder} required={entryMode === ROOM_ENTRY_MODES.SINGLE} error={entryMode === ROOM_ENTRY_MODES.SINGLE ? errors.phone : ""} />
+            placeholder={t.phonePlaceholder} required={entryMode === ROOM_ENTRY_MODES.SINGLE} error={entryMode === ROOM_ENTRY_MODES.SINGLE ? errors.phone : ""} data-client-field="phone" />
           <Input
             label={t.registrationSource || "جهة التسجيل"}
             value={form.registrationSource}
@@ -1386,6 +1487,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
                 <button
                   key={option.value}
                   type="button"
+                  data-client-field="gender"
                   onClick={() => setGender(option.value)}
                   style={{
                     minWidth: 92,
@@ -1443,6 +1545,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             min="0"
             step="0.01"
             error={errors.salePrice}
+            data-client-field="salePrice"
             inputStyle={{
               height:36,
               padding:"7px 10px",
@@ -1533,6 +1636,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             type="date"
             max={todayInputValue}
             error={passportDateErrors.birthDate}
+            data-client-field="birthDate"
           />
           <Input
             label={t.issueDate}
@@ -1541,6 +1645,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
             type="date"
             max={todayInputValue}
             error={passportDateErrors.issueDate}
+            data-client-field="issueDate"
           />
           <Input label={t.expiry} value={form.passport.expiry} onChange={setPass("expiry")} type="date" />
         </div>
@@ -1573,6 +1678,7 @@ export default function ClientForm({ client, store, onSave, onCancel, defaultPro
 	                </label>
 	                <div style={{ position:"relative" }}>
 	                  <input
+                      data-client-field="representedByClientId"
 	                    value={representativeInputValue}
 	                    disabled={!representativeOptions.length}
 	                    placeholder={representativeOptions.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative}

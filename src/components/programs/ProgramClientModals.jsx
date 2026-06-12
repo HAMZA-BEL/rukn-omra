@@ -12,6 +12,7 @@ export default function ProgramClientModals({
   tr,
   program,
   packages,
+  registeredCount = 0,
   participantTerms,
   completionLabels,
   participantExcelImportLabel,
@@ -56,6 +57,9 @@ export default function ProgramClientModals({
     programType: program.programType,
     program_type: program.program_type,
     category: program.category,
+    seats: program.seats,
+    capacity: program.capacity,
+    registeredCount,
     packages,
   };
 
@@ -85,6 +89,7 @@ export default function ProgramClientModals({
           lockProgramId={program.id}
           onSave={onSaveAddClient}
           onCancel={onCloseAddClient}
+          onToast={onToast}
         />
       </Modal>
       <Modal open={isExcelImportOpen} onClose={onCloseExcelImport} title={participantExcelImportLabel} width={920}>
@@ -120,6 +125,7 @@ export default function ProgramClientModals({
             store={store}
             onSave={onSaveEditClient}
             onCancel={onCloseEditClient}
+            onToast={onToast}
           />
         )}
       </Modal>

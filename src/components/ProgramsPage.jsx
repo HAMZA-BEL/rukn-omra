@@ -97,6 +97,11 @@ import {
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { buildProgramListSummaryById } from "../utils/programListSummaries";
 import {
+  formatProgramCapacityValue,
+  getProgramCapacityInfo,
+  getProgramCapacityMessage,
+} from "../utils/programCapacity";
+import {
   downloadProgramBadgesPdf,
 } from "../features/badges";
 import {
@@ -4364,6 +4369,24 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         : clients.filter(c => c.programId === program.id)
     )
   ), [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
+  const currentProgram = useScopedProgramDetail ? (scopedProgramDetail.program || program) : program;
+  const registeredCapacityValue = React.useMemo(
+    () => formatProgramCapacityValue(currentProgram, progClients.length),
+    [currentProgram, progClients.length]
+  );
+  const ensureCurrentProgramCanAdd = React.useCallback((countToAdd = 1, action = "add") => {
+    const capacityInfo = getProgramCapacityInfo(currentProgram, progClients.length, countToAdd);
+    if (capacityInfo.canAddRequested) return true;
+    onToast(getProgramCapacityMessage({
+      program: currentProgram,
+      lang,
+      messages: t,
+      action,
+      countToAdd,
+      remainingSeats: capacityInfo.remainingSeats || 0,
+    }), "error");
+    return false;
+  }, [currentProgram, lang, onToast, progClients.length, t]);
 
   const filtered = React.useMemo(() => progClients.filter(c => {
     const status = getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id));
@@ -4642,10 +4665,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       closeTransferSheet();
       return;
     }
-    const capacity = destination.seats || Number.MAX_SAFE_INTEGER;
     const currentCount = programOccupancy.get(String(programId || "")) || 0;
-    if (capacity !== Number.MAX_SAFE_INTEGER && currentCount + clientsToMove.length > capacity) {
-      onToast(t.programFull || "البرنامج ممتلئ", "error");
+    const incomingCount = clientsToMove.filter((client) => String(getClientProgramId(client) || "") !== String(programId || "")).length;
+    const capacityInfo = getProgramCapacityInfo(destination, currentCount, incomingCount);
+    if (!capacityInfo.canAddRequested) {
+      onToast(getProgramCapacityMessage({
+        program: destination,
+        lang,
+        messages: t,
+        action: "transfer",
+        countToAdd: incomingCount,
+        remainingSeats: capacityInfo.remainingSeats || 0,
+      }), "error");
       return;
     }
     const movedCount = transferClients(clientsToMove.map((client) => client.id), programId);
@@ -4658,7 +4689,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     closeTransferSheet();
     exitSelectMode();
     refreshScopedProgramDetail();
-  }, [allPrograms, ensureGlobalDetailDataForCurrentAction, transferList, programOccupancy, transferClients, onToast, t.programNotFound, t.noClientsSelected, t.programFull, tr, closeTransferSheet, exitSelectMode, refreshScopedProgramDetail]);
+  }, [allPrograms, ensureGlobalDetailDataForCurrentAction, transferList, programOccupancy, transferClients, onToast, lang, t, tr, closeTransferSheet, exitSelectMode, refreshScopedProgramDetail]);
 
   const selectedVisibleCount = React.useMemo(
     () => paginatedProgramClients.reduce((count, client) => count + (checkedIds.has(client.id) ? 1 : 0), 0),
@@ -5030,12 +5061,18 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
-    runWithGlobalDetailData(() => setShowPassportImport(true));
-  }, [closeHeaderActions, runWithGlobalDetailData]);
+    runWithGlobalDetailData(() => {
+      if (!ensureCurrentProgramCanAdd(1, "import")) return;
+      setShowPassportImport(true);
+    });
+  }, [closeHeaderActions, ensureCurrentProgramCanAdd, runWithGlobalDetailData]);
   const handleExcelImportOpen = React.useCallback(() => {
     closeHeaderActions();
-    runWithGlobalDetailData(() => setShowExcelImport(true));
-  }, [closeHeaderActions, runWithGlobalDetailData]);
+    runWithGlobalDetailData(() => {
+      if (!ensureCurrentProgramCanAdd(1, "import")) return;
+      setShowExcelImport(true);
+    });
+  }, [closeHeaderActions, ensureCurrentProgramCanAdd, runWithGlobalDetailData]);
   const handleEditProgram = React.useCallback(() => {
     closeHeaderActions();
     onEditProgram?.();
@@ -5267,7 +5304,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         headerActions={headerActions}
         hoveredHeaderAction={hoveredHeaderAction}
         setHoveredHeaderAction={setHoveredHeaderAction}
-        onAddClient={() => runWithGlobalDetailData(() => setShowAddClient(true))}
+        onAddClient={() => runWithGlobalDetailData(() => {
+          if (!ensureCurrentProgramCanAdd(1, "add")) return;
+          setShowAddClient(true);
+        })}
         addClientLabel={participantTerms.addAction || t.addClient}
       />
 
@@ -5297,7 +5337,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         ]}
         showSummary={listDataReady && programTab !== "rooming"}
         statCards={[
-          { icon:"users", label:t.registered, value:progClients.length, color:tc.gold },
+          { icon:"users", label:t.registered, value:registeredCapacityValue, color:tc.gold },
           { icon:"success", label:t.cleared, value:statusCounts.cleared, color:tc.greenLight },
           { icon:"partial", label:t.partial, value:statusCounts.partial, color:tc.warning },
           { icon:"unpaid", label:t.unpaid, value:statusCounts.unpaid, color:tc.danger },
@@ -5650,8 +5690,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         onToast={onToast}
         t={t}
         tr={tr}
-        program={program}
+        program={currentProgram}
         packages={packages}
+        registeredCount={progClients.length}
         participantTerms={participantTerms}
         completionLabels={completionLabels}
         participantExcelImportLabel={participantExcelImportLabel}

@@ -437,7 +437,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
       <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={t.edit+" — "+t.fullName} width={680}>
         {editingClient && <ClientForm client={editingClient} store={store}
           onSave={()=>{ setEditingClient(null); showToast(t.updateSuccess, "success"); }}
-          onCancel={()=>setEditingClient(null)} />}
+          onCancel={()=>setEditingClient(null)}
+          onToast={showToast} />}
       </Modal>
 
       <Modal

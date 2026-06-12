@@ -1,4 +1,5 @@
 import { PROGRAM_ROOM_PRICE_KEYS, normalizeProgramPackages } from "./programPackages";
+import { getProgramCapacity, getProgramCapacityInfo } from "./programCapacity";
 
 const toProgramId = (programOrId) => String(programOrId?.id ?? programOrId ?? "");
 
@@ -57,9 +58,10 @@ export function buildProgramListSummaryById({
 
     const programId = toProgramId(program);
     const activeProgramClients = activeClientsByProgramId.get(programId) || [];
-    const capacity = Number(program.seats);
-    const hasValidCapacity = Number.isFinite(capacity) && capacity > 0;
     const registeredCount = activeProgramClients.length;
+    const capacityInfo = getProgramCapacityInfo(program, registeredCount);
+    const capacity = getProgramCapacity(program);
+    const hasValidCapacity = capacityInfo.hasCapacity;
 
     let totalPaid = 0;
     let remainingTotal = 0;
@@ -110,6 +112,7 @@ export function buildProgramListSummaryById({
       ...getProgramPackageSummary(program),
       capacity,
       hasValidCapacity,
+      remainingSeats: capacityInfo.remainingSeats,
       capacityPct: hasValidCapacity ? Math.min((registeredCount / capacity) * 100, 100) : 0,
       isFull: capacityStatus === "full",
       isNotFull: capacityStatus === "not_full",

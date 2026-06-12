@@ -84,6 +84,11 @@ import {
   removeAgencyLogo,
   uploadAgencyLogo,
 } from "../utils/agencyLogo";
+import {
+  getProgramCapacityDeltaForClientChange,
+  getProgramCapacityInfo,
+  getProgramCapacityMessage,
+} from "../utils/programCapacity";
 
 const EMPTY_DASHBOARD_STATS = {
   totalClients: 0,
@@ -837,6 +842,28 @@ export function useStore(agencyId, onToast) {
       && String(program.status || "active").toLowerCase() !== "archived"
     ))
   ), [programs]);
+  const findProgramForCapacity = useCallback((programId) => {
+    const targetId = String(programId || "");
+    if (!targetId) return null;
+    return programs.find((program) => String(program?.id || "") === targetId) || null;
+  }, [programs]);
+  const notifyProgramCapacityBlocked = useCallback((program, capacityInfo, countToAdd = 1, action = "add") => {
+    notify(getProgramCapacityMessage({
+      program,
+      lang: getUiLang(),
+      action,
+      countToAdd,
+      remainingSeats: capacityInfo?.remainingSeats || 0,
+    }), "error");
+  }, [notify]);
+  const ensureProgramCapacityForStore = useCallback((programId, countToAdd = 1, action = "add") => {
+    const targetProgram = findProgramForCapacity(programId);
+    if (!targetProgram || countToAdd <= 0) return true;
+    const capacityInfo = getProgramCapacityInfo(targetProgram, activeClients, countToAdd);
+    if (capacityInfo.canAddRequested) return true;
+    notifyProgramCapacityBlocked(targetProgram, capacityInfo, countToAdd, action);
+    return false;
+  }, [activeClients, findProgramForCapacity, notifyProgramCapacityBlocked]);
   const clearActivityLogConfirmed = useCallback((days = 0) => clearActivityLog(days), [clearActivityLog]);
 
   useEffect(() => {
@@ -2372,12 +2399,13 @@ export function useStore(agencyId, onToast) {
       archived:         false,
       archivedAt:       null,
     };
+    if (!ensureProgramCapacityForStore(getClientProgramId(newClient), 1, "add")) return null;
     addClientLocal(newClient);
     queueProgramArchiveSuggestionCheck(getClientProgramId(newClient));
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     sync(() => saveClient(newClient, agencyId));
     return newClient;
-  }, [addClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
+  }, [addClientLocal, ensureProgramCapacityForStore, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const addClientFromPassportImport = useCallback(async (data) => {
     const id  = trimString(data.id) || genId("CL");
@@ -2395,6 +2423,9 @@ export function useStore(agencyId, onToast) {
       archived:         false,
       archivedAt:       null,
     };
+    if (!ensureProgramCapacityForStore(getClientProgramId(newClient), 1, "import")) {
+      return { data: null, error: { code: "program_capacity_full", message: trKey("programFull", getUiLang()) || "Program is full" } };
+    }
     if (isSupabaseEnabled && agencyId) {
       const { error } = await saveClient(newClient, agencyId);
       if (error) return { data: null, error };
@@ -2404,12 +2435,22 @@ export function useStore(agencyId, onToast) {
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
     if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(newClient, agencyId));
     return { data: newClient, error: null };
-  }, [addClientLocal, agencyId, logActivity, queueProgramArchiveSuggestionCheck, sync]);
+  }, [addClientLocal, agencyId, ensureProgramCapacityForStore, isSupabaseEnabled, logActivity, queueProgramArchiveSuggestionCheck, sync]);
 
   const updateClientFromPassportImport = useCallback(async (id, data) => {
     const now      = new Date().toISOString().split("T")[0];
     const prepared = prepareClientForSave(data);
     const updated  = { ...prepared, id, lastModified: now };
+    const previous = clients.find((client) => client.id === id) || null;
+    const targetProgramId = getClientProgramId(updated);
+    const capacityDelta = getProgramCapacityDeltaForClientChange({
+      targetProgramId,
+      previousClient: previous,
+      nextClient: updated,
+    });
+    if (!ensureProgramCapacityForStore(targetProgramId, capacityDelta, "import")) {
+      return { data: null, error: { code: "program_capacity_full", message: trKey("programFull", getUiLang()) || "Program is full" } };
+    }
     if (isSupabaseEnabled && agencyId) {
       const { error } = await saveClient(updated, agencyId);
       if (error) return { data: null, error };
@@ -2419,7 +2460,7 @@ export function useStore(agencyId, onToast) {
     logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
     if (!isSupabaseEnabled || !agencyId) sync(() => saveClient(updated, agencyId));
     return { data: updated, error: null };
-  }, [agencyId, logActivity, queueProgramArchiveSuggestionCheck, sync, updateClientLocal]);
+  }, [agencyId, clients, ensureProgramCapacityForStore, isSupabaseEnabled, logActivity, queueProgramArchiveSuggestionCheck, sync, updateClientLocal]);
 
   const updateClient = useCallback((id, data) => {
     const now      = new Date().toISOString().split("T")[0];
@@ -2428,8 +2469,15 @@ export function useStore(agencyId, onToast) {
     const previous = clients.find(c => c.id === id);
     if (getClientIdentityName(previous) && !getClientIdentityName(updated)) {
       notify(trKey("nameEmptyGuard") || "تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
-      return;
+      return null;
     }
+    const targetProgramId = getClientProgramId(updated);
+    const capacityDelta = getProgramCapacityDeltaForClientChange({
+      targetProgramId,
+      previousClient: previous,
+      nextClient: updated,
+    });
+    if (!ensureProgramCapacityForStore(targetProgramId, capacityDelta, "transfer")) return null;
     updateClientLocal(id, updated);
     queueProgramArchiveSuggestionCheck([
       getClientProgramId(previous),
@@ -2442,7 +2490,8 @@ export function useStore(agencyId, onToast) {
       logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
     }
     sync(() => saveClient({ id, ...updated }, agencyId));
-  }, [clients, programs, updateClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify]);
+    return updated;
+  }, [clients, programs, updateClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify, ensureProgramCapacityForStore]);
 
   const syncRoomingClientFields = useCallback(async (programId, updates = []) => {
     if (!programId || !Array.isArray(updates) || !updates.length) {
@@ -2507,6 +2556,8 @@ export function useStore(agencyId, onToast) {
     const idSet = new Set(ids);
     const affected = clients.filter((c) => idSet.has(c.id));
     if (!affected.length) return 0;
+    const capacityDelta = affected.filter((client) => String(getClientProgramId(client) || "") !== String(programId || "")).length;
+    if (!ensureProgramCapacityForStore(programId, capacityDelta, "transfer")) return 0;
     const now = new Date().toISOString().split("T")[0];
     const updatedClients = affected.map((client) => ({
       ...client,
@@ -2538,7 +2589,7 @@ export function useStore(agencyId, onToast) {
       return { error };
     });
     return affected.length;
-  }, [clients, programs, transferClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify]);
+  }, [clients, programs, transferClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify, ensureProgramCapacityForStore]);
 
   const deleteClient = useCallback((id) => {
     const client = clients.find((x) => x.id === id);

@@ -9,6 +9,10 @@ import {
   getClientServiceTypeLabel,
   parseClientServiceTypeValue,
 } from "../utils/clientServiceTypes";
+import {
+  getProgramCapacityInfo,
+  getProgramCapacityMessage,
+} from "../utils/programCapacity";
 
 const tc = theme.colors;
 const previewText = "var(--rukn-text)";
@@ -829,6 +833,11 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
   }, [controlsDisabled, onImportingChange]);
 
   const existingClients = store?.clients || [];
+  const capacityClientSource = React.useMemo(() => {
+    if (store?.isSupabaseEnabled && !store?.clientsLoaded) return undefined;
+    if (Array.isArray(store?.activeClients)) return store.activeClients;
+    return existingClients;
+  }, [existingClients, store?.activeClients, store?.clientsLoaded, store?.isSupabaseEnabled]);
   const importProgramOptions = React.useMemo(
     () => (Array.isArray(store?.programs) ? store.programs : [])
       .filter((program) => program?.id)
@@ -1108,6 +1117,22 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
     }
 
     const acceptedRows = previewRows.filter((row) => row.accepted);
+    if (effectiveProgramContext?.id) {
+      const capacityInfo = getProgramCapacityInfo(effectiveProgramContext, capacityClientSource, acceptedRows.length);
+      if (!capacityInfo.canAddRequested) {
+        const message = getProgramCapacityMessage({
+          program: effectiveProgramContext,
+          lang,
+          messages: t,
+          action: "import",
+          countToAdd: acceptedRows.length,
+          remainingSeats: capacityInfo.remainingSeats || 0,
+        });
+        setError(message);
+        onToast?.(message, "error");
+        return;
+      }
+    }
     const skipped = previewRows.length - acceptedRows.length;
     const batches = Math.ceil(acceptedRows.length / IMPORT_BATCH_SIZE);
     const saveClient = typeof store?.addClientFromPassportImport === "function"

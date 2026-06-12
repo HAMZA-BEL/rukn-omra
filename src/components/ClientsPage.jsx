@@ -1073,13 +1073,15 @@ export default function ClientsPage({ store, onToast }) {
         {editing && (
           <ClientForm client={editing} store={store}
             onSave={() => { setEditing(null); onToast(t.updateSuccess,"success"); }}
-            onCancel={() => setEditing(null)} />
+            onCancel={() => setEditing(null)}
+            onToast={onToast} />
         )}
       </Modal>
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title={t.addClient} width={660}>
         <ClientForm store={store}
           onSave={() => { setShowAdd(false); onToast(t.addSuccess,"success"); }}
-          onCancel={() => setShowAdd(false)} />
+          onCancel={() => setShowAdd(false)}
+          onToast={onToast} />
       </Modal>
       <Modal open={showImport} onClose={closeImportModal} title={t.importModalTitle} width={920}>
         {showImport && (
