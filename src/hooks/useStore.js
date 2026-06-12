@@ -69,6 +69,7 @@ import {
   createProgramFullyClearedArchiveKey,
   getDaysUntil,
   getProgramDepartureDate,
+  isProgramArchived,
 } from "../utils/notificationRules";
 import { normalizeHotelCheckinDay } from "../utils/hotelDates";
 import { normalizeRouteStops } from "../utils/programRoutes";
@@ -224,7 +225,7 @@ const isActiveProgramForArchiveSuggestion = (program = {}) => (
   program
   && !program.deleted
   && !program.deletedAt
-  && String(program.status || "active").toLowerCase() !== "archived"
+  && !isProgramArchived(program)
 );
 
 const isActiveClientForArchiveSuggestion = (client = {}) => (
@@ -839,7 +840,7 @@ export function useStore(agencyId, onToast) {
       program
       && !program.deleted
       && !program.deletedAt
-      && String(program.status || "active").toLowerCase() !== "archived"
+      && !isProgramArchived(program)
     ))
   ), [programs]);
   const findProgramForCapacity = useCallback((programId) => {
@@ -2250,7 +2251,7 @@ export function useStore(agencyId, onToast) {
   // ── Archive suggestions ───────────────────────────────────────────────────
   const getArchiveSuggestions = useCallback(() => {
     const today = new Date();
-    return programs
+    return activeProgramRecords
       .map(p => {
         const ret = p.returnDate ? new Date(p.returnDate) : (p.departure ? new Date(p.departure) : null);
         if (!ret) return null;
@@ -2262,12 +2263,14 @@ export function useStore(agencyId, onToast) {
         return { program: p, daysAgo, count: active.length };
       })
       .filter(Boolean);
-  }, [programs, activeClients, getClientStatus]);
+  }, [activeProgramRecords, activeClients, getClientStatus]);
 
   useEffect(() => {
     if (!storeHydrated) return;
     if (isSupabaseEnabled && (!clientsLoaded || !paymentsLoaded || !notificationsLoaded)) return;
     const activeKeys = new Set();
+    const activeProgramIds = new Set(activeProgramRecords.map((program) => String(program.id || "")));
+    const knownProgramIds = new Set(programs.map((program) => String(program?.id || "")).filter(Boolean));
     const track = (notif) => {
       const key = getNotificationKey(notif);
       activeKeys.add(key);
@@ -2278,7 +2281,7 @@ export function useStore(agencyId, onToast) {
       });
     };
 
-    programs.forEach((program) => {
+    activeProgramRecords.forEach((program) => {
       const seats = typeof program.seats === "number" ? program.seats : 0;
       const assigned = activeClients.filter(c => c.programId === program.id);
       const seatsLeft = seats - assigned.length;
@@ -2334,7 +2337,7 @@ export function useStore(agencyId, onToast) {
     });
 
     buildSystemNotificationCandidates({
-      programs,
+      programs: activeProgramRecords,
       clients: activeClients,
       getClientName: getClientDisplayName,
       defaultTitle: trKey("notificationsDefaultTitle", getUiLang()),
@@ -2358,6 +2361,16 @@ export function useStore(agencyId, onToast) {
 
     notifications.forEach((notif) => {
       if (notif.isArchived) return;
+      const linkedProgramId = String(
+        notif.programId
+        || (notif.targetType === "program" ? notif.targetId : "")
+        || notif.meta?.programId
+        || ""
+      ).trim();
+      if (linkedProgramId && knownProgramIds.has(linkedProgramId) && !activeProgramIds.has(linkedProgramId)) {
+        archiveNotification(notif.id, { silent: true });
+        return;
+      }
       if (!notif.type || !notif.type.startsWith("system:")) return;
       if (notif.type === PROGRAM_FULLY_CLEARED_ARCHIVE_NOTIFICATION_TYPE) return;
       const key = getNotificationKey(notif);
@@ -2367,8 +2380,9 @@ export function useStore(agencyId, onToast) {
     });
   }, [
     agencyId,
-    programs,
+    activeProgramRecords,
     activeClients,
+    programs,
     getClientStatus,
     getArchiveSuggestions,
     notifications,

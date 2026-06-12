@@ -67,6 +67,18 @@ export const getProgramDepartureDate = (program = {}) => trimText(
   || ""
 );
 
+export const isProgramArchived = (program = {}) => {
+  const status = String(program?.status || "").trim().toLowerCase();
+  return Boolean(
+    program?.archived === true
+    || program?.isArchived === true
+    || program?.is_archived === true
+    || program?.archivedAt
+    || program?.archived_at
+    || status === "archived"
+  );
+};
+
 export const createProgramDeparture11DaysKey = (program = {}) => (
   program.id && getProgramDepartureDate(program) ? `program-departure-11days-${program.id}-${getProgramDepartureDate(program)}` : ""
 );
@@ -151,10 +163,13 @@ export function buildSystemNotificationCandidates({
   defaultTitle = "",
   defaultProgramName = "",
 } = {}) {
-  const programsById = new Map(programs.map((program) => [program.id, program]));
+  const activePrograms = (Array.isArray(programs) ? programs : []).filter((program) => (
+    program && !isProgramArchived(program)
+  ));
+  const programsById = new Map(activePrograms.map((program) => [program.id, program]));
   const candidates = [];
 
-  programs.forEach((program) => {
+  activePrograms.forEach((program) => {
     const departureDate = getProgramDepartureDate(program);
     const daysLeft = getDaysUntil(departureDate);
     if (daysLeft === null || daysLeft < 0) return;
