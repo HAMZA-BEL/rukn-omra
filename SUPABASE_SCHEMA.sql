@@ -163,6 +163,7 @@ create table if not exists public.badge_templates (
   width_mm      numeric not null default 90,
   height_mm     numeric not null default 140,
   layout        jsonb not null default '{}'::jsonb,
+  background_transform jsonb not null default '{}'::jsonb,
   is_default    boolean not null default false,
   created_by    uuid references auth.users(id) on delete set null,
   created_at    timestamptz default now(),
@@ -170,6 +171,9 @@ create table if not exists public.badge_templates (
 );
 
 alter table public.badge_templates add column if not exists description text;
+alter table public.badge_templates add column if not exists background_transform jsonb not null default '{}'::jsonb;
+alter table public.badge_templates alter column width_mm type numeric using width_mm::numeric;
+alter table public.badge_templates alter column height_mm type numeric using height_mm::numeric;
 
 -- Contract templates
 create table if not exists public.contract_templates (
@@ -697,6 +701,9 @@ create policy "contract_templates_storage_delete" on storage.objects
   );
 
 -- badge template rows
+grant select, insert, update, delete on table public.badge_templates to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+
 drop policy if exists "badge_templates_select" on public.badge_templates;
 drop policy if exists "badge_templates_insert" on public.badge_templates;
 drop policy if exists "badge_templates_update" on public.badge_templates;

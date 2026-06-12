@@ -74,6 +74,26 @@ const toNullableFiniteNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const toDecimalNumber = (value, fallback = 0) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "string") {
+    const parsed = Number(value.trim().replace(/\s+/g, "").replace(/٫/g, ".").replace(/,/g, "."));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const sanitizeJsonValue = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(sanitizeJsonValue);
+  return Object.entries(value).reduce((acc, [key, item]) => {
+    if (item !== undefined) acc[key] = sanitizeJsonValue(item);
+    return acc;
+  }, {});
+};
+
 const parseRpcJson = (value) => {
   if (typeof value !== "string") return value;
   try {
@@ -736,26 +756,31 @@ const isActiveLinkedInvoiceRecord = (invoice = {}) => {
     && !invoice.deletedAt;
 };
 
-const toBadgeTemplate = (template, agencyId) => ({
-  id: template.id,
-  agency_id: agencyId,
-  name: cleanString(template.name) || "قالب الشارة",
-  description: cleanString(template.description),
-  template_path: cleanString(template.templatePath),
-  width_mm: Number(template.widthMm || 90),
-  height_mm: Number(template.heightMm || 140),
-  layout: template.layout || {},
-  is_default: Boolean(template.isDefault),
-  updated_at: new Date().toISOString(),
-});
+const toBadgeTemplate = (template, agencyId) => {
+  const widthMm = toDecimalNumber(template.widthMm, 90);
+  const heightMm = toDecimalNumber(template.heightMm, 140);
+
+  return {
+    id: template.id,
+    agency_id: agencyId,
+    name: cleanString(template.name) || "قالب الشارة",
+    description: cleanString(template.description),
+    template_path: cleanString(template.templatePath),
+    width_mm: widthMm > 0 ? widthMm : 90,
+    height_mm: heightMm > 0 ? heightMm : 140,
+    layout: sanitizeJsonValue(template.layout || {}),
+    is_default: Boolean(template.isDefault),
+    updated_at: new Date().toISOString(),
+  };
+};
 
 const fromBadgeTemplate = (row) => ({
   id: row.id,
   name: row.name || "قالب الشارة",
   description: row.description || "",
   templatePath: row.template_path || "",
-  widthMm: Number(row.width_mm || 90),
-  heightMm: Number(row.height_mm || 140),
+  widthMm: toDecimalNumber(row.width_mm, 90) || 90,
+  heightMm: toDecimalNumber(row.height_mm, 140) || 140,
   layout: row.layout || {},
   isDefault: Boolean(row.is_default),
   createdAt: row.created_at || "",
@@ -1848,6 +1873,7 @@ export const db = {
     async upsert(template, agencyId) {
       if (!agencyId) return { data: null, error: null };
       const payload = toBadgeTemplate(template, agencyId);
+      console.log("badge template insert payload", payload);
       if (payload.is_default) {
         await supabase
           .from("badge_templates")
@@ -1859,6 +1885,9 @@ export const db = {
         .upsert(payload, { onConflict: "id" })
         .select("*")
         .single();
+      if (error) {
+        console.error("badge template insert error", error);
+      }
       return { data: data ? fromBadgeTemplate(data) : null, error };
     },
     async setDefault(id, agencyId) {

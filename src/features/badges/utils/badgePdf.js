@@ -1,6 +1,7 @@
 import { fetchBadgeTemplates } from "../services/badgeTemplatesApi";
-import { badgePhonesFromProgram } from "./badgeTemplateMapping";
+import { badgePhonesFromProgram, normalizeBadgeNumber } from "./badgeTemplateMapping";
 import { normalizeBadgeLayout } from "./badgeLayout";
+import { drawBadgeBackgroundImage } from "./badgeBackground";
 import { getBadgeTemplateImageUrl, getPilgrimPhotoUrl } from "./badgeStorage";
 import { fitTextBox } from "./badgeTextFit";
 import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_TEMPLATE_PATH } from "./badgeDefaults";
@@ -125,8 +126,8 @@ const drawDefaultBadgeBackground = (ctx, width, height) => {
 };
 
 const createBadgeRenderAssets = async (template = {}) => {
-  const widthMm = Number(template.widthMm || 90);
-  const heightMm = Number(template.heightMm || 140);
+  const widthMm = normalizeBadgeNumber(template.widthMm, 90) || 90;
+  const heightMm = normalizeBadgeNumber(template.heightMm, 140) || 140;
   const scale = BADGE_TEMPLATE_PRINT_DPI / 25.4;
   const pixelWidth = Math.round(widthMm * scale);
   const pixelHeight = Math.round(heightMm * scale);
@@ -144,7 +145,13 @@ const createBadgeRenderAssets = async (template = {}) => {
   baseCtx.fillStyle = "#ffffff";
   baseCtx.fillRect(0, 0, pixelWidth, pixelHeight);
   if (background) {
-    drawCover(baseCtx, background, 0, 0, pixelWidth, pixelHeight, "cover");
+    drawBadgeBackgroundImage({
+      ctx: baseCtx,
+      image: background,
+      canvasWidth: pixelWidth,
+      canvasHeight: pixelHeight,
+      background: layout.background,
+    });
   } else if (useDefaultDesign) {
     drawDefaultBadgeBackground(baseCtx, pixelWidth, pixelHeight);
   }

@@ -1,4 +1,5 @@
 import { ALL_BADGE_FIELD_DEFINITIONS, BADGE_FIELD_DEFINITIONS } from "./badgeDefaults";
+import { normalizeBadgeBackgroundTransform } from "./badgeBackground";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const roundPct = (value) => Math.round(value * 100) / 100;
@@ -29,11 +30,15 @@ export const createBadgeField = (key, index = 0, position = {}) => {
   };
 };
 
-export const createDefaultBadgeLayout = () => ({ fields: [] });
+export const createDefaultBadgeLayout = () => ({
+  fields: [],
+  background: normalizeBadgeBackgroundTransform(),
+});
 
 export const normalizeBadgeLayout = (layout = {}) => {
   const customFields = Array.isArray(layout.fields) ? layout.fields : [];
   return {
+    background: normalizeBadgeBackgroundTransform(layout.background),
     fields: customFields.map((field, index) => {
       const fallback = getBadgeFieldDefinition(field.key) || BADGE_FIELD_DEFINITIONS[0];
       return {

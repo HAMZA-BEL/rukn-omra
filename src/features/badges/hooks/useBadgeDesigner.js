@@ -6,6 +6,7 @@ import {
   removeBadgeFieldFromLayout,
   updateBadgeFieldBox,
 } from "../utils/badgeLayout";
+import { normalizeBadgeBackgroundTransform } from "../utils/badgeBackground";
 
 export function useBadgeDesigner(initialLayout) {
   const [layout, setLayout] = React.useState(() => normalizeBadgeLayout(initialLayout || createDefaultBadgeLayout()));
@@ -34,6 +35,20 @@ export function useBadgeDesigner(initialLayout) {
     setSelectedFieldId("");
   }, []);
 
+  const updateBackground = React.useCallback((patch = {}) => {
+    setLayout((current) => {
+      const normalized = normalizeBadgeLayout(current);
+      return {
+        ...normalized,
+        background: normalizeBadgeBackgroundTransform({
+          ...normalized.background,
+          ...patch,
+        }),
+      };
+    });
+    setSelectedFieldId("");
+  }, []);
+
   return {
     layout,
     selectedFieldId,
@@ -42,6 +57,7 @@ export function useBadgeDesigner(initialLayout) {
     addField,
     updateField,
     removeField,
+    updateBackground,
     setLayout,
   };
 }

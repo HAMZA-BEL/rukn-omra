@@ -1,8 +1,9 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { Button, GlassCard } from "../../../components/UI";
+import { Button, GlassCard, Modal } from "../../../components/UI";
 import { useLang } from "../../../hooks/useLang";
 import { useBodyScrollLock } from "../../../hooks/useBodyScrollLock";
+import { AppIcon } from "../../../components/Icon";
 import { BadgeTemplateCreatorModal } from "./BadgeTemplateCreatorModal";
 import { BadgeTemplateMapper } from "./BadgeTemplateMapper";
 import { useBadgeTemplates } from "../hooks/useBadgeTemplates";
@@ -23,11 +24,15 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
   const [editorId, setEditorId] = React.useState("");
   const [editorDirty, setEditorDirty] = React.useState(false);
   const [confirmCloseOpen, setConfirmCloseOpen] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] = React.useState(null);
+  const [deletingId, setDeletingId] = React.useState("");
+  const didAutoSelectRef = React.useRef(false);
   const { templates, loading, error, refresh, save, remove, makeDefault } = useBadgeTemplates({ agencyId });
 
   React.useEffect(() => {
-    if (!activeId && templates.length) {
+    if (!activeId && templates.length && !didAutoSelectRef.current) {
       setActiveId((templates.find((template) => template.isDefault) || templates[0]).id);
+      didAutoSelectRef.current = true;
     }
   }, [activeId, templates]);
 
@@ -71,19 +76,24 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
       const saved = await save(template);
       setActiveId(saved.id || template.id);
       if (options.openEditor) setEditorId(saved.id || template.id);
-      onToast?.(t.badgeSaveSuccess || "Badge template saved", "success");
+      if (!options.silentToast) onToast?.(t.badgeSaveSuccess || "Badge template saved", "success");
       return saved;
     } catch {
-      onToast?.(t.badgeSaveError || "Unable to save badge template", "error");
+      if (!options.silentToast) onToast?.(t.badgeSaveError || "Unable to save badge template", "error");
       return null;
     }
   };
 
   const handleDelete = async (template) => {
+    if (!template?.id) return;
+    setDeletingId(template.id);
+    onToast?.(t.badgeDeletingTemplate || "جاري حذف القالب…", "info");
+    const wasActive = activeId === template.id;
+    const wasEditor = editorId === template.id;
+    if (wasActive) setActiveId("");
+    if (wasEditor) setEditorId("");
     try {
       const result = await remove(template.id);
-      setActiveId("");
-      setEditorId("");
       if (result?.storageError) {
         onToast?.(
           t.badgeTemplateImageDeleteError || "Badge template deleted, but the image could not be removed from Storage.",
@@ -94,6 +104,8 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
       }
     } catch {
       onToast?.(t.badgeDeleteError || "Unable to delete badge template", "error");
+    } finally {
+      setDeletingId("");
     }
   };
 
@@ -282,16 +294,24 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
             {templates.map((template) => {
               const active = activeId === template.id;
               return (
-                <button
+                <div
                   key={template.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     setActiveId(template.id);
                     setEditorId(template.id);
                   }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    setActiveId(template.id);
+                    setEditorId(template.id);
+                  }}
                   style={{
+                    position: "relative",
                     textAlign: "start",
-                    padding: "10px 11px",
+                    padding: "10px 42px 10px 11px",
                     borderRadius: 13,
                     border: active ? "1px solid var(--rukn-gold)" : "1px solid var(--rukn-border-soft)",
                     background: active ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
@@ -300,11 +320,39 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
                     fontFamily: "'Cairo',sans-serif",
                   }}
                 >
+                  <button
+                    type="button"
+                    title={t.badgeDeleteTemplate || t.delete || "حذف"}
+                    aria-label={t.badgeDeleteTemplate || t.delete || "حذف"}
+                    disabled={deletingId === template.id}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setDeleteTarget(template);
+                    }}
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      insetInlineEnd: 8,
+                      width: 28,
+                      height: 28,
+                      borderRadius: 9,
+                      border: "1px solid rgba(239,68,68,.28)",
+                      background: "rgba(239,68,68,.1)",
+                      color: "var(--rukn-danger)",
+                      cursor: deletingId === template.id ? "not-allowed" : "pointer",
+                      display: "grid",
+                      placeItems: "center",
+                      fontWeight: 900,
+                    }}
+                  >
+                    <AppIcon name="trash" size={14} />
+                  </button>
                   <strong style={{ display: "block", fontSize: 13 }}>{displayTemplateName(template)}</strong>
                   <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
                     {template.widthMm}×{template.heightMm}mm {template.isDefault ? `· ${t.badgeDefault || "Default"}` : ""}
                   </span>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -341,9 +389,39 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
         open={creatorOpen}
         onClose={() => setCreatorOpen(false)}
         agencyId={agencyId}
-        onCreate={(template) => handleSave(template, { openEditor: true })}
+        onCreate={(template) => handleSave(template, { openEditor: true, silentToast: true })}
         onToast={onToast}
       />
+
+      <Modal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title={t.badgeDeleteTemplate || "حذف القالب"}
+        width={440}
+      >
+        <div style={{ display: "grid", gap: 16 }}>
+          <p style={{ margin: 0, color: "var(--rukn-text)", fontSize: 14, lineHeight: 1.8 }}>
+            {t.badgeDeleteConfirmMessage || "هل تريد حذف هذا القالب؟ لا يمكن التراجع عن هذا الإجراء."}
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)} disabled={Boolean(deletingId)}>
+              {t.cancel || "إلغاء"}
+            </Button>
+            <Button
+              variant="danger"
+              icon="trash"
+              disabled={Boolean(deletingId)}
+              onClick={async () => {
+                const target = deleteTarget;
+                setDeleteTarget(null);
+                await handleDelete(target);
+              }}
+            >
+              {t.badgeDeleteTemplate || t.delete || "حذف"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 

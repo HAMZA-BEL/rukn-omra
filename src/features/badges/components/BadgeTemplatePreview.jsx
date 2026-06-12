@@ -2,6 +2,7 @@ import React from "react";
 import { useLang } from "../../../hooks/useLang";
 import { BadgeFieldBox } from "./BadgeFieldBox";
 import { normalizeBadgeLayout, sampleBadgeData } from "../utils/badgeLayout";
+import { getBadgeCanvasPixelSize, toBadgeBackgroundLayerStyles } from "../utils/badgeBackground";
 
 export function BadgeTemplatePreview({
   imageUrl = "",
@@ -15,6 +16,23 @@ export function BadgeTemplatePreview({
   const { t } = useLang();
   const normalized = normalizeBadgeLayout(layout);
   const aspect = Number(widthMm || 90) / Number(heightMm || 140);
+  const [backgroundImageSize, setBackgroundImageSize] = React.useState(null);
+  const canvasSize = React.useMemo(() => getBadgeCanvasPixelSize(widthMm, heightMm), [heightMm, widthMm]);
+
+  React.useEffect(() => {
+    setBackgroundImageSize(null);
+  }, [imageUrl]);
+
+  const backgroundLayerStyles = React.useMemo(() => {
+    if (!imageUrl || !backgroundImageSize?.width || !backgroundImageSize?.height) return null;
+    return toBadgeBackgroundLayerStyles({
+      background: normalized.background,
+      canvasWidth: canvasSize.width,
+      canvasHeight: canvasSize.height,
+      imageNaturalWidth: backgroundImageSize.width,
+      imageNaturalHeight: backgroundImageSize.height,
+    });
+  }, [backgroundImageSize, canvasSize.height, canvasSize.width, imageUrl, normalized.background]);
 
   return (
     <div style={{
@@ -34,11 +52,46 @@ export function BadgeTemplatePreview({
           overflow: "hidden",
           border: "1px solid rgba(212,175,55,.22)",
           background: imageUrl
-            ? `center / cover no-repeat url("${imageUrl}")`
+            ? "#ffffff"
             : "linear-gradient(135deg,var(--rukn-bg-soft),var(--rukn-bg-card))",
           boxShadow: "0 18px 42px rgba(0,0,0,.16)",
         }}
       >
+        {imageUrl && (
+          backgroundLayerStyles ? (
+            <div style={backgroundLayerStyles.wrapperStyle}>
+              <img
+                src={imageUrl}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  setBackgroundImageSize({
+                    width: image.naturalWidth || image.width || 0,
+                    height: image.naturalHeight || image.height || 0,
+                  });
+                }}
+                style={backgroundLayerStyles.imageStyle}
+              />
+            </div>
+          ) : (
+            <img
+              src={imageUrl}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              onLoad={(event) => {
+                const image = event.currentTarget;
+                setBackgroundImageSize({
+                  width: image.naturalWidth || image.width || 0,
+                  height: image.naturalHeight || image.height || 0,
+                });
+              }}
+              style={fallbackBackgroundImageStyle}
+            />
+          )
+        )}
         {!imageUrl && (
           <div style={{
             position: "absolute",
@@ -69,3 +122,13 @@ export function BadgeTemplatePreview({
     </div>
   );
 }
+
+const fallbackBackgroundImageStyle = {
+  position: "absolute",
+  inset: 0,
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  pointerEvents: "none",
+  userSelect: "none",
+};

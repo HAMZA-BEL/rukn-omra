@@ -1,24 +1,84 @@
 import React from "react";
 import { Button, Input, Select } from "../../../components/UI";
 import { useLang } from "../../../hooks/useLang";
+import { normalizeBadgeBackgroundTransform } from "../utils/badgeBackground";
 
 const safeNumber = (value, fallback) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
 
-export function BadgePropertiesPanel({ field, onChange, onRemove }) {
+export function BadgePropertiesPanel({
+  field,
+  onChange,
+  onRemove,
+  hasBackgroundImage = false,
+  background,
+  onBackgroundChange,
+  onBackgroundFitChange,
+  onBackgroundReset,
+}) {
   const { t } = useLang();
   const alignOptions = [
     { value: "start", label: t.badgeAlignStart || "بداية" },
     { value: "center", label: t.badgeAlignCenter || "وسط" },
     { value: "end", label: t.badgeAlignEnd || "نهاية" },
   ];
-  const fitOptions = [
+  const imageFitOptions = [
     { value: "contain", label: t.badgeFitContain || "احتواء" },
+  ];
+  const backgroundFitOptions = [
+    { value: "contain", label: t.badgeBackgroundFitContain || t.badgeFitContain || "Fit inside / contain" },
+    { value: "cover", label: t.badgeBackgroundFitCover || t.badgeFitCover || "Fill / cover" },
+    { value: "stretch", label: t.badgeBackgroundFitStretch || t.badgeFitStretch || "Stretch" },
+    { value: "original", label: t.badgeBackgroundFitOriginal || "Original size" },
   ];
 
   if (!field) {
+    if (hasBackgroundImage) {
+      const normalizedBackground = normalizeBadgeBackgroundTransform(background);
+      const backgroundNumberInput = (label, key, { min, max, step = 1 } = {}) => (
+        <Input
+          label={label}
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={normalizedBackground[key]}
+          onChange={(event) => onBackgroundChange?.({ [key]: safeNumber(event.target.value, normalizedBackground[key]) })}
+        />
+      );
+
+      return (
+        <div style={{ display: "grid", gap: 12 }}>
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 900, color: "var(--rukn-text)" }}>
+              {t.badgeBackgroundImage || "Background image"}
+            </p>
+            <p style={{ fontSize: 11, color: "var(--rukn-text-muted)", marginTop: 3, lineHeight: 1.6 }}>
+              {t.badgeBackgroundImageHint || "Control how the imported badge design fits inside the canvas."}
+            </p>
+          </div>
+          <Select
+            label={t.badgeBackgroundFit || "Background fit"}
+            value={normalizedBackground.fitMode || "contain"}
+            onChange={(event) => onBackgroundFitChange?.(event.target.value)}
+            options={backgroundFitOptions}
+          />
+          <Button variant="secondary" size="sm" icon="restore" onClick={onBackgroundReset}>
+            {t.badgeResetFit || "Reset fit"}
+          </Button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+            {backgroundNumberInput("X px", "x")}
+            {backgroundNumberInput("Y px", "y")}
+            {backgroundNumberInput("Scale X", "scaleX", { min: 0.001, step: 0.01 })}
+            {backgroundNumberInput("Scale Y", "scaleY", { min: 0.001, step: 0.01 })}
+          </div>
+          {backgroundNumberInput(t.badgeRotation || "Rotation", "rotation", { step: 1 })}
+        </div>
+      );
+    }
+
     return (
       <div style={{
         border: "1px dashed var(--rukn-border-soft)",
@@ -105,7 +165,7 @@ export function BadgePropertiesPanel({ field, onChange, onRemove }) {
           label={t.badgeImageFit || "ملاءمة الصورة"}
           value="contain"
           onChange={(event) => onChange?.(field.id, { fit: event.target.value })}
-          options={fitOptions}
+          options={imageFitOptions}
         />
       )}
       <Button variant="danger" size="sm" icon="trash" onClick={() => onRemove?.(field.id)}>

@@ -1,3 +1,20 @@
+import { normalizeBadgeLayout } from "./badgeLayout";
+
+export const normalizeBadgeNumber = (value, fallback = 0) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  if (typeof value === "string") {
+    const normalized = value
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/٫/g, ".")
+      .replace(/,/g, ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 export const badgePhonesFromProgram = (program = {}) => {
   const safeProgram = program || {};
 
@@ -26,9 +43,9 @@ export const normalizeBadgeTemplate = (template = {}) => ({
   name: template.name || "Badge template",
   description: template.description || "",
   templatePath: template.templatePath || template.template_path || "",
-  widthMm: Number(template.widthMm ?? template.width_mm ?? 90) || 90,
-  heightMm: Number(template.heightMm ?? template.height_mm ?? 140) || 140,
-  layout: template.layout && typeof template.layout === "object" ? template.layout : {},
+  widthMm: normalizeBadgeNumber(template.widthMm ?? template.width_mm, 90) || 90,
+  heightMm: normalizeBadgeNumber(template.heightMm ?? template.height_mm, 140) || 140,
+  layout: normalizeBadgeLayout(template.layout && typeof template.layout === "object" ? template.layout : {}),
   isDefault: Boolean(template.isDefault ?? template.is_default),
   createdAt: template.createdAt || template.created_at || "",
   updatedAt: template.updatedAt || template.updated_at || "",
@@ -41,6 +58,6 @@ export const toBadgeTemplatePayload = (template = {}) => {
     name: normalized.name.trim() || "Badge template",
     description: normalized.description.trim(),
     templatePath: normalized.templatePath,
-    layout: normalized.layout,
+    layout: normalizeBadgeLayout(normalized.layout),
   };
 };

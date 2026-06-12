@@ -6,6 +6,12 @@ import { BadgeFieldPalette } from "./BadgeFieldPalette";
 import { BadgePropertiesPanel } from "./BadgePropertiesPanel";
 import { useBadgeDesigner } from "../hooks/useBadgeDesigner";
 import { normalizeBadgeLayout } from "../utils/badgeLayout";
+import { normalizeBadgeNumber } from "../utils/badgeTemplateMapping";
+import {
+  calculateBadgeBackgroundFit,
+  getBadgeCanvasPixelSize,
+  hasStoredBadgeBackgroundTransform,
+} from "../utils/badgeBackground";
 import { getBadgeTemplateImageUrl } from "../utils/badgeStorage";
 import { DEFAULT_BADGE_TEMPLATE_PATH } from "../utils/badgeDefaults";
 
@@ -17,8 +23,8 @@ const isEditableTarget = (target) => {
 const editableTemplateState = (template = {}, layout) => JSON.stringify({
   name: String(template.name || ""),
   description: String(template.description || ""),
-  widthMm: Number(template.widthMm) || 90,
-  heightMm: Number(template.heightMm) || 140,
+  widthMm: normalizeBadgeNumber(template.widthMm, 90) || 90,
+  heightMm: normalizeBadgeNumber(template.heightMm, 140) || 140,
   layout: normalizeBadgeLayout(layout || template.layout),
 });
 
@@ -26,6 +32,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
   const { t } = useLang();
   const [draft, setDraft] = React.useState(template);
   const [imageUrl, setImageUrl] = React.useState("");
+  const [backgroundImageSize, setBackgroundImageSize] = React.useState(null);
   const [headerCollapsed, setHeaderCollapsed] = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const actionsRef = React.useRef(null);
@@ -48,6 +55,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
   React.useEffect(() => {
     let cancelled = false;
     setImageUrl("");
+    setBackgroundImageSize(null);
     if (!template?.templatePath || template.templatePath === DEFAULT_BADGE_TEMPLATE_PATH) return undefined;
     getBadgeTemplateImageUrl(template.templatePath).then((url) => {
       if (!cancelled) setImageUrl(url || "");
@@ -74,6 +82,55 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
   }, [actionsOpen]);
+
+  const canvasSize = React.useMemo(
+    () => getBadgeCanvasPixelSize(draft?.widthMm, draft?.heightMm),
+    [draft?.heightMm, draft?.widthMm]
+  );
+  const hasImportedBackground = Boolean(draft?.templatePath && draft.templatePath !== DEFAULT_BADGE_TEMPLATE_PATH);
+
+  const applyBackgroundFit = React.useCallback((fitMode = "contain") => {
+    const currentBackground = designer.layout.background || {};
+    const imageWidth = backgroundImageSize?.width || currentBackground.naturalWidth || 0;
+    const imageHeight = backgroundImageSize?.height || currentBackground.naturalHeight || 0;
+    if (!imageWidth || !imageHeight) {
+      designer.updateBackground({ fitMode });
+      return;
+    }
+    designer.updateBackground(calculateBadgeBackgroundFit({
+      canvasWidth: canvasSize.width,
+      canvasHeight: canvasSize.height,
+      imageNaturalWidth: imageWidth,
+      imageNaturalHeight: imageHeight,
+      cropX: currentBackground.cropX,
+      cropY: currentBackground.cropY,
+      cropWidth: currentBackground.cropWidth,
+      cropHeight: currentBackground.cropHeight,
+      fitMode,
+    }));
+  }, [backgroundImageSize, canvasSize.height, canvasSize.width, designer]);
+
+  const handleBackgroundImageLoad = React.useCallback((size = {}) => {
+    setBackgroundImageSize(size);
+    if (!size.width || !size.height) return;
+    const currentBackground = designer.layout.background || {};
+    if (!hasStoredBadgeBackgroundTransform(currentBackground)) {
+      designer.updateBackground(calculateBadgeBackgroundFit({
+        canvasWidth: canvasSize.width,
+        canvasHeight: canvasSize.height,
+        imageNaturalWidth: size.width,
+        imageNaturalHeight: size.height,
+        fitMode: currentBackground.fitMode || "contain",
+      }));
+      return;
+    }
+    if (currentBackground.naturalWidth !== size.width || currentBackground.naturalHeight !== size.height) {
+      designer.updateBackground({
+        naturalWidth: size.width,
+        naturalHeight: size.height,
+      });
+    }
+  }, [canvasSize.height, canvasSize.width, designer]);
 
   if (!draft) {
     return (
@@ -228,6 +285,11 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
             field={designer.selectedField}
             onChange={designer.updateField}
             onRemove={designer.removeField}
+            hasBackgroundImage={hasImportedBackground}
+            background={designer.layout.background}
+            onBackgroundChange={designer.updateBackground}
+            onBackgroundFitChange={applyBackgroundFit}
+            onBackgroundReset={() => applyBackgroundFit("contain")}
           />
         </GlassCard>
 
@@ -249,6 +311,7 @@ export function BadgeTemplateMapper({ template, onSave, onDelete, onDefault, onD
             onFieldChange={designer.updateField}
             onRemoveField={designer.removeField}
             onDropField={designer.addField}
+            onBackgroundImageLoad={handleBackgroundImageLoad}
             useDefaultDesign={draft.templatePath === DEFAULT_BADGE_TEMPLATE_PATH}
           />
         </div>

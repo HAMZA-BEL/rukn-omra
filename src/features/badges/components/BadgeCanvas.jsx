@@ -1,6 +1,7 @@
 import React from "react";
 import { BadgeFieldBox } from "./BadgeFieldBox";
 import { normalizeBadgeLayout, sampleBadgeData } from "../utils/badgeLayout";
+import { getBadgeCanvasPixelSize, toBadgeBackgroundLayerStyles } from "../utils/badgeBackground";
 import { useLang } from "../../../hooks/useLang";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -19,6 +20,7 @@ export function BadgeCanvas({
   onFieldChange,
   onRemoveField,
   onDropField,
+  onBackgroundImageLoad,
   useDefaultDesign = false,
 }) {
   const { t } = useLang();
@@ -28,6 +30,23 @@ export function BadgeCanvas({
   const baseRef = React.useRef(null);
   const stageRef = React.useRef(null);
   const [zoom, setZoom] = React.useState(1);
+  const [backgroundImageSize, setBackgroundImageSize] = React.useState(null);
+  const canvasSize = React.useMemo(() => getBadgeCanvasPixelSize(widthMm, heightMm), [heightMm, widthMm]);
+
+  React.useEffect(() => {
+    setBackgroundImageSize(null);
+  }, [imageUrl]);
+
+  const backgroundLayerStyles = React.useMemo(() => {
+    if (!imageUrl || !backgroundImageSize?.width || !backgroundImageSize?.height) return null;
+    return toBadgeBackgroundLayerStyles({
+      background: normalized.background,
+      canvasWidth: canvasSize.width,
+      canvasHeight: canvasSize.height,
+      imageNaturalWidth: backgroundImageSize.width,
+      imageNaturalHeight: backgroundImageSize.height,
+    });
+  }, [backgroundImageSize, canvasSize.height, canvasSize.width, imageUrl, normalized.background]);
 
   const fitToScreen = React.useCallback(() => {
     const viewport = viewportRef.current;
@@ -102,6 +121,16 @@ export function BadgeCanvas({
     onDropField?.(key, { xPct: Math.max(0, xPct - 5), yPct: Math.max(0, yPct - 3) });
   };
 
+  const handleBackgroundLoad = (event) => {
+    const image = event.currentTarget;
+    const size = {
+      width: image.naturalWidth || image.width || 0,
+      height: image.naturalHeight || image.height || 0,
+    };
+    setBackgroundImageSize(size);
+    onBackgroundImageLoad?.(size);
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateRows: "auto minmax(0,1fr)", minHeight: 0, height: "100%" }}>
       <div style={{
@@ -164,12 +193,35 @@ export function BadgeCanvas({
                 overflow: "hidden",
                 border: "1px solid rgba(212,175,55,.24)",
                 background: imageUrl
-                  ? `center / cover no-repeat url("${imageUrl}")`
+                  ? "#ffffff"
                   : useDefaultDesign
                   ? "linear-gradient(180deg,#f8fafc 0%,#f8fafc 52%,#e8f0fa 52%,#e8f0fa 100%)"
                   : "linear-gradient(135deg,var(--rukn-bg-soft),var(--rukn-bg-card))",
               }}
             >
+              {imageUrl && (
+                backgroundLayerStyles ? (
+                  <div style={backgroundLayerStyles.wrapperStyle}>
+                    <img
+                      src={imageUrl}
+                      alt=""
+                      aria-hidden="true"
+                      draggable={false}
+                      onLoad={handleBackgroundLoad}
+                      style={backgroundLayerStyles.imageStyle}
+                    />
+                  </div>
+                ) : (
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    onLoad={handleBackgroundLoad}
+                    style={fallbackBackgroundImageStyle}
+                  />
+                )
+              )}
               {useDefaultDesign && !imageUrl && (
                 <>
                   <div style={{
@@ -254,4 +306,14 @@ const toolButtonStyle = {
   fontFamily: "'Cairo',sans-serif",
   fontSize: 12,
   fontWeight: 800,
+};
+
+const fallbackBackgroundImageStyle = {
+  position: "absolute",
+  inset: 0,
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  pointerEvents: "none",
+  userSelect: "none",
 };
