@@ -1,7 +1,7 @@
 import { fetchBadgeTemplates } from "../services/badgeTemplatesApi";
 import { badgePhonesFromProgram, normalizeBadgeNumber } from "./badgeTemplateMapping";
 import { normalizeBadgeLayout } from "./badgeLayout";
-import { drawBadgeBackgroundImage } from "./badgeBackground";
+import { drawBadgeBackgroundImage, hasStoredBadgeBackgroundTransform } from "./badgeBackground";
 import { getBadgeTemplateImageUrl, getPilgrimPhotoUrl } from "./badgeStorage";
 import { fitTextBox } from "./badgeTextFit";
 import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_TEMPLATE_PATH } from "./badgeDefaults";
@@ -16,8 +16,76 @@ const clientName = (client = {}, program = {}) => [client.firstName, client.last
 const passportNumber = (client = {}) => client.passport?.number || client.passportNumber || "";
 const BADGE_FONT_FAMILY = "\"Tajawal\", \"Cairo\", \"Noto Sans Arabic\", Arial, sans-serif";
 const BADGE_FONT_SCALE_DIVISOR = 3.2;
-const BADGE_JPEG_QUALITY = 0.98;
+const BADGE_EXPORT_SETTINGS = {
+  fast: { dpi: 200, jpegQuality: 0.88 },
+  standard: { dpi: 240, jpegQuality: 0.93 },
+  high: { dpi: BADGE_TEMPLATE_PRINT_DPI, jpegQuality: 0.98 },
+};
+const BADGE_DEFAULT_EXPORT_QUALITY = "standard";
+const BADGE_EXPORT_PHOTO_CONCURRENCY = 4;
+const BADGE_RENDER_YIELD_EVERY = 2;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const now = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+
+const getExportSettings = (quality = BADGE_DEFAULT_EXPORT_QUALITY) => {
+  if (typeof quality === "number") {
+    const dpi = clamp(Math.round(quality), 150, BADGE_TEMPLATE_PRINT_DPI);
+    return { dpi, jpegQuality: dpi >= BADGE_TEMPLATE_PRINT_DPI ? 0.98 : 0.93 };
+  }
+  return BADGE_EXPORT_SETTINGS[quality] || BADGE_EXPORT_SETTINGS[BADGE_DEFAULT_EXPORT_QUALITY];
+};
+
+const isBadgeExportLoggingEnabled = () => {
+  try {
+    return typeof console !== "undefined"
+      && !(typeof process !== "undefined" && process.env?.NODE_ENV === "production");
+  } catch {
+    return typeof console !== "undefined";
+  }
+};
+
+const createBadgeExportTelemetry = (enabled = isBadgeExportLoggingEnabled()) => {
+  const starts = new Map();
+  const time = (label) => {
+    if (!enabled || !console.time) return;
+    starts.set(label, now());
+    console.time(label);
+  };
+  const timeEnd = (label) => {
+    if (!enabled || !starts.has(label)) return 0;
+    const elapsed = now() - starts.get(label);
+    starts.delete(label);
+    if (console.timeEnd) console.timeEnd(label);
+    return elapsed;
+  };
+  return {
+    enabled,
+    time,
+    timeEnd,
+    finishOpenTimers() {
+      Array.from(starts.keys()).forEach((label) => timeEnd(label));
+    },
+    info(payload) {
+      if (enabled && console.info) console.info("[badge export]", payload);
+    },
+  };
+};
+
+const emitProgress = (onProgress, payload = {}) => {
+  if (typeof onProgress !== "function") return;
+  onProgress({
+    ...payload,
+    percent: clamp(Math.round(Number(payload.percent) || 0), 0, 100),
+  });
+};
+
+const yieldToBrowser = () => new Promise((resolve) => {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => resolve());
+    return;
+  }
+  setTimeout(resolve, 0);
+});
 
 const waitForBadgeFonts = async () => {
   if (typeof document === "undefined" || !document.fonts?.ready) return;
@@ -34,23 +102,74 @@ const setHighQualitySmoothing = (ctx) => {
   ctx.imageSmoothingQuality = "high";
 };
 
-const loadImage = async (url) => {
-  if (!url) return null;
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  const blob = await response.blob();
+const decodeImageBlob = async (blob) => {
+  if (!blob) return null;
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(blob);
+    } catch {
+      /* Fall back to HTMLImageElement decoding below. */
+    }
+  }
   const objectUrl = URL.createObjectURL(blob);
   try {
-    const image = await new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = reject;
+      img.decoding = "async";
       img.src = objectUrl;
     });
-    return image;
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+};
+
+const loadImage = async (url, cache = null) => {
+  if (!url) return null;
+  if (cache?.has(url)) return cache.get(url);
+  const promise = (async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      return await decodeImageBlob(await response.blob());
+    } catch {
+      return null;
+    }
+  })();
+  cache?.set(url, promise);
+  const image = await promise;
+  if (!image) cache?.delete(url);
+  return image;
+};
+
+const disposeDrawable = (drawable) => {
+  if (drawable && typeof drawable.close === "function") drawable.close();
+};
+
+const drawableWidth = (drawable) => drawable?.naturalWidth || drawable?.width || 0;
+const drawableHeight = (drawable) => drawable?.naturalHeight || drawable?.height || 0;
+
+const createCanvas = (width, height) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  return canvas;
+};
+
+const resizeImageForBox = (image, maxWidth, maxHeight) => {
+  const imageWidth = drawableWidth(image);
+  const imageHeight = drawableHeight(image);
+  if (!image || !imageWidth || !imageHeight || !maxWidth || !maxHeight) return null;
+  const scale = Math.min(1, maxWidth / imageWidth, maxHeight / imageHeight);
+  const targetWidth = Math.max(1, Math.round(imageWidth * scale));
+  const targetHeight = Math.max(1, Math.round(imageHeight * scale));
+  const canvas = createCanvas(targetWidth, targetHeight);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return image;
+  setHighQualitySmoothing(ctx);
+  ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+  return canvas;
 };
 
 const drawCover = (ctx, image, x, y, width, height, mode = "cover") => {
@@ -125,66 +244,161 @@ const drawDefaultBadgeBackground = (ctx, width, height) => {
   ctx.stroke();
 };
 
-const createBadgeRenderAssets = async (template = {}) => {
+const scaleStoredBackgroundForExport = ({ background, widthMm, heightMm, pixelWidth, pixelHeight }) => {
+  if (!hasStoredBadgeBackgroundTransform(background)) return background;
+  const designScale = BADGE_TEMPLATE_PRINT_DPI / 25.4;
+  const designWidth = Math.max(1, Math.round(widthMm * designScale));
+  const designHeight = Math.max(1, Math.round(heightMm * designScale));
+  const xRatio = pixelWidth / designWidth;
+  const yRatio = pixelHeight / designHeight;
+  return {
+    ...background,
+    x: (Number(background.x) || 0) * xRatio,
+    y: (Number(background.y) || 0) * yRatio,
+    scaleX: (Number(background.scaleX) || 1) * xRatio,
+    scaleY: (Number(background.scaleY) || 1) * yRatio,
+  };
+};
+
+const prepareFieldLayout = (field, pixelWidth, pixelHeight, scale) => {
+  const box = {
+    x: pixelWidth * field.xPct / 100,
+    y: pixelHeight * field.yPct / 100,
+    width: pixelWidth * field.wPct / 100,
+    height: pixelHeight * field.hPct / 100,
+  };
+  const opacity = fieldOpacity(field);
+  const radius = fieldRadius(field, scale);
+  if (field.type === "image") {
+    return {
+      field,
+      type: "image",
+      key: field.key,
+      box,
+      opacity,
+      radius,
+      fit: field.fit || "contain",
+    };
+  }
+
+  const padding = Math.max(3, 1.2 * scale);
+  const requestedFontSize = scaledFieldValue(field.fontSize || 12, scale, 12);
+  const minFontSize = scaledFieldValue(
+    field.minFontSize || Math.max(6, Number(field.fontSize || 12) * 0.62),
+    scale,
+    Math.max(7, requestedFontSize * 0.62)
+  );
+  return {
+    field,
+    type: "text",
+    key: field.key,
+    box,
+    opacity,
+    textBox: {
+      x: box.x + padding,
+      y: box.y,
+      width: Math.max(1, box.width - padding * 2),
+      height: box.height,
+    },
+    requestedFontSize,
+    minFontSize,
+    fontWeight: field.fontWeight || 700,
+    maxLines: Math.max(1, Number(field.maxLines || field.lineCount || 1)),
+  };
+};
+
+const getPhotoTargetSize = (fieldLayouts = []) => {
+  const imageFields = fieldLayouts.filter((item) => item.type === "image");
+  if (!imageFields.length) return null;
+  return imageFields.reduce((size, item) => ({
+    width: Math.max(size.width, Math.ceil(item.box.width)),
+    height: Math.max(size.height, Math.ceil(item.box.height)),
+  }), { width: 0, height: 0 });
+};
+
+const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry } = {}) => {
   const widthMm = normalizeBadgeNumber(template.widthMm, 90) || 90;
   const heightMm = normalizeBadgeNumber(template.heightMm, 140) || 140;
-  const scale = BADGE_TEMPLATE_PRINT_DPI / 25.4;
+  const exportSettings = getExportSettings(exportQuality);
+  const scale = exportSettings.dpi / 25.4;
   const pixelWidth = Math.round(widthMm * scale);
   const pixelHeight = Math.round(heightMm * scale);
   const layout = normalizeBadgeLayout(template.layout);
   const visibleFields = layout.fields.filter((item) => item.visible !== false);
   const useDefaultDesign = template.templatePath === DEFAULT_BADGE_TEMPLATE_PATH;
+  const imageCache = new Map();
+  telemetry?.time("load template image");
   const templateUrl = useDefaultDesign ? "" : await getBadgeTemplateImageUrl(template.templatePath);
-  const background = await loadImage(templateUrl);
-  const baseCanvas = document.createElement("canvas");
-  baseCanvas.width = pixelWidth;
-  baseCanvas.height = pixelHeight;
+  const background = await loadImage(templateUrl, imageCache);
+  telemetry?.timeEnd("load template image");
+  const baseCanvas = createCanvas(pixelWidth, pixelHeight);
   const baseCtx = baseCanvas.getContext("2d");
   if (!baseCtx) throw new Error("badge-canvas-unavailable");
   setHighQualitySmoothing(baseCtx);
   baseCtx.fillStyle = "#ffffff";
   baseCtx.fillRect(0, 0, pixelWidth, pixelHeight);
+  const exportBackground = scaleStoredBackgroundForExport({
+    background: layout.background,
+    widthMm,
+    heightMm,
+    pixelWidth,
+    pixelHeight,
+  });
   if (background) {
     drawBadgeBackgroundImage({
       ctx: baseCtx,
       image: background,
       canvasWidth: pixelWidth,
       canvasHeight: pixelHeight,
-      background: layout.background,
+      background: exportBackground,
     });
   } else if (useDefaultDesign) {
     drawDefaultBadgeBackground(baseCtx, pixelWidth, pixelHeight);
   }
+  const fieldLayouts = visibleFields.map((field) => prepareFieldLayout(field, pixelWidth, pixelHeight, scale));
 
   return {
     widthMm,
     heightMm,
     scale,
+    dpi: exportSettings.dpi,
+    jpegQuality: exportSettings.jpegQuality,
     pixelWidth,
     pixelHeight,
     widthPt: mmToPt(widthMm),
     heightPt: mmToPt(heightMm),
     visibleFields,
+    fieldLayouts,
+    photoTargetSize: getPhotoTargetSize(fieldLayouts),
     background,
+    backgroundInfo: {
+      width: drawableWidth(background),
+      height: drawableHeight(background),
+      url: templateUrl,
+    },
     baseCanvas,
   };
 };
 
-const dataForField = ({ field, client, program, agency, fileNumber, lang }) => {
+const createProgramBadgeData = ({ program, agency, lang }) => {
   const phones = badgePhonesFromProgram(program);
-  const map = {
-    fullName: clientName(client, program),
-    passportNumber: passportNumber(client),
+  return {
     primaryPhone: phones[0] || "",
     extraPhone: phones[1] || phones[2] || "",
-    hotelMecca: client?.hotelMecca || client?.hotel_mecca || program?.hotelMecca || "",
-    hotelMadina: client?.hotelMadina || client?.hotel_madina || program?.hotelMadina || "",
     programName: program?.name || "",
     badgeNote: program?.badgeNote || "",
     agencyName: getLocalizedAgencyName(agency, lang),
-    fileNumber: fileNumber || "",
   };
-  return map[field.key] || "";
+};
+
+const dataForField = ({ field, client, program, agency, fileNumber, lang, programBadgeData }) => {
+  const shared = programBadgeData || createProgramBadgeData({ program, agency, lang });
+  if (field.key === "fullName") return clientName(client, program);
+  if (field.key === "passportNumber") return passportNumber(client);
+  if (field.key === "hotelMecca") return client?.hotelMecca || client?.hotel_mecca || program?.hotelMecca || "";
+  if (field.key === "hotelMadina") return client?.hotelMadina || client?.hotel_madina || program?.hotelMadina || "";
+  if (field.key === "fileNumber") return fileNumber || "";
+  return shared[field.key] || "";
 };
 
 const getTemplateForProgram = async ({ agencyId, program }) => {
@@ -225,38 +439,99 @@ const fieldRadius = (field = {}, scale = 1) => (
   scaledFieldValue(field.borderRadius ?? field.radius, scale, 0)
 );
 
-const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber, lang, renderAssets }) => {
+const getClientPhotoPath = (client = {}) => client?.badgePhotoPath || client?.docs?.badgePhotoPath || "";
+
+const runWithConcurrency = async (items, limit, worker) => {
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await worker(items[index], index);
+    }
+  }));
+};
+
+const preparePilgrimPhotoAssets = async ({ clients = [], renderAssets, onProgress }) => {
+  const targetSize = renderAssets?.photoTargetSize;
+  const paths = Array.from(new Set(
+    clients.map((client) => getClientPhotoPath(client)).filter(Boolean)
+  ));
+  const photoAssets = new Map();
+  if (!targetSize?.width || !targetSize?.height || !paths.length) {
+    emitProgress(onProgress, { step: "photos", current: 0, total: paths.length, percent: 35 });
+    return photoAssets;
+  }
+
+  const imageCache = new Map();
+  let completed = 0;
+  await runWithConcurrency(paths, BADGE_EXPORT_PHOTO_CONCURRENCY, async (path) => {
+    let resized = null;
+    try {
+      const url = await getPilgrimPhotoUrl(path);
+      const image = await loadImage(url, imageCache);
+      resized = resizeImageForBox(image, targetSize.width, targetSize.height);
+      if (resized !== image) disposeDrawable(image);
+    } catch {
+      resized = null;
+    }
+    photoAssets.set(path, resized);
+    completed += 1;
+    emitProgress(onProgress, {
+      step: "photos",
+      current: completed,
+      total: paths.length,
+      percent: 10 + (completed / paths.length) * 25,
+    });
+    await yieldToBrowser();
+  });
+  return photoAssets;
+};
+
+const renderBadgeCanvas = async ({
+  template,
+  client,
+  program,
+  agency,
+  fileNumber,
+  lang,
+  renderAssets,
+  photoAssets = null,
+  programBadgeData = null,
+}) => {
   const assets = renderAssets || await createBadgeRenderAssets(template);
-  const { scale, pixelWidth, pixelHeight, visibleFields, baseCanvas } = assets;
-  await waitForBadgeFonts();
-  const canvas = document.createElement("canvas");
-  canvas.width = pixelWidth;
-  canvas.height = pixelHeight;
+  const { pixelWidth, pixelHeight, fieldLayouts, baseCanvas, jpegQuality } = assets;
+  const canvas = createCanvas(pixelWidth, pixelHeight);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("badge-canvas-unavailable");
   setHighQualitySmoothing(ctx);
   ctx.drawImage(baseCanvas, 0, 0);
 
-  const photoPath = client?.badgePhotoPath || client?.docs?.badgePhotoPath || "";
-  const photo = photoPath ? await loadImage(await getPilgrimPhotoUrl(photoPath)) : null;
+  const photoPath = getClientPhotoPath(client);
+  let photo = photoPath && photoAssets ? photoAssets.get(photoPath) : null;
+  if (photoPath && !photoAssets) {
+    const url = await getPilgrimPhotoUrl(photoPath);
+    const rawPhoto = await loadImage(url);
+    photo = resizeImageForBox(
+      rawPhoto,
+      assets.photoTargetSize?.width || pixelWidth,
+      assets.photoTargetSize?.height || pixelHeight
+    );
+    if (photo !== rawPhoto) disposeDrawable(rawPhoto);
+  }
   const direction = textDirectionForLang(lang);
 
-  for (const field of visibleFields) {
-    const box = {
-      x: canvas.width * field.xPct / 100,
-      y: canvas.height * field.yPct / 100,
-      width: canvas.width * field.wPct / 100,
-      height: canvas.height * field.hPct / 100,
-    };
-    const opacity = fieldOpacity(field);
-    if (field.type === "image") {
+  for (const item of fieldLayouts) {
+    const { field, box, opacity } = item;
+    if (item.type === "image") {
       ctx.save();
       ctx.globalAlpha = opacity;
       ctx.beginPath();
-      roundedRectPath(ctx, box.x, box.y, box.width, box.height, fieldRadius(field, scale));
+      roundedRectPath(ctx, box.x, box.y, box.width, box.height, item.radius);
       ctx.clip();
       if (photo) {
-        drawCover(ctx, photo, box.x, box.y, box.width, box.height, "contain");
+        drawCover(ctx, photo, box.x, box.y, box.width, box.height, item.fit);
       } else {
         ctx.fillStyle = "#eef2f7";
         ctx.fillRect(box.x, box.y, box.width, box.height);
@@ -270,27 +545,15 @@ const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber
       continue;
     }
 
-    const text = dataForField({ field, client, program, agency, fileNumber, lang });
+    const text = dataForField({ field, client, program, agency, fileNumber, lang, programBadgeData });
     if (!text) continue;
-    const padding = Math.max(3, 1.2 * scale);
-    const textBox = {
-      x: box.x + padding,
-      y: box.y,
-      width: Math.max(1, box.width - padding * 2),
-      height: box.height,
-    };
-    const requestedFontSize = scaledFieldValue(field.fontSize || 12, scale, 12);
-    const minFontSize = scaledFieldValue(
-      field.minFontSize || Math.max(6, Number(field.fontSize || 12) * 0.62),
-      scale,
-      Math.max(7, requestedFontSize * 0.62)
-    );
+    const textBox = item.textBox;
     const fitted = fitTextBox(ctx, text, textBox, {
-      fontSize: requestedFontSize,
-      minFontSize,
-      fontWeight: field.fontWeight || 700,
+      fontSize: item.requestedFontSize,
+      minFontSize: item.minFontSize,
+      fontWeight: item.fontWeight,
       fontFamily: BADGE_FONT_FAMILY,
-      maxLines: Math.max(1, Number(field.maxLines || field.lineCount || 1)),
+      maxLines: item.maxLines,
     });
     ctx.save();
     ctx.globalAlpha = opacity;
@@ -298,7 +561,7 @@ const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber
     ctx.direction = direction;
     ctx.textAlign = textAlignForField(field.align);
     ctx.textBaseline = "middle";
-    ctx.font = `${field.fontWeight || 700} ${fitted.fontSize}px ${BADGE_FONT_FAMILY}`;
+    ctx.font = `${item.fontWeight} ${fitted.fontSize}px ${BADGE_FONT_FAMILY}`;
     if ("fontKerning" in ctx) ctx.fontKerning = "normal";
     const x = textAnchorForField(textBox, field.align, direction, 0);
     const totalHeight = fitted.lines.length * fitted.lineHeight;
@@ -308,12 +571,17 @@ const renderBadgeCanvas = async ({ template, client, program, agency, fileNumber
     ctx.restore();
   }
 
+  const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", jpegQuality));
+  const renderedWidth = canvas.width;
+  const renderedHeight = canvas.height;
+  canvas.width = 1;
+  canvas.height = 1;
   return {
     widthPt: assets.widthPt,
     heightPt: assets.heightPt,
-    pixelWidth: canvas.width,
-    pixelHeight: canvas.height,
-    jpeg: await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", BADGE_JPEG_QUALITY)),
+    pixelWidth: renderedWidth,
+    pixelHeight: renderedHeight,
+    jpeg,
   };
 };
 
@@ -330,8 +598,13 @@ const concatBytes = (chunks) => {
 const makePdf = async (pages) => {
   const chunks = [];
   const offsets = [0];
-  const write = (chunk) => chunks.push(typeof chunk === "string" ? ascii(chunk) : chunk);
-  const currentOffset = () => chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  let byteLength = 0;
+  const write = (chunk) => {
+    const bytes = typeof chunk === "string" ? ascii(chunk) : chunk;
+    chunks.push(bytes);
+    byteLength += bytes.length;
+  };
+  const currentOffset = () => byteLength;
   let objectId = 1;
   const pageIds = [];
   const objects = [];
@@ -384,31 +657,122 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url);
 };
 
-export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar" }) {
-  const template = await getTemplateForProgram({ agencyId, program });
-  if (!template) throw new Error("missing-template");
-  const page = await renderBadgeCanvas({ template, client, program, agency, fileNumber, lang });
-  const pdf = await makePdf([page]);
-  downloadBlob(pdf, `badge-${sanitizeFile(clientName(client, program))}.pdf`);
-}
-
-export async function downloadProgramBadgesPdf({ agencyId, clients = [], program, agency, lang = "ar" }) {
-  const template = await getTemplateForProgram({ agencyId, program });
-  if (!template) throw new Error("missing-template");
-  const renderAssets = await createBadgeRenderAssets(template);
-  const pages = [];
-  for (let index = 0; index < clients.length; index += 1) {
+export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar", exportQuality }) {
+  const telemetry = createBadgeExportTelemetry();
+  telemetry.time("badge export total");
+  try {
+    const template = await getTemplateForProgram({ agencyId, program });
+    if (!template) throw new Error("missing-template");
+    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry });
+    await waitForBadgeFonts();
+    telemetry.time("load pilgrim photos");
+    const photoAssets = await preparePilgrimPhotoAssets({ clients: [client], renderAssets });
+    telemetry.timeEnd("load pilgrim photos");
+    const programBadgeData = createProgramBadgeData({ program, agency, lang });
+    telemetry.time("render badges");
+    const renderStart = now();
     const page = await renderBadgeCanvas({
       template,
-      client: clients[index],
+      client,
       program,
       agency,
+      fileNumber,
       lang,
-      fileNumber: String(index + 1).padStart(3, "0"),
       renderAssets,
+      photoAssets,
+      programBadgeData,
     });
-    pages.push(page);
+    const averageRenderMs = now() - renderStart;
+    telemetry.timeEnd("render badges");
+    telemetry.time("generate pdf");
+    const pdf = await makePdf([page]);
+    const pdfMs = telemetry.timeEnd("generate pdf");
+    telemetry.info({
+      pilgrims: 1,
+      exportDpi: renderAssets.dpi,
+      templateImageSize: `${renderAssets.backgroundInfo.width || 0}x${renderAssets.backgroundInfo.height || 0}`,
+      averageRenderMs: Math.round(averageRenderMs),
+      pdfMs: Math.round(pdfMs),
+    });
+    telemetry.timeEnd("badge export total");
+    downloadBlob(pdf, `badge-${sanitizeFile(clientName(client, program))}.pdf`);
+  } catch (error) {
+    telemetry.finishOpenTimers();
+    throw error;
   }
-  const pdf = await makePdf(pages);
-  downloadBlob(pdf, `badges-${sanitizeFile(program?.name || "program")}.pdf`);
+}
+
+export async function downloadProgramBadgesPdf({
+  agencyId,
+  clients = [],
+  program,
+  agency,
+  lang = "ar",
+  exportQuality,
+  onProgress,
+}) {
+  const total = clients.length;
+  const telemetry = createBadgeExportTelemetry();
+  telemetry.time("badge export total");
+  try {
+    emitProgress(onProgress, { step: "template", current: 0, total, percent: 2 });
+    const template = await getTemplateForProgram({ agencyId, program });
+    if (!template) throw new Error("missing-template");
+    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry });
+    emitProgress(onProgress, { step: "template", current: 1, total, percent: 10 });
+    await waitForBadgeFonts();
+    telemetry.time("load pilgrim photos");
+    const photoAssets = await preparePilgrimPhotoAssets({ clients, renderAssets, onProgress });
+    telemetry.timeEnd("load pilgrim photos");
+    const programBadgeData = createProgramBadgeData({ program, agency, lang });
+    const pages = [];
+    const renderStart = now();
+    telemetry.time("render badges");
+    for (let index = 0; index < clients.length; index += 1) {
+      const page = await renderBadgeCanvas({
+        template,
+        client: clients[index],
+        program,
+        agency,
+        lang,
+        fileNumber: String(index + 1).padStart(3, "0"),
+        renderAssets,
+        photoAssets,
+        programBadgeData,
+      });
+      pages.push(page);
+      emitProgress(onProgress, {
+        step: "render",
+        current: index + 1,
+        total,
+        percent: 35 + ((index + 1) / Math.max(1, total)) * 53,
+      });
+      if ((index + 1) % BADGE_RENDER_YIELD_EVERY === 0) await yieldToBrowser();
+    }
+    const renderMs = now() - renderStart;
+    telemetry.timeEnd("render badges");
+    await yieldToBrowser();
+    emitProgress(onProgress, { step: "pdf", current: total, total, percent: 92 });
+    telemetry.time("generate pdf");
+    const pdf = await makePdf(pages);
+    const pdfMs = telemetry.timeEnd("generate pdf");
+    telemetry.info({
+      pilgrims: total,
+      exportDpi: renderAssets.dpi,
+      templateImageSize: `${renderAssets.backgroundInfo.width || 0}x${renderAssets.backgroundInfo.height || 0}`,
+      averageRenderMs: total ? Math.round(renderMs / total) : 0,
+      pdfMs: Math.round(pdfMs),
+    });
+    telemetry.timeEnd("badge export total");
+    emitProgress(onProgress, {
+      step: "done",
+      current: total,
+      total,
+      percent: 100,
+    });
+    downloadBlob(pdf, `badges-${sanitizeFile(program?.name || "program")}.pdf`);
+  } catch (error) {
+    telemetry.finishOpenTimers();
+    throw error;
+  }
 }

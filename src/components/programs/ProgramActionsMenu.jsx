@@ -38,33 +38,42 @@ export default function ProgramActionsMenu({
           backdropFilter:"blur(12px)",
         }}>
           {actions.map((action) => {
+            const disabled = Boolean(action.disabled);
             const hovered = hoveredAction === action.key;
             return (
               <button
                 key={action.key}
                 type="button"
-                onMouseEnter={() => onHoverAction(action.key)}
+                disabled={disabled}
+                onMouseEnter={() => !disabled && onHoverAction(action.key)}
                 onMouseLeave={() => onHoverAction(current => current === action.key ? "" : current)}
-                onClick={action.onClick}
+                onClick={(event) => {
+                  if (disabled) {
+                    event.preventDefault();
+                    return;
+                  }
+                  action.onClick?.(event);
+                }}
                 style={{
                   width:"100%",
                   border:0,
                   borderRadius:10,
-                  background:hovered ? "var(--rukn-gold-dim)" : "transparent",
-                  color:hovered ? tc.gold : "var(--rukn-text-strong)",
+                  background:hovered && !disabled ? "var(--rukn-gold-dim)" : "transparent",
+                  color:disabled ? "var(--rukn-text-muted)" : hovered ? tc.gold : "var(--rukn-text-strong)",
                   display:"flex",
                   alignItems:"center",
                   gap:9,
                   padding:"10px 11px",
                   fontSize:12,
                   fontWeight:800,
-                  cursor:"pointer",
+                  cursor:disabled ? "not-allowed" : "pointer",
+                  opacity: disabled ? 0.6 : 1,
                   textAlign:"start",
                   fontFamily:"'Cairo',sans-serif",
                   transition:"background .16s ease, color .16s ease",
                 }}
               >
-                <AppIcon name={action.icon} size={15} color={hovered ? tc.gold : "var(--rukn-text-muted)"} />
+                <AppIcon name={action.icon} size={15} color={hovered && !disabled ? tc.gold : "var(--rukn-text-muted)"} />
                 <span>{action.label}</span>
               </button>
             );

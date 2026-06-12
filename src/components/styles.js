@@ -19,8 +19,8 @@ export const theme = {
     dangerDim: "var(--rukn-danger-dim)",
     warning: "var(--rukn-warning)",
     warningDim: "var(--rukn-warning-dim)",
-    success: "#22c55e",
-    successDim: "rgba(34,197,94,0.15)",
+    success: "var(--rukn-success)",
+    successDim: "var(--rukn-success-dim)",
   },
 };
 
@@ -62,6 +62,15 @@ export const globalCSS = `
     --rukn-danger-dim: rgba(239,68,68,0.15);
     --rukn-warning: #f59e0b;
     --rukn-warning-dim: rgba(245,158,11,0.15);
+    --rukn-success: #22c55e;
+    --rukn-success-dim: rgba(34,197,94,0.15);
+    --rukn-progress-bg: rgba(255,255,255,0.04);
+    --rukn-progress-border: rgba(212,175,55,0.24);
+    --rukn-progress-track: rgba(148,163,184,0.18);
+    --rukn-progress-fill: linear-gradient(90deg, var(--rukn-gold), var(--rukn-success));
+    --rukn-progress-text: var(--rukn-text-strong);
+    --rukn-progress-accent: var(--rukn-gold);
+    --rukn-progress-shadow: 0 10px 24px rgba(0,0,0,.18);
     --rukn-topbar-bg: rgba(6,13,26,.85);
     --rukn-topbar-border: rgba(212,175,55,.1);
     --rukn-topbar-button-bg: rgba(212,175,55,.1);
@@ -111,6 +120,15 @@ export const globalCSS = `
     --rukn-danger-dim: rgba(220,38,38,0.13);
     --rukn-warning: #8a4f00;
     --rukn-warning-dim: rgba(138,79,0,0.13);
+    --rukn-success: #15803d;
+    --rukn-success-dim: rgba(21,128,61,0.13);
+    --rukn-progress-bg: rgba(255,255,255,0.92);
+    --rukn-progress-border: rgba(128,91,11,0.18);
+    --rukn-progress-track: rgba(128,91,11,0.12);
+    --rukn-progress-fill: linear-gradient(90deg, var(--rukn-gold), var(--rukn-success));
+    --rukn-progress-text: var(--rukn-text-strong);
+    --rukn-progress-accent: var(--rukn-gold);
+    --rukn-progress-shadow: 0 10px 28px rgba(15,23,42,.08);
     --rukn-topbar-bg: rgba(255,255,255,.88);
     --rukn-topbar-border: rgba(15,23,42,.1);
     --rukn-topbar-button-bg: rgba(128,91,11,.09);

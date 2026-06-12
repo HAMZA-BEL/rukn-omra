@@ -240,6 +240,35 @@ const getPosterExportLabels = (lang = "ar", labels = {}) => ({
   },
 });
 
+const getBadgeExportProgressLabel = (progress = {}, lang = "ar") => {
+  const step = progress?.step || "template";
+  const current = Math.max(0, Number(progress?.current) || 0);
+  const total = Math.max(0, Number(progress?.total) || 0);
+  if (step === "render" && total > 0) {
+    if (lang === "fr") return `Préparation du badge ${current} sur ${total}`;
+    if (lang === "en") return `Preparing badge ${current} of ${total}`;
+    return `جاري تجهيز الشارة ${current} من ${total}`;
+  }
+  if (step === "photos" && total > 0) {
+    if (lang === "fr") return `Chargement des photos ${current} sur ${total}`;
+    if (lang === "en") return `Loading photos ${current} of ${total}`;
+    return `تحميل الصور ${current} من ${total}`;
+  }
+  if (step === "pdf") {
+    if (lang === "fr") return "Création du PDF";
+    if (lang === "en") return "Creating PDF";
+    return "إنشاء PDF";
+  }
+  if (step === "done") {
+    if (lang === "fr") return "PDF prêt";
+    if (lang === "en") return "PDF ready";
+    return "تم تجهيز PDF";
+  }
+  if (lang === "fr") return "Chargement du modèle";
+  if (lang === "en") return "Loading template";
+  return "تحميل القالب";
+};
+
 const getPosterTemplateProgramContext = (program = {}) => {
   const rawLevelsCount = getProgramPosterLevelsCount(program);
   const programType = normalizePosterTemplateType(getProgramKind(program, null, {
@@ -3821,6 +3850,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
   const [badgeExportBusy, setBadgeExportBusy] = React.useState(false);
+  const [badgeExportProgress, setBadgeExportProgress] = React.useState(null);
   const [wordContractExportBusy, setWordContractExportBusy] = React.useState(false);
   const [posterExportBusy, setPosterExportBusy] = React.useState(false);
   const [posterTemplateChoice, setPosterTemplateChoice] = React.useState(null);
@@ -4812,6 +4842,14 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   const packageById = React.useMemo(() => new Map(packages.map((pkg) => [pkg.id, pkg])), [packages]);
   const packageByLevel = React.useMemo(() => new Map(packages.map((pkg) => [pkg.level, pkg])), [packages]);
   const headerActionsLabel = lang === "fr" ? "Actions" : lang === "en" ? "Actions" : "إجراءات";
+  const badgeExportProgressLabel = React.useMemo(
+    () => badgeExportProgress ? getBadgeExportProgressLabel(badgeExportProgress, lang) : "",
+    [badgeExportProgress, lang]
+  );
+  const badgeExportProgressPercent = Math.max(0, Math.min(100, Math.round(Number(badgeExportProgress?.percent) || 0)));
+  const badgeExportActionLabel = badgeExportBusy
+    ? (badgeExportProgressLabel || (lang === "fr" ? "Préparation des badges..." : lang === "en" ? "Preparing badges..." : "جاري تجهيز الشارات..."))
+    : (lang === "fr" ? "Télécharger les badges PDF" : lang === "en" ? "Download program badges PDF" : "تحميل شارات البرنامج PDF");
   const allLevelsExportLabel = React.useMemo(() => {
     if (lang === "fr") return "Tous les niveaux";
     if (lang === "en") return "All levels";
@@ -5032,6 +5070,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     }
   }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported, useScopedProgramDetail]);
   const handleBadgePdfExport = React.useCallback(async () => {
+    if (badgeExportBusy) return;
     closeHeaderActions();
     if (!useScopedProgramDetail) {
       const ready = await ensureGlobalDetailDataForCurrentAction();
@@ -5039,6 +5078,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     }
     const exportClients = getCurrentExportClients();
     if (exportClients.length === 0) { notifyNoExportClients(); return; }
+    setBadgeExportProgress({ step: "template", current: 0, total: exportClients.length, percent: 0 });
     setBadgeExportBusy(true);
     try {
       await downloadProgramBadgesPdf({
@@ -5047,6 +5087,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         program,
         agency,
         lang,
+        onProgress: setBadgeExportProgress,
       });
     } catch (error) {
       onToast(
@@ -5057,8 +5098,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       );
     } finally {
       setBadgeExportBusy(false);
+      setBadgeExportProgress(null);
     }
-  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
+  }, [agency, badgeExportBusy, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     runWithGlobalDetailData(() => {
@@ -5271,7 +5313,8 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     {
       key: "badges",
       icon: "download",
-      label: badgeExportBusy ? "جاري تجهيز الشارات..." : "تحميل شارات البرنامج PDF",
+      label: badgeExportActionLabel,
+      disabled: badgeExportBusy,
       onClick: handleBadgePdfExport,
     },
     {
@@ -5286,7 +5329,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ]), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -5310,6 +5353,54 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         })}
         addClientLabel={participantTerms.addAction || t.addClient}
       />
+
+      {badgeExportBusy && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            marginTop:-12,
+            marginBottom:18,
+            padding:"10px 12px",
+            border:"1px solid var(--rukn-progress-border)",
+            borderRadius:10,
+            background:"var(--rukn-progress-bg)",
+            boxShadow:"var(--rukn-progress-shadow)",
+            direction:dir,
+          }}
+        >
+          <div style={{
+            display:"flex",
+            alignItems:"center",
+            justifyContent:"space-between",
+            gap:12,
+            flexWrap:"wrap",
+            color:"var(--rukn-progress-text)",
+            fontSize:12,
+            fontWeight:800,
+          }}>
+            <span>{badgeExportProgressLabel || badgeExportActionLabel}</span>
+            <span style={{ color:"var(--rukn-progress-accent)", fontVariantNumeric:"tabular-nums" }}>
+              {badgeExportProgressPercent}%
+            </span>
+          </div>
+          <div style={{
+            height:6,
+            marginTop:8,
+            borderRadius:999,
+            overflow:"hidden",
+            background:"var(--rukn-progress-track)",
+          }}>
+            <div style={{
+              width:`${badgeExportProgressPercent}%`,
+              height:"100%",
+              borderRadius:999,
+              background:"var(--rukn-progress-fill)",
+              transition:"width .18s ease",
+            }} />
+          </div>
+        </div>
+      )}
 
       <ProgramPosterTemplateChoiceModal
         choice={posterTemplateChoice}
