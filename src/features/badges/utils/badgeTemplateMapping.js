@@ -43,6 +43,7 @@ export const normalizeBadgeTemplate = (template = {}) => ({
   name: template.name || "Badge template",
   description: template.description || "",
   templatePath: template.templatePath || template.template_path || "",
+  thumbnailPath: template.thumbnailPath || template.thumbnail_path || "",
   widthMm: normalizeBadgeNumber(template.widthMm ?? template.width_mm, 90) || 90,
   heightMm: normalizeBadgeNumber(template.heightMm ?? template.height_mm, 140) || 140,
   layout: normalizeBadgeLayout(template.layout && typeof template.layout === "object" ? template.layout : {}),
@@ -58,6 +59,7 @@ export const toBadgeTemplatePayload = (template = {}) => {
     name: normalized.name.trim() || "Badge template",
     description: normalized.description.trim(),
     templatePath: normalized.templatePath,
+    thumbnailPath: normalized.thumbnailPath,
     layout: normalizeBadgeLayout(normalized.layout),
   };
 };

@@ -766,6 +766,7 @@ const toBadgeTemplate = (template, agencyId) => {
     name: cleanString(template.name) || "قالب الشارة",
     description: cleanString(template.description),
     template_path: cleanString(template.templatePath),
+    thumbnail_path: cleanString(template.thumbnailPath),
     width_mm: widthMm > 0 ? widthMm : 90,
     height_mm: heightMm > 0 ? heightMm : 140,
     layout: sanitizeJsonValue(template.layout || {}),
@@ -779,6 +780,7 @@ const fromBadgeTemplate = (row) => ({
   name: row.name || "قالب الشارة",
   description: row.description || "",
   templatePath: row.template_path || "",
+  thumbnailPath: row.thumbnail_path || "",
   widthMm: toDecimalNumber(row.width_mm, 90) || 90,
   heightMm: toDecimalNumber(row.height_mm, 140) || 140,
   layout: row.layout || {},
@@ -1885,6 +1887,25 @@ export const db = {
         .upsert(payload, { onConflict: "id" })
         .select("*")
         .single();
+      const missingThumbnailColumn = error && (
+        String(error.message || "").includes("thumbnail_path")
+        || String(error.details || "").includes("thumbnail_path")
+        || String(error.hint || "").includes("thumbnail_path")
+      );
+      if (missingThumbnailColumn) {
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.thumbnail_path;
+        console.warn("badge template thumbnail_path column is missing; retrying template save without thumbnail_path");
+        const retry = await supabase
+          .from("badge_templates")
+          .upsert(fallbackPayload, { onConflict: "id" })
+          .select("*")
+          .single();
+        if (retry.error) {
+          console.error("badge template insert error", retry.error);
+        }
+        return { data: retry.data ? fromBadgeTemplate(retry.data) : null, error: retry.error };
+      }
       if (error) {
         console.error("badge template insert error", error);
       }

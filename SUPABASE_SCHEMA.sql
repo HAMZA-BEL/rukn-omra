@@ -160,6 +160,7 @@ create table if not exists public.badge_templates (
   name          text not null,
   description   text,
   template_path text,
+  thumbnail_path text,
   width_mm      numeric not null default 90,
   height_mm     numeric not null default 140,
   layout        jsonb not null default '{}'::jsonb,
@@ -171,6 +172,7 @@ create table if not exists public.badge_templates (
 );
 
 alter table public.badge_templates add column if not exists description text;
+alter table public.badge_templates add column if not exists thumbnail_path text;
 alter table public.badge_templates add column if not exists background_transform jsonb not null default '{}'::jsonb;
 alter table public.badge_templates alter column width_mm type numeric using width_mm::numeric;
 alter table public.badge_templates alter column height_mm type numeric using height_mm::numeric;

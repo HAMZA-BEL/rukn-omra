@@ -9,6 +9,8 @@ export const BADGE_TEMPLATE_MAX_BYTES = 8 * 1024 * 1024;
 export const BADGE_TEMPLATE_MAX_DIMENSION = 3600;
 export const BADGE_TEMPLATE_PRINT_DPI = 300;
 export const BADGE_TEMPLATE_QUALITY = 0.98;
+export const BADGE_TEMPLATE_THUMBNAIL_MAX_WIDTH = 320;
+export const BADGE_TEMPLATE_THUMBNAIL_QUALITY = 0.82;
 
 export const buildBadgePhotoPath = ({ agencyId, clientId, extension = "webp" } = {}) => {
   const safeAgencyId = String(agencyId || "").trim();
@@ -22,6 +24,13 @@ export const buildBadgeTemplatePath = ({ agencyId, templateId, extension = "webp
   const safeTemplateId = String(templateId || "").trim();
   if (!safeAgencyId || !safeTemplateId) return "";
   return `agencies/${safeAgencyId}/badge-templates/${safeTemplateId}/front.${extension}`;
+};
+
+export const buildBadgeTemplateThumbnailPath = ({ agencyId, templateId, extension = "webp" } = {}) => {
+  const safeAgencyId = String(agencyId || "").trim();
+  const safeTemplateId = String(templateId || "").trim();
+  if (!safeAgencyId || !safeTemplateId) return "";
+  return `agencies/${safeAgencyId}/badge-templates/${safeTemplateId}/thumbnail.${extension}`;
 };
 
 export const getBadgeContactDefaults = (program = {}) => {

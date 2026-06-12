@@ -8,6 +8,9 @@ alter table if exists public.badge_templates
 alter table if exists public.badge_templates
   add column if not exists background_transform jsonb not null default '{}'::jsonb;
 
+alter table if exists public.badge_templates
+  add column if not exists thumbnail_path text;
+
 grant select, insert, update, delete on table public.badge_templates to authenticated;
 grant usage, select on all sequences in schema public to authenticated;
 

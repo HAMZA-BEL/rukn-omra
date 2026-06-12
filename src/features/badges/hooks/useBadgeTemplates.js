@@ -54,6 +54,7 @@ export function useBadgeTemplates({ agencyId, onError } = {}) {
       agencyId,
       id,
       templatePath: template?.templatePath,
+      thumbnailPath: template?.thumbnailPath,
     });
     if (error) {
       setTemplates(previousTemplates);

@@ -1,12 +1,12 @@
 import React from "react";
 import { Button, Input, Modal } from "../../../components/UI";
 import { isSupabaseEnabled } from "../../../lib/supabase";
-import { compressBadgeTemplateImage, getBadgeImageDimensions } from "../utils/badgeImageCompression";
+import { compressBadgeTemplateImage, createBadgeTemplateThumbnail, getBadgeImageDimensions } from "../utils/badgeImageCompression";
 import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_SIZE } from "../utils/badgeDefaults";
 import { createDefaultBadgeLayout } from "../utils/badgeLayout";
 import { calculateBadgeBackgroundFit, getBadgeCanvasPixelSize } from "../utils/badgeBackground";
 import { createBadgeTemplateId } from "../services/badgeTemplatesApi";
-import { uploadBadgeTemplateImage } from "../utils/badgeStorage";
+import { uploadBadgeTemplateImage, uploadBadgeTemplateThumbnail } from "../utils/badgeStorage";
 import { validateBadgeTemplateImageFile } from "../utils/badgeValidation";
 import { normalizeBadgeNumber } from "../utils/badgeTemplateMapping";
 import { useLang } from "../../../hooks/useLang";
@@ -288,11 +288,25 @@ export function BadgeTemplateCreatorModal({ open, onClose, agencyId, onCreate, o
       };
       const { data, error } = await uploadBadgeTemplateImage({ agencyId, templateId: id, file: compressed });
       if (error || !data?.path) throw error || new Error("Upload failed");
+      let thumbnailPath = "";
+      try {
+        const thumbnail = await createBadgeTemplateThumbnail(compressed, mappedCrop);
+        const { data: thumbnailData, error: thumbnailError } = await uploadBadgeTemplateThumbnail({
+          agencyId,
+          templateId: id,
+          file: thumbnail,
+        });
+        if (thumbnailError) throw thumbnailError;
+        thumbnailPath = thumbnailData?.path || "";
+      } catch (thumbnailError) {
+        console.warn("Unable to create badge template thumbnail", thumbnailError);
+      }
       const saved = await onCreate?.({
         id,
         name: name.trim(),
         description: description.trim(),
         templatePath: data.path,
+        thumbnailPath,
         widthMm: positiveNumber(widthMm),
         heightMm: positiveNumber(heightMm),
         layout,

@@ -7,6 +7,7 @@ import { AppIcon } from "../../../components/Icon";
 import { BadgeTemplateCreatorModal } from "./BadgeTemplateCreatorModal";
 import { BadgeTemplateMapper } from "./BadgeTemplateMapper";
 import { useBadgeTemplates } from "../hooks/useBadgeTemplates";
+import { getBadgeTemplateImageUrl } from "../utils/badgeStorage";
 
 const isMissingSetupError = (error) => Boolean(error && (
   String(error.message || "").includes("badge_templates")
@@ -15,6 +16,65 @@ const isMissingSetupError = (error) => Boolean(error && (
   || String(error.code || "") === "42P01"
 ));
 const DEFAULT_TEMPLATE_NAMES = new Set(["قالب الشارة", "Modèle de badge", "Badge template"]);
+
+function BadgeTemplateCardThumbnail({ template }) {
+  const [url, setUrl] = React.useState("");
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setUrl("");
+    if (!template?.thumbnailPath) return undefined;
+    getBadgeTemplateImageUrl(template.thumbnailPath).then((nextUrl) => {
+      if (!cancelled) setUrl(nextUrl || "");
+    });
+    return () => { cancelled = true; };
+  }, [template?.thumbnailPath]);
+
+  return (
+    <div style={{
+      width: 54,
+      height: 72,
+      borderRadius: 10,
+      overflow: "hidden",
+      border: "1px solid rgba(212,175,55,.24)",
+      background: "linear-gradient(135deg,var(--rukn-bg-soft),var(--rukn-bg-card))",
+      flexShrink: 0,
+      position: "relative",
+      display: "grid",
+      placeItems: "center",
+    }}>
+      {url ? (
+        <>
+          {!loaded && (
+            <div style={{
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(90deg,rgba(148,163,184,.10),rgba(255,255,255,.18),rgba(148,163,184,.10))",
+            }} />
+          )}
+          <img
+            src={url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setLoaded(true)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              background: "#ffffff",
+              display: loaded ? "block" : "none",
+            }}
+          />
+        </>
+      ) : (
+        <AppIcon name="idCard" size={22} style={{ color: "var(--rukn-text-muted)", opacity: .55 }} />
+      )}
+    </div>
+  );
+}
 
 export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
   const { t } = useLang();
@@ -26,6 +86,7 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
   const [confirmCloseOpen, setConfirmCloseOpen] = React.useState(false);
   const [deleteTarget, setDeleteTarget] = React.useState(null);
   const [deletingId, setDeletingId] = React.useState("");
+  const [savingDefault, setSavingDefault] = React.useState(false);
   const didAutoSelectRef = React.useRef(false);
   const { templates, loading, error, refresh, save, remove, makeDefault } = useBadgeTemplates({ agencyId });
 
@@ -116,6 +177,30 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
     } catch {
       onToast?.(t.badgeDefaultError || "Unable to set default badge template", "error");
     }
+  };
+
+  const handleAdoptSelected = async () => {
+    if (!activeTemplate?.id) {
+      onToast?.(t.badgeSelectTemplateFirst || "يرجى اختيار قالب أولا", "error");
+      return;
+    }
+    setSavingDefault(true);
+    try {
+      await makeDefault(activeTemplate.id);
+      onToast?.(t.badgeAdoptSuccess || "تم اعتماد قالب الشارة", "success");
+    } catch {
+      onToast?.(t.badgeAdoptError || "تعذر اعتماد قالب الشارة", "error");
+    } finally {
+      setSavingDefault(false);
+    }
+  };
+
+  const openSelectedDesigner = () => {
+    if (!activeTemplate?.id) {
+      onToast?.(t.badgeSelectTemplateFirst || "يرجى اختيار قالب أولا", "error");
+      return;
+    }
+    setEditorId(activeTemplate.id);
   };
 
   const editorOverlay = editorTemplate && typeof document !== "undefined"
@@ -290,6 +375,22 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
             </div>
           )}
 
+          {loading && !templates.length && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {[0, 1, 2].map((item) => (
+                <div
+                  key={item}
+                  style={{
+                    height: 92,
+                    borderRadius: 13,
+                    border: "1px solid var(--rukn-border-soft)",
+                    background: "linear-gradient(90deg,rgba(148,163,184,.08),rgba(255,255,255,.16),rgba(148,163,184,.08))",
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
           <div style={{ display: "grid", gap: 8 }}>
             {templates.map((template) => {
               const active = activeId === template.id;
@@ -300,18 +401,16 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
                   tabIndex={0}
                   onClick={() => {
                     setActiveId(template.id);
-                    setEditorId(template.id);
                   }}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     setActiveId(template.id);
-                    setEditorId(template.id);
                   }}
                   style={{
                     position: "relative",
                     textAlign: "start",
-                    padding: "10px 42px 10px 11px",
+                    padding: "9px 42px 9px 10px",
                     borderRadius: 13,
                     border: active ? "1px solid var(--rukn-gold)" : "1px solid var(--rukn-border-soft)",
                     background: active ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
@@ -348,10 +447,37 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
                   >
                     <AppIcon name="trash" size={14} />
                   </button>
-                  <strong style={{ display: "block", fontSize: 13 }}>{displayTemplateName(template)}</strong>
-                  <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
-                    {template.widthMm}×{template.heightMm}mm {template.isDefault ? `· ${t.badgeDefault || "Default"}` : ""}
-                  </span>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                    <BadgeTemplateCardThumbnail template={template} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
+                        <strong style={{ display: "block", fontSize: 13, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {displayTemplateName(template)}
+                        </strong>
+                        {active && (
+                          <span style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            border: "1px solid rgba(34,197,94,.28)",
+                            background: "rgba(34,197,94,.12)",
+                            color: "var(--rukn-success, #16a34a)",
+                            borderRadius: 999,
+                            padding: "2px 7px",
+                            fontSize: 10,
+                            fontWeight: 900,
+                            lineHeight: 1.2,
+                          }}>
+                            <AppIcon name="check" size={11} />
+                            {t.badgeSelectedTemplate || "محدد"}
+                          </span>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 11, color: "var(--rukn-text-muted)" }}>
+                        {template.widthMm}×{template.heightMm}mm {template.isDefault ? `· ${t.badgeDefault || "Default"}` : ""}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               );
             })}
@@ -371,13 +497,21 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
               <p style={{ fontSize: 12, color: "var(--rukn-text-muted)", lineHeight: 1.8, maxWidth: 420 }}>
                 {t.badgeOpenDesignerHint || "Open the design workspace to adjust fields and save the template."}
               </p>
-              <Button variant="secondary" size="sm" onClick={() => setEditorId(activeTemplate.id)}>
-                {t.badgeOpenDesigner || "Open designer"}
-              </Button>
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                <Button variant="primary" size="sm" icon="save" onClick={handleAdoptSelected} disabled={savingDefault || loading}>
+                  {t.saveSettingsLabel || "حفظ الإعدادات"}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={openSelectedDesigner}>
+                  {t.badgeOpenDesigner || "Open designer"}
+                </Button>
+              </div>
             </div>
           ) : (
-            <div style={{ textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 12, lineHeight: 1.8 }}>
-              {t.badgeSelectTemplateEmpty || "Select a template or create a new one to start."}
+            <div style={{ textAlign: "center", color: "var(--rukn-text-muted)", fontSize: 12, lineHeight: 1.8, display: "grid", gap: 10, justifyItems: "center" }}>
+              <span>{t.badgeSelectTemplateEmpty || "Select a template or create a new one to start."}</span>
+              <Button variant="secondary" size="sm" onClick={openSelectedDesigner}>
+                {t.badgeOpenDesigner || "Open designer"}
+              </Button>
             </div>
           )}
         </GlassCard>
@@ -389,7 +523,7 @@ export function BadgeTemplatesPage({ store, onToast, embedded = false }) {
         open={creatorOpen}
         onClose={() => setCreatorOpen(false)}
         agencyId={agencyId}
-        onCreate={(template) => handleSave(template, { openEditor: true, silentToast: true })}
+        onCreate={(template) => handleSave(template, { silentToast: true })}
         onToast={onToast}
       />
 

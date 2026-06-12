@@ -4,6 +4,7 @@ import {
   BADGE_TEMPLATE_BUCKET,
   buildBadgePhotoPath,
   buildBadgeTemplatePath,
+  buildBadgeTemplateThumbnailPath,
 } from "./badgeDefaults";
 
 export const canUseBadgePhotoStorage = () => Boolean(isSupabaseEnabled && supabase);
@@ -69,6 +70,26 @@ export async function uploadBadgeTemplateImage({ agencyId, templateId, file }) {
   return { data: { path }, error: null };
 }
 
+export async function uploadBadgeTemplateThumbnail({ agencyId, templateId, file }) {
+  if (!canUseBadgePhotoStorage()) {
+    return { data: null, error: new Error("Supabase Storage is unavailable") };
+  }
+  const extension = imageExtensionFromType(file?.type);
+  const path = buildBadgeTemplateThumbnailPath({ agencyId, templateId, extension });
+  if (!path || !file) {
+    return { data: null, error: new Error("Missing badge template thumbnail upload data") };
+  }
+  const { error } = await supabase.storage
+    .from(BADGE_TEMPLATE_BUCKET)
+    .upload(path, file, {
+      cacheControl: "604800",
+      contentType: file.type || "image/webp",
+      upsert: true,
+    });
+  if (error) return { data: null, error };
+  return { data: { path }, error: null };
+}
+
 export async function getBadgeTemplateImageUrl(path) {
   if (!canUseBadgePhotoStorage() || !path) return "";
   const { data, error } = await supabase.storage
@@ -81,5 +102,14 @@ export async function getBadgeTemplateImageUrl(path) {
 export async function removeBadgeTemplateImage(path) {
   if (!canUseBadgePhotoStorage() || !path) return { error: null };
   const { error } = await supabase.storage.from(BADGE_TEMPLATE_BUCKET).remove([path]);
+  return { error };
+}
+
+export async function removeBadgeTemplateImages(paths = []) {
+  const cleanPaths = (Array.isArray(paths) ? paths : [paths])
+    .map((path) => String(path || "").trim())
+    .filter(Boolean);
+  if (!canUseBadgePhotoStorage() || !cleanPaths.length) return { error: null };
+  const { error } = await supabase.storage.from(BADGE_TEMPLATE_BUCKET).remove(cleanPaths);
   return { error };
 }

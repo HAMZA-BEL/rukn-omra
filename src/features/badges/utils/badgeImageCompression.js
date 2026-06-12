@@ -3,6 +3,8 @@ import {
   BADGE_PHOTO_QUALITY,
   BADGE_TEMPLATE_MAX_DIMENSION,
   BADGE_TEMPLATE_QUALITY,
+  BADGE_TEMPLATE_THUMBNAIL_MAX_WIDTH,
+  BADGE_TEMPLATE_THUMBNAIL_QUALITY,
 } from "./badgeDefaults";
 
 const canvasToBlob = (canvas, type, quality) => new Promise((resolve, reject) => {
@@ -110,3 +112,34 @@ export const getBadgeImageDimensions = async (file) => {
     height: image.naturalHeight || image.height || 0,
   };
 };
+
+export async function createBadgeTemplateThumbnail(file, crop = {}, {
+  maxWidth = BADGE_TEMPLATE_THUMBNAIL_MAX_WIDTH,
+  quality = BADGE_TEMPLATE_THUMBNAIL_QUALITY,
+} = {}) {
+  if (!file) throw new Error("Missing badge template image file");
+  const image = await loadImage(file);
+  const naturalWidth = image.naturalWidth || image.width || 1;
+  const naturalHeight = image.naturalHeight || image.height || 1;
+  const sourceX = Math.max(0, Math.min(naturalWidth - 1, Number(crop.cropX ?? crop.x) || 0));
+  const sourceY = Math.max(0, Math.min(naturalHeight - 1, Number(crop.cropY ?? crop.y) || 0));
+  const sourceWidth = Math.max(1, Math.min(naturalWidth - sourceX, Number(crop.cropWidth ?? crop.width) || naturalWidth));
+  const sourceHeight = Math.max(1, Math.min(naturalHeight - sourceY, Number(crop.cropHeight ?? crop.height) || naturalHeight));
+  const scale = Math.min(1, maxWidth / sourceWidth);
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas is unavailable");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+
+  const blob = await canvasToBlob(canvas, "image/webp", quality);
+  return new File([blob], "thumbnail.webp", { type: "image/webp", lastModified: Date.now() });
+}
