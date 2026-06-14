@@ -165,6 +165,8 @@ export default function ClientDetail({
   paymentsOverride = null,
   paymentsReadyOverride = undefined,
   onRequireGlobalData = null,
+  badgesEnabled = true,
+  contractsEnabled = true,
 }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
@@ -365,6 +367,9 @@ export default function ClientDetail({
   }, [globalDetailReady, loadingLabel, onRequireGlobalData, onToast, store]);
 
   const handleDownloadBadge = React.useCallback(async () => {
+    if (!badgesEnabled) {
+      return;
+    }
     if (!program) {
       onToast?.(t.badgeNoProgramForClient || "No program is linked to this pilgrim.", "error");
       return;
@@ -389,10 +394,13 @@ export default function ClientDetail({
     } finally {
       setBadgeBusy(false);
     }
-  }, [agency, badgeFileNumber, client, lang, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
+  }, [agency, badgeFileNumber, badgesEnabled, client, lang, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
 
   const handleDownloadContract = React.useCallback(async () => {
     const labels = {
+      disabled: lang === "fr" ? "La fonction contrats n’est pas activée pour cette agence."
+        : lang === "en" ? "Contracts are not enabled for this agency."
+        : "ميزة العقود غير مفعلة لهذه الوكالة.",
       noProgram: lang === "fr" ? "Aucun programme n’est lié à ce pèlerin."
         : lang === "en" ? "No program is linked to this pilgrim."
         : "لا يوجد برنامج مرتبط بهذا المعتمر.",
@@ -418,6 +426,10 @@ export default function ClientDetail({
         : lang === "en" ? "Contract downloaded"
         : "تم تحميل العقد",
     };
+    if (!contractsEnabled) {
+      onToast?.(labels.disabled, "info");
+      return null;
+    }
     if (!globalDetailReady) {
       const ready = await requestGlobalDetailDataForAction();
       if (!ready) return null;
@@ -484,7 +496,7 @@ export default function ClientDetail({
     } finally {
       setContractBusy(false);
     }
-  }, [agency, client, clients, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, store]);
+  }, [agency, client, clients, contractsEnabled, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, store]);
 
   const buildSharedReceiptDraftFromGroup = React.useCallback((paymentGroup = {}) => {
     const coveredClients = Array.isArray(paymentGroup.coveredClients || paymentGroup.covered_clients)
@@ -928,18 +940,22 @@ export default function ClientDetail({
           onClick={() => printClientCard({ client, program, agency, lang, programClients })}>
           {t.printCard}
         </Button>
-        <Button variant="secondary" size="sm" icon="download"
-          style={printActionButtonStyle}
-          disabled={badgeBusy}
-          onClick={handleDownloadBadge}>
-          {t.downloadBadge || "Download badge"}
-        </Button>
-        <Button variant="secondary" size="sm" icon="file"
-          style={printActionButtonStyle}
-          disabled={contractBusy || !paymentsReady}
-          onClick={handleDownloadContract}>
-          {lang === "fr" ? "Télécharger contrat" : lang === "en" ? "Download contract" : "تحميل العقد"}
-        </Button>
+        {badgesEnabled && (
+          <Button variant="secondary" size="sm" icon="download"
+            style={printActionButtonStyle}
+            disabled={badgeBusy}
+            onClick={handleDownloadBadge}>
+            {t.downloadBadge || "Download badge"}
+          </Button>
+        )}
+        {contractsEnabled && (
+          <Button variant="secondary" size="sm" icon="file"
+            style={printActionButtonStyle}
+            disabled={contractBusy || !paymentsReady}
+            onClick={handleDownloadContract}>
+            {lang === "fr" ? "Télécharger contrat" : lang === "en" ? "Download contract" : "تحميل العقد"}
+          </Button>
+        )}
       </div>
 
       {/* Program */}

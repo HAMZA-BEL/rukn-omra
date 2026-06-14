@@ -1950,7 +1950,14 @@ const renderStructuredRoomBlock = (sheet, room, clientsById = {}) => {
 // ═══════════════════════════════════════
 // PROGRAMS LIST PAGE
 // ═══════════════════════════════════════
-export default function ProgramsPage({ store, onToast, notificationFocus = null }) {
+export default function ProgramsPage({
+  store,
+  onToast,
+  notificationFocus = null,
+  badgesEnabled = true,
+  contractsEnabled = true,
+  programPostersEnabled = true,
+}) {
   const { programs, clients, addProgram, updateProgram, archiveProgramRecord, trashProgramRecord, deleteProgram,
           getClientTotalPaid } = store;
   const { t, lang, dir } = useLang();
@@ -1968,9 +1975,8 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
     (value) => formatCurrency(value, lang),
     [lang]
   );
-  const { templates: bulkAssignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId);
+  const { templates: bulkAssignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const bulkPosterExportLabels = React.useMemo(() => getPosterExportLabels(lang, t), [lang, t]);
-
   const [showForm,      setShowForm]      = React.useState(false);
   const [showBulkPosterModal, setShowBulkPosterModal] = React.useState(false);
   const [pendingBulkPosterPayload, setPendingBulkPosterPayload] = React.useState(null);
@@ -2862,6 +2868,9 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         <ProgramInner
           program={prog} store={store} onToast={onToast}
           programSummaryById={programSummaryById}
+          badgesEnabled={badgesEnabled}
+          contractsEnabled={contractsEnabled}
+          programPostersEnabled={programPostersEnabled}
           onBack={() => closeProgramDetail(true)}
           onEditProgram={() => setEditing(prog)}
         />
@@ -2870,6 +2879,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
           program={editing}
           store={store}
           title={t.editProgramTitle}
+          badgesEnabled={badgesEnabled}
           onSaved={handleProgramFormSaved}
           onClose={closeProgramForm}
         />
@@ -3638,6 +3648,7 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         program={editing}
         store={store}
         title={editing ? t.editProgramTitle : t.addProgramTitle}
+        badgesEnabled={badgesEnabled}
         onSaved={handleProgramFormSaved}
         onClose={closeProgramForm}
       />
@@ -3655,18 +3666,20 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
         programs={filteredPrograms}
         onDownloadRequest={handleBulkPosterDownloadRequest}
       />
-      <ProgramPosterTemplateChoiceModal
-        choice={bulkPosterTemplateChoice}
-        selectedChoiceId={bulkPosterTemplateChoiceId}
-        onSelectChoice={setBulkPosterTemplateChoiceId}
-        busy={bulkPosterExportBusy}
-        onClose={closeBulkPosterTemplateChoice}
-        onDownload={handleBulkPosterTemplateChoiceDownload}
-        labels={bulkPosterExportLabels}
-        lang={lang}
-        dir={dir}
-        posterOptionsVisible={false}
-      />
+      {programPostersEnabled && (
+        <ProgramPosterTemplateChoiceModal
+          choice={bulkPosterTemplateChoice}
+          selectedChoiceId={bulkPosterTemplateChoiceId}
+          onSelectChoice={setBulkPosterTemplateChoiceId}
+          busy={bulkPosterExportBusy}
+          onClose={closeBulkPosterTemplateChoice}
+          onDownload={handleBulkPosterTemplateChoiceDownload}
+          labels={bulkPosterExportLabels}
+          lang={lang}
+          dir={dir}
+          posterOptionsVisible={false}
+        />
+      )}
       <Modal
         open={!!archivePrompt}
         onClose={() => setArchivePrompt(null)}
@@ -3766,7 +3779,17 @@ export default function ProgramsPage({ store, onToast, notificationFocus = null 
 // ═══════════════════════════════════════
 // PROGRAM INNER — full client list
 // ═══════════════════════════════════════
-function ProgramInner({ program, store, onToast, onBack, onEditProgram, programSummaryById = null }) {
+function ProgramInner({
+  program,
+  store,
+  onToast,
+  onBack,
+  onEditProgram,
+  programSummaryById = null,
+  badgesEnabled = true,
+  contractsEnabled = true,
+  programPostersEnabled = true,
+}) {
   const {
     clients,
     payments: globalPayments = [],
@@ -3782,7 +3805,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
   } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
-  const { templates: assignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId);
+  const { templates: assignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const detailDataReady = clientsReady && paymentsReady;
@@ -4844,6 +4867,20 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     missingTemplate: lang === "fr" ? "Importez d’abord le modèle de contrat Word." : lang === "en" ? "Upload the Word contract template first." : "ارفع قالب العقد أولًا لتصدير عقود Word.",
     error: lang === "fr" ? "Impossible d’exporter les contrats Word." : lang === "en" ? "Unable to export Word contracts." : "تعذر تصدير عقود Word",
   }), [lang, t.loading]);
+  const contractsDisabledMessage = React.useMemo(() => (
+    lang === "fr"
+      ? "La fonction contrats n’est pas activée pour cette agence."
+      : lang === "en"
+        ? "Contracts are not enabled for this agency."
+        : "ميزة العقود غير مفعلة لهذه الوكالة."
+  ), [lang]);
+  const programPostersDisabledMessage = React.useMemo(() => (
+    lang === "fr"
+      ? "Les affiches de programmes ne sont pas activées pour cette agence."
+      : lang === "en"
+        ? "Program posters are not enabled for this agency."
+        : "ميزة ملصقات البرامج غير مفعلة لهذه الوكالة."
+  ), [lang]);
   const posterExportLabels = React.useMemo(() => getPosterExportLabels(lang, t), [lang, t]);
   const costingLabels = React.useMemo(() => getProgramCostingLabels(lang), [lang]);
   const defaultPosterTitle = React.useMemo(() => getDefaultPosterTitle(program, lang), [program, lang]);
@@ -4891,6 +4928,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     downloadPosterBlob(blob, buildProgramPosterFilename(program, lang));
   }, [agency, getPosterOptions, lang, program]);
   const runPosterTemplateDownload = React.useCallback(async (template) => {
+    if (!programPostersEnabled) {
+      onToast?.(programPostersDisabledMessage, "info");
+      return;
+    }
     if (!template || posterExportBusy) return;
     setPosterExportBusy(true);
     try {
@@ -4909,7 +4950,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     } finally {
       setPosterExportBusy(false);
     }
-  }, [defaultPosterTitle, generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success]);
+  }, [defaultPosterTitle, generatePosterFromTemplate, onToast, posterExportBusy, posterExportLabels.error, posterExportLabels.missingImage, posterExportLabels.success, programPostersDisabledMessage, programPostersEnabled]);
   const runCodePosterDownload = React.useCallback(async (templateKey = OFFICIAL_RUKN_CODE_TEMPLATE_KEY) => {
     if (posterExportBusy) return;
     setPosterExportBusy(true);
@@ -4941,6 +4982,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     runCodePosterDownload(defaultTemplate.key);
   }, [agency, assignedCodePosterTemplates, closeHeaderActions, posterExportBusy, runCodePosterDownload]);
   const handlePosterTemplateChoiceDownload = React.useCallback(() => {
+    if (!programPostersEnabled) {
+      onToast?.(programPostersDisabledMessage, "info");
+      return;
+    }
     if (posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID) {
       runOfficialPosterDownload();
       return;
@@ -4953,7 +4998,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     const selectedTemplate = posterTemplateChoice?.templates?.find((template) => template.id === posterTemplateChoiceId)
       || posterTemplateChoice?.templates?.[0];
     runPosterTemplateDownload(selectedTemplate);
-  }, [posterTemplateChoice, posterTemplateChoiceId, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
+  }, [onToast, posterTemplateChoice, posterTemplateChoiceId, programPostersDisabledMessage, programPostersEnabled, runCodePosterDownload, runOfficialPosterDownload, runPosterTemplateDownload]);
   const posterOptionsVisible = posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID
     || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
@@ -5045,6 +5090,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     }
   }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported, useScopedProgramDetail]);
   const handleBadgePdfExport = React.useCallback(async () => {
+    if (!badgesEnabled) {
+      return;
+    }
     if (badgeExportBusy) return;
     closeHeaderActions();
     if (!useScopedProgramDetail) {
@@ -5075,7 +5123,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       setBadgeExportBusy(false);
       setBadgeExportProgress(null);
     }
-  }, [agency, badgeExportBusy, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
+  }, [agency, badgeExportBusy, badgesEnabled, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     runWithGlobalDetailData(() => {
@@ -5132,6 +5180,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
   }, [activePackageChip?.label, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType, useScopedProgramDetail]);
   const handleContractsExcelExport = React.useCallback(async () => {
+    if (!contractsEnabled) {
+      onToast?.(contractsDisabledMessage, "info");
+      return;
+    }
     closeHeaderActions();
     if (!useScopedProgramDetail) {
       const ready = await ensureGlobalDetailDataForCurrentAction();
@@ -5191,8 +5243,12 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     XLSX.utils.book_append_sheet(wb, ws, "contracts");
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
-  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program, useScopedProgramDetail]);
+  }, [closeHeaderActions, contractsDisabledMessage, contractsEnabled, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program, useScopedProgramDetail]);
   const handleWordContractsExport = React.useCallback(async () => {
+    if (!contractsEnabled) {
+      onToast?.(contractsDisabledMessage, "info");
+      return;
+    }
     closeHeaderActions();
     if (wordContractExportBusy) return;
     const ready = await ensureGlobalDetailDataForCurrentAction();
@@ -5229,7 +5285,7 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
     } finally {
       setWordContractExportBusy(false);
     }
-  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
+  }, [agency, closeHeaderActions, contractsDisabledMessage, contractsEnabled, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
   const headerActions = React.useMemo(() => ([
     {
       key: "edit",
@@ -5304,7 +5360,10 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
       label: lang === "fr" ? "Excel contrats" : lang === "en" ? "Contracts Excel" : "تصدير Excel للعقود",
       onClick: handleContractsExcelExport,
     },
-  ]), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, completionLabels.passportImport, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ].filter((action) => (
+    (badgesEnabled || action.key !== "badges")
+    && (contractsEnabled || (action.key !== "word-contracts" && action.key !== "contracts"))
+  ))), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, badgesEnabled, completionLabels.passportImport, contractsEnabled, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -5377,22 +5436,24 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         </div>
       )}
 
-      <ProgramPosterTemplateChoiceModal
-        choice={posterTemplateChoice}
-        selectedChoiceId={posterTemplateChoiceId}
-        onSelectChoice={setPosterTemplateChoiceId}
-        busy={posterExportBusy}
-        onClose={closePosterTemplateChoice}
-        onDownload={handlePosterTemplateChoiceDownload}
-        labels={posterExportLabels}
-        lang={lang}
-        dir={dir}
-        posterOptionsVisible={posterOptionsVisible}
-        titleOverride={posterTitleOverride}
-        onTitleOverrideChange={setPosterTitleOverride}
-        showDates={posterShowDates}
-        onToggleShowDates={() => setPosterShowDates((show) => !show)}
-      />
+      {programPostersEnabled && (
+        <ProgramPosterTemplateChoiceModal
+          choice={posterTemplateChoice}
+          selectedChoiceId={posterTemplateChoiceId}
+          onSelectChoice={setPosterTemplateChoiceId}
+          busy={posterExportBusy}
+          onClose={closePosterTemplateChoice}
+          onDownload={handlePosterTemplateChoiceDownload}
+          labels={posterExportLabels}
+          lang={lang}
+          dir={dir}
+          posterOptionsVisible={posterOptionsVisible}
+          titleOverride={posterTitleOverride}
+          onTitleOverrideChange={setPosterTitleOverride}
+          showDates={posterShowDates}
+          onToggleShowDates={() => setPosterShowDates((show) => !show)}
+        />
+      )}
 
       <ProgramDetailOverview
         activeTab={programTab}
@@ -5817,6 +5878,9 @@ function ProgramInner({ program, store, onToast, onBack, onEditProgram, programS
         paymentsReadyOverride={useScopedProgramDetail ? true : undefined}
         onRequireGlobalData={ensureGlobalDetailDataForCurrentAction}
         invoiceApi={store.invoiceApi}
+        badgesEnabled={badgesEnabled}
+        contractsEnabled={contractsEnabled}
+        programPostersEnabled={programPostersEnabled}
         isBulkDeleteOpen={bulkDeleteOpen}
         onCloseBulkDelete={() => setBulkDeleteOpen(false)}
         bulkDeleteSelectedCount={checkedIds.size}

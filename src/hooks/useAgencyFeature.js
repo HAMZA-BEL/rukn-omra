@@ -3,11 +3,14 @@ import { isSupabaseEnabled, supabase } from "../lib/supabase";
 
 export const AGENCY_FEATURES = {
   PROGRAM_POSTERS: "program_posters",
+  BADGES: "badges",
+  CONTRACTS: "contracts",
 };
 
-export function useAgencyFeature(agencyId, featureKey) {
+export function useAgencyFeature(agencyId, featureKey, options = {}) {
+  const fallbackEnabled = Boolean(options.fallbackEnabled);
   const [state, setState] = React.useState({
-    enabled: false,
+    enabled: fallbackEnabled,
     loading: Boolean(isSupabaseEnabled && agencyId && featureKey),
   });
 
@@ -15,13 +18,13 @@ export function useAgencyFeature(agencyId, featureKey) {
     let cancelled = false;
 
     if (!isSupabaseEnabled || !supabase || !agencyId || !featureKey) {
-      setState({ enabled: false, loading: false });
+      setState({ enabled: fallbackEnabled, loading: false });
       return () => {
         cancelled = true;
       };
     }
 
-    setState((current) => ({ ...current, enabled: false, loading: true }));
+    setState((current) => ({ ...current, enabled: fallbackEnabled, loading: true }));
 
     supabase
       .from("agency_features")
@@ -35,17 +38,16 @@ export function useAgencyFeature(agencyId, featureKey) {
           if (process.env.NODE_ENV !== "production") {
             console.warn("[AgencyFeature] Feature check failed:", featureKey, error);
           }
-          setState({ enabled: false, loading: false });
+          setState({ enabled: fallbackEnabled, loading: false });
           return;
         }
-        setState({ enabled: Boolean(data?.enabled), loading: false });
+        setState({ enabled: data ? Boolean(data.enabled) : fallbackEnabled, loading: false });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [agencyId, featureKey]);
+  }, [agencyId, fallbackEnabled, featureKey]);
 
   return state;
 }
-

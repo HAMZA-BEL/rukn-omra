@@ -420,7 +420,17 @@ const buildFormState = (client, defaultProgramId, programs) => {
   };
 };
 
-export default function ClientForm({ client, store, onSave, onCancel, onToast, defaultProgramId, lockProgramId = "" }) {
+export default function ClientForm({
+  client,
+  store,
+  onSave,
+  onCancel,
+  onToast,
+  defaultProgramId,
+  lockProgramId = "",
+  badgesEnabled = true,
+  contractsEnabled = true,
+}) {
   const { t, tr, dir, lang } = useLang();
   const { programs = [], clients = [], activeClients = [], addClient, updateClient } = store;
   const storeNotify = typeof store.notify === "function" ? store.notify : null;
@@ -712,20 +722,21 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
   }, [form.salePrice, getDefaultSalePriceForService, normalizedServiceType]);
 
   React.useEffect(() => {
-    if (!hasCin) return;
+    if (!contractsEnabled || !hasCin) return;
     setForm((prev) => (
       prev.representedByClientId || prev.representedByRelationship
         ? { ...prev, representedByClientId: "", representedByRelationship: "" }
         : prev
     ));
-  }, [hasCin]);
+  }, [contractsEnabled, hasCin]);
 
   React.useEffect(() => {
+    if (!contractsEnabled) return;
     if (!form.representedByClientId) return;
     if (representativeOptions.some((item) => String(item.id || "") === String(form.representedByClientId || ""))) return;
     setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
     setRepresentativeSearch("");
-  }, [form.representedByClientId, representativeOptions]);
+  }, [contractsEnabled, form.representedByClientId, representativeOptions]);
 
   const handlePackageChange = React.useCallback((e) => {
     const pkg = programPackages.find(item => item.id === e.target.value) || null;
@@ -880,7 +891,7 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
     }
     if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
     if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
-    if (minorWithoutCin && !form.representedByClientId) e.representedByClientId = representationLabels.representativeRequired;
+    if (contractsEnabled && minorWithoutCin && !form.representedByClientId) e.representedByClientId = representationLabels.representativeRequired;
     return e;
   };
 
@@ -952,6 +963,9 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
 
   const resolveBadgePhotoPath = async (clientId, currentPath = "") => {
     let nextPath = pickString(currentPath);
+    if (!badgesEnabled) {
+      return { ok: true, path: nextPath };
+    }
     if (badgePhotoFile && !badgePhotoApi.isAvailable) {
       setBadgePhotoError(badgeStorageUnavailableMessage(lang));
       return { ok: false, path: nextPath };
@@ -1085,6 +1099,12 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
     if (!ensureProgramCanAdd(targetProgram, capacityDelta)) return;
     setSaving(true);
     setBadgePhotoError("");
+    const nextRepresentedByClientId = contractsEnabled
+      ? (hasCin ? "" : form.representedByClientId)
+      : form.representedByClientId;
+    const nextRepresentedByRelationship = contractsEnabled
+      ? (hasCin ? "" : normalizeRepresentativeRelationship(form.representedByRelationship))
+      : form.representedByRelationship;
     const baseData = {
       ...form,
       programId: lockProgramId || form.programId || null,
@@ -1109,8 +1129,8 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
         cin: pickString(form.cin),
         gender: genderToPassportValue(form.gender),
       },
-      representedByClientId: hasCin ? "" : form.representedByClientId,
-      representedByRelationship: hasCin ? "" : normalizeRepresentativeRelationship(form.representedByRelationship),
+      representedByClientId: nextRepresentedByClientId,
+      representedByRelationship: nextRepresentedByRelationship,
     };
     try {
       const targetId = isEdit ? client.id : (badgePhotoFile ? createClientId() : "");
@@ -1656,7 +1676,7 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
       )}
 
 	      {/* ── Contract Representation ── */}
-	      {entryMode === ROOM_ENTRY_MODES.SINGLE && minorWithoutCin && (
+		      {contractsEnabled && entryMode === ROOM_ENTRY_MODES.SINGLE && minorWithoutCin && (
 	      <GlassCard style={{
 	        padding:16,
 	        marginBottom:14,
@@ -1818,33 +1838,35 @@ export default function ClientForm({ client, store, onSave, onCancel, onToast, d
       {entryMode === ROOM_ENTRY_MODES.SINGLE && (
       <GlassCard style={{ padding:16, marginBottom:14 }}>
         <p style={{ fontSize:12, fontWeight:700, color:tc.gold, marginBottom:12, display:"inline-flex", alignItems:"center", gap:6 }}><AppIcon name="documents" size={14} color={tc.gold} /> {t.documents}</p>
-        <div style={{ marginBottom:14 }}>
-          <PilgrimPhotoUploader
-            lang={lang}
-            photoUrl={badgePhotoRemoved ? "" : badgePhotoUrl}
-            disabled={!badgePhotoApi.isAvailable}
-            busy={saving}
-            error={badgePhotoError}
-            onPhotoReady={(file) => {
-              setBadgePhotoFile(file);
-              setBadgePhotoRemoved(false);
-              setBadgePhotoError("");
-              setForm((prev) => ({
-                ...prev,
-                docs: { ...prev.docs, photo: true },
-              }));
-            }}
-            onRemove={() => {
-              setBadgePhotoFile(null);
-              setBadgePhotoRemoved(true);
-              setBadgePhotoError("");
-              setForm((prev) => ({
-                ...prev,
-                docs: { ...prev.docs, photo: false },
-              }));
-            }}
-          />
-        </div>
+        {badgesEnabled && (
+          <div style={{ marginBottom:14 }}>
+            <PilgrimPhotoUploader
+              lang={lang}
+              photoUrl={badgePhotoRemoved ? "" : badgePhotoUrl}
+              disabled={!badgePhotoApi.isAvailable}
+              busy={saving}
+              error={badgePhotoError}
+              onPhotoReady={(file) => {
+                setBadgePhotoFile(file);
+                setBadgePhotoRemoved(false);
+                setBadgePhotoError("");
+                setForm((prev) => ({
+                  ...prev,
+                  docs: { ...prev.docs, photo: true },
+                }));
+              }}
+              onRemove={() => {
+                setBadgePhotoFile(null);
+                setBadgePhotoRemoved(true);
+                setBadgePhotoError("");
+                setForm((prev) => ({
+                  ...prev,
+                  docs: { ...prev.docs, photo: false },
+                }));
+              }}
+            />
+          </div>
+        )}
         <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
           {DOCUMENT_FIELDS.map(([key, labelKey])=>(
             <label key={key} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer",

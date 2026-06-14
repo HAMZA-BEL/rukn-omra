@@ -45,6 +45,8 @@ export default function ProgramClientModals({
   paymentsReadyOverride,
   onRequireGlobalData,
   invoiceApi,
+  badgesEnabled = true,
+  contractsEnabled = true,
   isBulkDeleteOpen,
   onCloseBulkDelete,
   bulkDeleteSelectedCount,
@@ -79,6 +81,8 @@ export default function ProgramClientModals({
             paymentsOverride={paymentsOverride}
             paymentsReadyOverride={paymentsReadyOverride}
             onRequireGlobalData={onRequireGlobalData}
+            badgesEnabled={badgesEnabled}
+            contractsEnabled={contractsEnabled}
           />
         )}
       </Modal>
@@ -87,6 +91,8 @@ export default function ProgramClientModals({
           store={store}
           defaultProgramId={program.id}
           lockProgramId={program.id}
+          badgesEnabled={badgesEnabled}
+          contractsEnabled={contractsEnabled}
           onSave={onSaveAddClient}
           onCancel={onCloseAddClient}
           onToast={onToast}
@@ -123,6 +129,8 @@ export default function ProgramClientModals({
           <ClientForm
             client={editingClient}
             store={store}
+            badgesEnabled={badgesEnabled}
+            contractsEnabled={contractsEnabled}
             onSave={onSaveEditClient}
             onCancel={onCloseEditClient}
             onToast={onToast}

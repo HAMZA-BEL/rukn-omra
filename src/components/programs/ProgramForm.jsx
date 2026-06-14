@@ -289,7 +289,13 @@ function RouteSaveOverlay({ done, copy }) {
   return createPortal(overlay, document.body);
 }
 
-export default function ProgramForm({ program, store, onSave, onCancel }) {
+export default function ProgramForm({
+  program,
+  store,
+  onSave,
+  onCancel,
+  badgesEnabled = true,
+}) {
   const { addProgram, updateProgram } = store;
   const { t, lang, dir } = useLang();
   const isEdit = !!program;
@@ -341,7 +347,7 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
     returnRouteText: program?.returnRouteText ?? program?.return_route_text ?? routeStopsToText(initialReturnStops),
     posterTravelRoute: program?.posterTravelRoute ?? program?.poster_travel_route ?? "",
   };
-  const { templates: badgeTemplates } = useBadgeTemplates({ agencyId: store.agencyId });
+  const { templates: badgeTemplates } = useBadgeTemplates({ agencyId: store.agencyId, enabled: badgesEnabled });
   const [form, setForm] = React.useState({
     name:      program?.name      || "",
     type:      normalizeProgramType(program?.type || "عمرة"),
@@ -863,54 +869,56 @@ export default function ProgramForm({ program, store, onSave, onCancel }) {
         </div>
       </Modal>
 
-      <GlassCard style={{ padding:16 }}>
-        <p style={{ fontSize:13, fontWeight:800, color:tc.gold, marginBottom:6 }}>
-          {t.badgeData || "بيانات الشارة"}
-        </p>
-        <p style={{ fontSize:11, color:tc.grey, marginBottom:14 }}>
-          {t.badgeDataHint || "حقول اختيارية ستستخدم لاحقاً في بطاقات المعتمرين."}
-        </p>
-        <div style={{ display:"grid", gap:12 }}>
-          <Input
-            label={t.guidePhone || "رقم المؤطر / الرقم السعودي"}
-            value={badgePhones[0] || ""}
-            onChange={e => setBadgePhone(0, e.target.value)}
-          />
-          {badgePhones.slice(1).map((phone, index) => (
-            <div key={`badge-phone-${index + 1}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:8, alignItems:"end" }}>
-              <Input
-                label={`${t.extraSaudiPhone || "رقم إضافي"} ${index + 1}`}
-                value={phone}
-                onChange={e => setBadgePhone(index + 1, e.target.value)}
-              />
-              <Button variant="ghost" icon="trash" onClick={() => removeBadgePhone(index + 1)}>
-                {t.remove || "إزالة"}
-              </Button>
-            </div>
-          ))}
-          {badgePhones.length < 3 && (
-            <Button variant="ghost" size="sm" icon="plus" onClick={addBadgePhone} style={{ justifySelf:"start" }}>
-              {t.addPhone || "+ إضافة رقم"}
-            </Button>
-          )}
-          {badgeTemplates.length > 0 && (
-            <Select
-              label={t.badgeTemplate || "قالب الشارة"}
-              value={form.badgeTemplateId}
-              onChange={set("badgeTemplateId")}
-              options={[
-                { value:"", label:t.defaultBadgeTemplate || "القالب الافتراضي" },
-                ...badgeTemplates.map(template => ({ value:template.id, label:template.name })),
-              ]}
+      {badgesEnabled && (
+        <GlassCard style={{ padding:16 }}>
+          <p style={{ fontSize:13, fontWeight:800, color:tc.gold, marginBottom:6 }}>
+            {t.badgeData || "بيانات الشارة"}
+          </p>
+          <p style={{ fontSize:11, color:tc.grey, marginBottom:14 }}>
+            {t.badgeDataHint || "حقول اختيارية ستستخدم لاحقاً في بطاقات المعتمرين."}
+          </p>
+          <div style={{ display:"grid", gap:12 }}>
+            <Input
+              label={t.guidePhone || "رقم المؤطر / الرقم السعودي"}
+              value={badgePhones[0] || ""}
+              onChange={e => setBadgePhone(0, e.target.value)}
             />
-          )}
-          <Input
-            label={t.badgeNote || "ملاحظة الشارة"}
-            value={form.badgeNote}
-            onChange={set("badgeNote")}
-          />
-        </div>
-      </GlassCard>
+            {badgePhones.slice(1).map((phone, index) => (
+              <div key={`badge-phone-${index + 1}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:8, alignItems:"end" }}>
+                <Input
+                  label={`${t.extraSaudiPhone || "رقم إضافي"} ${index + 1}`}
+                  value={phone}
+                  onChange={e => setBadgePhone(index + 1, e.target.value)}
+                />
+                <Button variant="ghost" icon="trash" onClick={() => removeBadgePhone(index + 1)}>
+                  {t.remove || "إزالة"}
+                </Button>
+              </div>
+            ))}
+            {badgePhones.length < 3 && (
+              <Button variant="ghost" size="sm" icon="plus" onClick={addBadgePhone} style={{ justifySelf:"start" }}>
+                {t.addPhone || "+ إضافة رقم"}
+              </Button>
+            )}
+            {badgeTemplates.length > 0 && (
+              <Select
+                label={t.badgeTemplate || "قالب الشارة"}
+                value={form.badgeTemplateId}
+                onChange={set("badgeTemplateId")}
+                options={[
+                  { value:"", label:t.defaultBadgeTemplate || "القالب الافتراضي" },
+                  ...badgeTemplates.map(template => ({ value:template.id, label:template.name })),
+                ]}
+              />
+            )}
+            <Input
+              label={t.badgeNote || "ملاحظة الشارة"}
+              value={form.badgeNote}
+              onChange={set("badgeNote")}
+            />
+          </div>
+        </GlassCard>
+      )}
 
       <GlassCard style={{ padding:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:14 }}>

@@ -5,16 +5,17 @@ import {
   OFFICIAL_RUKN_CODE_TEMPLATE_KEY,
 } from "../features/posterTemplates/codeTemplates/registry";
 
-export function useAgencyCodePosterTemplates(agencyId) {
+export function useAgencyCodePosterTemplates(agencyId, options = {}) {
+  const enabled = options.enabled !== false;
   const [state, setState] = React.useState({
     templates: [],
-    loading: Boolean(isSupabaseEnabled && agencyId),
+    loading: Boolean(enabled && isSupabaseEnabled && agencyId),
   });
 
   React.useEffect(() => {
     let cancelled = false;
 
-    if (!isSupabaseEnabled || !supabase || !agencyId) {
+    if (!enabled || !isSupabaseEnabled || !supabase || !agencyId) {
       setState({ templates: [], loading: false });
       return () => {
         cancelled = true;
@@ -62,7 +63,7 @@ export function useAgencyCodePosterTemplates(agencyId) {
     return () => {
       cancelled = true;
     };
-  }, [agencyId]);
+  }, [agencyId, enabled]);
 
   return state;
 }

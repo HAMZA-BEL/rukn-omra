@@ -2,6 +2,7 @@ import React from "react";
 import { globalCSS } from "./components/styles";
 import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
+import { AGENCY_FEATURES, useAgencyFeature } from "./hooks/useAgencyFeature";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
 import { Menu as MenuIcon, Home, Users, FolderKanban, FolderArchive, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun } from "lucide-react";
@@ -25,6 +26,7 @@ import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
+
 function getInitialPage() {
   const hash = window.location.hash.replace("#", "").trim();
   return VALID_PAGES.includes(hash) ? hash : "dashboard";
@@ -51,6 +53,12 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
   const store = useStore(agencyId, showToast);
+  const badgesFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.BADGES, { fallbackEnabled: true });
+  const contractsFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.CONTRACTS, { fallbackEnabled: true });
+  const programPostersFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.PROGRAM_POSTERS, { fallbackEnabled: true });
+  const badgesEnabled = badgesFeature.enabled;
+  const contractsEnabled = contractsFeature.enabled;
+  const programPostersEnabled = programPostersFeature.enabled;
   const [page,           setPage]           = React.useState(getInitialPage);
   const [pageHistory,    setPageHistory]    = React.useState([]);
   const [selectedClient, setSelectedClient] = React.useState(null);
@@ -371,8 +379,27 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
               />
             </ErrorBoundary>
           )}
-          {page==="clients"    && <ErrorBoundary><ClientsPage store={store} onToast={showToast} /></ErrorBoundary>}
-          {page==="programs"   && <ErrorBoundary><ProgramsPage store={store} onToast={showToast} notificationFocus={notificationFocus?.type === "program" ? notificationFocus : null} /></ErrorBoundary>}
+          {page==="clients"    && (
+            <ErrorBoundary>
+              <ClientsPage
+                store={store}
+                onToast={showToast}
+                contractsEnabled={contractsEnabled}
+              />
+            </ErrorBoundary>
+          )}
+          {page==="programs"   && (
+            <ErrorBoundary>
+              <ProgramsPage
+                store={store}
+                onToast={showToast}
+                notificationFocus={notificationFocus?.type === "program" ? notificationFocus : null}
+                badgesEnabled={badgesEnabled}
+                contractsEnabled={contractsEnabled}
+                programPostersEnabled={programPostersEnabled}
+              />
+            </ErrorBoundary>
+          )}
           {page==="archive"    && <ErrorBoundary><ArchivePage store={store} onToast={showToast} /></ErrorBoundary>}
           {page==="notifications" && (
             <ErrorBoundary>
@@ -402,6 +429,9 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
                 onToast={showToast}
                 currentUserRole={currentUserRole}
                 currentUserId={currentUserId}
+                badgesEnabled={badgesEnabled}
+                contractsEnabled={contractsEnabled}
+                programPostersEnabled={programPostersEnabled}
               />
             </ErrorBoundary>
           )}
@@ -429,6 +459,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
             setEditingClient(c);
           }}
           linkedPayments={selectedClientLinkedPayments}
+          badgesEnabled={badgesEnabled}
+          contractsEnabled={contractsEnabled}
           highlightFromNotification={notificationFocus?.type === "client" && String(notificationFocus.targetId) === String(selectedClient.id)}
           notificationHighlightToken={notificationFocus?.token}
           onToast={showToast} />}
@@ -436,6 +468,8 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
 
       <Modal open={!!editingClient} onClose={()=>setEditingClient(null)} title={t.edit+" — "+t.fullName} width={680}>
         {editingClient && <ClientForm client={editingClient} store={store}
+          badgesEnabled={badgesEnabled}
+          contractsEnabled={contractsEnabled}
           onSave={()=>{ setEditingClient(null); showToast(t.updateSuccess, "success"); }}
           onCancel={()=>setEditingClient(null)}
           onToast={showToast} />}

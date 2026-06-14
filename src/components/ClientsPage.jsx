@@ -57,7 +57,7 @@ const formatClientReference = (client = {}) => {
   return fallback;
 };
 
-export default function ClientsPage({ store, onToast }) {
+export default function ClientsPage({ store, onToast, contractsEnabled = true }) {
   const { t, tr, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { activeClients, programs,
@@ -1065,6 +1065,7 @@ export default function ClientsPage({ store, onToast }) {
             onDelete={() => handleSingleDelete(selected)}
             onArchive={() => handleSingleArchive(selected)}
             onRestore={() => handleSingleRestore(selected)}
+            contractsEnabled={contractsEnabled}
             onToast={onToast} />
         )}
       </Modal>
@@ -1072,6 +1073,7 @@ export default function ClientsPage({ store, onToast }) {
         title={`${t.editLabel} — ${editing ? getClientTerms(editing).fileTitle : t.clientFile}`} width={660}>
         {editing && (
           <ClientForm client={editing} store={store}
+            contractsEnabled={contractsEnabled}
             onSave={() => { setEditing(null); onToast(t.updateSuccess,"success"); }}
             onCancel={() => setEditing(null)}
             onToast={onToast} />
@@ -1079,6 +1081,7 @@ export default function ClientsPage({ store, onToast }) {
       </Modal>
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title={t.addClient} width={660}>
         <ClientForm store={store}
+          contractsEnabled={contractsEnabled}
           onSave={() => { setShowAdd(false); onToast(t.addSuccess,"success"); }}
           onCancel={() => setShowAdd(false)}
           onToast={onToast} />

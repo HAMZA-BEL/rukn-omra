@@ -104,7 +104,15 @@ const parseDefaultPosterTemplateValue = (value = OFFICIAL_POSTER_TEMPLATE_VALUE)
   };
 };
 
-export default function SettingsPage({ store, onToast, currentUserRole, currentUserId }) {
+export default function SettingsPage({
+  store,
+  onToast,
+  currentUserRole,
+  currentUserId,
+  badgesEnabled = true,
+  contractsEnabled = true,
+  programPostersEnabled = true,
+}) {
   const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
   const agencyId = store?.agencyId || agency?.id || "";
   const { lang, setLang, t } = useLang();
@@ -161,7 +169,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
   const {
     templates: agencyCodePosterTemplates,
     loading: agencyCodePosterTemplatesLoading,
-  } = useAgencyCodePosterTemplates(store.agencyId);
+  } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
 
   const handleForceSync = async () => {
@@ -178,24 +186,26 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
 
   const handleSave = async () => {
     if (settingsSaving) return;
-    if (posterTemplateOptionsLoading) {
+    if (programPostersEnabled && posterTemplateOptionsLoading) {
       onToast(posterDefaultLabels.loading, "info");
       return;
     }
     const validPosterTemplate = defaultPosterTemplateOptions.some((option) => option.value === selectedPosterTemplateValue);
-    if (!validPosterTemplate) {
+    if (programPostersEnabled && !validPosterTemplate) {
       onToast(posterDefaultLabels.unavailable, "error");
       return;
     }
-    const nextForm = {
-      ...form,
-      ...parseDefaultPosterTemplateValue(selectedPosterTemplateValue),
-    };
+    const nextForm = programPostersEnabled
+      ? {
+        ...form,
+        ...parseDefaultPosterTemplateValue(selectedPosterTemplateValue),
+      }
+      : { ...form };
     setSettingsSaving(true);
     try {
-      if (badgeTemplateSettingsSaveRef.current) {
+      if (badgesEnabled && badgeTemplateSettingsSaveRef.current) {
         await badgeTemplateSettingsSaveRef.current();
-      } else if (selectedBadgeTemplateId) {
+      } else if (badgesEnabled && selectedBadgeTemplateId) {
         const { error: badgeTemplateError } = await setDefaultBadgeTemplate({
           agencyId,
           id: selectedBadgeTemplateId,
@@ -510,6 +520,7 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
     || defaultPosterTemplateOptions[0];
   const posterTemplateOptionsLoading = agencyCodePosterTemplatesLoading;
   const handleDefaultPosterTemplateChange = (value) => {
+    if (!programPostersEnabled) return;
     if (posterTemplateOptionsLoading) return;
     const parsed = parseDefaultPosterTemplateValue(value);
     setSelectedDefaultPosterTemplateValue(value);
@@ -829,22 +840,24 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
         </div>
       </SettingsSectionCard>
 
-      <SettingsSectionCard
-        title={badgeTemplatesTitle}
-        description={badgeTemplatesDesc}
-        open={badgeTemplatesOpen}
-        onToggle={() => setBadgeTemplatesOpen((current) => !current)}
-      >
-        <BadgeTemplatesPage
-          store={store}
-          onToast={onToast}
-          embedded
-          onRegisterSettingsSave={registerBadgeTemplateSettingsSave}
-          onSelectedTemplateChange={handleSelectedBadgeTemplateChange}
-        />
-      </SettingsSectionCard>
+      {badgesEnabled && (
+        <SettingsSectionCard
+          title={badgeTemplatesTitle}
+          description={badgeTemplatesDesc}
+          open={badgeTemplatesOpen}
+          onToggle={() => setBadgeTemplatesOpen((current) => !current)}
+        >
+          <BadgeTemplatesPage
+            store={store}
+            onToast={onToast}
+            embedded
+            onRegisterSettingsSave={registerBadgeTemplateSettingsSave}
+            onSelectedTemplateChange={handleSelectedBadgeTemplateChange}
+          />
+        </SettingsSectionCard>
+      )}
 
-      {canManageContractTemplates && (
+      {contractsEnabled && canManageContractTemplates && (
         <SettingsSectionCard
           title={contractTemplatesTitle}
           description={contractTemplatesDesc}
@@ -1012,14 +1025,21 @@ export default function SettingsPage({ store, onToast, currentUserRole, currentU
                 </span>
               )}
             </div>
+            {!programPostersEnabled && (
+              <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:12, lineHeight:1.8 }}>
+                يمكنكم استعمال قوالب ركن الرسمية. وللحصول على قالب خاص بوكالتكم، يرجى التواصل مع إدارة ركن.
+              </p>
+            )}
           </div>
         </div>
-        <ProgramPosterTemplatesSettings
-          store={store}
-          onToast={onToast}
-          canManage={canManagePosterTemplates}
-          embedded
-        />
+        {programPostersEnabled && (
+          <ProgramPosterTemplatesSettings
+            store={store}
+            onToast={onToast}
+            canManage={canManagePosterTemplates}
+            embedded
+          />
+        )}
       </SettingsSectionCard>
 
       <div

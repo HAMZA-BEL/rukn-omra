@@ -7,7 +7,7 @@ import {
   setDefaultBadgeTemplate,
 } from "../services/badgeTemplatesApi";
 
-export function useBadgeTemplates({ agencyId, onError } = {}) {
+export function useBadgeTemplates({ agencyId, onError, enabled = true } = {}) {
   const [templates, setTemplates] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -18,6 +18,12 @@ export function useBadgeTemplates({ agencyId, onError } = {}) {
   }, [onError]);
 
   const refresh = React.useCallback(async () => {
+    if (!enabled) {
+      setTemplates([]);
+      setError(null);
+      setLoading(false);
+      return [];
+    }
     setLoading(true);
     setError(null);
     try {
@@ -32,21 +38,23 @@ export function useBadgeTemplates({ agencyId, onError } = {}) {
     } finally {
       setLoading(false);
     }
-  }, [agencyId]);
+  }, [agencyId, enabled]);
 
   React.useEffect(() => {
     refresh();
   }, [refresh]);
 
   const save = React.useCallback(async (template) => {
+    if (!enabled) throw new Error("badge-feature-disabled");
     const payload = { ...template, id: template.id || createBadgeTemplateId() };
     const { data, error } = await saveBadgeTemplate({ agencyId, template: payload });
     if (error) throw error;
     await refresh();
     return data || payload;
-  }, [agencyId, refresh]);
+  }, [agencyId, enabled, refresh]);
 
   const remove = React.useCallback(async (id) => {
+    if (!enabled) throw new Error("badge-feature-disabled");
     const template = templates.find((item) => item.id === id);
     const previousTemplates = templates;
     setTemplates((current) => current.filter((item) => item.id !== id));
@@ -62,13 +70,14 @@ export function useBadgeTemplates({ agencyId, onError } = {}) {
     }
     await refresh();
     return { storageError };
-  }, [agencyId, refresh, templates]);
+  }, [agencyId, enabled, refresh, templates]);
 
   const makeDefault = React.useCallback(async (id) => {
+    if (!enabled) throw new Error("badge-feature-disabled");
     const { error } = await setDefaultBadgeTemplate({ agencyId, id });
     if (error) throw error;
     await refresh();
-  }, [agencyId, refresh]);
+  }, [agencyId, enabled, refresh]);
 
   return { templates, loading, error, refresh, save, remove, makeDefault };
 }
