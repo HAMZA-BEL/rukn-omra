@@ -34,6 +34,7 @@ import {
 } from "../../features/badges";
 
 const tc = theme.colors;
+const PHONE_INPUT_STYLE = { direction: "ltr", textAlign: "left" };
 const PACKAGE_TEMPLATES = ["اقتصادي", "سياحي", "سياحي بالإفطار"];
 const PROGRAM_TYPE_OPTIONS = [
   { value: "عمرة", label: "عمرة" },
@@ -896,6 +897,8 @@ export default function ProgramForm({
               label={t.guidePhone || "رقم المؤطر / الرقم السعودي"}
               value={badgePhones[0] || ""}
               onChange={e => setBadgePhone(0, e.target.value)}
+              dir="ltr"
+              inputStyle={PHONE_INPUT_STYLE}
             />
             {badgePhones.slice(1).map((phone, index) => (
               <div key={`badge-phone-${index + 1}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:8, alignItems:"end" }}>
@@ -903,6 +906,8 @@ export default function ProgramForm({
                   label={`${t.extraSaudiPhone || "رقم إضافي"} ${index + 1}`}
                   value={phone}
                   onChange={e => setBadgePhone(index + 1, e.target.value)}
+                  dir="ltr"
+                  inputStyle={PHONE_INPUT_STYLE}
                 />
                 <Button variant="ghost" icon="trash" onClick={() => removeBadgePhone(index + 1)}>
                   {t.remove || "إزالة"}
