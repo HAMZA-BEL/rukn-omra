@@ -901,14 +901,28 @@ const normalizeRoomingMeta = (meta) => ({
 });
 
 const getProgramHotelsForCity = (program, packages, city) => {
-  const values = new Set();
+  const values = [];
+  const addHotel = (hotel) => {
+    const value = String(hotel || "").trim();
+    if (!value || isMissingRoomingValue(value)) return;
+    if (values.some((item) => normalizeRoomingHotel(item) === normalizeRoomingHotel(value))) return;
+    values.push(value);
+  };
   packages.forEach((pkg) => {
-    const hotel = city === "makkah" ? pkg?.hotelMecca : pkg?.hotelMadina;
-    if (String(hotel || "").trim()) values.add(String(hotel).trim());
+    addHotel(city === "makkah"
+      ? (pkg?.hotelMecca || pkg?.hotel_mecca)
+      : (pkg?.hotelMadina || pkg?.hotel_madina));
   });
-  const fallback = city === "makkah" ? program?.hotelMecca : program?.hotelMadina;
-  if (String(fallback || "").trim()) values.add(String(fallback).trim());
-  return Array.from(values);
+  addHotel(city === "makkah"
+    ? (program?.hotelMecca || program?.hotel_mecca)
+    : (program?.hotelMadina || program?.hotel_madina));
+  return values;
+};
+
+const getVerifiedRoomingHotel = (hotel, verifiedHotels = []) => {
+  const key = normalizeRoomingHotel(hotel);
+  if (!key || isMissingRoomingValue(key)) return "";
+  return verifiedHotels.find((value) => normalizeRoomingHotel(value) === key) || "";
 };
 
 const getRoomHotelName = (room = {}, program = {}, packages = [], location = "makkah") => {
@@ -1184,7 +1198,7 @@ const clampRoomingContextMenuPoint = (x, y, width = 170, height = 132) => {
 };
 
 const getRoomingPackageHotel = (pkg, city) => (
-  city === "madinah" ? pkg?.hotelMadina : pkg?.hotelMecca
+  city === "madinah" ? (pkg?.hotelMadina || pkg?.hotel_madina) : (pkg?.hotelMecca || pkg?.hotel_mecca)
 );
 
 const findRoomingPackageFromRoom = (room = {}, packages = [], city = "makkah") => {
@@ -1276,8 +1290,9 @@ const getRoomingPriceSync = ({ client, room, packages = [], city = "makkah", dec
   };
 };
 
-const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = "", city = "makkah", packages = [] }) => {
+const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], program = {}, programId = "", city = "makkah", packages = [] }) => {
   const clientsById = new Map(clients.map((client) => [client.id, client]));
+  const verifiedCityHotels = getProgramHotelsForCity(program, packages, city);
   const seen = new Set();
   const updates = [];
   rooms.forEach((room) => {
@@ -1294,7 +1309,10 @@ const buildRoomingClientFieldUpdates = ({ rooms = [], clients = [], programId = 
     const roomingGroupId = String(room.roomingGroupId || room.id || "").trim();
     const roomingGroupName = String(room.roomingGroupName || (room.roomNumber ? `غرفة ${room.roomNumber}` : "")).trim();
     const genderOverrides = room.genderOverrides && typeof room.genderOverrides === "object" ? room.genderOverrides : {};
-    const roomHotel = String(getRoomHotelName(room, {}, packages, city) || room.hotel || "").trim();
+    const roomHotel = getVerifiedRoomingHotel(
+      getRoomHotelName(room, program, packages, city) || room.hotel,
+      verifiedCityHotels
+    );
     const roomPackage = findRoomingPackageFromRoom(room, packages, city);
     const roomLevel = String(roomPackage?.level || room.packageLevel || room.hotelLevel || room.level || room.levelName || "").trim();
     const priceOverrides = room.priceOverrides && typeof room.priceOverrides === "object" ? room.priceOverrides : {};
@@ -6202,12 +6220,19 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           : `نسخ التسكين من ${roomingCityShortLabels[sourceCity]}`);
   }, [lang, roomingCityShortLabels, roomingCopyModal.sourceCity, roomingCopySourceCity, tr]);
 
+  const verifiedCityHotelOptions = React.useMemo(
+    () => getProgramHotelsForCity(program, packages, city),
+    [city, packages, program]
+  );
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
     const pkg = packageByLevel.get(level) || packageById.get(client.packageId || client.package_id);
-    const hotel = city === "makkah"
-      ? (client.hotelMecca || pkg?.hotelMecca || program.hotelMecca || "")
-      : (client.hotelMadina || pkg?.hotelMadina || program.hotelMadina || "");
+    const hotelCandidates = city === "makkah"
+      ? [client.hotelMecca, client.hotel_mecca, pkg?.hotelMecca, pkg?.hotel_mecca, program.hotelMecca, program.hotel_mecca]
+      : [client.hotelMadina, client.hotel_madina, pkg?.hotelMadina, pkg?.hotel_madina, program.hotelMadina, program.hotel_madina];
+    const hotel = hotelCandidates
+      .map((value) => getVerifiedRoomingHotel(value, verifiedCityHotelOptions))
+      .find(Boolean) || "";
     const roomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room) || "";
     const gender = normalizeRoomingGender(client.gender);
     return {
@@ -6222,16 +6247,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       category: client.roomCategory || "",
       familyKey: client.roomingGroupId || getRoomingFamilyKey(client),
     };
-  }, [city, packageById, packageByLevel, program, t, lang, getLocalizedRoomTypeLabel]);
+  }, [city, packageById, packageByLevel, program, t, lang, getLocalizedRoomTypeLabel, verifiedCityHotelOptions]);
 
-  const hotelOptions = React.useMemo(() => {
-    const values = new Set(getProgramHotelsForCity(program, packages, city));
-    roomingEligibleClients.forEach((client) => {
-      const hotel = getClientContext(client).hotel;
-      if (hotel) values.add(hotel);
-    });
-    return Array.from(values);
-  }, [program, packages, city, roomingEligibleClients, getClientContext]);
+  const hotelOptions = verifiedCityHotelOptions;
   const resolveRoomHotelName = React.useCallback(
     (room, targetCity = city) => getRoomHotelName(room, program, packages, targetCity),
     [city, packages, program]
@@ -6241,6 +6259,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     selectRoomType: t.roomingSelectRoomTypePlaceholder || (lang === "fr" ? "Type de chambre…" : lang === "en" ? "Room type…" : "نوع الغرفة…"),
     selectCategory: t.roomingSelectRoomCategoryPlaceholder || (lang === "fr" ? "Classification de chambre…" : lang === "en" ? "Room classification…" : "تصنيف الغرفة…"),
     hotelRequired: t.roomingHotelRequired || (lang === "fr" ? "L’hôtel est obligatoire" : lang === "en" ? "Hotel is required" : "الفندق مطلوب"),
+    hotelInvalid: t.roomingHotelInvalid || (lang === "fr" ? "Choisissez un hôtel valide pour cette ville" : lang === "en" ? "Select a valid hotel for this city" : "يرجى اختيار فندق صالح لهذه المدينة"),
     roomTypeRequired: t.roomingRoomTypeRequired || (lang === "fr" ? "Le type de chambre est obligatoire" : lang === "en" ? "Room type is required" : "نوع الغرفة مطلوب"),
     categoryRequired: t.roomingRoomCategoryRequired || (lang === "fr" ? "La classification de la chambre est obligatoire" : lang === "en" ? "Room classification is required" : "تصنيف الغرفة مطلوب"),
   }), [lang, t]);
@@ -6249,6 +6268,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const addHotel = (hotel) => {
       const value = String(hotel || "").trim();
       if (!value) return;
+      if (!getVerifiedRoomingHotel(value, hotelOptions)) return;
       if (values.some((item) => normalizeRoomingHotel(item) === normalizeRoomingHotel(value))) return;
       values.push(value);
     };
@@ -6282,10 +6302,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const roomType = normalizeRoomingRoomType(draft.roomType);
     const category = String(draft.category || "").trim();
     if (!hotel) errors.hotel = roomModalLabels.hotelRequired;
+    else if (!getVerifiedRoomingHotel(hotel, hotelOptions)) errors.hotel = roomModalLabels.hotelInvalid;
     if (!roomType) errors.roomType = roomModalLabels.roomTypeRequired;
     if (!["male_only", "female_only", "family"].includes(category)) errors.category = roomModalLabels.categoryRequired;
     return errors;
-  }, [roomModalLabels.categoryRequired, roomModalLabels.hotelRequired, roomModalLabels.roomTypeRequired]);
+  }, [hotelOptions, roomModalLabels.categoryRequired, roomModalLabels.hotelInvalid, roomModalLabels.hotelRequired, roomModalLabels.roomTypeRequired]);
 
   const buildCanvasPayload = React.useCallback((targetCity, nextRooms = [], nextUnassigned = [], nextRoomLinks = []) => ({
     kind: "rooming-canvas",
@@ -6299,10 +6320,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   const syncRoomingClientsFromRooms = React.useCallback(async (nextRooms = []) => {
     if (typeof syncRoomingClientFields !== "function") return { error: null, updatedCount: 0, skippedCount: 0 };
-    const updates = buildRoomingClientFieldUpdates({ rooms: nextRooms, clients: roomingEligibleClients, programId: program.id, city, packages });
+    const updates = buildRoomingClientFieldUpdates({ rooms: nextRooms, clients: roomingEligibleClients, program, programId: program.id, city, packages });
     if (!updates.length) return { error: null, updatedCount: 0, skippedCount: 0 };
     return syncRoomingClientFields(program.id, updates);
-  }, [city, roomingEligibleClients, packages, program.id, syncRoomingClientFields]);
+  }, [city, roomingEligibleClients, packages, program, syncRoomingClientFields]);
 
   const writeCanvasCache = React.useCallback((targetCity, payload) => {
     try {
@@ -6358,18 +6379,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   ]);
 
   const getTargetHotelOptionsForCopy = React.useCallback((targetCity) => {
-    const values = new Set(getProgramHotelsForCity(program, packages, targetCity));
-    if (targetCity === city) {
-      hotelOptions.forEach((hotel) => {
-        if (String(hotel || "").trim()) values.add(String(hotel).trim());
-      });
-    }
-    return Array.from(values);
-  }, [city, hotelOptions, packages, program]);
+    return getProgramHotelsForCity(program, packages, targetCity);
+  }, [packages, program]);
 
   const resolveCopiedRoomHotel = React.useCallback((room, sourceCity, targetCity, useTargetHotels) => {
-    const sourceHotel = String(room?.hotel || "").trim();
     const targetHotels = getTargetHotelOptionsForCopy(targetCity);
+    const sourceHotel = String(getRoomHotelName(room, program, packages, sourceCity) || room?.hotel || "").trim();
     const targetHotelByKey = new Map(targetHotels.map((hotel) => [normalizeRoomingHotel(hotel), hotel]));
     const sameTargetHotel = sourceHotel ? targetHotelByKey.get(normalizeRoomingHotel(sourceHotel)) : "";
     if (sameTargetHotel) return sameTargetHotel;
@@ -6377,11 +6392,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (useTargetHotels) {
       const sourcePackage = findRoomingPackageFromRoom(room, packages, sourceCity);
       const targetPackageHotel = String(getRoomingPackageHotel(sourcePackage, targetCity) || "").trim();
-      if (targetPackageHotel) return targetPackageHotel;
+      const verifiedTargetPackageHotel = getVerifiedRoomingHotel(targetPackageHotel, targetHotels);
+      if (verifiedTargetPackageHotel) return verifiedTargetPackageHotel;
     }
 
     return "";
-  }, [getTargetHotelOptionsForCopy, packages]);
+  }, [getTargetHotelOptionsForCopy, packages, program]);
 
   const applyLoadedRoomingState = React.useCallback((loaded, sourceUpdatedAt = null, options = {}) => {
     const resetInteraction = options.resetInteraction !== false;
@@ -7331,7 +7347,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
     const selectedRoomType = normalizeRoomingRoomType(roomDraft.roomType);
     const selectedCategory = String(roomDraft.category || "").trim();
-    const selectedHotel = String(roomDraft.hotel || "").trim();
+    const selectedHotel = getVerifiedRoomingHotel(roomDraft.hotel, hotelOptions);
     const capacity = getRoomingCapacity(selectedRoomType);
     if (roomModal.mode === "create") {
       const roomCount = normalizeRoomCreateCount(roomDraft.roomCount);
@@ -7386,6 +7402,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
     const room = rooms.find((item) => item.id === roomModal.roomId);
     if (!room) return;
+    const previousHotelName = resolveRoomHotelName(room);
+    const preserveHotelId = previousHotelName
+      && normalizeRoomingHotel(previousHotelName) === normalizeRoomingHotel(selectedHotel);
     const kept = [];
     const removed = [];
     (room.occupantIds || []).forEach((clientId) => {
@@ -7404,8 +7423,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       hotel: selectedHotel,
       hotelName: selectedHotel,
       hotel_name: selectedHotel,
-      hotelId: "",
-      hotel_id: "",
+      hotelId: preserveHotelId ? (item.hotelId || "") : "",
+      hotel_id: preserveHotelId ? (item.hotel_id || "") : "",
       capacity,
       occupantIds: kept,
       genderOverrides: Object.fromEntries(Object.entries(item.genderOverrides || {}).filter(([id]) => kept.includes(id))),
@@ -7419,7 +7438,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
     closeRoomModal();
     markDirty();
-  }, [closeRoomModal, rooms, roomModal.mode, roomModal.roomId, roomDraft, roomCreatePosition, clientsById, getCompatibilityReason, markDirty, onToast, roomToCollisionNode, t, validateRoomDraft]);
+  }, [closeRoomModal, rooms, roomModal.mode, roomModal.roomId, roomDraft, roomCreatePosition, clientsById, getCompatibilityReason, hotelOptions, markDirty, onToast, resolveRoomHotelName, roomToCollisionNode, t, validateRoomDraft]);
 
   const cancelLargeRoomGeneration = React.useCallback(() => {
     setLargeRoomGenerationConfirm(null);
@@ -7671,6 +7690,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       .map((room) => Number(String(room.roomNumber || "").replace(/[^\d]/g, "")))
       .filter((value) => Number.isFinite(value) && value > 0);
     const firstAppendRoomNumber = (existingRoomNumbers.length ? Math.max(...existingRoomNumbers) : 0) + 1;
+    const blockedMissingHotelRooms = [];
     let skippedAlreadyAssigned = 0;
     let skippedUnavailable = 0;
     let skippedCapacity = 0;
@@ -7710,6 +7730,13 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         x: Number.isFinite(Number(sourceRoom.x)) ? Number(sourceRoom.x) : gridFallback.x,
         y: Number.isFinite(Number(sourceRoom.y)) ? Number(sourceRoom.y) : gridFallback.y,
       };
+      const copiedHotel = resolveCopiedRoomHotel(sourceRoom, sourceCity, targetCity, useTargetHotels);
+      if (!copiedHotel) {
+        blockedMissingHotelRooms.push({
+          roomNumber: sourceRoom.roomNumber || String(index + 1).padStart(2, "0"),
+          sourceHotel: getRoomHotelName(sourceRoom, program, packages, sourceCity) || sourceRoom.hotel || "",
+        });
+      }
       const copiedRoom = {
         ...sourceRoom,
         id: newRoomId,
@@ -7720,7 +7747,11 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           : String(firstAppendRoomNumber + index).padStart(2, "0"),
         roomType,
         category: sourceRoom.category || "male_only",
-        hotel: resolveCopiedRoomHotel(sourceRoom, sourceCity, targetCity, useTargetHotels),
+        hotel: copiedHotel,
+        hotelName: copiedHotel,
+        hotel_name: copiedHotel,
+        hotelId: "",
+        hotel_id: "",
         capacity,
         occupantIds,
         genderOverrides: mode === "distribution" ? filterRoomingMapByClientIds(sourceRoom.genderOverrides, occupantIdSet) : {},
@@ -7764,11 +7795,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       unassigned: nextUnassigned,
       roomLinks: nextRoomLinks,
       copiedRoomIds: copiedRooms.map((room) => room.id),
+      blockedMissingHotelRooms,
       skippedAlreadyAssigned,
       skippedUnavailable,
       skippedCapacity,
     };
-  }, [clientsById, resolveCopiedRoomHotel, roomLinks, roomToCollisionNode, roomingEligibleClients, rooms]);
+  }, [clientsById, packages, program, resolveCopiedRoomHotel, roomLinks, roomToCollisionNode, roomingEligibleClients, rooms]);
 
   const confirmCopyRooming = React.useCallback(() => {
     const modal = roomingCopyModal;
@@ -7783,6 +7815,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
     try {
       const copied = buildCopiedRoomingState(modal);
+      if (copied.blockedMissingHotelRooms?.length) {
+        onToast?.(
+          t.roomingCopyHotelMappingFailed
+            || (lang === "fr"
+              ? "Impossible de copier certaines chambres car l’hôtel cible n’a pas pu être identifié."
+              : lang === "en"
+                ? "Some rooms cannot be copied because the target hotel could not be mapped."
+                : "تعذر نسخ بعض الغرف لأن الفندق الهدف غير معروف."),
+          "warning"
+        );
+        return;
+      }
       setRooms(copied.rooms);
       setUnassigned(copied.unassigned);
       setRoomLinks(copied.roomLinks);
