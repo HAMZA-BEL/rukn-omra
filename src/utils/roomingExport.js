@@ -531,6 +531,25 @@ const PDF_DENSITY = {
   },
 };
 
+const ROOMING_NAME_FONT_SIZE_DEFAULT = 13;
+const ROOMING_NAME_FONT_SIZE_MIN = 9;
+const ROOMING_NAME_FONT_SIZE_MAX = 18;
+const ROOMING_NAME_FONT_SIZE_MIN_PT = ROOMING_NAME_FONT_SIZE_MIN * 0.75;
+
+const clampRoomingNameFontSize = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ROOMING_NAME_FONT_SIZE_DEFAULT;
+  return Math.min(ROOMING_NAME_FONT_SIZE_MAX, Math.max(ROOMING_NAME_FONT_SIZE_MIN, Math.round(numeric)));
+};
+
+const getExcelRoomingNameFontSize = (settings = {}, density = PDF_DENSITY.normal) => {
+  const selectedSize = clampRoomingNameFontSize(settings.roomingNameFontSize);
+  return Math.max(
+    ROOMING_NAME_FONT_SIZE_MIN_PT,
+    (Number(density.nameFontSize) || PDF_DENSITY.normal.nameFontSize) * (selectedSize / ROOMING_NAME_FONT_SIZE_DEFAULT)
+  );
+};
+
 const excelBorder = (color = COLORS.border, style = "thin") => ({
   top: { style, color: { argb: color } },
   left: { style, color: { argb: color } },
@@ -1027,10 +1046,10 @@ const makeOccupantCellText = (occupant, includeSource) => {
   return source ? `${occupant.name}    ${source}` : occupant.name;
 };
 
-const writeOccupantName = (worksheet, row, startCol, endCol, occupant, includeSource, density, direction, border) => {
+const writeOccupantName = (worksheet, row, startCol, endCol, occupant, includeSource, density, direction, border, settings = {}) => {
   mergeValue(worksheet, row, startCol, row, endCol, makeOccupantCellText(occupant, includeSource), {
-    font: { name: EXCEL_FONT, size: density.nameFontSize, bold: Boolean(occupant), color: { argb: COLORS.text } },
-    alignment: getAlignment(direction),
+    font: { name: EXCEL_FONT, size: getExcelRoomingNameFontSize(settings, density), bold: Boolean(occupant), color: { argb: COLORS.text } },
+    alignment: getAlignment(direction, { shrinkToFit: Boolean(occupant) && settings.roomingAutoShrinkLongNames !== false }),
     fill: fill(COLORS.card),
     border,
   });
@@ -1077,9 +1096,9 @@ const drawRoomCard = (worksheet, room, startRow, startCol, blockRows, exportData
           right: { style: "thin", color: { argb: COLORS.divider } },
         },
       });
-      writeOccupantName(worksheet, row, startCol + 1, endCol, inCapacity ? occupant : null, includeSource, density, direction, rowBorder);
+      writeOccupantName(worksheet, row, startCol + 1, endCol, inCapacity ? occupant : null, includeSource, density, direction, rowBorder, exportData.settings);
     } else {
-      writeOccupantName(worksheet, row, startCol, endCol, inCapacity ? occupant : null, includeSource, density, direction, rowBorder);
+      writeOccupantName(worksheet, row, startCol, endCol, inCapacity ? occupant : null, includeSource, density, direction, rowBorder, exportData.settings);
     }
     worksheet.getRow(row).height = density.occupantRowHeight;
   }

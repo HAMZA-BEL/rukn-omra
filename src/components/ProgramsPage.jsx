@@ -982,6 +982,14 @@ const ROOMING_PRINT_DEFAULT_SETTINGS = {
   unifyMakkahMadinahRooming: true,
   density: "normal",
   layoutMode: "default",
+  roomingNameFontSize: 13,
+  roomingAutoShrinkLongNames: true,
+};
+
+const clampRoomingNameFontSize = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ROOMING_PRINT_DEFAULT_SETTINGS.roomingNameFontSize;
+  return Math.min(18, Math.max(9, Math.round(numeric)));
 };
 
 const normalizeRoomingPrintSettingsValue = (settings = {}) => {
@@ -1000,6 +1008,8 @@ const normalizeRoomingPrintSettingsValue = (settings = {}) => {
     layoutMode: mergedSettings.layoutMode === "arranged"
       ? "arranged"
       : ROOMING_PRINT_DEFAULT_SETTINGS.layoutMode,
+    roomingNameFontSize: clampRoomingNameFontSize(mergedSettings.roomingNameFontSize),
+    roomingAutoShrinkLongNames: mergedSettings.roomingAutoShrinkLongNames !== false,
   };
 };
 
@@ -6107,6 +6117,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         comfortable: "Confortable",
         normal: "Normal",
         compact: "Compact",
+        nameFontSize: `Taille des noms des ${roomingParticipantTerms.plural || "pèlerins"}`,
+        autoShrinkLongNames: "Réduire automatiquement les noms longs",
+        resetDefault: "Réinitialiser",
         layoutMode: "Mode d’organisation d’impression",
         defaultLayout: "Organisation par défaut",
         arrangedLayout: "Selon l’agencement du rooming",
@@ -6125,6 +6138,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         comfortable: "Comfortable",
         normal: "Normal",
         compact: "Compact",
+        nameFontSize: `${roomingParticipantTerms.plural || "Pilgrim"} names font size`,
+        autoShrinkLongNames: "Auto-shrink long names",
+        resetDefault: "Reset to default",
         layoutMode: "Print layout mode",
         defaultLayout: "Default layout",
         arrangedLayout: "Rooming arrangement",
@@ -6142,6 +6158,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       comfortable: "كبير",
       normal: "عادي",
       compact: "صغير",
+      nameFontSize: roomingParticipantTerms.kind === "hajj" ? "حجم خط أسماء الحجاج" : "حجم خط أسماء المعتمرين",
+      autoShrinkLongNames: "تصغير تلقائي للأسماء الطويلة",
+      resetDefault: "إعادة إلى الافتراضي",
       layoutMode: "طريقة ترتيب الطباعة",
       defaultLayout: "الترتيب الافتراضي",
       arrangedLayout: "حسب ترتيب التسكين",
@@ -6150,7 +6169,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       unifiedBothDescription: t.roomingPrintUnifiedBothDescription || "إذا كان تسكين مكة والمدينة متطابقا، تتم طباعة ورقة واحدة فقط بدل تكرار نفس الغرف.",
       done: "تطبيق",
     };
-  }, [lang, t]);
+  }, [lang, roomingParticipantTerms.kind, roomingParticipantTerms.plural, t]);
   const roomingDensityOptions = React.useMemo(() => ([
     { value: "comfortable", label: roomingPrintLabels.comfortable },
     { value: "normal", label: roomingPrintLabels.normal },
@@ -6171,6 +6190,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     });
     setRoomingPrintSettingsOpen(false);
   }, [agencyId]);
+  const roomingNameFontSize = clampRoomingNameFontSize(roomingPrintSettings.roomingNameFontSize);
+  const roomingAutoShrinkLongNames = roomingPrintSettings.roomingAutoShrinkLongNames !== false;
+  const roomingNamePreviewNames = React.useMemo(() => ([
+    "الإسم الكامل",
+    "الإسم الكامل",
+    "الإسم الكامل",
+    "الإسم الكامل",
+  ]), []);
   const roomingCopySourceCity = getOppositeRoomingCity(city);
   const roomingCityShortLabels = React.useMemo(() => ({
     makkah: t.makkah || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
@@ -9429,6 +9456,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               || roomingPrintSettings.showRegistrationSource !== ROOMING_PRINT_DEFAULT_SETTINGS.showRegistrationSource
               || roomingPrintSettings.showBedNumbers !== ROOMING_PRINT_DEFAULT_SETTINGS.showBedNumbers
               || roomingPrintSettings.unifyMakkahMadinahRooming !== ROOMING_PRINT_DEFAULT_SETTINGS.unifyMakkahMadinahRooming
+              || roomingPrintSettings.roomingNameFontSize !== ROOMING_PRINT_DEFAULT_SETTINGS.roomingNameFontSize
+              || roomingPrintSettings.roomingAutoShrinkLongNames !== ROOMING_PRINT_DEFAULT_SETTINGS.roomingAutoShrinkLongNames
             }
             icon={<Settings size={15} />}
           >
@@ -10444,6 +10473,200 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            <div style={{
+              display: "grid",
+              gap: 10,
+              padding: "10px 12px",
+              border: "1px solid var(--rooming-modal-section-border)",
+              borderRadius: 12,
+              background: "var(--rooming-modal-section-bg)",
+            }}>
+              <p style={{ color: "var(--rooming-text-soft)", fontSize: 12, fontWeight: 900 }}>
+                {roomingPrintLabels.nameFontSize}
+              </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{
+                  display: "inline-grid",
+                  gridTemplateColumns: "34px 58px 34px",
+                  alignItems: "center",
+                  border: "1px solid var(--rooming-modal-section-border)",
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  background: "var(--rooming-list-bg)",
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => setRoomingPrintSettings((prev) => ({
+                      ...prev,
+                      roomingNameFontSize: clampRoomingNameFontSize(roomingNameFontSize - 1),
+                    }))}
+                    disabled={roomingNameFontSize <= 9}
+                    style={{
+                      height: 34,
+                      border: 0,
+                      borderInlineEnd: "1px solid var(--rooming-modal-section-border)",
+                      background: "transparent",
+                      color: "var(--rooming-button-text)",
+                      fontSize: 18,
+                      fontWeight: 900,
+                      cursor: roomingNameFontSize <= 9 ? "not-allowed" : "pointer",
+                      opacity: roomingNameFontSize <= 9 ? 0.45 : 1,
+                    }}
+                  >
+                    -
+                  </button>
+                  <strong style={{ textAlign: "center", color: "var(--rooming-text)", fontSize: 13, fontWeight: 900 }}>
+                    {roomingNameFontSize}px
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setRoomingPrintSettings((prev) => ({
+                      ...prev,
+                      roomingNameFontSize: clampRoomingNameFontSize(roomingNameFontSize + 1),
+                    }))}
+                    disabled={roomingNameFontSize >= 18}
+                    style={{
+                      height: 34,
+                      border: 0,
+                      borderInlineStart: "1px solid var(--rooming-modal-section-border)",
+                      background: "transparent",
+                      color: "var(--rooming-button-text)",
+                      fontSize: 18,
+                      fontWeight: 900,
+                      cursor: roomingNameFontSize >= 18 ? "not-allowed" : "pointer",
+                      opacity: roomingNameFontSize >= 18 ? 0.45 : 1,
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setRoomingPrintSettings((prev) => ({
+                    ...prev,
+                    roomingNameFontSize: ROOMING_PRINT_DEFAULT_SETTINGS.roomingNameFontSize,
+                    roomingAutoShrinkLongNames: ROOMING_PRINT_DEFAULT_SETTINGS.roomingAutoShrinkLongNames,
+                  }))}
+                  style={{
+                    border: "1px solid var(--rooming-modal-section-border)",
+                    background: "var(--rooming-button-bg)",
+                    color: "var(--rooming-button-text)",
+                    borderRadius: 9,
+                    padding: "8px 10px",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    fontFamily: "'Cairo',sans-serif",
+                  }}
+                >
+                  {roomingPrintLabels.resetDefault}
+                </button>
+              </div>
+
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, color: "var(--rooming-text)", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+                <span>{roomingPrintLabels.autoShrinkLongNames}</span>
+                <input
+                  type="checkbox"
+                  checked={roomingAutoShrinkLongNames}
+                  onChange={(event) => setRoomingPrintSettings((prev) => ({
+                    ...prev,
+                    roomingAutoShrinkLongNames: event.target.checked,
+                  }))}
+                  style={{ width: 17, height: 17, accentColor: "#b99235" }}
+                />
+              </label>
+
+              <div style={{
+                width: "min(100%, 260px)",
+                justifySelf: "center",
+                border: "1px solid #334155",
+                background: "#fff",
+                color: "#111827",
+                direction: "rtl",
+                fontFamily: "'Cairo', sans-serif",
+                boxShadow: "0 10px 24px rgba(15,23,42,.08)",
+              }}>
+                <div style={{
+                  minHeight: 30,
+                  borderBottom: "1px solid #334155",
+                  background: "#f8fafc",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "5px 8px",
+                  fontSize: 11,
+                  fontWeight: 900,
+                }}>
+                  <span>غرفة رباعية 4/4</span>
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 28,
+                    height: 18,
+                    borderRadius: 999,
+                    background: "#fffbeb",
+                    border: "1px solid #d9b861",
+                    color: "#7c641f",
+                    fontSize: 10,
+                    fontWeight: 900,
+                  }}>
+                    4
+                  </span>
+                </div>
+                <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {roomingNamePreviewNames.map((name, index) => {
+                    return (
+                      <li
+                        key={`${name}-${index}`}
+                        style={{
+                          minHeight: 30,
+                          borderTop: index === 0 ? 0 : "1px solid #94a3b8",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "5px 8px",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <span style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 999,
+                          background: "#fef3c7",
+                          color: "#111827",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 10,
+                          fontWeight: 900,
+                          flex: "0 0 auto",
+                        }}>
+                          {index + 1}
+                        </span>
+                        <span style={{
+                          display: "block",
+                          minWidth: 0,
+                          flex: "1 1 auto",
+                          overflow: "hidden",
+                          whiteSpace: "nowrap",
+                          textOverflow: "clip",
+                          fontSize: roomingNameFontSize,
+                          lineHeight: 1.2,
+                          fontWeight: 700,
+                          textAlign: "right",
+                        }}>
+                          {name}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
               </div>
             </div>
 

@@ -22,14 +22,14 @@ const FLOW_LAYOUT = {
 };
 const MANUAL_ROOM_NUMBER_LABEL = "غرفة رقم :";
 const ROOMING_PRINT_FONT_FAMILY = "\"IBM Plex Sans Arabic\", \"Cairo\", \"Tajawal\", Arial, sans-serif";
-const SINGLE_LINE_NAME_MIN_PT = 4.4;
-const SINGLE_LINE_NAME_MIN_PX = 5.2;
 const SINGLE_LINE_SOURCE_MIN_PT = 4.2;
 const SINGLE_LINE_SOURCE_MIN_PX = 4.8;
 const SOURCE_MAX_WIDTH_RATIO = 0.28;
-const OCCUPANT_NAME_FONT_SCALE = 0.68;
 const OCCUPANT_NAME_MAX_PT = 7.5;
 const OCCUPANT_NAME_MAX_PX = 10;
+const ROOMING_NAME_FONT_SIZE_DEFAULT = 13;
+const ROOMING_NAME_FONT_SIZE_MIN = 9;
+const ROOMING_NAME_FONT_SIZE_MAX = 18;
 const DENSITY_CONFIGS = {
   comfortable: {
     columns: 5,
@@ -227,6 +227,12 @@ const maxDateValue = (...values) => {
 
 const getDirection = (lang) => (lang === "ar" ? "rtl" : "ltr");
 
+const clampRoomingNameFontSize = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ROOMING_NAME_FONT_SIZE_DEFAULT;
+  return Math.min(ROOMING_NAME_FONT_SIZE_MAX, Math.max(ROOMING_NAME_FONT_SIZE_MIN, Math.round(numeric)));
+};
+
 const normalizePrintSettings = (settings = {}) => {
   const defaultSettings = {
     density: "normal",
@@ -234,6 +240,8 @@ const normalizePrintSettings = (settings = {}) => {
     showRegistrationSource: true,
     showBedNumbers: false,
     unifyMakkahMadinahRooming: true,
+    roomingNameFontSize: ROOMING_NAME_FONT_SIZE_DEFAULT,
+    roomingAutoShrinkLongNames: true,
   };
   const mergedSettings = {
     ...defaultSettings,
@@ -249,6 +257,8 @@ const normalizePrintSettings = (settings = {}) => {
     showRegistrationSource: mergedSettings.showRegistrationSource !== false,
     showBedNumbers: mergedSettings.showBedNumbers === true,
     unifyMakkahMadinahRooming: mergedSettings.unifyMakkahMadinahRooming !== false,
+    roomingNameFontSize: clampRoomingNameFontSize(mergedSettings.roomingNameFontSize),
+    roomingAutoShrinkLongNames: mergedSettings.roomingAutoShrinkLongNames !== false,
   };
 };
 
@@ -414,23 +424,26 @@ const fitFontSizeToWidth = ({
 const getAdaptiveNameFontMetrics = ({
   ctx,
   name = "",
-  rowCount = 1,
-  occupiedCount = 0,
   chipHeight = 12,
   contentWidth = 80,
   density,
   unit = "pt",
+  printSettings = {},
 }) => {
   const html = unit === "px";
   const htmlConfig = density?.html || {};
-  const fontScale = Number(density?.nameFontScale) || OCCUPANT_NAME_FONT_SCALE;
-  const base = (html
-    ? Number.parseFloat(String(htmlConfig.nameFont || "10px")) || 10
-    : Number(density?.fontNormal) || 8) * fontScale;
+  const normalizedSettings = normalizePrintSettings(printSettings);
+  const selectedNameFontSize = clampRoomingNameFontSize(normalizedSettings.roomingNameFontSize);
+  const base = html
+    ? selectedNameFontSize
+    : selectedNameFontSize * 0.75;
+  const autoShrink = normalizedSettings.roomingAutoShrinkLongNames !== false;
   const configuredMin = html
     ? Number.parseFloat(String(htmlConfig.nameFontMin || "")) || Math.max(8.8, base - 1.8)
     : Number(density?.nameFontMin) || Math.max(6.8, base - 1.4);
-  const min = Math.min(configuredMin, html ? SINGLE_LINE_NAME_MIN_PX : SINGLE_LINE_NAME_MIN_PT);
+  const min = autoShrink
+    ? Math.max(html ? ROOMING_NAME_FONT_SIZE_MIN : ROOMING_NAME_FONT_SIZE_MIN * 0.75, Math.min(configuredMin, base))
+    : base;
   const densityMax = html
     ? Number.parseFloat(String(htmlConfig.nameFontMax || "")) || base + 1.6
     : Number(density?.nameFontMax) || base + 1.1;
@@ -440,32 +453,23 @@ const getAdaptiveNameFontMetrics = ({
   const hardMax = Number.isFinite(configuredHardMax) && configuredHardMax > 0
     ? configuredHardMax
     : (html ? OCCUPANT_NAME_MAX_PX : OCCUPANT_NAME_MAX_PT);
-  const max = Math.max(min, Math.min(densityMax, chipHeight * 0.74, hardMax));
-  const length = String(name || "").trim().length;
+  const max = autoShrink
+    ? Math.max(min, Math.min(Math.max(densityMax, base), chipHeight * 0.74, Math.max(hardMax, base)))
+    : base;
   let fontSize = base;
 
-  if (rowCount <= 2) fontSize += html ? 0.25 : 0.18;
-  else if (rowCount === 3) fontSize += html ? 0.12 : 0.08;
-  else if (rowCount >= 5) fontSize -= html ? 0.1 : 0.05;
-
-  if (occupiedCount >= rowCount && rowCount >= 4) fontSize -= html ? 0.18 : 0.12;
-
-  if (length > 64) fontSize -= html ? 1.3 : 1.05;
-  else if (length > 52) fontSize -= html ? 0.95 : 0.75;
-  else if (length > 40) fontSize -= html ? 0.6 : 0.45;
-  else if (length > 32) fontSize -= html ? 0.3 : 0.25;
-  else if (length <= 18 && rowCount <= 3) fontSize += html ? 0.35 : 0.25;
-
   fontSize = clampNumber(fontSize, min, max);
-  fontSize = fitFontSizeToWidth({
-    ctx,
-    value: name,
-    fontSize,
-    minSize: min,
-    maxWidth: Math.max(1, contentWidth * (html ? 0.9 : 0.98)),
-    weight: 600,
-    unit,
-  });
+  if (autoShrink) {
+    fontSize = fitFontSizeToWidth({
+      ctx,
+      value: name,
+      fontSize,
+      minSize: min,
+      maxWidth: Math.max(1, contentWidth * (html ? 0.9 : 0.98)),
+      weight: 600,
+      unit,
+    });
+  }
 
   const sourceFontSize = getSourceFontSize(fontSize, density);
   const lineHeight = getNameLineHeight(fontSize, density);
@@ -818,7 +822,7 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
   const density = getDensityConfig(settings);
   const printSettings = normalizePrintSettings(settings);
   const direction = getDirection(lang);
-  const { pilgrims, rowCount, rows } = getRoomPrintRows(room, settings);
+  const { rows } = getRoomPrintRows(room, settings);
   const showBedNumbers = printSettings.showBedNumbers;
   const cardHeight = Math.min(measureRoomCard(ctx, room, width, settings), height || Number.POSITIVE_INFINITY);
   const right = x + width - density.cardPadX;
@@ -831,7 +835,6 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
   const topRowHeight = density.writeAreaHeight;
   const rowAreaTop = y + topRowHeight;
   const rowHeight = density.chipMinHeight;
-  const occupiedCount = getOccupiedNameCount(pilgrims);
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(x, y, width, cardHeight);
@@ -949,11 +952,10 @@ const drawRoomCard = (ctx, room, x, y, width, height, labels, lang, settings = {
     const nameMetrics = getAdaptiveNameFontMetrics({
       ctx,
       name: pilgrim.name,
-      rowCount,
-      occupiedCount,
       chipHeight: rowHeight,
       contentWidth: nameContentWidth,
       density,
+      printSettings,
     });
     ctx.font = `600 ${nameMetrics.fontSize}pt ${ROOMING_PRINT_FONT_FAMILY}`;
     const textBlockHeight = nameMetrics.lineHeight;
@@ -1519,13 +1521,14 @@ export const createRoomingPrintHtml = ({
     ? Math.max(...sections.map((section) => section.rooms.length))
     : rooms.length;
   const layout = getFlowLayout(normalizedPrintSettings, layoutRoomCount);
+  const printNameFontSize = clampRoomingNameFontSize(normalizedPrintSettings.roomingNameFontSize);
+  const autoShrinkNames = normalizedPrintSettings.roomingAutoShrinkLongNames !== false;
   const fallbackLogoInitial = escapeHtml((agencyName || "R").trim().slice(0, 1));
   const logoHtml = agencyLogoUrl
     ? `<span class="agency-logo-wrap"><img class="agency-logo" src="${escapeHtml(agencyLogoUrl)}" alt="${escapeHtml(agencyName || "Rukn")}" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex'"/><span class="agency-logo-fallback is-hidden">${fallbackLogoInitial}</span></span>`
     : `<span class="agency-logo-fallback">${fallbackLogoInitial}</span>`;
   const roomCardHtml = (room) => {
-    const { pilgrims, rowCount, rows } = getRoomPrintRows(room, normalizedPrintSettings);
-    const occupiedCount = getOccupiedNameCount(pilgrims);
+    const { rows } = getRoomPrintRows(room, normalizedPrintSettings);
     const showBedNumbers = normalizedPrintSettings.showBedNumbers;
     const badgeText = text(room.badgeText, "");
     const badgeClass = room.badgeReason === "changed-pilgrim-rooming" ? " city" : "";
@@ -1562,12 +1565,11 @@ export const createRoomingPrintHtml = ({
             const nameContentWidth = Math.max(24, contentWidth - sourceWidth - sourceGap);
             const nameMetrics = empty ? null : getAdaptiveNameFontMetrics({
               name: pilgrim.name,
-              rowCount,
-              occupiedCount,
               chipHeight,
               contentWidth: nameContentWidth,
               density,
               unit: "px",
+              printSettings: normalizedPrintSettings,
             });
             const nameStyle = nameMetrics
               ? ` style="--smart-name-font:${nameMetrics.fontSize.toFixed(1)}px;--smart-name-line:${(nameMetrics.lineHeight / nameMetrics.fontSize).toFixed(2)}"`
@@ -1673,10 +1675,10 @@ export const createRoomingPrintHtml = ({
       --item-padding:${density.html.itemPadding};
       --item-gap:${density.html.itemGap};
       --item-min-height:${density.html.itemMinHeight};
-      --name-font:${density.html.nameFont};
+      --name-font:${printNameFontSize}px;
       --name-line:${density.html.nameLine};
       --source-font:${density.html.sourceFont};
-      --name-hard-max:${density.html.nameHardMax || "10px"};
+      --name-hard-max:${printNameFontSize}px;
       --room-header-font:${density.html.headerFont || "8px"};
       --bed-font:${density.html.bedFont || "8px"};
       --bed-number-width:5.2mm;
@@ -1762,13 +1764,15 @@ export const createRoomingPrintHtml = ({
         const sourceWidth = source ? source.getBoundingClientRect().width : 0;
         const available = Math.max(1, lineWidth - sourceWidth - gap);
         let nameSize = parseFloat(getComputedStyle(name).fontSize) || 9;
-        while (nameSize > ${SINGLE_LINE_NAME_MIN_PX} && name.scrollWidth > available + 0.5) {
-          nameSize -= 0.25;
-          name.style.fontSize = nameSize.toFixed(2) + "px";
-        }
-        if (name.scrollWidth > available + 0.5) {
-          const scaled = nameSize * (available / Math.max(1, name.scrollWidth)) * 0.98;
-          name.style.fontSize = Math.max(3.8, scaled).toFixed(2) + "px";
+        if (${autoShrinkNames ? "true" : "false"}) {
+          while (nameSize > ${ROOMING_NAME_FONT_SIZE_MIN} && name.scrollWidth > available + 0.5) {
+            nameSize -= 0.25;
+            name.style.fontSize = nameSize.toFixed(2) + "px";
+          }
+          if (name.scrollWidth > available + 0.5) {
+            const scaled = nameSize * (available / Math.max(1, name.scrollWidth)) * 0.98;
+            name.style.fontSize = Math.max(${ROOMING_NAME_FONT_SIZE_MIN}, scaled).toFixed(2) + "px";
+          }
         }
       });
     };
