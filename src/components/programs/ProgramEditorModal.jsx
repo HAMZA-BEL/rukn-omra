@@ -13,6 +13,7 @@ export default function ProgramEditorModal({
   return (
     <Modal open={open} onClose={onClose} title={title} width={620}>
       <ProgramForm
+        key={program?.id || "new-program"}
         program={program}
         store={store}
         badgesEnabled={badgesEnabled}

@@ -21,7 +21,11 @@ import {
   translateProgramType,
   translateRoomType,
 } from "../../utils/i18nValues";
-import { normalizeProgramType } from "../../utils/programDuplicate";
+import {
+  isDuplicateProgramNameAvailable,
+  normalizeDuplicateProgramName,
+  normalizeProgramType,
+} from "../../utils/programDuplicate";
 import {
   badgePhonesFromProgram,
   getBadgeContactDefaults,
@@ -296,7 +300,7 @@ export default function ProgramForm({
   onCancel,
   badgesEnabled = true,
 }) {
-  const { addProgram, updateProgram } = store;
+  const { addProgram, updateProgram, programs = [] } = store;
   const { t, lang, dir } = useLang();
   const isEdit = !!program;
   const createPackage = React.useCallback((level = "اقتصادي") => ({
@@ -401,7 +405,10 @@ export default function ProgramForm({
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
   }, [levelMenuOpen]);
-  const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const set = k => e => {
+    setForm(f=>({...f,[k]:e.target.value}));
+    setErrors(prev => (prev[k] ? { ...prev, [k]: "" } : prev));
+  };
   const routeCopy = React.useMemo(() => routeLabels(lang, t), [lang, t]);
   const routePreview = React.useMemo(() => buildPosterTravelRoute(form), [form]);
   const routeDraftPreview = React.useMemo(() => buildPosterTravelRoute(routeDraft), [routeDraft]);
@@ -581,9 +588,15 @@ export default function ProgramForm({
 
   const handleSave = () => {
     const nextErrors = {};
-    if (!String(form.name || "").trim() || !String(form.seats || "").trim()) {
+    const cleanName = normalizeDuplicateProgramName(form.name);
+    if (!cleanName || !String(form.seats || "").trim()) {
       alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد");
       return;
+    }
+    if (!isDuplicateProgramNameAvailable(cleanName, programs, { excludeProgramId: program?.id })) {
+      nextErrors.name = lang === "ar"
+        ? "يوجد برنامج آخر بنفس الاسم"
+        : t.programDuplicateNameExists || "يوجد برنامج آخر بنفس الاسم";
     }
     const selectedAirline = getProgramAirline(form);
     if (!selectedAirline?.code) nextErrors.transport = t.transportError || "يرجى اختيار شركة الطيران";
@@ -618,6 +631,7 @@ export default function ProgramForm({
       ...legacyFields,
       ...phoneFields,
       ...routeFields,
+      name: cleanName,
       type: normalizeProgramType(form.type),
       visitOrder: normalizeVisitOrder(form.visitOrder),
       hotelCheckinDay: normalizeHotelCheckinDay(form.hotelCheckinDay),
@@ -648,7 +662,7 @@ export default function ProgramForm({
           </span>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-          <Input label={t.program} value={form.name} onChange={set("name")} required style={{gridColumn:"1/-1"}}/>
+          <Input label={t.program} value={form.name} onChange={set("name")} required error={errors.name} style={{gridColumn:"1/-1"}}/>
           <Select label={t.programType} value={form.type} onChange={set("type")}
             options={programTypeOptions}/>
           <Input

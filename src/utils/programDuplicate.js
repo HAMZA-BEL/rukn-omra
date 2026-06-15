@@ -94,7 +94,11 @@ const getDuplicateProgramRouteFields = (source = {}) => {
   };
 };
 
-export const normalizeDuplicateProgramName = (value) => String(value || "").trim();
+export const normalizeDuplicateProgramName = (value) => String(value || "").trim().replace(/\s+/g, " ");
+
+export const normalizeProgramNameForComparison = (value) => (
+  normalizeDuplicateProgramName(value).toLocaleLowerCase()
+);
 
 export const buildDuplicateProgramName = (program = {}, programs = [], lang = "ar") => {
   const originalName = normalizeDuplicateProgramName(program.name) || (
@@ -111,9 +115,16 @@ export const buildDuplicateProgramName = (program = {}, programs = [], lang = "a
   return `${originalName} - ${suffix} ${Date.now()}`;
 };
 
-export const isDuplicateProgramNameAvailable = (name, programs = []) => {
-  const cleanName = normalizeDuplicateProgramName(name);
-  return Boolean(cleanName) && !(programs || []).some((program) => normalizeDuplicateProgramName(program?.name) === cleanName);
+export const isDuplicateProgramNameAvailable = (name, programs = [], options = {}) => {
+  const cleanName = normalizeProgramNameForComparison(name);
+  const excludedId = options?.excludeProgramId === undefined || options?.excludeProgramId === null
+    ? ""
+    : String(options.excludeProgramId);
+  return Boolean(cleanName) && !(programs || []).some((program) => {
+    if (!program) return false;
+    if (excludedId && String(program.id || "") === excludedId) return false;
+    return normalizeProgramNameForComparison(program.name) === cleanName;
+  });
 };
 
 export const createDuplicateProgramPayload = (program = {}, newName = "") => {
