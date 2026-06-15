@@ -74,6 +74,7 @@ import {
   buildDuplicateProgramName,
   createDuplicateProgramPayload,
   getProgramDepartureYear,
+  getUsedProgramYears,
   isDuplicateProgramNameAvailable,
   normalizeDuplicateProgramName,
 } from "../utils/programDuplicate";
@@ -187,6 +188,80 @@ const PROGRAMS_REALTIME_SUMMARY_REFRESH_DEBOUNCE_MS = 250;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
+const PROGRAMS_FILTERS_STORAGE_VERSION = 1;
+const PROGRAMS_TYPE_FILTER_KEYS = new Set(["all", "umrah", "hajj"]);
+const PROGRAMS_STATUS_FILTER_KEYS = new Set(["all", "cleared", "not_cleared", "full", "not_full"]);
+
+const getProgramsFiltersStorageKey = (agencyId = null) => (
+  `rukn_programs_filters_${String(agencyId || "local")}`
+);
+
+const normalizeProgramsYearFilter = (value, currentYear) => {
+  const text = String(value ?? "").trim();
+  if (text === "all") return "all";
+  if (/^\d{4}$/.test(text)) return text;
+  return String(currentYear);
+};
+
+const normalizeProgramsFilterOption = (value, allowedKeys, fallback = "all") => {
+  const text = String(value ?? "").trim();
+  return allowedKeys.has(text) ? text : fallback;
+};
+
+const getDefaultProgramsFilters = (currentYear) => ({
+  search: "",
+  selectedYear: String(currentYear),
+  programTypeFilter: "all",
+  programStatusFilter: "all",
+});
+
+const normalizeProgramsFilters = (value, currentYear) => {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    search: typeof source.search === "string" ? source.search : "",
+    selectedYear: normalizeProgramsYearFilter(
+      source.selectedYear ?? source.yearFilter ?? source.year,
+      currentYear
+    ),
+    programTypeFilter: normalizeProgramsFilterOption(
+      source.programTypeFilter ?? source.typeFilter ?? source.type,
+      PROGRAMS_TYPE_FILTER_KEYS
+    ),
+    programStatusFilter: normalizeProgramsFilterOption(
+      source.programStatusFilter ?? source.statusFilter ?? source.status,
+      PROGRAMS_STATUS_FILTER_KEYS
+    ),
+  };
+};
+
+const readProgramsFiltersFromStorage = (storageKey, currentYear) => {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return getDefaultProgramsFilters(currentYear);
+  }
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return getDefaultProgramsFilters(currentYear);
+    return normalizeProgramsFilters(JSON.parse(raw), currentYear);
+  } catch (error) {
+    console.warn("[ProgramsPage] Failed to read saved filters", error);
+    return getDefaultProgramsFilters(currentYear);
+  }
+};
+
+const writeProgramsFiltersToStorage = (storageKey, filters, currentYear) => {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: PROGRAMS_FILTERS_STORAGE_VERSION,
+        ...normalizeProgramsFilters(filters, currentYear),
+      })
+    );
+  } catch (error) {
+    console.warn("[ProgramsPage] Failed to save filters", error);
+  }
+};
 
 const getDefaultPosterTitle = (program = {}, lang = "ar") => (
   String(resolvePosterAreaValue("program_name", program, { lang })
@@ -2015,12 +2090,20 @@ export default function ProgramsPage({
   const [bulkPosterShowDates, setBulkPosterShowDates] = React.useState(true);
   const [editing,       setEditing]       = React.useState(null);
   const [activeProgram, setActiveProgram] = React.useState(null);
-  const [search,        setSearch]        = React.useState("");
   const currentYear = React.useMemo(() => new Date().getFullYear(), []);
   const nextYear = currentYear + 1;
-  const [selectedYear, setSelectedYear] = React.useState(String(currentYear));
-  const [programTypeFilter, setProgramTypeFilter] = React.useState("all");
-  const [programStatusFilter, setProgramStatusFilter] = React.useState("all");
+  const programsFiltersStorageKey = React.useMemo(
+    () => getProgramsFiltersStorageKey(store.agencyId),
+    [store.agencyId]
+  );
+  const initialProgramsFilters = React.useMemo(
+    () => readProgramsFiltersFromStorage(programsFiltersStorageKey, currentYear),
+    [programsFiltersStorageKey, currentYear]
+  );
+  const [search,        setSearch]        = React.useState(() => initialProgramsFilters.search);
+  const [selectedYear, setSelectedYear] = React.useState(() => initialProgramsFilters.selectedYear);
+  const [programTypeFilter, setProgramTypeFilter] = React.useState(() => initialProgramsFilters.programTypeFilter);
+  const [programStatusFilter, setProgramStatusFilter] = React.useState(() => initialProgramsFilters.programStatusFilter);
   const [programsPageSize, setProgramsPageSize] = React.useState(PROGRAMS_LIST_DEFAULT_PAGE_SIZE);
   const [programsCurrentPage, setProgramsCurrentPage] = React.useState(1);
   const [programSelectionMode, setProgramSelectionMode] = React.useState(false);
@@ -2051,6 +2134,8 @@ export default function ProgramsPage({
   const programCardRefs = React.useRef(new Map());
   const metricsHydrationRequestedRef = React.useRef(false);
   const programRealtimeSummaryTimerRef = React.useRef(null);
+  const programsFiltersStorageKeyRef = React.useRef(programsFiltersStorageKey);
+  const skipNextProgramsFilterPersistRef = React.useRef(false);
   const serverProgramPageData = store.isSupabaseEnabled && serverProgramPage.status === "ready" ? serverProgramPage.data : null;
   const serverProgramPageReady = Boolean(serverProgramPageData);
   const programMetricsReady = Boolean(serverProgramPageReady) || (clientsReady && paymentsReady);
@@ -2060,6 +2145,42 @@ export default function ProgramsPage({
       window.clearTimeout(programRealtimeSummaryTimerRef.current);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (programsFiltersStorageKeyRef.current === programsFiltersStorageKey) return;
+    programsFiltersStorageKeyRef.current = programsFiltersStorageKey;
+    skipNextProgramsFilterPersistRef.current = true;
+    const savedFilters = readProgramsFiltersFromStorage(programsFiltersStorageKey, currentYear);
+    setSearch(savedFilters.search);
+    setSelectedYear(savedFilters.selectedYear);
+    setProgramTypeFilter(savedFilters.programTypeFilter);
+    setProgramStatusFilter(savedFilters.programStatusFilter);
+    setProgramsCurrentPage(1);
+  }, [programsFiltersStorageKey, currentYear]);
+
+  React.useEffect(() => {
+    if (skipNextProgramsFilterPersistRef.current) {
+      skipNextProgramsFilterPersistRef.current = false;
+      return;
+    }
+    writeProgramsFiltersToStorage(
+      programsFiltersStorageKey,
+      {
+        search,
+        selectedYear,
+        programTypeFilter,
+        programStatusFilter,
+      },
+      currentYear
+    );
+  }, [
+    currentYear,
+    programStatusFilter,
+    programTypeFilter,
+    programsFiltersStorageKey,
+    search,
+    selectedYear,
+  ]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled) return;
@@ -2186,17 +2307,6 @@ export default function ProgramsPage({
     t.programStatusNotFull,
   ]);
 
-  const yearOptions = React.useMemo(() => ([
-    { value: "all", label: allYearsLabel },
-    { value: String(currentYear), label: String(currentYear) },
-    { value: String(nextYear), label: String(nextYear) },
-  ]), [allYearsLabel, currentYear, nextYear]);
-
-  const selectedYearOption = React.useMemo(
-    () => yearOptions.find((option) => option.value === selectedYear) || yearOptions[0],
-    [yearOptions, selectedYear]
-  );
-
   const activePrograms = React.useMemo(() => (
     programs.filter((program) => (
       program
@@ -2205,6 +2315,27 @@ export default function ProgramsPage({
       && String(program.status || "active").toLowerCase() !== "archived"
     ))
   ), [programs]);
+
+  const yearOptions = React.useMemo(() => {
+    const selectedNumericYear = Number(selectedYear);
+    const primaryYears = [currentYear, nextYear];
+    const extraYears = Array.from(new Set([
+      ...getUsedProgramYears(activePrograms),
+      Number.isFinite(selectedNumericYear) ? selectedNumericYear : null,
+    ].filter(Number.isFinite)))
+      .filter((year) => !primaryYears.includes(year))
+      .sort((a, b) => b - a);
+    return [
+      { value: "all", label: allYearsLabel },
+      ...Array.from(new Set([...primaryYears, ...extraYears]))
+        .map((year) => ({ value: String(year), label: String(year) })),
+    ];
+  }, [activePrograms, allYearsLabel, currentYear, nextYear, selectedYear]);
+
+  const selectedYearOption = React.useMemo(
+    () => yearOptions.find((option) => option.value === selectedYear) || yearOptions[0],
+    [yearOptions, selectedYear]
+  );
 
   const activeProgramById = React.useMemo(() => (
     new Map(activePrograms.map((program) => [String(program.id), program]))
