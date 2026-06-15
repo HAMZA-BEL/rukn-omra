@@ -60,7 +60,7 @@ import {
   getProgramStandaloneServiceSalePrice,
 } from "../components/programs/programCosting";
 import { formatCurrency } from "../utils/currency";
-import { getUiLang, trKey, translateActivityDescription } from "../utils/i18nValues";
+import { getUiLang, trKey, translateActivityDescription, translateProgramType } from "../utils/i18nValues";
 import { readSavedInvoices } from "../utils/invoices";
 import {
   PROGRAM_FULLY_CLEARED_ARCHIVE_ACTION,
@@ -71,8 +71,9 @@ import {
   getProgramDepartureDate,
   isProgramArchived,
 } from "../utils/notificationRules";
-import { normalizeHotelCheckinDay } from "../utils/hotelDates";
-import { normalizeRouteStops } from "../utils/programRoutes";
+import { normalizeHotelCheckinDay, normalizeVisitOrder } from "../utils/hotelDates";
+import { normalizeRouteStops, routeStopsToDisplayText } from "../utils/programRoutes";
+import { getProgramAirline } from "../utils/airlines";
 import {
   canUseBadgePhotoStorage,
   getPilgrimPhotoUrl,
@@ -220,6 +221,145 @@ const archivePersistenceErrorMessage = (key) => (
 );
 
 const getPaymentClientId = (payment = {}) => payment.clientId || payment.client_id || "";
+
+const PROGRAM_ACTIVITY_EMPTY_VALUE = "غير محدد";
+const PROGRAM_ACTIVITY_VISIT_ORDER_LABELS = {
+  madinah_first: "المدينة أولاً",
+  makkah_first: "مكة أولاً",
+};
+const PROGRAM_ACTIVITY_HOTEL_CHECKIN_LABELS = {
+  same_day: "نفس يوم الوصول",
+  next_day: "اليوم التالي للوصول",
+};
+
+const compactActivityText = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+
+const getFirstActivityValue = (source = {}, keys = []) => {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value !== undefined && value !== null) return value;
+  }
+  return "";
+};
+
+const getReadableProgramNameForActivity = (...sources) => {
+  for (const source of sources) {
+    const candidates = source && typeof source === "object"
+      ? [source.name, source.title, source.programName, source.program_name]
+      : [source];
+    for (const candidate of candidates) {
+      const text = compactActivityText(candidate);
+      if (text && !isUUID(text)) return text;
+    }
+  }
+  return PROGRAM_ACTIVITY_EMPTY_VALUE;
+};
+
+const getActivityDisplayValue = (value) => {
+  const text = compactActivityText(value);
+  return text || PROGRAM_ACTIVITY_EMPTY_VALUE;
+};
+
+const normalizeActivityComparable = (value) => compactActivityText(value).toLowerCase();
+
+const getActivityNumericValue = (value) => {
+  const text = compactActivityText(value);
+  if (!text) return "";
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? String(numeric) : text;
+};
+
+const getActivityDateValue = (value) => {
+  const text = compactActivityText(value);
+  if (!text) return "";
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  return iso || text;
+};
+
+const getActivityProgramType = (program = {}) => {
+  const value = getFirstActivityValue(program, ["type", "programType", "program_type"]);
+  return compactActivityText(translateProgramType(value, "ar") || value);
+};
+
+const getActivityProgramVisitOrder = (program = {}) => {
+  const value = normalizeVisitOrder(getFirstActivityValue(program, ["visitOrder", "visit_order"]));
+  return PROGRAM_ACTIVITY_VISIT_ORDER_LABELS[value] || value;
+};
+
+const getActivityProgramHotelCheckin = (program = {}) => {
+  const value = normalizeHotelCheckinDay(getFirstActivityValue(program, ["hotelCheckinDay", "hotel_checkin_day"]));
+  return PROGRAM_ACTIVITY_HOTEL_CHECKIN_LABELS[value] || value;
+};
+
+const stripActivityAirlineCode = (value) => (
+  compactActivityText(value).replace(/\s*\(([A-Za-z0-9]{2,3})\)\s*$/, "").trim()
+);
+
+const getActivityProgramAirline = (program = {}) => {
+  const airline = getProgramAirline(program);
+  const airlineName = compactActivityText(airline?.name);
+  if (airlineName && !isUUID(airlineName)) return airlineName;
+  return stripActivityAirlineCode(getFirstActivityValue(program, [
+    "airlineName",
+    "airline_name",
+    "transport",
+    "carrier",
+    "airline",
+    "company",
+  ]));
+};
+
+const getActivityRoutePart = (program = {}, stopKeys = [], textKeys = []) => {
+  const stopsText = routeStopsToDisplayText(normalizeRouteStops(getFirstActivityValue(program, stopKeys)));
+  if (stopsText) return stopsText;
+  return routeStopsToDisplayText(normalizeRouteStops(getFirstActivityValue(program, textKeys)));
+};
+
+const getActivityProgramRoute = (program = {}) => {
+  const customRoute = routeStopsToDisplayText(normalizeRouteStops(
+    getFirstActivityValue(program, ["posterTravelRoute", "poster_travel_route"])
+  ));
+  if (customRoute) return customRoute;
+  const outboundRoute = getActivityRoutePart(
+    program,
+    ["outboundRouteStops", "outbound_route_stops"],
+    ["outboundRouteText", "outbound_route_text"]
+  );
+  const returnRoute = getActivityRoutePart(
+    program,
+    ["returnRouteStops", "return_route_stops"],
+    ["returnRouteText", "return_route_text"]
+  );
+  return [outboundRoute, returnRoute].filter(Boolean).join(" / ");
+};
+
+const PROGRAM_ACTIVITY_DIFF_FIELDS = [
+  { label: "اسم البرنامج", getValue: (program) => getReadableProgramNameForActivity(program) },
+  { label: "نوع البرنامج", getValue: getActivityProgramType },
+  { label: "المدة", getValue: (program) => getActivityNumericValue(program?.duration) },
+  { label: "تاريخ الذهاب", getValue: (program) => getActivityDateValue(program?.departure) },
+  { label: "تاريخ العودة", getValue: (program) => getActivityDateValue(getFirstActivityValue(program, ["returnDate", "return_date"])) },
+  { label: "الدخول للفندق", getValue: getActivityProgramHotelCheckin },
+  { label: "ترتيب الزيارة", getValue: getActivityProgramVisitOrder },
+  { label: "شركة الطيران", getValue: getActivityProgramAirline },
+  { label: "عدد المقاعد", getValue: (program) => getActivityNumericValue(program?.seats) },
+  { label: "مسار الرحلة", getValue: getActivityProgramRoute },
+  { label: "فندق مكة", getValue: (program) => getFirstActivityValue(program, ["hotelMecca", "hotel_mecca"]) },
+  { label: "فندق المدينة", getValue: (program) => getFirstActivityValue(program, ["hotelMadina", "hotel_madina"]) },
+];
+
+const buildProgramUpdateActivityDetails = (previousProgram, nextProgram) => {
+  if (!previousProgram || !nextProgram) return "";
+  return PROGRAM_ACTIVITY_DIFF_FIELDS
+    .map(({ label, getValue }) => {
+      const previousValue = getActivityDisplayValue(getValue(previousProgram));
+      const nextValue = getActivityDisplayValue(getValue(nextProgram));
+      if (normalizeActivityComparable(previousValue) === normalizeActivityComparable(nextValue)) return "";
+      return `تم تغيير ${label} من "${previousValue}" إلى "${nextValue}"`;
+    })
+    .filter(Boolean)
+    .join("، ");
+};
 
 const isActiveProgramForArchiveSuggestion = (program = {}) => (
   program
@@ -3095,7 +3235,11 @@ export function useStore(agencyId, onToast) {
     const nextProgram = currentProgram ? { ...currentProgram, ...data } : { id, ...data };
     setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
     queueProgramArchiveSuggestionCheck(id);
-    logActivity("program_update", translateActivityDescription(`تم تعديل برنامج ${data.name || id}`), "");
+    logActivity(
+      "program_update",
+      translateActivityDescription(`تم تعديل برنامج ${getReadableProgramNameForActivity(nextProgram, currentProgram)}`),
+      buildProgramUpdateActivityDetails(currentProgram, nextProgram)
+    );
     return sync(() => saveProgram(nextProgram, agencyId));
   }, [programs, setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
