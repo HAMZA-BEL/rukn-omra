@@ -1055,10 +1055,32 @@ const getRoomingDraftStorageKey = (programId, city, agencyId = null) => (
 );
 
 const ROOMING_AUTOSAVE_DELAY_MS = 750;
+const ROOMING_LAYOUT_AUTOSAVE_DELAY_MS = 1600;
 const ROOMING_SLOW_MS = 8000;
 const ROOMING_TIMEOUT_MS = 15000;
 const ROOMING_EXPORT_TIMEOUT_MS = 15000;
 const ROOMING_RETRY_COUNT = 1;
+const ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED = "assignmentChanged";
+const ROOMING_SAVE_REASON_LAYOUT_ONLY = "layoutOnly";
+
+const normalizeRoomingSaveReason = (reason) => (
+  reason === ROOMING_SAVE_REASON_LAYOUT_ONLY
+    ? ROOMING_SAVE_REASON_LAYOUT_ONLY
+    : ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED
+);
+
+const mergeRoomingSaveReason = (...reasons) => {
+  const normalizedReasons = reasons.filter(Boolean).map(normalizeRoomingSaveReason);
+  if (!normalizedReasons.length) return ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED;
+  return normalizedReasons.includes(ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED)
+    ? ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED
+    : ROOMING_SAVE_REASON_LAYOUT_ONLY;
+};
+
+const areRoomingPositionsEqual = (first = {}, second = {}) => (
+  Math.abs((Number(first?.x) || 0) - (Number(second?.x) || 0)) < 0.5
+  && Math.abs((Number(first?.y) || 0) - (Number(second?.y) || 0)) < 0.5
+);
 
 const getRoomingPayloadSize = (payload) => {
   try {
@@ -6230,6 +6252,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingSavePendingRef = React.useRef(null);
   const roomingSavePromiseRef = React.useRef(Promise.resolve({ ok: true }));
   const roomingSaveSeqRef = React.useRef(0);
+  const roomingDirtyReasonRef = React.useRef("");
+  const roomingSaveTriggerCountRef = React.useRef(0);
   const dirtyRef = React.useRef(false);
   const draggingClientIdRef = React.useRef(null);
   const roomModalOpenRef = React.useRef(false);
@@ -7133,12 +7157,14 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const createRoomingSaveSnapshot = React.useCallback((notify = true) => {
     const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
     const payload = buildCanvasPayload(city, sanitized.rooms, sanitized.unassigned, sanitized.roomLinks);
+    const reason = normalizeRoomingSaveReason(roomingDirtyReasonRef.current || ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED);
     return {
       agencyId,
       city,
       notify,
       payload,
       programId: program.id,
+      reason,
       revision: roomingRevisionRef.current,
     };
   }, [agencyId, buildCanvasPayload, city, program.id, rooms, roomLinks, roomingEligibleClientIds, unassigned]);
@@ -7152,6 +7178,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       programId: snapshot.programId,
       location: snapshot.city,
       revision: snapshot.revision,
+      reason: normalizeRoomingSaveReason(snapshot.reason),
       payloadSize,
       rooms: snapshot.payload.rooms?.length || 0,
     };
@@ -7160,8 +7187,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       writeCanvasCache(snapshot.city, snapshot.payload);
       writeRoomingDraftToStorage(snapshot.city, snapshot.payload);
       logRoomingDiagnostic("save.start", saveContext);
+      logRoomingDiagnostic("rooming.save.reason", saveContext);
 
       const syncClientsBestEffort = async () => {
+        if (saveContext.reason === ROOMING_SAVE_REASON_LAYOUT_ONLY) {
+          logRoomingDiagnostic("rooming.clientSync.skipped", {
+            ...saveContext,
+            durationMs: Date.now() - startedAt,
+          });
+          return { ok: true, skipped: true };
+        }
         logRoomingDiagnostic("rooming.clientSync.start", saveContext);
         try {
           const clientSync = await runRoomingTimedOperation(
@@ -7276,6 +7311,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         });
         if (roomingRevisionRef.current === snapshot.revision) {
           setDirty(false);
+          roomingDirtyReasonRef.current = "";
           setSavedAt(data?.updatedAt ? new Date(data.updatedAt) : new Date());
           setRoomingSaveStatus("saved");
           clearRoomingDraftFromStorage(snapshot.city);
@@ -7297,6 +7333,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       if (snapshot.payload.updatedAt) roomingLastPayloadUpdatedAtRef.current = snapshot.payload.updatedAt;
       if (roomingRevisionRef.current === snapshot.revision) {
         setDirty(false);
+        roomingDirtyReasonRef.current = "";
         setSavedAt(new Date());
         setRoomingSaveStatus("saved");
         clearRoomingDraftFromStorage(snapshot.city);
@@ -7366,10 +7403,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     writeRoomingDraftToStorage(snapshot.city, snapshot.payload);
 
     const existingPending = roomingSavePendingRef.current;
+    const pendingReason = mergeRoomingSaveReason(existingPending?.reason, snapshot.reason);
+    roomingSaveTriggerCountRef.current += 1;
     roomingSavePendingRef.current = {
       ...snapshot,
       notify: Boolean(notify || existingPending?.notify),
+      reason: pendingReason,
     };
+    logRoomingDiagnostic("rooming.save.queued", {
+      programId: snapshot.programId,
+      location: snapshot.city,
+      revision: snapshot.revision,
+      reason: pendingReason,
+      inFlight: roomingSaveInFlightRef.current,
+      replacedPending: Boolean(existingPending),
+      triggerCount: roomingSaveTriggerCountRef.current,
+    });
 
     if (!roomingSaveInFlightRef.current) setRoomingSaveStatus("saving");
     return processRoomingSaveQueue();
@@ -7423,8 +7472,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     };
   }, [canPersistRoomingRemote]);
 
-  const markDirty = React.useCallback(() => {
+  const markDirty = React.useCallback((reason = ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED) => {
+    const normalizedReason = normalizeRoomingSaveReason(reason);
     roomingRevisionRef.current += 1;
+    roomingDirtyReasonRef.current = roomingDirtyReasonRef.current
+      ? mergeRoomingSaveReason(roomingDirtyReasonRef.current, normalizedReason)
+      : normalizedReason;
     setDirty(true);
     setRoomingSaveStatus("dirty");
   }, []);
@@ -7453,8 +7506,24 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   React.useEffect(() => {
     if (!dirty) return undefined;
-    const timer = window.setTimeout(() => saveCanvas(false), ROOMING_AUTOSAVE_DELAY_MS);
-    return () => window.clearTimeout(timer);
+    const reason = normalizeRoomingSaveReason(roomingDirtyReasonRef.current || ROOMING_SAVE_REASON_ASSIGNMENT_CHANGED);
+    const delayMs = reason === ROOMING_SAVE_REASON_LAYOUT_ONLY
+      ? ROOMING_LAYOUT_AUTOSAVE_DELAY_MS
+      : ROOMING_AUTOSAVE_DELAY_MS;
+    let timer = null;
+    const scheduleAutosave = (nextDelayMs) => {
+      timer = window.setTimeout(() => {
+        if (roomDragActiveRef.current) {
+          scheduleAutosave(ROOMING_LAYOUT_AUTOSAVE_DELAY_MS);
+          return;
+        }
+        saveCanvas(false);
+      }, nextDelayMs);
+    };
+    scheduleAutosave(delayMs);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+    };
   }, [dirty, rooms, roomLinks, unassigned, saveCanvas]);
 
   const switchCity = React.useCallback((nextCity) => {
@@ -8795,7 +8864,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const autoArrangeRooms = React.useCallback(() => {
     if (rooms.length && !window.confirm(t.roomingAutoArrangeConfirm || "سيتم إعادة ترتيب الغرف تلقائيًا. هل تريد المتابعة؟")) return;
     setRooms((prev) => autoLayoutRoomNodes(prev));
-    markDirty();
+    markDirty(ROOMING_SAVE_REASON_LAYOUT_ONLY);
     window.requestAnimationFrame(() => flowRef.current?.fitView?.({ padding: 0.18, duration: 400 }));
   }, [rooms.length, markDirty]);
 
@@ -9018,11 +9087,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (node.data?.room?.locked) return;
     roomDragActiveRef.current = true;
     dragStartPositionRef.current.set(node.id, { ...node.position });
+    logRoomingDiagnostic("rooming.drag.start", {
+      programId: program.id,
+      location: city,
+      roomId: node.id,
+      x: Number(node.position?.x) || 0,
+      y: Number(node.position?.y) || 0,
+    });
     const nodes = allCollisionNodes;
     const isValidStart = !hasRoomingNodeCollision(node, nodes, node.position);
     if (isValidStart) lastValidPositionRef.current.set(node.id, { ...node.position });
     setFlowNodeDragInvalid(node.id, false);
-  }, [allCollisionNodes, setFlowNodeDragInvalid]);
+  }, [allCollisionNodes, city, program.id, setFlowNodeDragInvalid]);
 
   const onNodeDrag = React.useCallback((_event, node) => {
     const nodes = allCollisionNodes.map((item) => (
@@ -9046,20 +9122,40 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const nextPosition = invalid
       ? findNearestFreeRoomingPosition(currentNode, nodes, fallbackPosition)
       : node.position;
+    const startPosition = dragStartPositionRef.current.get(node.id) || node.position;
+    const positionChanged = !areRoomingPositionsEqual(startPosition, nextPosition);
     roomDragActiveRef.current = false;
     dragInvalidRef.current.set(node.id, false);
     setFlowNodes((current) => current.map((item) => item.id === node.id
       ? { ...item, position: nextPosition, data: { ...item.data, dragInvalid: false } }
       : item));
-    setRooms((prev) => prev.map((room) => room.id === node.id ? {
-      ...room,
-      x: nextPosition.x,
-      y: nextPosition.y,
-    } : room));
+    if (positionChanged) {
+      setRooms((prev) => prev.map((room) => room.id === node.id ? {
+        ...room,
+        x: nextPosition.x,
+        y: nextPosition.y,
+      } : room));
+    }
     lastValidPositionRef.current.set(node.id, { ...nextPosition });
-    markDirty();
+    dragStartPositionRef.current.delete(node.id);
+    logRoomingDiagnostic("rooming.drag.end", {
+      programId: program.id,
+      location: city,
+      roomId: node.id,
+      changed: positionChanged,
+      invalid,
+      from: {
+        x: Number(startPosition?.x) || 0,
+        y: Number(startPosition?.y) || 0,
+      },
+      to: {
+        x: Number(nextPosition?.x) || 0,
+        y: Number(nextPosition?.y) || 0,
+      },
+    });
+    if (positionChanged) markDirty(ROOMING_SAVE_REASON_LAYOUT_ONLY);
     if (invalid) onToast?.(t.roomingOverlapFixed || "تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
-  }, [allCollisionNodes, markDirty, onToast, setFlowNodes, t]);
+  }, [allCollisionNodes, city, markDirty, onToast, program.id, setFlowNodes, t]);
 
   const openCanvasContextMenu = React.useCallback((event) => {
     event.preventDefault();
