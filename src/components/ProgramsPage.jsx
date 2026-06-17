@@ -1050,6 +1050,102 @@ const getRoomingStorageKey = (programId, city, agencyId = null) => (
 );
 
 const getLegacyRoomingStorageKey = (programId, city) => `rukn_rooming_sheet_${programId}_${city}`;
+const getRoomingDraftStorageKey = (programId, city, agencyId = null) => (
+  `rukn_rooming_draft_${agencyId || "local"}_${programId}_${city}`
+);
+
+const ROOMING_AUTOSAVE_DELAY_MS = 750;
+const ROOMING_SLOW_MS = 8000;
+const ROOMING_TIMEOUT_MS = 15000;
+const ROOMING_EXPORT_TIMEOUT_MS = 15000;
+const ROOMING_RETRY_COUNT = 1;
+
+const getRoomingPayloadSize = (payload) => {
+  try {
+    return JSON.stringify(payload || {}).length;
+  } catch {
+    return 0;
+  }
+};
+
+const waitRoomingDelay = (delayMs) => new Promise((resolve) => {
+  const setTimer = typeof window !== "undefined" ? window.setTimeout : setTimeout;
+  setTimer(resolve, delayMs);
+});
+
+const createRoomingTimeoutError = (action) => {
+  const error = new Error(`${action || "rooming"} timed out`);
+  error.code = "ROOMING_TIMEOUT";
+  return error;
+};
+
+const runRoomingTimedOperation = (operation, {
+  action = "rooming",
+  timeoutMs = ROOMING_TIMEOUT_MS,
+  slowMs = ROOMING_SLOW_MS,
+  onSlow,
+} = {}) => {
+  let slowTimer = null;
+  let timeoutTimer = null;
+  let settled = false;
+  const setTimer = typeof window !== "undefined" ? window.setTimeout : setTimeout;
+  const clearTimer = typeof window !== "undefined" ? window.clearTimeout : clearTimeout;
+
+  return new Promise((resolve, reject) => {
+    slowTimer = setTimer(() => {
+      if (!settled) onSlow?.();
+    }, slowMs);
+    timeoutTimer = setTimer(() => {
+      if (settled) return;
+      settled = true;
+      clearTimer(slowTimer);
+      reject(createRoomingTimeoutError(action));
+    }, timeoutMs);
+
+    Promise.resolve()
+      .then(operation)
+      .then((result) => {
+        if (settled) return;
+        settled = true;
+        clearTimer(slowTimer);
+        clearTimer(timeoutTimer);
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        clearTimer(slowTimer);
+        clearTimer(timeoutTimer);
+        reject(error);
+      });
+  });
+};
+
+const retryRoomingOperation = async (operation, {
+  retries = ROOMING_RETRY_COUNT,
+  delayMs = 700,
+  onRetry,
+  shouldRetry = () => true,
+} = {}) => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !shouldRetry(error)) break;
+      onRetry?.(error, attempt + 1);
+      await waitRoomingDelay(delayMs);
+    }
+  }
+  throw lastError;
+};
+
+const logRoomingDiagnostic = (action, details = {}) => {
+  try {
+    console.info("[rooming]", { action, ...details });
+  } catch {}
+};
 
 const ROOMING_PRINT_DEFAULT_SETTINGS = {
   showRegistrationSource: true,
@@ -1149,6 +1245,7 @@ const normalizeRoomingCanvasState = (payload = {}, clients = []) => {
       unassigned: Array.isArray(parsed.unassigned) ? parsed.unassigned : [],
       roomLinks: normalizeRoomingLinks(Array.isArray(parsed.roomLinks) ? parsed.roomLinks : parsed.meta?.roomLinks, rooms),
       version: Number(parsed.version || parsed.canvasVersion || 4),
+      updatedAt: parsed.updatedAt || parsed.meta?.payloadUpdatedAt || "",
     };
   }
   const legacyRooms = Object.values(parsed?.meta?.rooms || {});
@@ -1167,6 +1264,7 @@ const normalizeRoomingCanvasState = (payload = {}, clients = []) => {
       .map((client) => ({ clientId: client.id, reason: "" })),
     roomLinks: normalizeRoomingLinks(parsed?.meta?.roomLinks, rooms),
     version: 4,
+    updatedAt: parsed?.meta?.payloadUpdatedAt || "",
   };
 };
 
@@ -1201,6 +1299,7 @@ const sanitizeRoomingStateForEligibleClients = (state = {}, eligibleClientIds = 
     unassigned,
     roomLinks,
     version: Number(state.version || 4),
+    updatedAt: state.updatedAt || "",
     removedCount,
   };
 };
@@ -6094,6 +6193,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const [roomingLoadConfirmed, setRoomingLoadConfirmed] = React.useState(false);
   const [roomingLoadConfirmedKey, setRoomingLoadConfirmedKey] = React.useState("");
   const [roomingSaveStatus, setRoomingSaveStatus] = React.useState("idle");
+  const [roomingLoadRetryNonce, setRoomingLoadRetryNonce] = React.useState(0);
+  const [roomingDraftAvailable, setRoomingDraftAvailable] = React.useState(false);
+  const [roomingExportStatus, setRoomingExportStatus] = React.useState("");
   const [roomingCopyBusy, setRoomingCopyBusy] = React.useState(false);
   const [roomingCopyModal, setRoomingCopyModal] = React.useState({
     open: false,
@@ -6122,7 +6224,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingRealtimePendingRef = React.useRef(false);
   const roomingRealtimeSeqRef = React.useRef(0);
   const roomingLastRemoteUpdatedAtRef = React.useRef("");
+  const roomingLastPayloadUpdatedAtRef = React.useRef("");
   const scheduleRoomingRealtimeRefetchRef = React.useRef(null);
+  const roomingSaveInFlightRef = React.useRef(false);
+  const roomingSavePendingRef = React.useRef(null);
+  const roomingSavePromiseRef = React.useRef(Promise.resolve({ ok: true }));
+  const roomingSaveSeqRef = React.useRef(0);
   const dirtyRef = React.useRef(false);
   const draggingClientIdRef = React.useRef(null);
   const roomModalOpenRef = React.useRef(false);
@@ -6339,8 +6446,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     [agencyId, city, program?.id]
   );
   const hasRoomingLoaded = roomingLoadConfirmed && roomingLoadConfirmedKey === roomingLoadKey;
-  const isRoomingLoading = !hasRoomingLoaded || roomingLoadStatus === "idle" || roomingLoadStatus === "loading";
-  const canShowGenerateRooms = hasRoomingLoaded && !rooms.length && !dirty && roomingSaveStatus !== "saving";
+  const isRoomingLoading = roomingLoadStatus === "initialLoading" || roomingLoadStatus === "slowLoading";
+  const isRoomingSaving = roomingSaveStatus === "saving" || roomingSaveStatus === "slowSaving";
+  const canShowGenerateRooms = hasRoomingLoaded && !rooms.length && !dirty && !isRoomingSaving;
   const roomingGenerateBlockedMessage = t.roomingGenerateBlockedExisting || (
     lang === "fr"
       ? "Des chambres existent déjà, impossible de générer de nouvelles chambres sur l’hébergement actuel"
@@ -6512,16 +6620,72 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     return { rooms: [], unassigned: [], roomLinks: [], version: 4 };
   }, [agencyId, roomingEligibleClients, program.id]);
 
+  const readRoomingDraftFromStorage = React.useCallback((targetCity) => {
+    try {
+      const raw = localStorage.getItem(getRoomingDraftStorageKey(program.id, targetCity, agencyId));
+      if (!raw) return null;
+      return normalizeRoomingCanvasState(JSON.parse(raw), roomingEligibleClients);
+    } catch (error) {
+      console.warn("[rooming] local draft read failed", error);
+      return null;
+    }
+  }, [agencyId, program.id, roomingEligibleClients]);
+
+  const hasRoomingDraftInStorage = React.useCallback((targetCity) => {
+    try {
+      return Boolean(localStorage.getItem(getRoomingDraftStorageKey(program.id, targetCity, agencyId)));
+    } catch {
+      return false;
+    }
+  }, [agencyId, program.id]);
+
+  const writeRoomingDraftToStorage = React.useCallback((targetCity, payload) => {
+    try {
+      localStorage.setItem(
+        getRoomingDraftStorageKey(program.id, targetCity, agencyId),
+        JSON.stringify(payload)
+      );
+      if (targetCity === city) setRoomingDraftAvailable(true);
+    } catch (error) {
+      console.warn("[rooming] local draft write failed", error);
+    }
+  }, [agencyId, city, program.id]);
+
+  const clearRoomingDraftFromStorage = React.useCallback((targetCity) => {
+    try {
+      localStorage.removeItem(getRoomingDraftStorageKey(program.id, targetCity, agencyId));
+      if (targetCity === city) setRoomingDraftAvailable(false);
+    } catch (error) {
+      console.warn("[rooming] local draft clear failed", error);
+    }
+  }, [agencyId, city, program.id]);
+
+  React.useEffect(() => {
+    setRoomingDraftAvailable(hasRoomingDraftInStorage(city));
+  }, [city, hasRoomingDraftInStorage]);
+
   const loadRoomingStateForCopy = React.useCallback(async (targetCity) => {
     if (canPersistRoomingRemote) {
-      const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, targetCity);
-      if (error) {
+      try {
+        const { data } = await retryRoomingOperation(
+          async () => {
+            const result = await runRoomingTimedOperation(
+              () => db.roomingAssignments.fetch(agencyId, program.id, targetCity),
+              { action: "rooming.copyLoad" }
+            );
+            if (result?.error) throw result.error;
+            return result;
+          },
+          { shouldRetry: (loadError) => loadError?.code !== "ROOMING_TIMEOUT" }
+        );
+        if (data) {
+          const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
+          const payload = buildCanvasPayload(targetCity, loaded.rooms, loaded.unassigned, loaded.roomLinks);
+          writeCanvasCache(targetCity, payload);
+          return sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
+        }
+      } catch (error) {
         console.error("[rooming] copy source load failed", error);
-      } else if (data) {
-        const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
-        const payload = buildCanvasPayload(targetCity, loaded.rooms, loaded.unassigned, loaded.roomLinks);
-        writeCanvasCache(targetCity, payload);
-        return sanitizeRoomingStateForEligibleClients(loaded, roomingEligibleClientIds);
       }
     }
     return sanitizeRoomingStateForEligibleClients(readCanvasStateFromStorage(targetCity), roomingEligibleClientIds);
@@ -6564,6 +6728,10 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const sourceUpdatedAtMs = Date.parse(sourceUpdatedAt || "");
     if (Number.isFinite(sourceUpdatedAtMs) && sourceUpdatedAtMs > 0) {
       roomingLastRemoteUpdatedAtRef.current = sourceUpdatedAt;
+    }
+    const payloadUpdatedAtMs = Date.parse(sanitized.updatedAt || loaded?.updatedAt || "");
+    if (Number.isFinite(payloadUpdatedAtMs) && payloadUpdatedAtMs > 0) {
+      roomingLastPayloadUpdatedAtRef.current = sanitized.updatedAt || loaded.updatedAt;
     }
     setRooms(sanitized.rooms);
     setUnassigned(sanitized.unassigned);
@@ -6608,6 +6776,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     let active = true;
     const loadSeq = roomingLoadSeqRef.current + 1;
     roomingLoadSeqRef.current = loadSeq;
+    const startedAt = Date.now();
 
     const applyLoadedState = (loaded, sourceUpdatedAt = null) => {
       if (!active || roomingLoadSeqRef.current !== loadSeq) return;
@@ -6615,51 +6784,144 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     };
 
     const loadRooming = async () => {
+      const loadContext = {
+        programId: program.id,
+        location: city,
+        agencyScoped: Boolean(agencyId),
+      };
+      const localDraft = readRoomingDraftFromStorage(city);
+      setRoomingDraftAvailable(Boolean(localDraft));
+
       if (!canPersistRoomingRemote) {
-        applyLoadedState(readCanvasStateFromStorage(city));
-        setRoomingLoadStatus("local");
+        applyLoadedState(localDraft || readCanvasStateFromStorage(city));
+        if (localDraft) {
+          setDirty(true);
+          setRoomingSaveStatus("dirty");
+        }
+        setRoomingLoadStatus("loaded");
         setRoomingLoadConfirmed(true);
         setRoomingLoadConfirmedKey(roomingLoadKey);
+        logRoomingDiagnostic("load.local", {
+          ...loadContext,
+          durationMs: Date.now() - startedAt,
+          source: localDraft ? "draft" : "cache",
+        });
         return;
       }
 
       setRoomingLoadConfirmed(false);
       setRoomingLoadConfirmedKey("");
-      setRoomingLoadStatus("loading");
-      const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, city);
-      if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+      setRoomingLoadStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "initialLoading");
 
-      if (error) {
-        console.error("[rooming] Supabase load failed", error);
-        onToast?.(t.roomingLoadFailed || "تعذر تحميل التسكين. سيتم استخدام النسخة المحلية إن وجدت.", "error");
-        applyLoadedState(readCanvasStateFromStorage(city));
-        setRoomingLoadStatus("local");
-        setRoomingLoadConfirmed(false);
-        setRoomingLoadConfirmedKey("");
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        applyLoadedState(localDraft || readCanvasStateFromStorage(city));
+        if (localDraft) {
+          setDirty(true);
+          setRoomingSaveStatus("offline");
+        }
+        setRoomingLoadConfirmed(Boolean(localDraft));
+        setRoomingLoadConfirmedKey(localDraft ? roomingLoadKey : "");
+        logRoomingDiagnostic("load.offline", {
+          ...loadContext,
+          durationMs: Date.now() - startedAt,
+          source: localDraft ? "draft" : "cache",
+        });
         return;
       }
 
-      if (data) {
-        const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
-        writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
-        applyLoadedState(loaded, data.updatedAt);
-        setRoomingLoadStatus("remote");
+      try {
+        const { data } = await retryRoomingOperation(async (attempt) => {
+          const result = await runRoomingTimedOperation(
+            () => db.roomingAssignments.fetch(agencyId, program.id, city),
+            {
+              action: "rooming.load",
+              onSlow: () => {
+                if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+                setRoomingLoadStatus("slowLoading");
+                logRoomingDiagnostic("load.slow", {
+                  ...loadContext,
+                  attempt: attempt + 1,
+                  durationMs: Date.now() - startedAt,
+                });
+              },
+            }
+          );
+          if (result?.error) throw result.error;
+          return result;
+        }, {
+          shouldRetry: (error) => error?.code !== "ROOMING_TIMEOUT",
+          onRetry: (error, attempt) => {
+            logRoomingDiagnostic("load.retry", {
+              ...loadContext,
+              attempt,
+              durationMs: Date.now() - startedAt,
+              error: error?.code || error?.message || "unknown",
+            });
+          },
+        });
+        if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+
+        if (data) {
+          const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
+          writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
+          applyLoadedState(localDraft || loaded, data.updatedAt);
+          if (localDraft) {
+            setDirty(true);
+            setRoomingSaveStatus("dirty");
+          }
+          setRoomingLoadStatus("loaded");
+          setRoomingLoadConfirmed(true);
+          setRoomingLoadConfirmedKey(roomingLoadKey);
+          logRoomingDiagnostic("load.success", {
+            ...loadContext,
+            durationMs: Date.now() - startedAt,
+            source: localDraft ? "draft" : "remote",
+            rooms: (localDraft || loaded).rooms?.length || 0,
+          });
+          return;
+        }
+
+        applyLoadedState(localDraft || readCanvasStateFromStorage(city));
+        if (localDraft) {
+          setDirty(true);
+          setRoomingSaveStatus("dirty");
+        }
+        setRoomingLoadStatus("loaded");
         setRoomingLoadConfirmed(true);
         setRoomingLoadConfirmedKey(roomingLoadKey);
+        logRoomingDiagnostic("load.emptyRemote", {
+          ...loadContext,
+          durationMs: Date.now() - startedAt,
+          source: localDraft ? "draft" : "cache",
+        });
         return;
+      } catch (error) {
+        if (!active || roomingLoadSeqRef.current !== loadSeq) return;
+        console.error("[rooming] Supabase load failed", error);
+        applyLoadedState(localDraft || readCanvasStateFromStorage(city));
+        if (localDraft) {
+          setDirty(true);
+          setRoomingSaveStatus("dirty");
+        }
+        setRoomingLoadStatus("loadFailed");
+        setRoomingLoadConfirmed(Boolean(localDraft));
+        setRoomingLoadConfirmedKey(localDraft ? roomingLoadKey : "");
+        setRoomingDraftAvailable(Boolean(localDraft));
+        onToast?.(t.roomingLoadFailed || "تعذر تحميل التسكين. يمكنك إعادة المحاولة أو متابعة النسخة المحلية إن وجدت.", "error");
+        logRoomingDiagnostic("load.failed", {
+          ...loadContext,
+          durationMs: Date.now() - startedAt,
+          source: localDraft ? "draft" : "cache",
+          error: error?.code || error?.message || "unknown",
+        });
       }
-
-      applyLoadedState(readCanvasStateFromStorage(city));
-      setRoomingLoadStatus("local");
-      setRoomingLoadConfirmed(true);
-      setRoomingLoadConfirmedKey(roomingLoadKey);
     };
 
     loadRooming();
     return () => {
       active = false;
     };
-  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, roomingEligibleClients, roomingLoadKey, t.roomingLoadFailed, writeCanvasCache]);
+  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, readRoomingDraftFromStorage, roomingEligibleClients, roomingLoadKey, roomingLoadRetryNonce, t.roomingLoadFailed, writeCanvasCache]);
 
   const isRoomingRealtimeUnsafe = React.useCallback(() => (
     dirtyRef.current
@@ -6674,8 +6936,17 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (!canPersistRoomingRemote) return;
     const requestSeq = roomingRealtimeSeqRef.current + 1;
     roomingRealtimeSeqRef.current = requestSeq;
-    const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, city);
+    let result = { data: null, error: null };
+    try {
+      result = await runRoomingTimedOperation(
+        () => db.roomingAssignments.fetch(agencyId, program.id, city),
+        { action: "rooming.realtimeLoad" }
+      );
+    } catch (error) {
+      result = { data: null, error };
+    }
     if (roomingRealtimeSeqRef.current !== requestSeq) return;
+    const { data, error } = result;
     if (error) {
       console.error("[rooming] realtime refetch failed", error);
       return;
@@ -6683,6 +6954,23 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     if (!data) return;
     const remoteUpdatedAtMs = Date.parse(data.updatedAt || "");
     const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
+    const remotePayloadUpdatedAtMs = Date.parse(data.meta?.payloadUpdatedAt || "");
+    const lastPayloadUpdatedAtMs = Date.parse(roomingLastPayloadUpdatedAtRef.current || "");
+    if (
+      Number.isFinite(remotePayloadUpdatedAtMs)
+      && remotePayloadUpdatedAtMs > 0
+      && Number.isFinite(lastPayloadUpdatedAtMs)
+      && lastPayloadUpdatedAtMs > 0
+      && remotePayloadUpdatedAtMs < lastPayloadUpdatedAtMs
+    ) {
+      logRoomingDiagnostic("realtime.ignoredStalePayload", {
+        programId: program.id,
+        location: city,
+        remotePayloadUpdatedAt: data.meta?.payloadUpdatedAt,
+        lastPayloadUpdatedAt: roomingLastPayloadUpdatedAtRef.current,
+      });
+      return;
+    }
     if (
       Number.isFinite(remoteUpdatedAtMs)
       && remoteUpdatedAtMs > 0
@@ -6695,7 +6983,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
     writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
     applyLoadedRoomingState(loaded, data.updatedAt, { resetInteraction: false });
-    setRoomingLoadStatus("remote");
+    setRoomingLoadStatus("loaded");
     setRoomingLoadConfirmed(true);
     setRoomingLoadConfirmedKey(roomingLoadKey);
   }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, program.id, roomingEligibleClients, roomingLoadKey, writeCanvasCache]);
@@ -6725,6 +7013,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   React.useEffect(() => {
     roomingRealtimePendingRef.current = false;
     roomingLastRemoteUpdatedAtRef.current = "";
+    roomingLastPayloadUpdatedAtRef.current = "";
     roomingRealtimeSeqRef.current += 1;
     if (roomingRealtimeTimerRef.current) {
       window.clearTimeout(roomingRealtimeTimerRef.current);
@@ -6841,69 +7130,312 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     };
   }, [exitRoomingWorkspace, fullWorkspace, pendingDrop, pickerOpen, roomModal.open, roomingCopyModal.open, roomingPrintSettingsOpen]);
 
-  const saveCanvas = React.useCallback(async (notify = true) => {
-    const revision = roomingRevisionRef.current;
+  const createRoomingSaveSnapshot = React.useCallback((notify = true) => {
     const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
     const payload = buildCanvasPayload(city, sanitized.rooms, sanitized.unassigned, sanitized.roomLinks);
+    return {
+      agencyId,
+      city,
+      notify,
+      payload,
+      programId: program.id,
+      revision: roomingRevisionRef.current,
+    };
+  }, [agencyId, buildCanvasPayload, city, program.id, rooms, roomLinks, roomingEligibleClientIds, unassigned]);
+
+  const persistRoomingSaveSnapshot = React.useCallback(async (snapshot) => {
+    const saveSeq = roomingSaveSeqRef.current + 1;
+    roomingSaveSeqRef.current = saveSeq;
+    const startedAt = Date.now();
+    const payloadSize = getRoomingPayloadSize(snapshot.payload);
+    const saveContext = {
+      programId: snapshot.programId,
+      location: snapshot.city,
+      revision: snapshot.revision,
+      payloadSize,
+      rooms: snapshot.payload.rooms?.length || 0,
+    };
+
     try {
-      writeCanvasCache(city, payload);
+      writeCanvasCache(snapshot.city, snapshot.payload);
+      writeRoomingDraftToStorage(snapshot.city, snapshot.payload);
+      logRoomingDiagnostic("save.start", saveContext);
+
+      const syncClientsBestEffort = async () => {
+        logRoomingDiagnostic("rooming.clientSync.start", saveContext);
+        try {
+          const clientSync = await runRoomingTimedOperation(
+            () => syncRoomingClientsFromRooms(snapshot.payload.rooms),
+            {
+              action: "rooming.clientSync",
+              onSlow: () => {
+                logRoomingDiagnostic("rooming.clientSync.warning", {
+                  ...saveContext,
+                  durationMs: Date.now() - startedAt,
+                  error: "slow",
+                });
+              },
+            }
+          );
+          if (clientSync?.error) {
+            console.warn("[rooming] client field sync failed", clientSync.error);
+            logRoomingDiagnostic("rooming.clientSync.warning", {
+              ...saveContext,
+              durationMs: Date.now() - startedAt,
+              error: clientSync.error?.code || clientSync.error?.message || "unknown",
+            });
+            if (snapshot.notify) onToast?.(roomingClientSyncWarning, "warning");
+            return { ok: false, error: clientSync.error };
+          }
+          logRoomingDiagnostic("rooming.clientSync.success", {
+            ...saveContext,
+            durationMs: Date.now() - startedAt,
+            updatedCount: clientSync?.updatedCount || 0,
+            skippedCount: clientSync?.skippedCount || 0,
+          });
+          return { ok: true };
+        } catch (syncError) {
+          console.warn("[rooming] client field sync failed", syncError);
+          logRoomingDiagnostic("rooming.clientSync.warning", {
+            ...saveContext,
+            durationMs: Date.now() - startedAt,
+            error: syncError?.code || syncError?.message || "unknown",
+          });
+          if (snapshot.notify) onToast?.(roomingClientSyncWarning, "warning");
+          return { ok: false, error: syncError };
+        }
+      };
 
       if (canPersistRoomingRemote) {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          setRoomingSaveStatus("offline");
+          setDirty(true);
+          logRoomingDiagnostic("save.offline", {
+            ...saveContext,
+            durationMs: Date.now() - startedAt,
+          });
+          if (snapshot.notify) {
+            onToast?.(
+              t.roomingSaveOffline || (lang === "fr" ? "Hors ligne. Le brouillon local est conservé." : lang === "en" ? "Offline. The local draft is kept." : "أنت غير متصل. تم الاحتفاظ بالمسودة المحلية."),
+              "warning"
+            );
+          }
+          return { ok: false, offline: true };
+        }
+
         setRoomingSaveStatus("saving");
-        const { data, error } = await db.roomingAssignments.upsert({
-          programId: program.id,
-          location: city,
-          rooms: payload.rooms,
-          unassigned: payload.unassigned,
-          version: payload.version,
-          meta: { kind: payload.kind, city, roomLinks: payload.roomLinks },
-        }, agencyId);
-        if (error) throw error;
+        logRoomingDiagnostic("rooming.assignmentSave.start", saveContext);
+        const data = await retryRoomingOperation(async (attempt) => {
+          const result = await runRoomingTimedOperation(
+            () => db.roomingAssignments.upsert({
+              programId: snapshot.programId,
+              location: snapshot.city,
+              rooms: snapshot.payload.rooms,
+              unassigned: snapshot.payload.unassigned,
+              version: snapshot.payload.version,
+              meta: {
+                kind: snapshot.payload.kind,
+                city: snapshot.city,
+                roomLinks: snapshot.payload.roomLinks,
+                payloadUpdatedAt: snapshot.payload.updatedAt,
+                roomingRevision: snapshot.revision,
+              },
+            }, snapshot.agencyId),
+            {
+              action: "rooming.assignmentSave",
+              onSlow: () => {
+                if (roomingSaveSeqRef.current !== saveSeq) return;
+                setRoomingSaveStatus("slowSaving");
+                logRoomingDiagnostic("rooming.assignmentSave.warning", {
+                  ...saveContext,
+                  attempt: attempt + 1,
+                  durationMs: Date.now() - startedAt,
+                  error: "slow",
+                });
+              },
+            }
+          );
+          if (result?.error) throw result.error;
+          return result?.data || null;
+        }, {
+          shouldRetry: (error) => error?.code !== "ROOMING_TIMEOUT",
+          onRetry: (error, attempt) => {
+            logRoomingDiagnostic("save.retry", {
+              ...saveContext,
+              attempt,
+              durationMs: Date.now() - startedAt,
+              error: error?.code || error?.message || "unknown",
+            });
+          },
+        });
         if (data?.updatedAt) roomingLastRemoteUpdatedAtRef.current = data.updatedAt;
-        const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
-        if (roomingRevisionRef.current === revision) {
+        if (snapshot.payload.updatedAt) roomingLastPayloadUpdatedAtRef.current = snapshot.payload.updatedAt;
+        logRoomingDiagnostic("rooming.assignmentSave.success", {
+          ...saveContext,
+          durationMs: Date.now() - startedAt,
+        });
+        if (roomingRevisionRef.current === snapshot.revision) {
           setDirty(false);
           setSavedAt(data?.updatedAt ? new Date(data.updatedAt) : new Date());
           setRoomingSaveStatus("saved");
+          clearRoomingDraftFromStorage(snapshot.city);
+        } else {
+          setDirty(true);
+          setRoomingSaveStatus(roomingSavePendingRef.current ? "saving" : "dirty");
         }
-        if (clientSync?.error) {
-          console.error("[rooming] client field sync failed", clientSync.error);
-          if (notify) onToast?.(roomingClientSyncWarning, "warning");
-        } else if (notify) {
+        syncClientsBestEffort();
+        if (snapshot.notify) {
           onToast?.(t.roomingSaved || "تم حفظ التسكين", "success");
         }
-        return;
+        logRoomingDiagnostic("save.success", {
+          ...saveContext,
+          durationMs: Date.now() - startedAt,
+        });
+        return { ok: true };
       }
 
-      const clientSync = await syncRoomingClientsFromRooms(payload.rooms);
-      if (roomingRevisionRef.current === revision) {
+      if (snapshot.payload.updatedAt) roomingLastPayloadUpdatedAtRef.current = snapshot.payload.updatedAt;
+      if (roomingRevisionRef.current === snapshot.revision) {
         setDirty(false);
         setSavedAt(new Date());
         setRoomingSaveStatus("saved");
+        clearRoomingDraftFromStorage(snapshot.city);
+      } else {
+        setDirty(true);
+        setRoomingSaveStatus(roomingSavePendingRef.current ? "saving" : "dirty");
       }
-      if (clientSync?.error) {
-        console.error("[rooming] client field sync failed", clientSync.error);
-        if (notify) onToast?.(roomingClientSyncWarning, "warning");
-      } else if (notify) {
+      syncClientsBestEffort();
+      if (snapshot.notify) {
         onToast?.(t.roomingSavedLocal || "تم حفظ مصمم التسكين محليًا", "success");
       }
+      logRoomingDiagnostic("save.localSuccess", {
+        ...saveContext,
+        durationMs: Date.now() - startedAt,
+      });
+      return { ok: true };
     } catch (error) {
       console.error("[rooming] save failed", error);
-      setRoomingSaveStatus("error");
-      if (notify || canPersistRoomingRemote) {
+      logRoomingDiagnostic("rooming.assignmentSave.failed", {
+        ...saveContext,
+        durationMs: Date.now() - startedAt,
+        error: error?.code || error?.message || "unknown",
+      });
+      setDirty(true);
+      setRoomingSaveStatus(typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "saveFailed");
+      writeCanvasCache(snapshot.city, snapshot.payload);
+      writeRoomingDraftToStorage(snapshot.city, snapshot.payload);
+      logRoomingDiagnostic("save.failed", {
+        ...saveContext,
+        durationMs: Date.now() - startedAt,
+        error: error?.code || error?.message || "unknown",
+      });
+      if (snapshot.notify || canPersistRoomingRemote) {
         onToast?.(
           t.roomingSaveFailed || "تعذر حفظ التسكين. تحقق من الاتصال ثم حاول مرة أخرى.",
           "error"
         );
       }
+      return { ok: false, error };
     }
-  }, [agencyId, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, rooms, roomLinks, roomingClientSyncWarning, roomingEligibleClientIds, syncRoomingClientsFromRooms, t, unassigned, writeCanvasCache]);
+  }, [canPersistRoomingRemote, clearRoomingDraftFromStorage, lang, onToast, roomingClientSyncWarning, syncRoomingClientsFromRooms, t, writeCanvasCache, writeRoomingDraftToStorage]);
+
+  const processRoomingSaveQueue = React.useCallback(() => {
+    if (roomingSaveInFlightRef.current) return roomingSavePromiseRef.current;
+    roomingSaveInFlightRef.current = true;
+
+    roomingSavePromiseRef.current = (async () => {
+      let finalResult = { ok: true };
+      try {
+        while (roomingSavePendingRef.current) {
+          const snapshot = roomingSavePendingRef.current;
+          roomingSavePendingRef.current = null;
+          finalResult = await persistRoomingSaveSnapshot(snapshot);
+        }
+      } finally {
+        roomingSaveInFlightRef.current = false;
+      }
+      return finalResult;
+    })();
+
+    return roomingSavePromiseRef.current;
+  }, [persistRoomingSaveSnapshot]);
+
+  const saveCanvas = React.useCallback(async (notify = true) => {
+    const snapshot = createRoomingSaveSnapshot(notify);
+    writeCanvasCache(snapshot.city, snapshot.payload);
+    writeRoomingDraftToStorage(snapshot.city, snapshot.payload);
+
+    const existingPending = roomingSavePendingRef.current;
+    roomingSavePendingRef.current = {
+      ...snapshot,
+      notify: Boolean(notify || existingPending?.notify),
+    };
+
+    if (!roomingSaveInFlightRef.current) setRoomingSaveStatus("saving");
+    return processRoomingSaveQueue();
+  }, [createRoomingSaveSnapshot, processRoomingSaveQueue, writeCanvasCache, writeRoomingDraftToStorage]);
+
+  const retryRoomingLoad = React.useCallback(() => {
+    setRoomingLoadRetryNonce((value) => value + 1);
+  }, []);
+
+  const retryRoomingSave = React.useCallback(() => {
+    saveCanvas(true);
+  }, [saveCanvas]);
+
+  const continueRoomingLocalDraft = React.useCallback(() => {
+    const draft = readRoomingDraftFromStorage(city);
+    if (!draft) {
+      onToast?.(
+        t.roomingNoLocalDraft || (lang === "fr" ? "Aucun brouillon local disponible." : lang === "en" ? "No local draft is available." : "لا توجد مسودة محلية متاحة."),
+        "warning"
+      );
+      setRoomingDraftAvailable(false);
+      return;
+    }
+    applyLoadedRoomingState(draft, null, { resetInteraction: true });
+    setDirty(true);
+    setRoomingSaveStatus("dirty");
+    setRoomingLoadStatus("loaded");
+    setRoomingLoadConfirmed(true);
+    setRoomingLoadConfirmedKey(roomingLoadKey);
+    logRoomingDiagnostic("load.continueDraft", {
+      programId: program.id,
+      location: city,
+      payloadSize: getRoomingPayloadSize(draft),
+      rooms: draft.rooms?.length || 0,
+    });
+  }, [applyLoadedRoomingState, city, lang, onToast, program.id, readRoomingDraftFromStorage, roomingLoadKey, t]);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleOffline = () => {
+      if (canPersistRoomingRemote) setRoomingSaveStatus((current) => (current === "saving" || current === "slowSaving" ? "offline" : current));
+    };
+    const handleOnline = () => {
+      setRoomingSaveStatus((current) => (current === "offline" && dirtyRef.current ? "dirty" : current));
+    };
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [canPersistRoomingRemote]);
 
   const markDirty = React.useCallback(() => {
     roomingRevisionRef.current += 1;
     setDirty(true);
     setRoomingSaveStatus("dirty");
   }, []);
+
+  React.useEffect(() => {
+    if (!dirty) return;
+    const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
+    const payload = buildCanvasPayload(city, sanitized.rooms, sanitized.unassigned, sanitized.roomLinks);
+    writeCanvasCache(city, payload);
+    writeRoomingDraftToStorage(city, payload);
+  }, [buildCanvasPayload, city, dirty, rooms, roomLinks, roomingEligibleClientIds, unassigned, writeCanvasCache, writeRoomingDraftToStorage]);
 
   React.useEffect(() => {
     const sanitized = sanitizeRoomingStateForEligibleClients({ rooms, unassigned, roomLinks }, roomingEligibleClientIds);
@@ -6921,7 +7453,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   React.useEffect(() => {
     if (!dirty) return undefined;
-    const timer = window.setTimeout(() => saveCanvas(false), 650);
+    const timer = window.setTimeout(() => saveCanvas(false), ROOMING_AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [dirty, rooms, roomLinks, unassigned, saveCanvas]);
 
@@ -7248,14 +7780,77 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   }), [getRoomingProgressForCity]);
 
   const roomingStatusText = React.useMemo(() => {
-    if (roomingLoadStatus === "loading") return t.loading || "جاري التحميل...";
+    if (roomingLoadStatus === "initialLoading") return t.loading || "جاري التحميل...";
+    if (roomingLoadStatus === "slowLoading") return t.roomingSlowLoading || (lang === "fr" ? "Chargement lent..." : lang === "en" ? "Loading is taking longer..." : "التحميل يستغرق وقتا أطول...");
+    if (roomingLoadStatus === "loadFailed") return t.roomingLoadFailedShort || (lang === "fr" ? "Échec du chargement" : lang === "en" ? "Load failed" : "تعذر التحميل");
+    if (roomingLoadStatus === "offline") return t.roomingOfflineShort || (lang === "fr" ? "Hors ligne" : lang === "en" ? "Offline" : "غير متصل");
     if (roomingSaveStatus === "saving") return t.saving || "جارٍ الحفظ";
-    if (roomingSaveStatus === "error") return t.roomingSaveFailedShort || "تعذر الحفظ";
+    if (roomingSaveStatus === "slowSaving") return t.roomingSlowSaving || (lang === "fr" ? "Enregistrement lent..." : lang === "en" ? "Saving is taking longer..." : "الحفظ يستغرق وقتا أطول...");
+    if (roomingSaveStatus === "saveFailed") return t.roomingSaveFailedShort || "تعذر الحفظ";
+    if (roomingSaveStatus === "offline") return t.roomingOfflineDraft || (lang === "fr" ? "Brouillon local conservé" : lang === "en" ? "Local draft kept" : "تم حفظ مسودة محلية");
+    if (roomingExportStatus === "slow") return t.roomingExportSlow || (lang === "fr" ? "Export en cours..." : lang === "en" ? "Export is taking longer..." : "التصدير يستغرق وقتا أطول...");
     if (dirty) return t.unsavedChanges || "تغييرات غير محفوظة";
     if (savedAt) return tr("lastSaved", { time: savedAt.toLocaleTimeString("ar-MA") }) || `آخر حفظ ${savedAt.toLocaleTimeString("ar-MA")}`;
-    if (roomingLoadStatus === "remote") return t.roomingLoadedFromCloud || "محفوظ في السحابة";
+    if (roomingLoadStatus === "loaded") return t.roomingLoadedFromCloud || "محفوظ في السحابة";
     return "";
-  }, [dirty, roomingLoadStatus, roomingSaveStatus, savedAt, t, tr]);
+  }, [dirty, lang, roomingExportStatus, roomingLoadStatus, roomingSaveStatus, savedAt, t, tr]);
+
+  const roomingStatusBanner = React.useMemo(() => {
+    const retryLoadLabel = t.retry || (lang === "fr" ? "Réessayer" : lang === "en" ? "Retry" : "إعادة المحاولة");
+    const retrySaveLabel = t.roomingRetrySave || (lang === "fr" ? "Réessayer l’enregistrement" : lang === "en" ? "Retry save" : "إعادة الحفظ");
+    const localDraftLabel = t.roomingContinueLocalDraft || (lang === "fr" ? "Continuer le brouillon local" : lang === "en" ? "Continue local draft" : "متابعة المسودة المحلية");
+    if (roomingLoadStatus === "loadFailed") {
+      return {
+        tone: "error",
+        message: t.roomingLoadFailed || (lang === "fr" ? "Chargement impossible. Réessayez ou continuez avec le brouillon local." : lang === "en" ? "Unable to load rooming. Retry or continue with the local draft." : "تعذر تحميل التسكين. أعد المحاولة أو تابع المسودة المحلية."),
+        retryLoadLabel,
+        localDraftLabel: roomingDraftAvailable ? localDraftLabel : "",
+      };
+    }
+    if (roomingLoadStatus === "slowLoading") {
+      return {
+        tone: "warning",
+        message: t.roomingSlowLoading || (lang === "fr" ? "Le chargement prend plus de temps que prévu." : lang === "en" ? "Loading is taking longer than expected." : "تحميل التسكين يستغرق وقتا أطول من المعتاد."),
+        retryLoadLabel,
+        localDraftLabel: roomingDraftAvailable ? localDraftLabel : "",
+      };
+    }
+    if (roomingLoadStatus === "offline") {
+      return {
+        tone: "warning",
+        message: t.roomingOfflineLoad || (lang === "fr" ? "Hors ligne. Les données locales sont affichées." : lang === "en" ? "Offline. Local data is shown." : "أنت غير متصل. يتم عرض البيانات المحلية."),
+        retryLoadLabel,
+        localDraftLabel: roomingDraftAvailable ? localDraftLabel : "",
+      };
+    }
+    if (roomingSaveStatus === "saveFailed") {
+      return {
+        tone: "error",
+        message: t.roomingSaveFailed || (lang === "fr" ? "Impossible d’enregistrer l’hébergement. Le brouillon local est conservé." : lang === "en" ? "Unable to save rooming. The local draft is kept." : "تعذر حفظ التسكين. تم الاحتفاظ بالمسودة المحلية."),
+        retrySaveLabel,
+      };
+    }
+    if (roomingSaveStatus === "offline") {
+      return {
+        tone: "warning",
+        message: t.roomingSaveOffline || (lang === "fr" ? "Hors ligne. Le brouillon local est conservé." : lang === "en" ? "Offline. The local draft is kept." : "أنت غير متصل. تم الاحتفاظ بالمسودة المحلية."),
+        retrySaveLabel,
+      };
+    }
+    if (roomingSaveStatus === "slowSaving") {
+      return {
+        tone: "warning",
+        message: t.roomingSlowSaving || (lang === "fr" ? "L’enregistrement prend plus de temps que prévu." : lang === "en" ? "Saving is taking longer than expected." : "حفظ التسكين يستغرق وقتا أطول من المعتاد."),
+      };
+    }
+    if (roomingExportStatus === "slow") {
+      return {
+        tone: "warning",
+        message: t.roomingExportSlow || (lang === "fr" ? "L’export prend plus de temps que prévu." : lang === "en" ? "Export is taking longer than expected." : "تصدير التسكين يستغرق وقتا أطول من المعتاد."),
+      };
+    }
+    return null;
+  }, [lang, roomingDraftAvailable, roomingExportStatus, roomingLoadStatus, roomingSaveStatus, t]);
 
   const roomNeeds = React.useMemo(() => {
     const counts = new Map();
@@ -7315,7 +7910,20 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const loadExistingRoomsBeforeGenerate = React.useCallback(async () => {
     if (rooms.length) return rooms;
     if (canPersistRoomingRemote) {
-      const { data, error } = await db.roomingAssignments.fetch(agencyId, program.id, city);
+      const { data, error } = await retryRoomingOperation(
+        async () => {
+          const result = await runRoomingTimedOperation(
+            () => db.roomingAssignments.fetch(agencyId, program.id, city),
+            {
+              action: "rooming.generatePreload",
+              onSlow: () => setRoomingLoadStatus("slowLoading"),
+            }
+          );
+          if (result?.error) throw result.error;
+          return result;
+        },
+        { shouldRetry: (error) => error?.code !== "ROOMING_TIMEOUT" }
+      );
       if (error) throw error;
       if (data) {
         const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
@@ -7323,7 +7931,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
         if (sanitized.rooms.length) {
           applyLoadedRoomingState(loaded, data.updatedAt, { resetInteraction: false });
-          setRoomingLoadStatus("remote");
+          setRoomingLoadStatus("loaded");
           setRoomingLoadConfirmed(true);
           setRoomingLoadConfirmedKey(roomingLoadKey);
         }
@@ -7334,7 +7942,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const localSanitized = sanitizeRoomingStateForEligibleClients(localLoaded, roomingEligibleClientIds);
     if (localSanitized.rooms.length) {
       applyLoadedRoomingState(localLoaded, null, { resetInteraction: false });
-      setRoomingLoadStatus("local");
+      setRoomingLoadStatus("loaded");
       setRoomingLoadConfirmed(true);
       setRoomingLoadConfirmedKey(roomingLoadKey);
     }
@@ -7360,7 +7968,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       onToast?.(roomingGenerateWaitMessage, "info");
       return;
     }
-    if (dirty || roomingSaveStatus === "saving") {
+    if (dirty || isRoomingSaving) {
       onToast?.(roomingGenerateWaitMessage, "info");
       return;
     }
@@ -7450,14 +8058,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     setLinkStartRoomId(null);
     setSelectedRoomLinkId(null);
     setSelectedRoomId(null);
-    setDirty(true);
+    markDirty();
     onToast?.(t.roomingGenerated || "تم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.", "success");
   }, [
     dirty,
     getClientContext,
     hasRoomingLoaded,
     isRoomingLoading,
+    isRoomingSaving,
     loadExistingRoomsBeforeGenerate,
+    markDirty,
     onToast,
     roomingEligibleClients,
     roomingGenerateBlockedMessage,
@@ -8769,27 +9379,109 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     });
   }, [roomingPrintSettings.layoutMode]);
 
+  const hasRoomingPrintableData = React.useCallback((mode = "single") => {
+    const targetCities = mode === "combined" ? ["makkah", "madinah"] : [city];
+    return targetCities.some((targetCity) => {
+      if (targetCity === city) return rooms.length > 0;
+      return sanitizeRoomingStateForEligibleClients(readCanvasStateFromStorage(targetCity), roomingEligibleClientIds).rooms.length > 0;
+    });
+  }, [city, readCanvasStateFromStorage, roomingEligibleClientIds, rooms.length]);
+
+  const confirmRoomingExportReadiness = React.useCallback(async (mode = "single", action = "export") => {
+    const hasPrintableData = hasRoomingPrintableData(mode);
+    if (isRoomingLoading && !hasPrintableData) {
+      onToast?.(
+        t.roomingExportWaitForLoad || (lang === "fr" ? "Chargement de l’hébergement en cours. Réessayez dans un instant." : lang === "en" ? "Rooming is still loading. Try again shortly." : "جاري تحميل التسكين. حاول بعد لحظات."),
+        "info"
+      );
+      return false;
+    }
+    if ((roomingLoadStatus === "loadFailed" || roomingLoadStatus === "offline") && !hasPrintableData) {
+      onToast?.(
+        t.roomingLoadFailedRetry || (lang === "fr" ? "Le chargement a échoué. Réessayez ou continuez avec le brouillon local." : lang === "en" ? "Loading failed. Retry or continue with the local draft." : "فشل تحميل التسكين. أعد المحاولة أو تابع المسودة المحلية."),
+        "error"
+      );
+      return false;
+    }
+    if (!hasPrintableData) {
+      onToast?.(
+        t.noRoomingRooms || (lang === "fr" ? "Aucune chambre d’hébergement à exporter." : lang === "en" ? "No rooming rooms to export." : "لا توجد غرف للتسكين للتصدير."),
+        "info"
+      );
+      return false;
+    }
+
+    const hasUnsavedWork = dirty || isRoomingSaving || roomingSaveStatus === "saveFailed" || roomingSaveStatus === "offline";
+    if (!hasUnsavedWork) return true;
+
+    const promptMessage = lang === "fr"
+      ? "Des modifications d’hébergement ne sont pas encore enregistrées.\n1 - Attendre l’enregistrement puis exporter\n2 - Exporter la version visible actuelle\n3 - Annuler"
+      : lang === "en"
+        ? "Rooming has unsaved changes.\n1 - Wait for save, then export\n2 - Export the current visible version\n3 - Cancel"
+        : "هناك تغييرات غير محفوظة في التسكين.\n1 - انتظار الحفظ ثم التصدير\n2 - تصدير النسخة الظاهرة حاليا\n3 - إلغاء";
+    const choice = typeof window === "undefined" ? "1" : window.prompt(promptMessage, "1");
+    if (choice === null) return false;
+    const normalizedChoice = String(choice || "").trim();
+    if (normalizedChoice === "2") {
+      logRoomingDiagnostic("export.visibleDraft", {
+        programId: program.id,
+        location: city,
+        action,
+        mode,
+        payloadSize: getRoomingPayloadSize(createRoomingSaveSnapshot(false).payload),
+      });
+      return true;
+    }
+    if (normalizedChoice !== "1") return false;
+
+    const result = await saveCanvas(false);
+    if (result?.ok && !dirtyRef.current) return true;
+
+    const failedChoiceMessage = lang === "fr"
+      ? "L’enregistrement n’a pas pu être confirmé.\n1 - Exporter la version visible actuelle\n2 - Annuler"
+      : lang === "en"
+        ? "Save could not be confirmed.\n1 - Export the current visible version\n2 - Cancel"
+        : "تعذر تأكيد الحفظ.\n1 - تصدير النسخة الظاهرة حاليا\n2 - إلغاء";
+    const failedChoice = typeof window === "undefined" ? "2" : window.prompt(failedChoiceMessage, "2");
+    return String(failedChoice || "").trim() === "1";
+  }, [city, createRoomingSaveSnapshot, dirty, hasRoomingPrintableData, isRoomingLoading, isRoomingSaving, lang, onToast, program.id, roomingLoadStatus, roomingSaveStatus, saveCanvas, t]);
+
   const handleDownloadRoomingPdf = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
+    if (!(await confirmRoomingExportReadiness(mode, "pdf"))) return;
     try {
       setRoomingExportBusy(`${mode}:pdf`);
-      const combined = mode === "combined";
-      const exportData = await buildRoomingExportPayload(mode);
-      const fullPrintSection = combined
-        ? buildFullRoomingPrintSection(exportData, { allowUnified: true })
-        : null;
-      logRoomingUnifiedPrintDebug(exportData, fullPrintSection?.rooms || exportData.pdfRooms);
-      await downloadRoomingPdf({
-        rooms: fullPrintSection?.rooms || exportData.pdfRooms,
-        lang,
-        programName: exportData.programInfo.name || "program",
-        agencyName: exportData.agencyInfo.name,
-        agencyLogoUrl: exportData.agencyInfo.logoUrl,
-        filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
-        labels: exportData.labels,
-        printSettings: roomingPrintSettings,
-        roomLinks: fullPrintSection?.roomLinks || exportData.roomLinks,
-        sectionOverride: fullPrintSection?.section || null,
+      setRoomingExportStatus("preparing");
+      await runRoomingTimedOperation(async () => {
+        const combined = mode === "combined";
+        const exportData = await buildRoomingExportPayload(mode);
+        const fullPrintSection = combined
+          ? buildFullRoomingPrintSection(exportData, { allowUnified: true })
+          : null;
+        logRoomingUnifiedPrintDebug(exportData, fullPrintSection?.rooms || exportData.pdfRooms);
+        logRoomingDiagnostic("export.pdf", {
+          programId: program.id,
+          location: city,
+          mode,
+          payloadSize: getRoomingPayloadSize(exportData),
+          rooms: (fullPrintSection?.rooms || exportData.pdfRooms || []).length,
+        });
+        await downloadRoomingPdf({
+          rooms: fullPrintSection?.rooms || exportData.pdfRooms,
+          lang,
+          programName: exportData.programInfo.name || "program",
+          agencyName: exportData.agencyInfo.name,
+          agencyLogoUrl: exportData.agencyInfo.logoUrl,
+          filename: `rooming-${combined ? "combined" : city}-${slugifyFilePart(program.name)}-${new Date().toISOString().slice(0, 10)}.pdf`,
+          labels: exportData.labels,
+          printSettings: roomingPrintSettings,
+          roomLinks: fullPrintSection?.roomLinks || exportData.roomLinks,
+          sectionOverride: fullPrintSection?.section || null,
+        });
+      }, {
+        action: "rooming.exportPdf",
+        timeoutMs: ROOMING_EXPORT_TIMEOUT_MS,
+        onSlow: () => setRoomingExportStatus("slow"),
       });
       onToast?.(t.roomingPdfReady || (lang === "fr" ? "PDF d'hébergement téléchargé" : lang === "en" ? "Rooming PDF downloaded" : "تم تنزيل PDF التسكين"), "success");
     } catch (error) {
@@ -8797,23 +9489,39 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       onToast?.(t.roomingPdfFailed || (lang === "fr" ? "Impossible de générer le PDF" : lang === "en" ? "Unable to generate PDF" : "تعذر إنشاء ملف PDF"), "error");
     } finally {
       setRoomingExportBusy("");
+      setRoomingExportStatus("");
     }
-  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, city, lang, logRoomingUnifiedPrintDebug, onToast, program.name, roomingExportBusy, roomingPrintSettings, t]);
+  }, [buildFullRoomingPrintSection, buildRoomingExportPayload, city, confirmRoomingExportReadiness, lang, logRoomingUnifiedPrintDebug, onToast, program.id, program.name, roomingExportBusy, roomingPrintSettings, t]);
 
   const handleDownloadRoomingExcel = React.useCallback(async (mode = "single") => {
     if (roomingExportBusy) return;
+    if (!(await confirmRoomingExportReadiness(mode, "excel"))) return;
     try {
       setRoomingExportBusy(`${mode}:excel`);
-      const exportData = await buildRoomingExportPayload(mode);
-      await downloadRoomingExcel(exportData);
+      setRoomingExportStatus("preparing");
+      await runRoomingTimedOperation(async () => {
+        const exportData = await buildRoomingExportPayload(mode);
+        logRoomingDiagnostic("export.excel", {
+          programId: program.id,
+          location: city,
+          mode,
+          payloadSize: getRoomingPayloadSize(exportData),
+        });
+        await downloadRoomingExcel(exportData);
+      }, {
+        action: "rooming.exportExcel",
+        timeoutMs: ROOMING_EXPORT_TIMEOUT_MS,
+        onSlow: () => setRoomingExportStatus("slow"),
+      });
       onToast?.(t.roomingExcelReady || (lang === "fr" ? "Fichier Excel d’hébergement téléchargé" : lang === "en" ? "Rooming Excel downloaded" : "تم تنزيل Excel التسكين"), "success");
     } catch (error) {
       console.error("[rooming excel export]", error);
       onToast?.(t.roomingExcelFailed || (lang === "fr" ? "Impossible de générer Excel" : lang === "en" ? "Unable to generate Excel" : "تعذر إنشاء ملف Excel"), "error");
     } finally {
       setRoomingExportBusy("");
+      setRoomingExportStatus("");
     }
-  }, [buildRoomingExportPayload, lang, onToast, roomingExportBusy, t]);
+  }, [buildRoomingExportPayload, city, confirmRoomingExportReadiness, lang, onToast, program.id, roomingExportBusy, t]);
 
   const handleRoomingExport = React.useCallback((mode, format) => {
     if (format === "excel") {
@@ -8851,11 +9559,18 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   const handleRoomingPrintChoice = React.useCallback(async (mode = "single") => {
     if (roomingPrintBusy) return;
+    if (!(await confirmRoomingExportReadiness(mode, "print"))) return;
     try {
       setRoomingPrintBusy(mode);
-      const printed = mode === "combined"
-        ? await printCombinedRooming()
-        : await printCanvas();
+      setRoomingExportStatus("preparing");
+      const printed = await runRoomingTimedOperation(
+        () => (mode === "combined" ? printCombinedRooming() : printCanvas()),
+        {
+          action: "rooming.print",
+          timeoutMs: ROOMING_EXPORT_TIMEOUT_MS,
+          onSlow: () => setRoomingExportStatus("slow"),
+        }
+      );
       if (!printed) {
         onToast?.(
           t.printWindowBlocked || (lang === "fr" ? "Impossible d’ouvrir la fenêtre d’impression." : lang === "en" ? "Unable to open the print window." : "تعذر فتح نافذة الطباعة."),
@@ -8870,8 +9585,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       );
     } finally {
       setRoomingPrintBusy("");
+      setRoomingExportStatus("");
     }
-  }, [lang, onToast, printCanvas, printCombinedRooming, roomingPrintBusy, t]);
+  }, [confirmRoomingExportReadiness, lang, onToast, printCanvas, printCombinedRooming, roomingPrintBusy, t]);
 
   const selectedRoom = visibleRooms.find((room) => room.id === selectedRoomId) || null;
   const canvasHeight = fullWorkspace ? "100%" : "min(72vh, 720px)";
@@ -9561,6 +10277,82 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             {canShowGenerateRooms && (
               <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
             )}
+            {roomingStatusBanner && (
+              <div style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                minHeight: 34,
+                maxWidth: fullWorkspace ? 520 : 620,
+                padding: "6px 9px",
+                borderRadius: 10,
+                border: `1px solid ${roomingStatusBanner.tone === "error" ? "rgba(239,68,68,.28)" : "rgba(212,175,55,.30)"}`,
+                background: roomingStatusBanner.tone === "error" ? "rgba(239,68,68,.08)" : "rgba(212,175,55,.12)",
+                color: roomingStatusBanner.tone === "error" ? "var(--rooming-danger-text)" : "var(--rooming-text-soft)",
+                fontSize: 11,
+                fontWeight: 800,
+                flexWrap: "wrap",
+              }}>
+                <span style={{ minWidth: 0 }}>{roomingStatusBanner.message}</span>
+                {roomingStatusBanner.retryLoadLabel && (
+                  <button
+                    type="button"
+                    onClick={retryRoomingLoad}
+                    style={{
+                      border: "1px solid var(--rooming-input-border)",
+                      background: "var(--rooming-button-bg)",
+                      color: "var(--rooming-text)",
+                      borderRadius: 8,
+                      padding: "3px 7px",
+                      fontFamily: "'Cairo',sans-serif",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {roomingStatusBanner.retryLoadLabel}
+                  </button>
+                )}
+                {roomingStatusBanner.localDraftLabel && (
+                  <button
+                    type="button"
+                    onClick={continueRoomingLocalDraft}
+                    style={{
+                      border: "1px solid rgba(37,99,235,.24)",
+                      background: "var(--rooming-button-active-bg)",
+                      color: "var(--rooming-button-active-text)",
+                      borderRadius: 8,
+                      padding: "3px 7px",
+                      fontFamily: "'Cairo',sans-serif",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {roomingStatusBanner.localDraftLabel}
+                  </button>
+                )}
+                {roomingStatusBanner.retrySaveLabel && (
+                  <button
+                    type="button"
+                    onClick={retryRoomingSave}
+                    style={{
+                      border: "1px solid rgba(37,99,235,.24)",
+                      background: "var(--rooming-button-active-bg)",
+                      color: "var(--rooming-button-active-text)",
+                      borderRadius: 8,
+                      padding: "3px 7px",
+                      fontFamily: "'Cairo',sans-serif",
+                      fontSize: 11,
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {roomingStatusBanner.retrySaveLabel}
+                  </button>
+                )}
+              </div>
+            )}
           <RoomingToolbarButton
             title={t.addRooms || t.addRoom || "إضافة غرف"}
             onClick={() => openCreateRoom({ x: ROOMING_LAYOUT_START_X, y: ROOMING_LAYOUT_START_Y })}
@@ -9571,7 +10363,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           <RoomingToolbarButton
             title={roomingCopyButtonLabel}
             onClick={openCopyRoomingModal}
-            disabled={roomingCopyBusy || roomingLoadStatus === "loading"}
+            disabled={roomingCopyBusy || isRoomingLoading}
             active={roomingCopyModal.open}
             icon={<Copy size={15} />}
           >
@@ -9648,8 +10440,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           <RoomingToolbarButton
             title={t.roomingSave || "حفظ"}
             onClick={() => saveCanvas(true)}
-            active={dirty || roomingSaveStatus === "saving"}
-            disabled={roomingLoadStatus === "loading" || roomingSaveStatus === "saving"}
+            active={dirty || isRoomingSaving}
+            disabled={isRoomingLoading || isRoomingSaving}
             icon={<AppIcon name="save" size={15} />}
           />
           <RoomingPrintMenuButton
@@ -9657,7 +10449,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
             currentLabel={roomingPrintMenuLabels.current}
             fullLabel={roomingPrintMenuLabels.full}
             loadingLabel={roomingPrintMenuLabels.loading}
-            disabled={roomingLoadStatus === "loading"}
+            disabled={false}
             busy={Boolean(roomingPrintBusy)}
             onPrint={handleRoomingPrintChoice}
           />
@@ -9842,15 +10634,15 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
                   <p style={{ color: "var(--rooming-text)", fontSize: 18, fontWeight: 900, marginBottom: 8 }}>
                     {isRoomingLoading
                       ? (t.roomingLoadingRooms || (lang === "fr" ? "Chargement de l’hébergement..." : lang === "en" ? "Loading rooming..." : "جاري تحميل التسكين..."))
-                      : dirty || roomingSaveStatus === "saving"
-                        ? (t.roomingSavingRooms || (lang === "fr" ? "Enregistrement de l’hébergement..." : lang === "en" ? "Saving rooming..." : "جاري حفظ التسكين..."))
+                      : roomingLoadStatus === "loadFailed"
+                        ? (t.roomingLoadFailedShort || (lang === "fr" ? "Chargement impossible" : lang === "en" ? "Load failed" : "تعذر تحميل التسكين"))
                         : (t.roomingStartTitle || "ابدأ بتوليد الغرف")}
                   </p>
                   <p style={{ color: "var(--rooming-muted)", fontSize: 13, marginBottom: 16 }}>
                     {isRoomingLoading
                       ? (t.roomingLoadingRoomsDesc || (lang === "fr" ? "Les chambres seront affichées dès que les données seront chargées." : lang === "en" ? "Rooms will appear as soon as the data finishes loading." : "ستظهر الغرف فور اكتمال تحميل البيانات."))
-                      : dirty || roomingSaveStatus === "saving"
-                        ? (t.roomingSavingRoomsDesc || (lang === "fr" ? "Veuillez attendre la fin de l’enregistrement avant de générer de nouvelles chambres." : lang === "en" ? "Wait for saving to finish before generating new rooms." : "يرجى انتظار اكتمال الحفظ قبل توليد غرف جديدة."))
+                      : roomingLoadStatus === "loadFailed"
+                        ? (t.roomingLoadFailedRetry || (lang === "fr" ? "Réessayez le chargement ou continuez avec le brouillon local si disponible." : lang === "en" ? "Retry loading or continue with the local draft if available." : "أعد محاولة التحميل أو تابع المسودة المحلية إن وجدت."))
                         : (t.roomingStartDesc || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.")}
                   </p>
                   {canShowGenerateRooms && (
