@@ -1055,7 +1055,7 @@ const getRoomingDraftStorageKey = (programId, city, agencyId = null) => (
 );
 
 const ROOMING_AUTOSAVE_DELAY_MS = 750;
-const ROOMING_LAYOUT_AUTOSAVE_DELAY_MS = 1600;
+const ROOMING_LAYOUT_AUTOSAVE_DELAY_MS = 650;
 const ROOMING_SLOW_MS = 8000;
 const ROOMING_TIMEOUT_MS = 15000;
 const ROOMING_EXPORT_TIMEOUT_MS = 15000;
@@ -7210,6 +7210,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         scheduleRoomingRealtimeRefetchRef.current?.({
           source: "subscriptionEvent",
           remoteUpdatedAt: row?.updated_at || "",
+          delayMs: 0,
         });
       },
       onError: (error) => {
@@ -7418,6 +7419,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         }
 
         setRoomingSaveStatus("saving");
+        if (saveContext.reason === ROOMING_SAVE_REASON_LAYOUT_ONLY) {
+          logRoomingDiagnostic("rooming.layoutSave.start", saveContext);
+        }
         logRoomingDiagnostic("rooming.assignmentSave.start", saveContext);
         const data = await retryRoomingOperation(async (attempt) => {
           const result = await runRoomingTimedOperation(
@@ -7468,6 +7472,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           ...saveContext,
           durationMs: Date.now() - startedAt,
         });
+        if (saveContext.reason === ROOMING_SAVE_REASON_LAYOUT_ONLY) {
+          logRoomingDiagnostic("rooming.layoutSave.success", {
+            ...saveContext,
+            durationMs: Date.now() - startedAt,
+          });
+        }
         if (roomingRevisionRef.current === snapshot.revision) {
           setDirty(false);
           roomingDirtyReasonRef.current = "";
@@ -7675,6 +7685,16 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const delayMs = reason === ROOMING_SAVE_REASON_LAYOUT_ONLY
       ? ROOMING_LAYOUT_AUTOSAVE_DELAY_MS
       : ROOMING_AUTOSAVE_DELAY_MS;
+    if (reason === ROOMING_SAVE_REASON_LAYOUT_ONLY) {
+      logRoomingDiagnostic("rooming.layoutSave.scheduled", {
+        programId: program.id,
+        location: city,
+        revision: roomingRevisionRef.current,
+        debounceMs: delayMs,
+        rooms: rooms.length,
+        saveInFlight: roomingSaveInFlightRef.current,
+      });
+    }
     let timer = null;
     const scheduleAutosave = (nextDelayMs) => {
       timer = window.setTimeout(() => {
@@ -7689,7 +7709,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     return () => {
       if (timer) window.clearTimeout(timer);
     };
-  }, [dirty, rooms, roomLinks, unassigned, saveCanvas]);
+  }, [city, dirty, program.id, rooms, roomLinks, unassigned, saveCanvas]);
 
   const switchCity = React.useCallback((nextCity) => {
     if (nextCity === city) return;
