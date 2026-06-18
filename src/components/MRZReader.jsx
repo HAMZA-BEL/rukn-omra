@@ -4,9 +4,11 @@ import { theme } from "./styles";
 import { parseMRZDetailed } from "../utils/mrzReader";
 import {
   convertDisplayedCropToNaturalRect,
+  createPassportOCRWorker,
   extractMRZFromImage,
   extractMRZFromImageRegion,
   normalizeMRZOCRText,
+  terminatePassportOCRWorker,
 } from "../utils/ocrPassport";
 import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
@@ -21,6 +23,20 @@ import {
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
 const MRZ_DEV = process.env.NODE_ENV !== "production";
+const PASSPORT_PERF_PREFIX = "[passport-import:perf]";
+
+const performanceNow = () => (
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : 0
+);
+
+const passportDuration = (startedAt) => Math.round((performanceNow() - startedAt) * 10) / 10;
+
+const logPassportPerformance = (event, payload = {}) => {
+  console.info(PASSPORT_PERF_PREFIX, event, payload);
+};
+
 const ROW_STATUS = {
   READY: "ready",
   MANUALLY_ACCEPTED: "manually_accepted",
@@ -83,6 +99,11 @@ const LABELS = {
     selectedFiles: "الصور المختارة",
     noImageSelected: "اختر صورة جواز أولًا",
     processing: "قيد القراءة",
+    progressPreparing: "جاري تجهيز صورة الجواز…",
+    progressReading: "جاري قراءة بيانات الجواز…",
+    progressValidating: "جاري التحقق من البيانات…",
+    progressConfirming: "تم العثور على نتيجة، نؤكدها الآن…",
+    progressSlow: "ما زلنا نقرأ الجواز، قد تستغرق الصور غير الواضحة وقتا أطول…",
     success: "جاهز",
     ready: "جاهز",
     manually_accepted: "مقبول يدويًا",
@@ -213,6 +234,11 @@ const LABELS = {
     selectedFiles: "Photos sélectionnées",
     noImageSelected: "Choisissez d'abord une photo de passeport",
     processing: "Lecture en cours",
+    progressPreparing: "Préparation de l’image du passeport…",
+    progressReading: "Lecture des données du passeport…",
+    progressValidating: "Vérification des données…",
+    progressConfirming: "Résultat trouvé, confirmation en cours…",
+    progressSlow: "Lecture toujours en cours, les images peu nettes peuvent prendre plus de temps…",
     success: "Prêt",
     ready: "Prêt",
     manually_accepted: "Accepté manuellement",
@@ -343,6 +369,11 @@ const LABELS = {
     selectedFiles: "Selected images",
     noImageSelected: "Choose a passport image first",
     processing: "Reading",
+    progressPreparing: "Preparing passport image…",
+    progressReading: "Reading passport data…",
+    progressValidating: "Validating data…",
+    progressConfirming: "Result found, confirming…",
+    progressSlow: "Still reading the passport; unclear images may take longer…",
     success: "Ready",
     ready: "Ready",
     manually_accepted: "Manually accepted",
@@ -1736,7 +1767,16 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const [mode, setMode] = React.useState("image");
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
-  const [progress, setProgress] = React.useState({ done: 0, total: 0, active: false });
+  const [progress, setProgress] = React.useState({
+    done: 0,
+    total: 0,
+    active: false,
+    current: 0,
+    currentFile: "",
+    phase: "preparing",
+    passportProgress: 0,
+    slow: false,
+  });
   const [singleFile, setSingleFile] = React.useState(null);
   const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
   const [bulkFiles, setBulkFiles] = React.useState([]);
@@ -1753,6 +1793,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const cropBoxRef = React.useRef(null);
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
+  const activeOcrWorkerRef = React.useRef(null);
+  const batchCancelledRef = React.useRef(false);
+  const batchPerfRef = React.useRef(null);
+  const slowProgressTimerRef = React.useRef(null);
   const clients = store?.clients || store?.activeClients || [];
   const capacityClientSource = React.useMemo(() => {
     if (store?.isSupabaseEnabled && !store?.clientsLoaded) return undefined;
@@ -1806,6 +1850,42 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     revokeAllDebugUrls();
   }, [revokeAllDebugUrls]);
 
+  React.useEffect(() => () => {
+    batchCancelledRef.current = true;
+    if (slowProgressTimerRef.current) {
+      window.clearTimeout(slowProgressTimerRef.current);
+      slowProgressTimerRef.current = null;
+    }
+    const worker = activeOcrWorkerRef.current;
+    activeOcrWorkerRef.current = null;
+    if (worker) {
+      terminatePassportOCRWorker(worker, {
+        batchId: batchPerfRef.current?.batchId || "",
+        scope: "batch",
+        reason: "component-unmount",
+      });
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const batch = batchPerfRef.current;
+    if (!rows.length || !batch || batch.firstRowLogged) return undefined;
+    const logFirstDisplayedRow = () => {
+      if (batch.firstRowLogged) return;
+      batch.firstRowLogged = true;
+      logPassportPerformance("time-to-first-displayed-row", {
+        batchId: batch.batchId,
+        durationMs: passportDuration(batch.startedAt),
+      });
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      const frameId = window.requestAnimationFrame(logFirstDisplayedRow);
+      return () => window.cancelAnimationFrame(frameId);
+    }
+    const timeoutId = setTimeout(logFirstDisplayedRow, 0);
+    return () => clearTimeout(timeoutId);
+  }, [rows.length]);
+
   React.useEffect(() => {
     setSelectedImportPackageKey("");
   }, [selectedImportProgramId]);
@@ -1855,8 +1935,18 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     if (singlePreviewUrl) URL.revokeObjectURL(singlePreviewUrl);
   }, [singlePreviewUrl]);
 
-  const processImageFile = React.useCallback(async (file, index = 0) => {
-    const outcome = await extractMRZFromImage(file, () => {});
+  const processImageFile = React.useCallback(async (file, index = 0, worker = null, batchContext = {}) => {
+    const outcome = await extractMRZFromImage(file, () => {}, {
+      worker,
+      onStage: batchContext.onStage,
+      perfContext: {
+        batchId: batchContext.batchId || "",
+        scope: "batch",
+        passport: index + 1,
+        totalPassports: batchContext.totalPassports || 1,
+        fileName: file?.name || `image-${index + 1}`,
+      },
+    });
     const originalImageUrl = createDebugOriginalImageUrl(file);
     let row;
     if (outcome.success) {
@@ -1889,7 +1979,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       });
     }
     if (row?.id) rowFilesRef.current.set(row.id, file);
-    return row;
+    return {
+      row,
+      workerShouldReset: Boolean(outcome.workerShouldReset),
+    };
   }, [addParsedRow, createDebugOriginalImageUrl, l]);
 
   const openCropModal = React.useCallback((id) => {
@@ -1913,18 +2006,181 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const processFilesSequentially = React.useCallback(async (fileList) => {
     const files = Array.from(fileList || []).slice(0, MAX_BULK_FILES);
     if (!files.length) return;
+    const batchStartedAt = performanceNow();
+    const batchId = `batch-${Math.round(batchStartedAt)}-${files.length}`;
+    batchPerfRef.current = {
+      batchId,
+      startedAt: batchStartedAt,
+      firstRowLogged: false,
+    };
+    batchCancelledRef.current = false;
     setError("");
     setRows([]);
     rowFilesRef.current.clear();
     revokeAllDebugUrls();
-    setProgress({ done: 0, total: files.length, active: true });
-    for (let index = 0; index < files.length; index += 1) {
-      setProgress({ done: index, total: files.length, active: true });
-      await processImageFile(files[index], index);
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      setProgress({ done: index + 1, total: files.length, active: index + 1 < files.length });
+    setProgress({
+      done: 0,
+      total: files.length,
+      active: true,
+      current: 1,
+      currentFile: files[0]?.name || "image-1",
+      phase: "preparing",
+      passportProgress: 0.01,
+      slow: false,
+    });
+    let worker = null;
+    let processedCount = 0;
+    let batchStatus = "success";
+    try {
+      try {
+        worker = await createPassportOCRWorker(() => {}, {
+          batchId,
+          scope: "batch",
+          totalPassports: files.length,
+        });
+        activeOcrWorkerRef.current = worker;
+      } catch (workerError) {
+        logPassportPerformance("batch-worker-fallback", {
+          batchId,
+          error: workerError?.message || String(workerError),
+          strategy: "per-passport-worker",
+        });
+      }
+
+      for (let index = 0; index < files.length; index += 1) {
+        if (batchCancelledRef.current) {
+          batchStatus = "cancelled";
+          break;
+        }
+        const file = files[index];
+        const passportStartedAt = performanceNow();
+        setProgress({
+          done: index,
+          total: files.length,
+          active: true,
+          current: index + 1,
+          currentFile: file?.name || `image-${index + 1}`,
+          phase: "preparing",
+          passportProgress: 0.01,
+          slow: false,
+        });
+        if (slowProgressTimerRef.current) window.clearTimeout(slowProgressTimerRef.current);
+        slowProgressTimerRef.current = window.setTimeout(() => {
+          setProgress((current) => (
+            current.active && current.current === index + 1
+              ? { ...current, slow: true }
+              : current
+          ));
+        }, 6000);
+        let result;
+        try {
+          result = await processImageFile(file, index, worker, {
+            batchId,
+            totalPassports: files.length,
+            onStage: (stageProgress = {}) => {
+              setProgress((current) => {
+                if (!current.active || current.current !== index + 1) return current;
+                return {
+                  ...current,
+                  phase: stageProgress.phase || current.phase,
+                  passportProgress: Math.max(0, Math.min(1, Number(stageProgress.progress) || 0)),
+                };
+              });
+            },
+          });
+        } finally {
+          if (slowProgressTimerRef.current) {
+            window.clearTimeout(slowProgressTimerRef.current);
+            slowProgressTimerRef.current = null;
+          }
+        }
+        processedCount = index + 1;
+        logPassportPerformance("passport-total", {
+          batchId,
+          passport: index + 1,
+          totalPassports: files.length,
+          fileName: file?.name || `image-${index + 1}`,
+          durationMs: passportDuration(passportStartedAt),
+          status: result.row?.status || "unknown",
+        });
+
+        if (result.workerShouldReset && worker) {
+          await terminatePassportOCRWorker(worker, {
+            batchId,
+            scope: "batch",
+            reason: "passport-ocr-error",
+            passport: index + 1,
+          });
+          worker = null;
+          activeOcrWorkerRef.current = null;
+          if (index + 1 < files.length && !batchCancelledRef.current) {
+            worker = await createPassportOCRWorker(() => {}, {
+              batchId,
+              scope: "batch",
+              reason: "passport-ocr-error-recovery",
+              totalPassports: files.length,
+            });
+            activeOcrWorkerRef.current = worker;
+          }
+        }
+
+        if (batchCancelledRef.current) {
+          batchStatus = "cancelled";
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        setProgress({
+          done: index + 1,
+          total: files.length,
+          active: index + 1 < files.length,
+          current: index + 1,
+          currentFile: file?.name || `image-${index + 1}`,
+          phase: "confirming",
+          passportProgress: 1,
+          slow: false,
+        });
+      }
+    } catch (processingError) {
+      batchStatus = "error";
+      setError(ocrFailureText(processingError?.message || "OCR_FAILED", l));
+      logPassportPerformance("batch-error", {
+        batchId,
+        error: processingError?.message || String(processingError),
+      });
+    } finally {
+      if (slowProgressTimerRef.current) {
+        window.clearTimeout(slowProgressTimerRef.current);
+        slowProgressTimerRef.current = null;
+      }
+      if (worker) {
+        await terminatePassportOCRWorker(worker, {
+          batchId,
+          scope: "batch",
+          reason: batchStatus === "success" ? "batch-complete" : `batch-${batchStatus}`,
+        });
+      }
+      if (activeOcrWorkerRef.current === worker) activeOcrWorkerRef.current = null;
+      if (!batchCancelledRef.current) {
+        setProgress({
+          done: processedCount,
+          total: files.length,
+          active: false,
+          current: processedCount,
+          currentFile: "",
+          phase: "confirming",
+          passportProgress: processedCount ? 1 : 0,
+          slow: false,
+        });
+      }
+      logPassportPerformance("batch-total", {
+        batchId,
+        passportCount: files.length,
+        processedCount,
+        durationMs: passportDuration(batchStartedAt),
+        status: batchCancelledRef.current ? "cancelled" : batchStatus,
+      });
     }
-  }, [processImageFile, revokeAllDebugUrls]);
+  }, [l, processImageFile, revokeAllDebugUrls]);
 
   const readSinglePassport = React.useCallback(() => {
     if (!singleFile) {
@@ -2196,6 +2452,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const readSelectedCrop = React.useCallback(async () => {
     const file = rowFilesRef.current.get(cropModal.rowId);
     if (!file || cropRect.width < 5 || cropRect.height < 5) return;
+    const cropStartedAt = performanceNow();
     setCropReading(true);
     if (process.env.NODE_ENV !== "production") {
       const imageRect = cropImageRef.current?.getBoundingClientRect();
@@ -2221,7 +2478,13 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         });
       }
     }
-    const outcome = await extractMRZFromImageRegion(file, cropRect, () => {});
+    const outcome = await extractMRZFromImageRegion(file, cropRect, () => {}, {
+      perfContext: {
+        scope: "manual-crop",
+        fileName: file?.name || cropModal.fileName || "",
+        rowId: cropModal.rowId,
+      },
+    });
     const raw = outcome.raw || {};
     const parsed = outcome.success
       ? outcome.parsed || parseMRZDetailed(
@@ -2232,6 +2495,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       : parseMRZDetailed(raw.line1 || "", raw.line2 || "", { ocrText: outcome.ocrText || "" });
     const { hasParsedData, succeeded } = applyParsedToCropRow({ parsed, raw, outcome });
     setCropReading(false);
+    logPassportPerformance("manual-crop-total", {
+      fileName: file?.name || cropModal.fileName || "",
+      rowId: cropModal.rowId,
+      durationMs: passportDuration(cropStartedAt),
+      status: succeeded ? "success" : hasParsedData ? "needs-review" : "failed",
+    });
     if (succeeded) {
       onToast?.(l.success, "success");
       closeCropModal();
@@ -2241,7 +2510,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     } else {
       onToast?.(ocrFailureText(outcome.error || (raw.line1 || raw.line2 ? "PARSE_FAILED" : "MRZ_NOT_FOUND"), l), "error");
     }
-  }, [applyParsedToCropRow, closeCropModal, cropModal.rowId, cropRect, l, onToast]);
+  }, [applyParsedToCropRow, closeCropModal, cropModal.fileName, cropModal.rowId, cropRect, l, onToast]);
 
   const buildPartialBirthDateDocs = React.useCallback((row = {}) => {
     if (!hasPartialBirthDateOnly(row) && !hasApproximatedBirthDate(row)) return {};
@@ -2464,6 +2733,15 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     l.workflowExtract,
     l.workflowReview,
   ];
+  const progressPhaseText = {
+    preparing: l.progressPreparing,
+    reading: l.progressReading,
+    validating: l.progressValidating,
+    confirming: l.progressConfirming,
+  }[progress.phase] || l.progressReading;
+  const overallProgressPercent = Math.round(
+    ((progress.done + (progress.active ? progress.passportProgress : 0)) / Math.max(progress.total, 1)) * 100
+  );
   const passportImportLinkingInfo = effectiveImportProgramId
     ? selectedImportPackage
       ? l.selectedProgramPackageInfo
@@ -2776,8 +3054,25 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
             )}
 
             {progress.active && (
-              <div style={{ height: 7, background: "rgba(255,255,255,.06)", borderRadius: 999, overflow: "hidden", marginTop: 13 }}>
-                <div style={{ height: "100%", width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%`, background: "linear-gradient(90deg,#2563eb,#d4af37)", transition: "width .25s ease" }} />
+              <div style={{ marginTop: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
+                  <span>
+                    {progress.currentFile || l.processing}
+                    {progress.current > 0 ? ` · ${progress.current}/${progress.total}` : ""}
+                  </span>
+                  <span>{Math.max(1, Math.min(99, overallProgressPercent))}%</span>
+                </div>
+                <div style={{ marginBottom: 7, color: "var(--rukn-text-strong)", fontSize: 12, fontWeight: 850 }}>
+                  {progressPhaseText}
+                </div>
+                <div style={{ height: 7, background: "rgba(255,255,255,.06)", borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.max(1, Math.min(99, overallProgressPercent))}%`, background: "linear-gradient(90deg,#2563eb,#d4af37)", transition: "width .25s ease" }} />
+                </div>
+                {progress.slow && (
+                  <div style={{ marginTop: 8, color: "var(--rukn-warning)", fontSize: 11, fontWeight: 800, lineHeight: 1.6 }}>
+                    {l.progressSlow}
+                  </div>
+                )}
               </div>
             )}
           </section>

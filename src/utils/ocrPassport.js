@@ -3,11 +3,58 @@ import { parseMRZDetailed } from "./mrzReader";
 import { detectMrzCandidateLines, normalizeOcrText, scoreTd3Line1Candidate } from "./passportMrzEngine";
 
 const MRZ_DEBUG = process.env.NODE_ENV !== "production";
+const PASSPORT_PERF_PREFIX = "[passport-import:perf]";
+const PASSPORT_DIAGNOSTICS_FLAG = "__PASSPORT_IMPORT_DIAGNOSTICS__";
+const PASSPORT_EARLY_EXIT_ENABLED = true;
+const PASSPORT_EARLY_EXIT_DISABLE_FLAG = "__PASSPORT_IMPORT_DISABLE_EARLY_EXIT__";
+const PASSPORT_EARLY_EXIT_SCORE = 220;
 const DEFAULT_MRZ_CROPS = [
   { x: 0, y: 72, width: 100, height: 28 },
   { x: 0, y: 65, width: 100, height: 35 },
   { x: 0, y: 55, width: 100, height: 45 },
 ];
+const PRIMARY_FULL_PASS_INDEXES = [0, 1, 2];
+const CONFIRMATION_FULL_PASS_INDEXES = [3, 4, 15, 16, 17];
+const terminatedWorkers = new WeakSet();
+
+const performanceNow = () => (
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : 0
+);
+
+const roundedDuration = (startedAt) => Math.round((performanceNow() - startedAt) * 10) / 10;
+
+const logPassportPerformance = (event, payload = {}) => {
+  console.info(PASSPORT_PERF_PREFIX, event, payload);
+};
+
+const passportDiagnosticsEnabled = () => {
+  if (!MRZ_DEBUG || typeof window === "undefined") return false;
+  // Enable explicitly in dev tools with:
+  // window.__PASSPORT_IMPORT_DIAGNOSTICS__ = true
+  // or localStorage.setItem("passport-import:diagnostics", "true")
+  if (window[PASSPORT_DIAGNOSTICS_FLAG] === true) return true;
+  try {
+    return window.localStorage?.getItem("passport-import:diagnostics") === "true";
+  } catch {
+    return false;
+  }
+};
+
+const passportEarlyExitEnabled = () => {
+  if (!PASSPORT_EARLY_EXIT_ENABLED) return false;
+  if (typeof window === "undefined") return true;
+  // Emergency safety switch:
+  // window.__PASSPORT_IMPORT_DISABLE_EARLY_EXIT__ = true
+  // or localStorage.setItem("passport-import:disable-early-exit", "true")
+  if (window[PASSPORT_EARLY_EXIT_DISABLE_FLAG] === true) return false;
+  try {
+    return window.localStorage?.getItem("passport-import:disable-early-exit") !== "true";
+  } catch {
+    return true;
+  }
+};
 
 const logMRZDebug = (label, payload) => {
   if (MRZ_DEBUG) console.debug(`[MRZ] ${label}`, payload);
@@ -174,7 +221,7 @@ const cropCanvasRegion = (sourceCanvas, { x = 0, y = 0, width = sourceCanvas.wid
 };
 
 const buildDebugPreviews = (canvas) => {
-  if (!MRZ_DEBUG) return {};
+  if (!passportDiagnosticsEnabled()) return {};
   const halfHeight = Math.max(1, Math.floor(canvas.height / 2));
   return {
     fullMrz: canvas.toDataURL("image/png"),
@@ -298,7 +345,11 @@ const createImageCropVariants = (imageFile, crop = { x: 0, y: 66, width: 100, he
 
 const createMRZCropBlobs = async (imageFile) => {
   const groups = await Promise.all(DEFAULT_MRZ_CROPS.map((crop) => createImageCropVariants(imageFile, crop)));
-  return groups.flat();
+  return groups.flatMap((group, cropIndex) => group.map((item, variantIndex) => ({
+    ...item,
+    cropIndex,
+    originalPassIndex: cropIndex * group.length + variantIndex,
+  })));
 };
 
 export const normalizeMRZOCRText = (text = "") => normalizeOcrText(text);
@@ -349,6 +400,27 @@ const createMRZWorker = (onProgress) => {
   });
 };
 
+export const terminatePassportOCRWorker = async (worker, context = {}) => {
+  if (!worker || terminatedWorkers.has(worker)) return;
+  terminatedWorkers.add(worker);
+  const startedAt = performanceNow();
+  try {
+    await worker.terminate();
+    logPassportPerformance("worker-terminate", {
+      ...context,
+      durationMs: roundedDuration(startedAt),
+      status: "success",
+    });
+  } catch (error) {
+    logPassportPerformance("worker-terminate", {
+      ...context,
+      durationMs: roundedDuration(startedAt),
+      status: "error",
+      error: error?.message || String(error),
+    });
+  }
+};
+
 const configureMRZWorker = async (worker) => {
   await worker.setParameters({
     tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
@@ -360,7 +432,35 @@ const configureMRZWorker = async (worker) => {
   });
 };
 
-const recognizeMRZBlob = async (worker, croppedMRZ) => {
+export const createPassportOCRWorker = async (onProgress, context = {}) => {
+  const startedAt = performanceNow();
+  let worker = null;
+  try {
+    worker = await createMRZWorker(onProgress);
+    await configureMRZWorker(worker);
+    logPassportPerformance("worker-init", {
+      ...context,
+      durationMs: roundedDuration(startedAt),
+      language: "eng",
+      pageSegMode: "6",
+      status: "success",
+    });
+    return worker;
+  } catch (error) {
+    logPassportPerformance("worker-init", {
+      ...context,
+      durationMs: roundedDuration(startedAt),
+      language: "eng",
+      pageSegMode: "6",
+      status: "error",
+      error: error?.message || String(error),
+    });
+    if (worker) await terminatePassportOCRWorker(worker, { ...context, reason: "worker-init-error" });
+    throw error;
+  }
+};
+
+const recognizeMRZBlob = async (worker, croppedMRZ, perfContext = {}) => {
   const blob = croppedMRZ?.blob || croppedMRZ;
   logMRZDebug("ocr:start", { variant: croppedMRZ?.variant, debug: croppedMRZ?.debug });
   if (croppedMRZ?.debug?.cropType === "line1" || croppedMRZ?.debug?.cropType === "line2") {
@@ -368,11 +468,33 @@ const recognizeMRZBlob = async (worker, croppedMRZ) => {
   } else {
     await worker.setParameters({ tessedit_pageseg_mode: "6" });
   }
+  const recognitionStartedAt = performanceNow();
   const recognition = worker.recognize(blob);
-  const { data: { text } } = await Promise.race([
-    recognition,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("OCR_TIMEOUT")), 18000)),
-  ]);
+  let text = "";
+  try {
+    const result = await Promise.race([
+      recognition,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("OCR_TIMEOUT")), 18000)),
+    ]);
+    text = result?.data?.text || "";
+    logPassportPerformance("ocr-pass", {
+      ...perfContext,
+      variant: croppedMRZ?.variant || "",
+      cropType: croppedMRZ?.debug?.cropType || "full_mrz",
+      durationMs: roundedDuration(recognitionStartedAt),
+      status: String(text || "").trim() ? "text" : "no-text",
+    });
+  } catch (error) {
+    logPassportPerformance("ocr-pass", {
+      ...perfContext,
+      variant: croppedMRZ?.variant || "",
+      cropType: croppedMRZ?.debug?.cropType || "full_mrz",
+      durationMs: roundedDuration(recognitionStartedAt),
+      status: "error",
+      error: error?.message || String(error),
+    });
+    throw error;
+  }
   logMRZDebug("ocr:raw-text", {
     variant: croppedMRZ?.variant,
     text,
@@ -432,6 +554,123 @@ const scoreRecognizedMRZResult = (result = {}) => {
   return score;
 };
 
+const completeReadyResult = (result = {}) => {
+  const parsed = result.parsed || {};
+  const data = parsed.data || {};
+  const checks = parsed.checks || {};
+  return Boolean(
+    result.success
+    && parsed.ok
+    && data.passportNo
+    && data.nationality
+    && data.birthDate
+    && data.expiryDate
+    && data.gender
+    && data.latinLastName
+    && data.latinFirstName
+    && checks.passportNumberCheck?.valid
+    && checks.birthDateCheck?.valid
+    && checks.expiryDateCheck?.valid
+    && checks.compositeCheck?.valid
+    && !(parsed.reviewReasons || []).length
+  );
+};
+
+const strictEarlySuccessResult = (result = {}, selectionScore = -1000) => {
+  if (!completeReadyResult(result) || selectionScore < PASSPORT_EARLY_EXIT_SCORE) return false;
+  const parsed = result.parsed || {};
+  const data = parsed.data || {};
+  const line1Diagnostics = parsed.engineResult?.diagnostics?.line1 || {};
+  const line2Diagnostics = parsed.engineResult?.diagnostics?.line2 || {};
+  const passportCorrection = line2Diagnostics.passportFieldCorrection || {};
+  const passportSource = line2Diagnostics.passportNumberSelection?.source || "mrz_line2";
+  const selectedLine2Source = line2Diagnostics.selectedSource || "";
+  const rawLine1 = result.raw?.line1 || parsed.raw?.line1 || "";
+  const rawLine2 = result.raw?.line2 || parsed.raw?.line2 || "";
+  return Boolean(
+    rawLine1.length === 44
+    && rawLine2.length === 44
+    && !data.birthDateApproximated
+    && line1Diagnostics.exactSeparator
+    && !(line1Diagnostics.removedNoise || []).length
+    && !line1Diagnostics.leadingSeparatorNoiseRemoved
+    && !line1Diagnostics.trailingGivenNameNoiseRemoved
+    && !passportCorrection.corrected
+    && ["mrz_line2", "mrz_line2_confirmed_by_visual"].includes(passportSource)
+    && selectedLine2Source === "short_or_exact_window"
+  );
+};
+
+const resultAgreementKey = (result = {}) => {
+  const data = result.parsed?.data || result.data || {};
+  return [
+    data.passportNo,
+    data.nationality,
+    data.birthDate,
+    data.expiryDate,
+    data.gender,
+    data.latinLastName,
+    data.latinFirstName,
+  ].map((value) => String(value || "").trim().toUpperCase()).join("|");
+};
+
+const findStrictEarlyConsensus = (records = []) => {
+  const groups = new Map();
+  records.forEach((record) => {
+    if (!record?.strictEarlySuccess) return;
+    const key = resultAgreementKey(record.result);
+    if (!key || key.split("|").some((value) => !value)) return;
+    const group = groups.get(key) || [];
+    group.push(record);
+    groups.set(key, group);
+  });
+  const confirmed = Array.from(groups.values())
+    .filter((group) => group.length >= 2)
+    .sort((a, b) => (
+      Math.max(...b.map((item) => item.selectionScore))
+      - Math.max(...a.map((item) => item.selectionScore))
+    ))[0];
+  if (!confirmed) return null;
+  return confirmed.slice().sort((a, b) => b.selectionScore - a.selectionScore)[0];
+};
+
+const buildAutomaticOcrStages = (croppedMRZs = [], earlyExitEnabled = true) => {
+  const byIndex = new Map(croppedMRZs.map((item, index) => [
+    Number.isInteger(item.originalPassIndex) ? item.originalPassIndex : index,
+    item,
+  ]));
+  if (!earlyExitEnabled) {
+    return [{
+      name: "full_fallback",
+      items: croppedMRZs,
+    }];
+  }
+  const used = new Set();
+  const takeIndexes = (indexes) => indexes
+    .map((index) => {
+      const item = byIndex.get(index);
+      if (item) used.add(index);
+      return item;
+    })
+    .filter(Boolean);
+  return [
+    {
+      name: "primary_full_mrz",
+      items: takeIndexes(PRIMARY_FULL_PASS_INDEXES),
+    },
+    {
+      name: "confirm_full_mrz",
+      items: takeIndexes(CONFIRMATION_FULL_PASS_INDEXES),
+    },
+    {
+      name: "full_fallback",
+      items: croppedMRZs.filter((item, index) => (
+        !used.has(Number.isInteger(item.originalPassIndex) ? item.originalPassIndex : index)
+      )),
+    },
+  ].filter((stage) => stage.items.length);
+};
+
 const buildRecoveryAttemptDebug = ({ croppedMRZ = {}, result = {}, selectionScore = null } = {}) => ({
   variant: croppedMRZ?.variant || result.variant || "",
   cropType: croppedMRZ?.debug?.cropType || "full_mrz",
@@ -453,6 +692,46 @@ const buildRecoveryAttemptDebug = ({ croppedMRZ = {}, result = {}, selectionScor
     reviewReasons: result.parsed?.engineResult?.reviewReasons || result.parsed?.reviewReasons || [],
   },
 });
+
+const selectAutomaticOcrResult = (croppedMRZs = [], recordsByPass = new Map()) => {
+  let bestFailure = { success: false, error: "MRZ_NOT_FOUND", raw: { line1: "", line2: "" } };
+  let bestSuccess = null;
+  let bestLine2Crop = null;
+  const recoveryAttempts = [];
+  croppedMRZs.forEach((croppedMRZ, fallbackIndex) => {
+    const originalPassIndex = Number.isInteger(croppedMRZ.originalPassIndex)
+      ? croppedMRZ.originalPassIndex
+      : fallbackIndex;
+    const record = recordsByPass.get(originalPassIndex);
+    if (!record) return;
+    const { result, selectionScore } = record;
+    recoveryAttempts.push(buildRecoveryAttemptDebug({ croppedMRZ, result, selectionScore }));
+    if (
+      croppedMRZ?.debug?.cropType === "line2"
+      && result.parsed?.data
+      && hasCompleteLine2Fields(result.parsed)
+      && (!bestLine2Crop || Number(selectionScore || -1000) > Number(bestLine2Crop.selectionScore || -1000))
+    ) {
+      bestLine2Crop = { ...result, selectionScore };
+    }
+    if (result.success) {
+      const scored = { ...result, selectionScore };
+      if (!bestSuccess || selectionScore > bestSuccess.selectionScore) bestSuccess = scored;
+      return;
+    }
+    if ((result.raw?.line1 || result.raw?.line2) && !(bestFailure.raw?.line1 || bestFailure.raw?.line2)) {
+      bestFailure = result;
+    } else if (result.error && bestFailure.error === "MRZ_NOT_FOUND") {
+      bestFailure = result;
+    }
+  });
+  return {
+    bestFailure,
+    bestSuccess,
+    bestLine2Crop,
+    recoveryAttempts,
+  };
+};
 
 const getLine2Fields = (parsed = {}) => {
   const data = parsed?.data || {};
@@ -536,64 +815,209 @@ const mergeLine2CropResult = (baseResult, line2Result) => {
   };
 };
 
-const runMRZOCR = async (croppedMRZ, onProgress) => {
-  let worker = null;
-
-  try {
-    worker = await createMRZWorker(onProgress);
-    await configureMRZWorker(worker);
-    return await recognizeMRZBlob(worker, croppedMRZ);
-  } catch (err) {
-    return { success: false, error: err.message };
-  } finally {
-    if (worker) await worker.terminate().catch(() => {});
-  }
-};
-
 /**
  * Runs Tesseract OCR on the expected bottom MRZ area of a passport image.
  * @param {File|Blob|string} imageFile - the image to process
  * @param {(pct: number) => void} [onProgress] - called with 0-100 during recognition
  * @returns {Promise<{success:boolean, data?:object, raw?:{line1:string,line2:string}, error?:string}>}
  */
-export async function extractMRZFromImage(imageFile, onProgress) {
+export async function extractMRZFromImage(imageFile, onProgress, options = {}) {
   let worker = null;
+  const externalWorker = options.worker || null;
+  const perfContext = options.perfContext || {};
+  const onStage = typeof options.onStage === "function" ? options.onStage : () => {};
+  let recognitionStarted = false;
+  const passportStartedAt = performanceNow();
   try {
-    const croppedMRZs = await createMRZCropBlobs(imageFile);
-    worker = await createMRZWorker(onProgress);
-    await configureMRZWorker(worker);
-    let bestFailure = { success: false, error: "MRZ_NOT_FOUND", raw: { line1: "", line2: "" } };
-    let bestSuccess = null;
-    let bestLine2Crop = null;
-    const recoveryAttempts = [];
-    for (const croppedMRZ of croppedMRZs) {
-      const result = await recognizeMRZBlob(worker, croppedMRZ);
-      const selectionScore = result.success
-        ? scoreRecognizedMRZResult(result)
-        : result.lineOnly && result.parsed?.data
-          ? scoreRecognizedMRZResult({ ...result, success: true }) - 60
-          : null;
-      recoveryAttempts.push(buildRecoveryAttemptDebug({ croppedMRZ, result, selectionScore }));
-      if (
-        croppedMRZ?.debug?.cropType === "line2"
-        && result.parsed?.data
-        && hasCompleteLine2Fields(result.parsed)
-        && (!bestLine2Crop || Number(selectionScore || -1000) > Number(bestLine2Crop.selectionScore || -1000))
-      ) {
-        bestLine2Crop = { ...result, selectionScore };
-      }
-      if (result.success) {
-        const score = selectionScore;
-        const scored = { ...result, selectionScore: score };
-        if (!bestSuccess || score > bestSuccess.selectionScore) bestSuccess = scored;
-        continue;
-      }
-      if ((result.raw?.line1 || result.raw?.line2) && !(bestFailure.raw?.line1 || bestFailure.raw?.line2)) {
-        bestFailure = result;
-      } else if (result.error && bestFailure.error === "MRZ_NOT_FOUND") {
-        bestFailure = result;
-      }
+    onStage({ phase: "preparing", progress: 0.02, completedPasses: 0, totalPasses: 45 });
+    const preprocessingStartedAt = performanceNow();
+    let croppedMRZs;
+    try {
+      croppedMRZs = await createMRZCropBlobs(imageFile);
+      logPassportPerformance("image-preprocess", {
+        ...perfContext,
+        fileName: imageFile?.name || perfContext.fileName || "",
+        durationMs: roundedDuration(preprocessingStartedAt),
+        cropCount: DEFAULT_MRZ_CROPS.length,
+        variantCount: croppedMRZs.length,
+        status: "success",
+      });
+    } catch (error) {
+      logPassportPerformance("image-preprocess", {
+        ...perfContext,
+        fileName: imageFile?.name || perfContext.fileName || "",
+        durationMs: roundedDuration(preprocessingStartedAt),
+        cropCount: DEFAULT_MRZ_CROPS.length,
+        variantCount: 0,
+        status: "error",
+        error: error?.message || String(error),
+      });
+      throw error;
     }
+    worker = externalWorker || await createPassportOCRWorker(onProgress, {
+      ...perfContext,
+      scope: perfContext.scope || "single-passport",
+    });
+    const earlyExitEnabled = passportEarlyExitEnabled();
+    const stages = buildAutomaticOcrStages(croppedMRZs, earlyExitEnabled);
+    const recordsByPass = new Map();
+    const executionRecords = [];
+    let executedPasses = 0;
+    let firstCompleteValid = null;
+    let earlyConsensus = null;
+    let fullFallbackRequired = !earlyExitEnabled;
+
+    for (const stage of stages) {
+      const stageStartedAt = performanceNow();
+      if (stage.name === "full_fallback") fullFallbackRequired = true;
+      logPassportPerformance("stage-start", {
+        ...perfContext,
+        stage: stage.name,
+        executedPasses,
+        totalPasses: croppedMRZs.length,
+        durationMs: roundedDuration(passportStartedAt),
+      });
+      for (const croppedMRZ of stage.items) {
+        const originalPassIndex = Number.isInteger(croppedMRZ.originalPassIndex)
+          ? croppedMRZ.originalPassIndex
+          : croppedMRZs.indexOf(croppedMRZ);
+        const confirming = executionRecords.some((record) => record.strictEarlySuccess);
+        onStage({
+          phase: confirming ? "confirming" : "reading",
+          progress: 0.08 + (executedPasses / Math.max(croppedMRZs.length, 1)) * 0.84,
+          completedPasses: executedPasses,
+          totalPasses: croppedMRZs.length,
+          stage: stage.name,
+        });
+        recognitionStarted = true;
+        const result = await recognizeMRZBlob(worker, croppedMRZ, {
+          ...perfContext,
+          pass: originalPassIndex + 1,
+          executionPass: executedPasses + 1,
+          totalPasses: croppedMRZs.length,
+          stage: stage.name,
+        });
+        onStage({
+          phase: "validating",
+          progress: 0.08 + ((executedPasses + 0.75) / Math.max(croppedMRZs.length, 1)) * 0.84,
+          completedPasses: executedPasses,
+          totalPasses: croppedMRZs.length,
+          stage: stage.name,
+        });
+        const selectionScore = result.success
+          ? scoreRecognizedMRZResult(result)
+          : result.lineOnly && result.parsed?.data
+            ? scoreRecognizedMRZResult({ ...result, success: true }) - 60
+            : null;
+        const record = {
+          croppedMRZ,
+          result,
+          selectionScore,
+          originalPassIndex,
+          executionPass: executedPasses + 1,
+          stage: stage.name,
+          strictEarlySuccess: strictEarlySuccessResult(result, selectionScore),
+        };
+        recordsByPass.set(originalPassIndex, record);
+        executionRecords.push(record);
+        executedPasses += 1;
+
+        if (!firstCompleteValid && completeReadyResult(result)) {
+          firstCompleteValid = record;
+          logPassportPerformance("first-complete-valid-result", {
+            ...perfContext,
+            stage: stage.name,
+            pass: originalPassIndex + 1,
+            executionPass: executedPasses,
+            variant: croppedMRZ.variant || "",
+            selectionScore,
+            durationMs: roundedDuration(passportStartedAt),
+          });
+        }
+
+        const consensus = earlyExitEnabled ? findStrictEarlyConsensus(executionRecords) : null;
+        if (consensus) {
+          const currentSelection = selectAutomaticOcrResult(croppedMRZs, recordsByPass);
+          const selectedBest = currentSelection.bestSuccess;
+          if (
+            selectedBest
+            && strictEarlySuccessResult(selectedBest, selectedBest.selectionScore)
+            && resultAgreementKey(selectedBest) === resultAgreementKey(consensus.result)
+          ) {
+            earlyConsensus = consensus;
+            onStage({
+              phase: "confirming",
+              progress: 0.96,
+              completedPasses: executedPasses,
+              totalPasses: croppedMRZs.length,
+              stage: stage.name,
+            });
+            break;
+          }
+        }
+      }
+      logPassportPerformance("stage-complete", {
+        ...perfContext,
+        stage: stage.name,
+        executedPasses,
+        totalPasses: croppedMRZs.length,
+        stageDurationMs: roundedDuration(stageStartedAt),
+        totalDurationMs: roundedDuration(passportStartedAt),
+        earlyExitReady: Boolean(earlyConsensus),
+      });
+      onStage({
+        phase: "validating",
+        progress: 0.08 + (executedPasses / Math.max(croppedMRZs.length, 1)) * 0.84,
+        completedPasses: executedPasses,
+        totalPasses: croppedMRZs.length,
+        stage: stage.name,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (earlyConsensus) {
+        onStage({
+          phase: "confirming",
+          progress: 0.96,
+          completedPasses: executedPasses,
+          totalPasses: croppedMRZs.length,
+          stage: stage.name,
+        });
+      }
+      if (earlyConsensus) break;
+    }
+
+    const {
+      bestFailure,
+      bestSuccess,
+      bestLine2Crop,
+      recoveryAttempts,
+    } = selectAutomaticOcrResult(croppedMRZs, recordsByPass);
+    const skippedPasses = Math.max(0, croppedMRZs.length - executedPasses);
+    const earlyExit = Boolean(earlyConsensus && skippedPasses > 0);
+    logPassportPerformance("ocr-summary", {
+      ...perfContext,
+      earlyExitEnabled,
+      earlyExit,
+      fullFallbackRequired,
+      executedPasses,
+      skippedPasses,
+      totalPasses: croppedMRZs.length,
+      firstCompleteValidPass: firstCompleteValid ? firstCompleteValid.originalPassIndex + 1 : null,
+      firstCompleteValidExecutionPass: firstCompleteValid?.executionPass || null,
+      confirmingPasses: earlyConsensus
+        ? executionRecords
+            .filter((record) => resultAgreementKey(record.result) === resultAgreementKey(earlyConsensus.result))
+            .map((record) => record.originalPassIndex + 1)
+        : [],
+      durationMs: roundedDuration(passportStartedAt),
+    });
+    onStage({
+      phase: "confirming",
+      progress: 0.98,
+      completedPasses: executedPasses,
+      totalPasses: croppedMRZs.length,
+      earlyExit,
+    });
+
     if (bestSuccess) {
       const selectedSuccess = bestLine2Crop ? mergeLine2CropResult(bestSuccess, bestLine2Crop) : bestSuccess;
       const debug = {
@@ -606,6 +1030,10 @@ export async function extractMRZFromImage(imageFile, onProgress) {
         checks: selectedSuccess.parsed?.checks,
         reviewReasons: selectedSuccess.parsed?.reviewReasons,
         line2CropOverride: selectedSuccess.line2CropOverride || null,
+        earlyExit,
+        fullFallbackRequired,
+        executedPasses,
+        skippedPasses,
       };
       logMRZRecoveryDecision(debug);
       return { ...selectedSuccess, debug };
@@ -616,25 +1044,94 @@ export async function extractMRZFromImage(imageFile, onProgress) {
       selected: null,
       safeModeClearedFields: true,
       reason: bestFailure.error || "MRZ_NOT_FOUND",
+      earlyExit,
+      fullFallbackRequired,
+      executedPasses,
+      skippedPasses,
     };
     logMRZRecoveryDecision(debug);
     return { ...bestFailure, debug };
   } catch (err) {
-    return { success: false, error: err.message };
+    return {
+      success: false,
+      error: err.message,
+      workerShouldReset: Boolean(externalWorker && recognitionStarted),
+    };
   } finally {
-    if (worker) await worker.terminate().catch(() => {});
+    if (worker && !externalWorker) {
+      await terminatePassportOCRWorker(worker, {
+        ...perfContext,
+        scope: perfContext.scope || "single-passport",
+        reason: "passport-complete",
+      });
+    }
   }
 }
 
-export async function extractMRZFromImageRegion(imageFile, crop, onProgress) {
+export async function extractMRZFromImageRegion(imageFile, crop, onProgress, options = {}) {
+  let worker = null;
+  const perfContext = options.perfContext || {};
   try {
-    const croppedMRZs = await createImageCropVariants(imageFile, crop);
+    const preprocessingStartedAt = performanceNow();
+    let croppedMRZs;
+    try {
+      croppedMRZs = await createImageCropVariants(imageFile, crop);
+      logPassportPerformance("image-preprocess", {
+        ...perfContext,
+        scope: perfContext.scope || "manual-crop",
+        fileName: imageFile?.name || perfContext.fileName || "",
+        durationMs: roundedDuration(preprocessingStartedAt),
+        cropCount: 1,
+        variantCount: croppedMRZs.length,
+        status: "success",
+      });
+    } catch (error) {
+      logPassportPerformance("image-preprocess", {
+        ...perfContext,
+        scope: perfContext.scope || "manual-crop",
+        fileName: imageFile?.name || perfContext.fileName || "",
+        durationMs: roundedDuration(preprocessingStartedAt),
+        cropCount: 1,
+        variantCount: 0,
+        status: "error",
+        error: error?.message || String(error),
+      });
+      throw error;
+    }
+    worker = await createPassportOCRWorker(onProgress, {
+      ...perfContext,
+      scope: perfContext.scope || "manual-crop",
+    });
     let bestFailure = { success: false, error: "MRZ_NOT_FOUND", raw: { line1: "", line2: "" } };
     let bestSuccess = null;
     let bestLine2Crop = null;
     const recoveryAttempts = [];
-    for (const croppedMRZ of croppedMRZs) {
-      const result = await runMRZOCR(croppedMRZ, onProgress);
+    for (let passIndex = 0; passIndex < croppedMRZs.length; passIndex += 1) {
+      const croppedMRZ = croppedMRZs[passIndex];
+      let result;
+      try {
+        result = await recognizeMRZBlob(worker, croppedMRZ, {
+          ...perfContext,
+          scope: perfContext.scope || "manual-crop",
+          pass: passIndex + 1,
+          totalPasses: croppedMRZs.length,
+        });
+      } catch (error) {
+        result = { success: false, error: error.message };
+        await terminatePassportOCRWorker(worker, {
+          ...perfContext,
+          scope: perfContext.scope || "manual-crop",
+          reason: "manual-crop-pass-error",
+          pass: passIndex + 1,
+        });
+        worker = passIndex + 1 < croppedMRZs.length
+          ? await createPassportOCRWorker(onProgress, {
+              ...perfContext,
+              scope: perfContext.scope || "manual-crop",
+              reason: "manual-crop-pass-error-recovery",
+            })
+          : null;
+      }
       const selectionScore = result.success
         ? scoreRecognizedMRZResult(result)
         : result.lineOnly && result.parsed?.data
@@ -688,5 +1185,13 @@ export async function extractMRZFromImageRegion(imageFile, crop, onProgress) {
     return { ...bestFailure, debug };
   } catch (err) {
     return { success: false, error: err.message };
+  } finally {
+    if (worker) {
+      await terminatePassportOCRWorker(worker, {
+        ...perfContext,
+        scope: perfContext.scope || "manual-crop",
+        reason: "manual-crop-complete",
+      });
+    }
   }
 }
