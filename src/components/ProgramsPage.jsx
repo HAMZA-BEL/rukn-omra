@@ -6244,6 +6244,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const generatedRoomFitPendingRef = React.useRef(null);
   const roomingRealtimeTimerRef = React.useRef(null);
   const roomingRealtimePendingRef = React.useRef(false);
+  const roomingRealtimePendingUpdatedAtRef = React.useRef("");
+  const roomingRealtimeFetchRetryRef = React.useRef(0);
   const roomingRealtimeSeqRef = React.useRef(0);
   const roomingLastRemoteUpdatedAtRef = React.useRef("");
   const roomingLastPayloadUpdatedAtRef = React.useRef("");
@@ -6254,6 +6256,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingSaveSeqRef = React.useRef(0);
   const roomingDirtyReasonRef = React.useRef("");
   const roomingSaveTriggerCountRef = React.useRef(0);
+  const roomingSaveStatusRef = React.useRef(roomingSaveStatus);
   const dirtyRef = React.useRef(false);
   const draggingClientIdRef = React.useRef(null);
   const roomModalOpenRef = React.useRef(false);
@@ -6267,6 +6270,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingModalPortalContainer = browserFullscreenMode ? roomingFullscreenRef.current : null;
   const canPersistRoomingRemote = Boolean(supabaseRoomingEnabled && agencyId && program?.id);
   dirtyRef.current = dirty;
+  roomingSaveStatusRef.current = roomingSaveStatus;
   draggingClientIdRef.current = draggingClientId;
   roomModalOpenRef.current = roomModal.open;
   pendingDropRef.current = pendingDrop;
@@ -6947,19 +6951,42 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     };
   }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, onToast, program.id, readCanvasStateFromStorage, readRoomingDraftFromStorage, roomingEligibleClients, roomingLoadKey, roomingLoadRetryNonce, t.roomingLoadFailed, writeCanvasCache]);
 
-  const isRoomingRealtimeUnsafe = React.useCallback(() => (
-    dirtyRef.current
-    || Boolean(draggingClientIdRef.current)
-    || Boolean(roomDragActiveRef.current)
-    || Boolean(roomModalOpenRef.current)
-    || Boolean(pendingDropRef.current)
-    || Boolean(roomingCopyModalOpenRef.current)
-  ), []);
+  const getRoomingRealtimeUnsafeReasons = React.useCallback(() => {
+    const reasons = [];
+    if (dirtyRef.current) reasons.push("dirty");
+    if (roomingSaveInFlightRef.current || roomingSavePendingRef.current) reasons.push("saveQueue");
+    if (["saving", "slowSaving", "saveFailed", "offline"].includes(roomingSaveStatusRef.current)) {
+      reasons.push(roomingSaveStatusRef.current);
+    }
+    if (draggingClientIdRef.current) reasons.push("clientDrag");
+    if (roomDragActiveRef.current) reasons.push("roomDrag");
+    if (roomModalOpenRef.current) reasons.push("roomEditor");
+    if (pendingDropRef.current) reasons.push("pendingDrop");
+    if (roomingCopyModalOpenRef.current) reasons.push("copyModal");
+    return reasons;
+  }, []);
+
+  const isRoomingRealtimeUnsafe = React.useCallback(
+    () => getRoomingRealtimeUnsafeReasons().length > 0,
+    [getRoomingRealtimeUnsafeReasons]
+  );
 
   const fetchAndApplyRealtimeRooming = React.useCallback(async () => {
     if (!canPersistRoomingRemote) return;
+    const unsafeReasons = getRoomingRealtimeUnsafeReasons();
+    if (unsafeReasons.length) {
+      logRoomingDiagnostic("rooming.realtime.deferred", {
+        programId: program.id,
+        location: city,
+        reasons: unsafeReasons,
+        pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+        source: "beforeFetch",
+      });
+      return;
+    }
     const requestSeq = roomingRealtimeSeqRef.current + 1;
     roomingRealtimeSeqRef.current = requestSeq;
+    const requestedPendingUpdatedAt = roomingRealtimePendingUpdatedAtRef.current;
     let result = { data: null, error: null };
     try {
       result = await runRoomingTimedOperation(
@@ -6973,28 +7000,37 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const { data, error } = result;
     if (error) {
       console.error("[rooming] realtime refetch failed", error);
+      roomingRealtimeFetchRetryRef.current += 1;
+      logRoomingDiagnostic("rooming.realtime.fetchFailed", {
+        programId: program.id,
+        location: city,
+        pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+        retryAttempt: roomingRealtimeFetchRetryRef.current,
+        error: error?.code || error?.message || "unknown",
+      });
+      if (roomingRealtimeFetchRetryRef.current <= ROOMING_RETRY_COUNT) {
+        scheduleRoomingRealtimeRefetchRef.current?.({
+          source: "fetchFailed",
+          delayMs: 1200,
+        });
+      }
       return;
     }
     if (!data) return;
-    const remoteUpdatedAtMs = Date.parse(data.updatedAt || "");
-    const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
-    const remotePayloadUpdatedAtMs = Date.parse(data.meta?.payloadUpdatedAt || "");
-    const lastPayloadUpdatedAtMs = Date.parse(roomingLastPayloadUpdatedAtRef.current || "");
-    if (
-      Number.isFinite(remotePayloadUpdatedAtMs)
-      && remotePayloadUpdatedAtMs > 0
-      && Number.isFinite(lastPayloadUpdatedAtMs)
-      && lastPayloadUpdatedAtMs > 0
-      && remotePayloadUpdatedAtMs < lastPayloadUpdatedAtMs
-    ) {
-      logRoomingDiagnostic("realtime.ignoredStalePayload", {
+    roomingRealtimeFetchRetryRef.current = 0;
+    const unsafeAfterFetch = getRoomingRealtimeUnsafeReasons();
+    if (unsafeAfterFetch.length) {
+      logRoomingDiagnostic("rooming.realtime.deferred", {
         programId: program.id,
         location: city,
-        remotePayloadUpdatedAt: data.meta?.payloadUpdatedAt,
-        lastPayloadUpdatedAt: roomingLastPayloadUpdatedAtRef.current,
+        reasons: unsafeAfterFetch,
+        pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+        source: "afterFetch",
       });
       return;
     }
+    const remoteUpdatedAtMs = Date.parse(data.updatedAt || "");
+    const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
     if (
       Number.isFinite(remoteUpdatedAtMs)
       && remoteUpdatedAtMs > 0
@@ -7002,40 +7038,129 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       && lastAppliedAtMs > 0
       && remoteUpdatedAtMs <= lastAppliedAtMs
     ) {
+      roomingRealtimePendingRef.current = false;
+      roomingRealtimePendingUpdatedAtRef.current = "";
+      logRoomingDiagnostic("rooming.realtime.ignoredOlderServerUpdate", {
+        programId: program.id,
+        location: city,
+        remoteUpdatedAt: data.updatedAt,
+        lastAppliedUpdatedAt: roomingLastRemoteUpdatedAtRef.current,
+        payloadUpdatedAt: data.meta?.payloadUpdatedAt || "",
+      });
       return;
     }
     const loaded = normalizeRoomingCanvasState(data, roomingEligibleClients);
     writeCanvasCache(city, buildCanvasPayload(city, loaded.rooms, loaded.unassigned, loaded.roomLinks));
     applyLoadedRoomingState(loaded, data.updatedAt, { resetInteraction: false });
+    const latestPendingUpdatedAtMs = Date.parse(roomingRealtimePendingUpdatedAtRef.current || "");
+    if (
+      !Number.isFinite(latestPendingUpdatedAtMs)
+      || !Number.isFinite(remoteUpdatedAtMs)
+      || latestPendingUpdatedAtMs <= remoteUpdatedAtMs
+    ) {
+      roomingRealtimePendingRef.current = false;
+      roomingRealtimePendingUpdatedAtRef.current = "";
+    }
     setRoomingLoadStatus("loaded");
     setRoomingLoadConfirmed(true);
     setRoomingLoadConfirmedKey(roomingLoadKey);
-  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, program.id, roomingEligibleClients, roomingLoadKey, writeCanvasCache]);
+    logRoomingDiagnostic("rooming.realtime.applied", {
+      programId: program.id,
+      location: city,
+      remoteUpdatedAt: data.updatedAt,
+      requestedPendingUpdatedAt,
+      payloadUpdatedAt: data.meta?.payloadUpdatedAt || "",
+      rooms: loaded.rooms?.length || 0,
+      roomLinks: loaded.roomLinks?.length || 0,
+    });
+    if (roomingRealtimePendingRef.current) {
+      scheduleRoomingRealtimeRefetchRef.current?.({
+        source: "newerEventDuringFetch",
+        delayMs: 0,
+      });
+    }
+  }, [agencyId, applyLoadedRoomingState, buildCanvasPayload, canPersistRoomingRemote, city, getRoomingRealtimeUnsafeReasons, program.id, roomingEligibleClients, roomingLoadKey, writeCanvasCache]);
 
-  const scheduleRoomingRealtimeRefetch = React.useCallback(() => {
+  const scheduleRoomingRealtimeRefetch = React.useCallback(({
+    source = "event",
+    remoteUpdatedAt = "",
+    delayMs = 350,
+  } = {}) => {
     if (!canPersistRoomingRemote) return;
     roomingRealtimePendingRef.current = true;
+    const incomingUpdatedAtMs = Date.parse(remoteUpdatedAt || "");
+    const pendingUpdatedAtMs = Date.parse(roomingRealtimePendingUpdatedAtRef.current || "");
+    if (
+      remoteUpdatedAt
+      && (
+        !Number.isFinite(pendingUpdatedAtMs)
+        || !Number.isFinite(incomingUpdatedAtMs)
+        || incomingUpdatedAtMs > pendingUpdatedAtMs
+      )
+    ) {
+      roomingRealtimePendingUpdatedAtRef.current = remoteUpdatedAt;
+    }
     if (roomingRealtimeTimerRef.current) {
       window.clearTimeout(roomingRealtimeTimerRef.current);
       roomingRealtimeTimerRef.current = null;
     }
+    const unsafeReasons = getRoomingRealtimeUnsafeReasons();
+    if (unsafeReasons.length) {
+      logRoomingDiagnostic("rooming.realtime.deferred", {
+        programId: program.id,
+        location: city,
+        reasons: unsafeReasons,
+        source,
+        pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+      });
+      return;
+    }
+    logRoomingDiagnostic("rooming.realtime.pendingRetry", {
+      programId: program.id,
+      location: city,
+      source,
+      delayMs,
+      pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+    });
     roomingRealtimeTimerRef.current = window.setTimeout(() => {
       roomingRealtimeTimerRef.current = null;
       if (!roomingRealtimePendingRef.current) return;
-      if (isRoomingRealtimeUnsafe()) return;
-      roomingRealtimePendingRef.current = false;
+      const timerUnsafeReasons = getRoomingRealtimeUnsafeReasons();
+      if (timerUnsafeReasons.length) {
+        logRoomingDiagnostic("rooming.realtime.deferred", {
+          programId: program.id,
+          location: city,
+          reasons: timerUnsafeReasons,
+          source: `${source}:timer`,
+          pendingUpdatedAt: roomingRealtimePendingUpdatedAtRef.current,
+        });
+        return;
+      }
       fetchAndApplyRealtimeRooming();
-    }, 350);
-  }, [canPersistRoomingRemote, fetchAndApplyRealtimeRooming, isRoomingRealtimeUnsafe]);
+    }, Math.max(0, Number(delayMs) || 0));
+  }, [canPersistRoomingRemote, city, fetchAndApplyRealtimeRooming, getRoomingRealtimeUnsafeReasons, program.id]);
   scheduleRoomingRealtimeRefetchRef.current = scheduleRoomingRealtimeRefetch;
 
   React.useEffect(() => {
     if (!roomingRealtimePendingRef.current || isRoomingRealtimeUnsafe()) return;
-    scheduleRoomingRealtimeRefetch();
-  }, [dirty, draggingClientId, isRoomingRealtimeUnsafe, pendingDrop, roomModal.open, scheduleRoomingRealtimeRefetch]);
+    scheduleRoomingRealtimeRefetch({
+      source: "unsafeStateCleared",
+      delayMs: 0,
+    });
+  }, [
+    dirty,
+    draggingClientId,
+    isRoomingRealtimeUnsafe,
+    pendingDrop,
+    roomModal.open,
+    roomingCopyModal.open,
+    roomingSaveStatus,
+    scheduleRoomingRealtimeRefetch,
+  ]);
 
   React.useEffect(() => {
     roomingRealtimePendingRef.current = false;
+    roomingRealtimePendingUpdatedAtRef.current = "";
     roomingLastRemoteUpdatedAtRef.current = "";
     roomingLastPayloadUpdatedAtRef.current = "";
     roomingRealtimeSeqRef.current += 1;
@@ -7045,14 +7170,28 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     }
     if (!canPersistRoomingRemote) return undefined;
 
+    logRoomingDiagnostic("rooming.realtime.subscription.start", {
+      programId: program.id,
+      location: city,
+      agencyScoped: Boolean(agencyId),
+    });
     const unsubscribe = db.roomingAssignments.subscribe({
       agencyId,
       programId: program.id,
       location: city,
       onChange: (payload) => {
         const row = payload?.new || payload?.old;
+        roomingRealtimeFetchRetryRef.current = 0;
         const remoteUpdatedAtMs = Date.parse(row?.updated_at || "");
         const lastAppliedAtMs = Date.parse(roomingLastRemoteUpdatedAtRef.current || "");
+        logRoomingDiagnostic("rooming.realtime.received", {
+          programId: program.id,
+          location: city,
+          eventType: payload?.eventType || payload?.event || "",
+          remoteUpdatedAt: row?.updated_at || "",
+          lastAppliedUpdatedAt: roomingLastRemoteUpdatedAtRef.current,
+          payloadUpdatedAt: row?.meta?.payloadUpdatedAt || "",
+        });
         if (
           Number.isFinite(remoteUpdatedAtMs)
           && remoteUpdatedAtMs > 0
@@ -7060,22 +7199,42 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
           && lastAppliedAtMs > 0
           && remoteUpdatedAtMs <= lastAppliedAtMs
         ) {
+          logRoomingDiagnostic("rooming.realtime.ignoredOlderServerUpdate", {
+            programId: program.id,
+            location: city,
+            remoteUpdatedAt: row?.updated_at || "",
+            lastAppliedUpdatedAt: roomingLastRemoteUpdatedAtRef.current,
+          });
           return;
         }
-        scheduleRoomingRealtimeRefetchRef.current?.();
+        scheduleRoomingRealtimeRefetchRef.current?.({
+          source: "subscriptionEvent",
+          remoteUpdatedAt: row?.updated_at || "",
+        });
       },
       onError: (error) => {
         console.error("[rooming] realtime subscription failed", error);
+        logRoomingDiagnostic("rooming.realtime.subscription.error", {
+          programId: program.id,
+          location: city,
+          error: error?.code || error?.message || "unknown",
+        });
       },
     });
 
     return () => {
       roomingRealtimePendingRef.current = false;
+      roomingRealtimePendingUpdatedAtRef.current = "";
+      roomingRealtimeFetchRetryRef.current = 0;
       roomingRealtimeSeqRef.current += 1;
       if (roomingRealtimeTimerRef.current) {
         window.clearTimeout(roomingRealtimeTimerRef.current);
         roomingRealtimeTimerRef.current = null;
       }
+      logRoomingDiagnostic("rooming.realtime.subscription.stop", {
+        programId: program.id,
+        location: city,
+      });
       unsubscribe?.();
     };
   }, [agencyId, canPersistRoomingRemote, city, program.id]);
@@ -7390,6 +7549,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         }
       } finally {
         roomingSaveInFlightRef.current = false;
+        if (roomingRealtimePendingRef.current) {
+          scheduleRoomingRealtimeRefetchRef.current?.({
+            source: "saveQueueSettled",
+            delayMs: 0,
+          });
+        }
       }
       return finalResult;
     })();
@@ -9154,6 +9319,12 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       },
     });
     if (positionChanged) markDirty(ROOMING_SAVE_REASON_LAYOUT_ONLY);
+    if (roomingRealtimePendingRef.current) {
+      scheduleRoomingRealtimeRefetchRef.current?.({
+        source: "roomDragEnd",
+        delayMs: 0,
+      });
+    }
     if (invalid) onToast?.(t.roomingOverlapFixed || "تم منع تداخل الغرف وإرجاع البطاقة إلى موضع صالح", "info");
   }, [allCollisionNodes, city, markDirty, onToast, program.id, setFlowNodes, t]);
 
