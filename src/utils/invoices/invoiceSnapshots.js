@@ -18,6 +18,14 @@ const safeAmount = (value) => {
   return Number.isFinite(amount) ? amount : 0;
 };
 
+const firstSnapshotText = (...values) => {
+  for (const value of values) {
+    const text = trimInvoiceValue(value);
+    if (text) return text;
+  }
+  return "";
+};
+
 const invoiceYearFromDisplay = (displayNumber = "") => {
   const match = trimInvoiceValue(displayNumber).match(/\/(\d{4})$/);
   return match?.[1] || String(new Date().getFullYear());
@@ -146,8 +154,8 @@ export const createInvoiceSnapshotDraft = ({
     programSnapshot: {
       programName: getInvoiceProgramDisplayName(program, invoiceData.lang || "ar"),
       programKind: trimInvoiceValue(program?.type || program?.program_type || program?.programType || program?.programKind),
-      departureDate: trimInvoiceValue(program?.departure),
-      returnDate: trimInvoiceValue(program?.returnDate),
+      departureDate: firstSnapshotText(invoiceData.departureDate, program?.departure, program?.departureDate, program?.departure_date),
+      returnDate: firstSnapshotText(invoiceData.returnDate, program?.returnDate, program?.return_date),
       level: trimInvoiceValue(client?.packageLevel || client?.hotelLevel),
       roomType: trimInvoiceValue(client?.roomType || client?.roomTypeLabel),
       carrier: formatAirlineNameForDocument(trimInvoiceValue(invoiceData.carrier), invoiceData.lang || "ar"),

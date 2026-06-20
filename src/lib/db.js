@@ -2480,6 +2480,8 @@ export const db = {
     onPayment = () => {},
     onNotification = () => {},
   }) {
+    if (!agencyId) return () => {};
+
     const handleStatus = (channelName) => (status, error) => {
       if (process.env.NODE_ENV === "development") {
         console.debug(`[Realtime] ${channelName}: ${status}`, error || "");

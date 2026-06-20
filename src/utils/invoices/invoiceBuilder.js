@@ -27,6 +27,14 @@ export const getLatestInvoicePayment = (payments = []) => (
 
 const getTodayDate = () => new Date().toISOString().slice(0, 10);
 
+const firstProgramText = (source = {}, keys = []) => {
+  for (const key of keys) {
+    const value = trimInvoiceValue(source?.[key]);
+    if (value) return value;
+  }
+  return "";
+};
+
 export const buildInvoiceData = ({
   client,
   program,
@@ -53,18 +61,26 @@ export const buildInvoiceData = ({
   const cin = getInvoiceClientCin(safeClient);
   const passportNo = trimInvoiceValue(safeClient.passport?.number);
   const carrier = formatAirlineNameForDocument(
-    trimInvoiceValue(
-      safeProgram?.carrier
-      || safeProgram?.company
-      || safeProgram?.compagnie
-      || safeProgram?.airline
-      || safeProgram?.transport
-      || safeProgram?.airlineName
-      || safeProgram?.airlineCode
-      || safeProgram?.carrierCode
-    ),
+    firstProgramText(safeProgram, [
+      "carrier",
+      "company",
+      "compagnie",
+      "airline",
+      "transport",
+      "airlineName",
+      "airline_name",
+      "airlineCode",
+      "airline_code",
+      "carrierCode",
+      "carrier_code",
+    ]),
     lang
   );
+  const departureDate = firstProgramText(safeProgram, ["departure", "departureDate", "departure_date", "startDate", "start_date", "date"]);
+  const returnDate = firstProgramText(safeProgram, ["returnDate", "return_date"]);
+  const travelRoute = firstProgramText(safeProgram, ["route", "itinerary", "travelRoute", "travel_route", "routeText", "route_text"]);
+  const visitOrder = firstProgramText(safeProgram, ["visitOrder", "visit_order"]);
+  const hotelCheckinDay = firstProgramText(safeProgram, ["hotelCheckinDay", "hotel_checkin_day", "hotelCheckIn", "hotel_check_in"]);
   const latestPayment = getLatestInvoicePayment(payments);
   const isProforma = documentType === "proforma";
   if (!isProforma && !paidInFull) {
@@ -99,6 +115,20 @@ export const buildInvoiceData = ({
     passportNo,
     carrier,
     programName: getInvoiceProgramDisplayName(safeProgram, lang),
+    departureDate,
+    returnDate,
+    route: travelRoute,
+    itinerary: travelRoute,
+    travelRoute,
+    travel_route: travelRoute,
+    routeText: travelRoute,
+    route_text: travelRoute,
+    visitOrder,
+    visit_order: visitOrder,
+    hotelCheckinDay,
+    hotel_checkin_day: hotelCheckinDay,
+    hotelCheckIn: hotelCheckinDay,
+    hotel_check_in: hotelCheckinDay,
     latestPayment,
     invoiceItem,
     invoiceNo: invoiceItem?.invoiceNumber || "",

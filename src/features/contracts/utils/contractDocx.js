@@ -1,6 +1,5 @@
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
-import expressionParser from "docxtemplater/expressions.js";
 import { CONTRACT_DOCX_MIME } from "./contractTemplateData";
 import { CONTRACT_TEMPLATE_FIELD_GROUPS } from "./contractTemplateFields";
 
@@ -28,7 +27,6 @@ export function renderContractDocx(arrayBuffer, data) {
     paragraphLoop: true,
     linebreaks: true,
     delimiters: { start: "{{", end: "}}" },
-    parser: expressionParser,
     nullGetter: (part) => {
       const tagName = getTagName(part);
       if (!tagName) return "";

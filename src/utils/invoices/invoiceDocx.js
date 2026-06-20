@@ -37,6 +37,13 @@ const formatPrintDate = (value) => {
   return `${day}/${month}/${parsed.getFullYear()}`;
 };
 
+const formatInvoiceTravelDate = (value) => {
+  const raw = trimValue(value);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+  return raw;
+};
+
 const run = (text, { bold = false, size = 22 } = {}) => `
   <w:r>
     <w:rPr>${bold ? "<w:b/><w:bCs/>" : ""}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr>
@@ -287,8 +294,34 @@ export function downloadInvoiceWordDocument({
     invoiceNo,
     phone: firstText(client?.phone),
     programName: firstText(invoiceData.programName, getInvoiceProgramDisplayName(program, lang)),
-    departureDate: firstText(program?.departure),
-    returnDate: firstText(program?.returnDate),
+    carrier: firstText(
+      invoiceData.carrier,
+      program?.carrier,
+      program?.company,
+      program?.compagnie,
+      program?.airline,
+      program?.transport,
+      program?.airlineName,
+      program?.airline_name,
+      program?.airlineCode,
+      program?.airline_code,
+      program?.carrierCode,
+      program?.carrier_code
+    ),
+    departureDate: formatInvoiceTravelDate(firstText(invoiceData.departureDate, program?.departure, program?.departureDate, program?.departure_date)),
+    returnDate: formatInvoiceTravelDate(firstText(invoiceData.returnDate, program?.returnDate, program?.return_date)),
+    route: firstText(invoiceData.route, program?.route, program?.itinerary, program?.travelRoute, program?.travel_route, program?.routeText, program?.route_text),
+    itinerary: firstText(invoiceData.itinerary, program?.itinerary, program?.route, program?.travelRoute, program?.travel_route, program?.routeText, program?.route_text),
+    travelRoute: firstText(invoiceData.travelRoute, program?.travelRoute, program?.travel_route, program?.route, program?.itinerary, program?.routeText, program?.route_text),
+    travel_route: firstText(invoiceData.travel_route, program?.travel_route, program?.travelRoute, program?.route, program?.itinerary, program?.routeText, program?.route_text),
+    routeText: firstText(invoiceData.routeText, program?.routeText, program?.route_text, program?.route, program?.itinerary, program?.travelRoute, program?.travel_route),
+    route_text: firstText(invoiceData.route_text, program?.route_text, program?.routeText, program?.route, program?.itinerary, program?.travelRoute, program?.travel_route),
+    visitOrder: firstText(invoiceData.visitOrder, program?.visitOrder, program?.visit_order),
+    visit_order: firstText(invoiceData.visit_order, program?.visit_order, program?.visitOrder),
+    hotelCheckinDay: firstText(invoiceData.hotelCheckinDay, program?.hotelCheckinDay, program?.hotel_checkin_day, program?.hotelCheckIn, program?.hotel_check_in),
+    hotel_checkin_day: firstText(invoiceData.hotel_checkin_day, program?.hotel_checkin_day, program?.hotelCheckinDay, program?.hotelCheckIn, program?.hotel_check_in),
+    hotelCheckIn: firstText(invoiceData.hotelCheckIn, program?.hotelCheckIn, program?.hotel_check_in, program?.hotelCheckinDay, program?.hotel_checkin_day),
+    hotel_check_in: firstText(invoiceData.hotel_check_in, program?.hotel_check_in, program?.hotelCheckIn, program?.hotelCheckinDay, program?.hotel_checkin_day),
     level: firstText(client?.packageLevel, client?.hotelLevel),
     roomType: firstText(client?.roomTypeLabel, client?.roomType),
   };

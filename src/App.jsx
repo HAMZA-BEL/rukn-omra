@@ -421,7 +421,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
             </ErrorBoundary>
           )}
           {page==="activity" && <ErrorBoundary><ActivityLogPage store={store} onToast={showToast} /></ErrorBoundary>}
-          {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} focus={clearanceFocus} /></ErrorBoundary>}
+          {page==="clearance"  && <ErrorBoundary><ClearancePage store={store} focus={clearanceFocus} onToast={showToast} /></ErrorBoundary>}
           {page==="settings"   && (
             <ErrorBoundary>
               <SettingsPage

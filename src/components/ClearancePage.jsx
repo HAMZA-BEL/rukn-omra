@@ -18,6 +18,12 @@ import {
   restoreSavedInvoiceSnapshot,
   trashSavedInvoiceSnapshot,
 } from "../utils/invoices";
+import {
+  CONTRACT_TRAVEL_CONTEXT_SOURCES,
+  buildTravelGroupById,
+  getClientTravelGroupId,
+  resolveClientTravelContext,
+} from "../features/contracts/utils/contractTravelContext";
 
 const tc = theme.colors;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -586,12 +592,15 @@ const invoiceTabText = (lang) => {
   };
 };
 
-export default function ClearancePage({ store, focus = null }) {
+export default function ClearancePage({ store, focus = null, onToast = null }) {
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const {
     clients,
     programs,
+    programTravelGroups = [],
+    getProgramTravelGroups,
+    loadProgramTravelGroups,
     getClientStatus,
     getClientPayments,
     getClientTotalPaid,
@@ -624,6 +633,7 @@ export default function ClearancePage({ store, focus = null }) {
   const statusFilterRef = React.useRef(null);
   const paymentMethodRef = React.useRef(null);
   const clearanceHydrationRequestedRef = React.useRef(false);
+  const invoiceTravelGroupsLoadPromisesRef = React.useRef(new Map());
   const invoiceFocusTokenRef = React.useRef(null);
   const labels = React.useMemo(() => getLocalizedClearanceLabels(lang), [lang]);
   const invoiceLabels = React.useMemo(() => invoiceTabText(lang), [lang]);
@@ -742,6 +752,64 @@ export default function ClearancePage({ store, focus = null }) {
     () => selectedProgramId ? clients.filter((client) => client.programId === selectedProgramId) : [],
     [clients, selectedProgramId]
   );
+  const getInvoiceSourceClient = React.useCallback((client = {}) => {
+    const clientId = String(client?.id || "").trim();
+    if (!clientId) return client || {};
+    const sourceClient = clients.find((item) => String(item?.id || "").trim() === clientId);
+    if (!sourceClient) return client || {};
+    const sourceTravelGroupId = sourceClient.travelGroupId ?? sourceClient.travel_group_id;
+    return {
+      ...sourceClient,
+      ...client,
+      travelGroupId: sourceTravelGroupId ?? client.travelGroupId,
+      travel_group_id: sourceClient.travel_group_id ?? sourceClient.travelGroupId ?? client.travel_group_id,
+    };
+  }, [clients]);
+  const getStoredInvoiceProgramTravelGroups = React.useCallback((programId) => {
+    const targetProgramId = String(programId || "").trim();
+    if (!targetProgramId) return [];
+    if (typeof getProgramTravelGroups === "function") {
+      return getProgramTravelGroups(targetProgramId) || [];
+    }
+    return programTravelGroups.filter((group) => (
+      String(group?.programId || group?.program_id || "").trim() === targetProgramId
+    ));
+  }, [getProgramTravelGroups, programTravelGroups]);
+  const loadInvoiceProgramTravelGroups = React.useCallback(async (programId) => {
+    const targetProgramId = String(programId || "").trim();
+    if (!targetProgramId) return [];
+    const storedGroups = getStoredInvoiceProgramTravelGroups(targetProgramId);
+    if (storedGroups.length || typeof loadProgramTravelGroups !== "function") return storedGroups;
+
+    let loadPromise = invoiceTravelGroupsLoadPromisesRef.current.get(targetProgramId);
+    if (!loadPromise) {
+      loadPromise = Promise.resolve(loadProgramTravelGroups(targetProgramId));
+      invoiceTravelGroupsLoadPromisesRef.current.set(targetProgramId, loadPromise);
+    }
+
+    const result = await loadPromise.catch((error) => {
+      console.warn("[Clearance] Unable to load invoice travel groups:", error);
+      invoiceTravelGroupsLoadPromisesRef.current.delete(targetProgramId);
+      return { data: [], error };
+    });
+    if (Array.isArray(result?.data)) return result.data;
+    return getStoredInvoiceProgramTravelGroups(targetProgramId);
+  }, [getStoredInvoiceProgramTravelGroups, loadProgramTravelGroups]);
+  const resolveInvoiceDocumentTravelContext = React.useCallback(async (client = {}, program = {}) => {
+    const sourceClient = getInvoiceSourceClient(client);
+    const clientTravelGroupId = getClientTravelGroupId(sourceClient);
+    const programId = program?.id || sourceClient.programId || sourceClient.program_id || client.programId || client.program_id;
+    const travelGroups = clientTravelGroupId
+      ? await loadInvoiceProgramTravelGroups(programId)
+      : [];
+    const travelGroupById = buildTravelGroupById(travelGroups);
+    const travelContext = resolveClientTravelContext(sourceClient, program, travelGroupById);
+    return {
+      client: sourceClient,
+      program: travelContext.program || program,
+      travelContext,
+    };
+  }, [getInvoiceSourceClient, loadInvoiceProgramTravelGroups]);
   const statusFilterOptions = React.useMemo(() => getStatusFilterOptions(t), [t]);
   const activeStatusFilterOption = statusFilterOptions.find((option) => option.key === filter) || statusFilterOptions[0];
   const paymentMethodOptions = React.useMemo(() => getPaymentMethodOptions(t), [t]);
@@ -833,29 +901,53 @@ export default function ClearancePage({ store, focus = null }) {
     if (!invoiceClient) return false;
     const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
     const clientPayments = invoiceClient.clientPayments || getClientPayments(invoiceClient.id);
+    const invoiceDocumentContext = await resolveInvoiceDocumentTravelContext(invoiceClient, program);
+    const invoiceDocumentClient = invoiceDocumentContext.client;
+    const invoiceDocumentProgram = invoiceDocumentContext.program;
+    const showStaleTravelGroupWarning = (generated) => {
+      if (
+        generated
+        && (
+          invoiceDocumentContext.travelContext.source === CONTRACT_TRAVEL_CONTEXT_SOURCES.STALE_TRAVEL_GROUP
+          || invoiceDocumentContext.travelContext.warnings?.length
+        )
+      ) {
+        onToast?.(
+          lang === "fr"
+            ? "La facture a été créée avec les données du programme principal car le groupe de voyage lié à ce client n’existe plus."
+            : lang === "en"
+              ? "The invoice was created with the main program data because this client’s linked travel group no longer exists."
+              : "تم إنشاء الفاتورة ببيانات البرنامج الأساسي لأن فوج السفر المرتبط بهذا العميل لم يعد موجودا.",
+          "warning"
+        );
+      }
+    };
     if (invoiceAction === "word") {
-      return downloadInvoiceWordDocument({
-        client: invoiceClient,
-        program,
+      const downloaded = downloadInvoiceWordDocument({
+        client: invoiceDocumentClient,
+        program: invoiceDocumentProgram,
         payments: clientPayments,
         recipient,
         lang,
         documentType: invoiceClient.remaining <= 0 ? "invoice" : "proforma",
       });
+      showStaleTravelGroupWarning(downloaded);
+      return downloaded;
     }
     const printFn = invoiceClient.remaining <= 0 ? printInvoice : printProformaInvoice;
     const printed = await printFn({
-      client: invoiceClient,
-      program,
+      client: invoiceDocumentClient,
+      program: invoiceDocumentProgram,
       payments: clientPayments,
       agency,
       lang,
       recipient,
       invoiceApi: invoiceClient.remaining <= 0 ? invoiceApi : null,
     });
+    showStaleTravelGroupWarning(printed);
     if (printed && invoiceClient.remaining <= 0) await refreshSavedInvoices();
     return printed;
-  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, lang, programs, refreshSavedInvoices]);
+  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, lang, onToast, programs, refreshSavedInvoices, resolveInvoiceDocumentTravelContext]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;

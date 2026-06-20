@@ -203,6 +203,7 @@ const PROGRAM_EXPORT_ACTIONS = Object.freeze({
   PDF: "program_pdf",
   PILGRIMS_LIST: "pilgrims_list",
   AMADEUS_EXCEL: "amadeus_excel",
+  PASSPORT_LIST_WORD: "passport_list_word",
   CONTRACTS_EXCEL: "contracts_excel",
   WORD_CONTRACTS: "word_contracts",
 });
@@ -5562,6 +5563,50 @@ function ProgramInner({
         ? "Some contracts could not be generated because the representative and some minors are assigned to different travel groups. Please align their travel group or move them back to the main program, then try again."
         : "تعذر إنشاء بعض العقود لأن الممثل وبعض القاصرين مرتبطون بأفواج سفر مختلفة. يرجى توحيد فوج السفر لهم أو إرجاعهم إلى البرنامج الأساسي ثم المحاولة مرة أخرى."
   ), [lang]);
+  const wordContractsAllMixedTravelGroupMessage = React.useMemo(() => (
+    lang === "fr"
+      ? "Impossible de générer le fichier de contrats car tous les contrats sélectionnés ont un conflit de groupe de voyage entre le représentant et les mineurs."
+      : lang === "en"
+        ? "The contracts ZIP could not be generated because every selected contract has a travel-group conflict between the representative and minors."
+        : "تعذر إنشاء ملف العقود لأن جميع العقود المحددة فيها اختلاف فوج السفر بين الممثل والقاصرين."
+  ), [lang]);
+  const getWordContractsSkippedTravelGroupMessage = React.useCallback((count, skippedErrors = []) => {
+    const skippedCount = Number(count) || 0;
+    const skippedNames = (Array.isArray(skippedErrors) ? skippedErrors : [])
+      .map((error) => {
+        const memberNames = Array.isArray(error?.contractMemberNames) ? error.contractMemberNames : [];
+        const memberIds = Array.isArray(error?.contractMemberIds) ? error.contractMemberIds : [];
+        return [
+          error?.contractClientName,
+          error?.sourceClientName,
+          memberNames[0],
+          error?.contractClientId,
+          error?.sourceClientId,
+          memberIds[0],
+        ]
+          .map((value) => String(value ?? "").trim())
+          .find(Boolean);
+      })
+      .filter(Boolean);
+    const visibleNames = skippedNames.slice(0, 5);
+    const hiddenCount = Math.max(0, skippedCount - visibleNames.length);
+    const nameLines = visibleNames.map((name) => `* ${name}`);
+    if (hiddenCount > 0) {
+      nameLines.push(
+        lang === "fr"
+          ? `et ${hiddenCount} autres`
+          : lang === "en"
+            ? `and ${hiddenCount} others`
+            : `و ${hiddenCount} آخرون`
+      );
+    }
+    const namesBlock = nameLines.length ? `\n\n${nameLines.join("\n")}` : "";
+    return lang === "fr"
+      ? `Le fichier de contrats a été généré, mais ${skippedCount} contrat(s) ont été ignorés à cause d’un conflit de groupe de voyage entre le représentant et les mineurs :${namesBlock}\n\nVeuillez harmoniser le groupe de voyage puis réessayer.`
+      : lang === "en"
+        ? `The contracts ZIP was generated, but ${skippedCount} contract(s) were skipped because the representative and minors are assigned to different travel groups:${namesBlock}\n\nPlease align their travel group and try again.`
+        : `تم إنشاء ملف العقود، لكن تم تجاوز ${skippedCount} عقد بسبب اختلاف فوج السفر بين الممثل والقاصر:${namesBlock}\n\nيرجى توحيد فوج السفر لهم ثم إعادة المحاولة.`;
+  }, [lang]);
   const exportScopeInitialScope = React.useMemo(() => (
     exportScopeDialogAction === PROGRAM_EXPORT_ACTIONS.WORD_CONTRACTS && checkedIds.size > 0
       ? PROGRAM_ACTION_SCOPES.SELECTED
@@ -5667,13 +5712,7 @@ function ProgramInner({
   const handleAmadeusExport = React.useCallback(() => {
     openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.AMADEUS_EXCEL);
   }, [openExportScopeDialog]);
-  const handlePassportListWordExport = React.useCallback(async () => {
-    closeHeaderActions();
-    if (!useScopedProgramDetail) {
-      const ready = await ensureGlobalDetailDataForCurrentAction();
-      if (!ready) return;
-    }
-    const exportClients = getCurrentExportClients();
+  const runPassportListWordExport = React.useCallback((exportClients) => {
     try {
       const result = downloadPassportListWord({ program, clients: exportClients });
       if (!result.ok) {
@@ -5685,7 +5724,10 @@ function ProgramInner({
       console.error("[Programs] Passport list Word export failed:", error);
       onToast(t.error || (lang === "fr" ? "Erreur inattendue" : lang === "en" ? "Unexpected error" : "خطأ غير متوقع"), "error");
     }
-  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported, useScopedProgramDetail]);
+  }, [lang, onToast, program, t.error, t.noPilgrimsToExport, t.passportListWordExported]);
+  const handlePassportListWordExport = React.useCallback(() => {
+    openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.PASSPORT_LIST_WORD);
+  }, [openExportScopeDialog]);
   const handleBadgePdfExport = React.useCallback(async () => {
     if (!badgesEnabled) {
       return;
@@ -5840,7 +5882,7 @@ function ProgramInner({
   const runWordContractsExport = React.useCallback(async (exportClients) => {
     setWordContractExportBusy(true);
     try {
-      await exportProgramWordContractsZip({
+      const result = await exportProgramWordContractsZip({
         agencyId: store.agencyId,
         clients: exportClients,
         programClients: progClients,
@@ -5851,10 +5893,16 @@ function ProgramInner({
         agency,
         lang,
       });
-      onToast(wordContractsExportLabels.success, "success");
+      if (result?.skippedCount > 0) {
+        onToast(getWordContractsSkippedTravelGroupMessage(result.skippedCount, result.skippedErrors), "warning");
+      } else {
+        onToast(wordContractsExportLabels.success, "success");
+      }
     } catch (error) {
       if (error?.code === "missing-contract-template") {
         onToast(wordContractsExportLabels.missingTemplate, "error");
+      } else if (error?.code === "no-valid-contract-clients") {
+        onToast(wordContractsAllMixedTravelGroupMessage, "error");
       } else if (error?.code === "mixed-contract-travel-context") {
         onToast(wordContractsMixedTravelGroupMessage, "error");
       } else if (error?.code === "no-contract-clients") {
@@ -5866,7 +5914,7 @@ function ProgramInner({
     } finally {
       setWordContractExportBusy(false);
     }
-  }, [agency, currentProgramTravelGroups, getClientPayments, getClientTotalPaid, lang, onToast, progClients, program, store.agencyId, wordContractsExportLabels, wordContractsMixedTravelGroupMessage]);
+  }, [agency, currentProgramTravelGroups, getClientPayments, getClientTotalPaid, getWordContractsSkippedTravelGroupMessage, lang, onToast, progClients, program, store.agencyId, wordContractsAllMixedTravelGroupMessage, wordContractsExportLabels, wordContractsMixedTravelGroupMessage]);
   const handleConfirmExportScope = React.useCallback(async (scope) => {
     const action = exportScopeDialogAction;
     if (!action) return;
@@ -5894,6 +5942,10 @@ function ProgramInner({
       await runAmadeusExcelExport(result.clients);
       return;
     }
+    if (action === PROGRAM_EXPORT_ACTIONS.PASSPORT_LIST_WORD) {
+      runPassportListWordExport(result.clients);
+      return;
+    }
     if (action === PROGRAM_EXPORT_ACTIONS.CONTRACTS_EXCEL) {
       await runContractsExcelExport(result.clients);
       return;
@@ -5901,7 +5953,7 @@ function ProgramInner({
     if (action === PROGRAM_EXPORT_ACTIONS.WORD_CONTRACTS) {
       await runWordContractsExport(result.clients);
     }
-  }, [exportScopeDialogAction, exportScopeEmptyMessage, exportScopeInvalidMessage, onToast, resolveCurrentExportScope, runAmadeusExcelExport, runContractsExcelExport, runPilgrimsListExport, runProgramPdfExport, runWordContractsExport]);
+  }, [exportScopeDialogAction, exportScopeEmptyMessage, exportScopeInvalidMessage, onToast, resolveCurrentExportScope, runAmadeusExcelExport, runContractsExcelExport, runPassportListWordExport, runPilgrimsListExport, runProgramPdfExport, runWordContractsExport]);
   const handleWordContractsExport = React.useCallback(async () => {
     if (!contractsEnabled) {
       onToast?.(contractsDisabledMessage, "info");

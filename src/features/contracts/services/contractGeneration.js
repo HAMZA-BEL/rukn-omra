@@ -179,12 +179,35 @@ const getRepresentedMinors = ({ contractClient, programClients = [], clientLooku
   ));
 };
 
-const createMixedTravelContextError = ({ contractClient, contractMembers, contextKeys } = {}) => {
-  const error = new Error("mixed-contract-travel-context");
-  error.code = "mixed-contract-travel-context";
-  error.contractClientId = contractClient?.id || null;
-  error.contractMemberIds = (contractMembers || []).map((client) => client?.id).filter(Boolean);
-  error.contextKeys = contextKeys || [];
+const createMixedTravelContextUnitError = ({ sourceClient, contractClient, contractMembers, contextKeys } = {}) => ({
+  code: "mixed-contract-travel-context",
+  reason: "mixed_travel_context",
+  sourceClientId: sourceClient?.id || null,
+  sourceClientName: getClientDisplayName(sourceClient) || sourceClient?.name || "",
+  contractClientId: contractClient?.id || null,
+  contractClientName: getClientDisplayName(contractClient) || contractClient?.name || "",
+  contractMemberIds: (contractMembers || []).map((client) => client?.id).filter(Boolean),
+  contractMemberNames: (contractMembers || [])
+    .map((client) => getClientDisplayName(client) || client?.name || "")
+    .filter(Boolean),
+  contextKeys: contextKeys || [],
+});
+
+const createNoValidContractUnitsError = ({ errors = [] } = {}) => {
+  const mixedError = errors.find((error) => error?.code === "mixed-contract-travel-context");
+  if (mixedError) {
+    const error = new Error("no-valid-contract-clients");
+    error.code = "no-valid-contract-clients";
+    error.reason = "mixed_travel_context";
+    error.skippedCount = errors.length;
+    error.skippedErrors = errors;
+    return error;
+  }
+
+  const error = new Error("no-contract-clients");
+  error.code = "no-contract-clients";
+  error.skippedCount = errors.length;
+  error.skippedErrors = errors;
   return error;
 };
 
@@ -197,6 +220,7 @@ const buildBulkContractUnits = ({
 } = {}) => {
   const renderedContractClientIds = new Set();
   const units = [];
+  const errors = [];
 
   for (let index = 0; index < exportClients.length; index += 1) {
     const sourceClient = exportClients[index];
@@ -211,7 +235,8 @@ const buildBulkContractUnits = ({
     ));
 
     if (contextKeys.length > 1) {
-      throw createMixedTravelContextError({ contractClient, contractMembers, contextKeys });
+      errors.push(createMixedTravelContextUnitError({ sourceClient, contractClient, contractMembers, contextKeys }));
+      continue;
     }
 
     const travelContext = resolveClientTravelContext(contractClient, program, travelGroupById);
@@ -223,7 +248,7 @@ const buildBulkContractUnits = ({
     });
   }
 
-  return units;
+  return { units, errors };
 };
 
 export async function downloadSingleContract({
@@ -280,13 +305,16 @@ export async function exportProgramWordContractsZip({
   const resolvedTravelGroupById = buildTravelGroupById(
     travelGroupById === undefined || travelGroupById === null ? travelGroups : travelGroupById
   );
-  const contractUnits = buildBulkContractUnits({
+  const contractUnitResult = buildBulkContractUnits({
     exportClients,
     programClients,
     clientLookups,
     program,
     travelGroupById: resolvedTravelGroupById,
   });
+  const contractUnits = contractUnitResult.units || [];
+  const skippedErrors = contractUnitResult.errors || [];
+  if (!contractUnits.length) throw createNoValidContractUnitsError({ errors: skippedErrors });
   let total = 0;
 
   for (let index = 0; index < contractUnits.length; index += 1) {
@@ -313,9 +341,7 @@ export async function exportProgramWordContractsZip({
   }
 
   if (!total) {
-    const error = new Error("no-contract-clients");
-    error.code = "no-contract-clients";
-    throw error;
+    throw createNoValidContractUnitsError({ errors: skippedErrors });
   }
 
   const zipBlob = zip.generate({
@@ -325,5 +351,11 @@ export async function exportProgramWordContractsZip({
   });
   const fileName = buildContractsZipFileName(program);
   downloadBlob(zipBlob, fileName);
-  return { templateType, fileName, total };
+  return {
+    templateType,
+    fileName,
+    total,
+    skippedCount: skippedErrors.length,
+    skippedErrors,
+  };
 }

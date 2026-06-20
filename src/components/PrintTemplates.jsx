@@ -32,6 +32,31 @@ const cleanDisplay = (value, fallback = "—") => {
   const text = trimValue(value);
   return text || fallback;
 };
+const overlayLiveInvoiceTravelFields = (invoiceData = {}, liveInvoiceData = {}) => {
+  if (!invoiceData?.valid || !liveInvoiceData?.valid) return invoiceData;
+  const next = { ...invoiceData };
+  [
+    "carrier",
+    "departureDate",
+    "returnDate",
+    "route",
+    "itinerary",
+    "travelRoute",
+    "travel_route",
+    "routeText",
+    "route_text",
+    "visitOrder",
+    "visit_order",
+    "hotelCheckinDay",
+    "hotel_checkin_day",
+    "hotelCheckIn",
+    "hotel_check_in",
+  ].forEach((key) => {
+    const value = trimValue(liveInvoiceData[key]);
+    if (value) next[key] = value;
+  });
+  return next;
+};
 const openPrintWindow = (features, lang = "ar") => {
   const printWindow = window.open("", "_blank", features);
   return printWindow || null;
@@ -154,6 +179,12 @@ const formatPrintDate = (value) => {
   const day = String(parsed.getDate()).padStart(2, "0");
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   return `${day}/${month}/${parsed.getFullYear()}`;
+};
+const formatInvoiceTravelDate = (value) => {
+  const raw = trimValue(value);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+  return raw;
 };
 const getAgencyBankDetails = (agency = {}) => ([
   ["bank", trimValue(agency.bankName || agency.bank_name)],
@@ -684,6 +715,9 @@ async function printInvoiceDocument({
     ? savedInvoiceSnapshotToPrintData(snapshotSource, { lang }) || builtInvoiceData
     : builtInvoiceData;
   }
+  if (!snapshotInvoiceData) {
+    invoiceData = overlayLiveInvoiceTravelFields(invoiceData, builtInvoiceData);
+  }
   if (!invoiceData.valid) return false;
   const {
     recipient: invoiceRecipient,
@@ -732,8 +766,8 @@ async function printInvoiceDocument({
     programName: displayProgramName,
   };
   const serviceLabel = formatProgramPackageLabelForDocument(programDisplaySource, lang);
-  const displayDeparture = departureDate || program?.departure || "—";
-  const displayReturn = returnDate || program?.returnDate || "—";
+  const displayDeparture = formatInvoiceTravelDate(departureDate || program?.departure) || "—";
+  const displayReturn = formatInvoiceTravelDate(returnDate || program?.returnDate) || "—";
   const displayLevel = formatProgramLevelForDocument(level || client?.packageLevel || client?.hotelLevel || "", lang);
   const displayRoomType = formatRoomTypeForDocument(roomType || client?.roomType || client?.roomTypeLabel || "", lang);
   const displayPhone = phone || client?.phone || "";
