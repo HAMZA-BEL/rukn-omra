@@ -18,11 +18,19 @@ export default function ProgramClientsToolbar({
   activeServiceTypeFilter,
   serviceTypeFilter,
   serviceTypeFilters = [],
+  showTravelGroupFilter = false,
+  travelGroupFilterRef,
+  travelGroupFilterOpen,
+  onToggleTravelGroupFilter,
+  activeTravelGroupFilter,
+  travelGroupFilter,
+  travelGroupFilters = [],
   filterMenuBaseStyle,
   filterMenuItemStyle,
   filterMenuCountStyle,
   onSelectStatusFilter,
   onSelectServiceTypeFilter,
+  onSelectTravelGroupFilter,
   searchExpanded,
   search,
   searchInputRef,
@@ -158,6 +166,56 @@ export default function ProgramClientsToolbar({
               </div>
             )}
           </div>
+
+          {showTravelGroupFilter && (
+            <div ref={travelGroupFilterRef} style={{ position:"relative" }}>
+              <button type="button" onClick={onToggleTravelGroupFilter} style={{
+                minWidth:166,
+                maxWidth:220,
+                display:"inline-flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:10,
+                padding:"7px 11px",
+                borderRadius:12,
+                background:"rgba(255,255,255,.04)",
+                border:"1px solid rgba(255,255,255,.1)",
+                color:tc.grey,
+                fontSize:12,
+                fontWeight:800,
+                cursor:"pointer",
+                fontFamily:"'Cairo',sans-serif",
+              }}>
+                <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
+                  <AppIcon name="users" size={14} color={travelGroupFilter === "all" ? tc.grey : tc.gold} />
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {activeTravelGroupFilter.label}
+                  </span>
+                </span>
+                <AppIcon name="chevronBack" size={13} color={tc.grey} style={{ transform:"rotate(-90deg)", flexShrink:0 }} />
+              </button>
+              {travelGroupFilterOpen && (
+                <div style={{
+                  ...filterMenuBaseStyle,
+                  insetInlineStart:0,
+                  width:230,
+                }}>
+                  {travelGroupFilters.map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => onSelectTravelGroupFilter(option.key)}
+                      style={filterMenuItemStyle(travelGroupFilter === option.key)}
+                    >
+                      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {option.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div
             onMouseEnter={onSearchMouseEnter}

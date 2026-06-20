@@ -15,6 +15,11 @@ import {
   isClientMinorWithoutCin,
   isEligibleRepresentative,
 } from "../../../utils/clientRepresentation";
+import {
+  buildTravelGroupById,
+  getTravelGroupContextKey,
+  resolveClientTravelContext,
+} from "../utils/contractTravelContext";
 
 const ZIP_MIME = "application/zip";
 
@@ -174,6 +179,53 @@ const getRepresentedMinors = ({ contractClient, programClients = [], clientLooku
   ));
 };
 
+const createMixedTravelContextError = ({ contractClient, contractMembers, contextKeys } = {}) => {
+  const error = new Error("mixed-contract-travel-context");
+  error.code = "mixed-contract-travel-context";
+  error.contractClientId = contractClient?.id || null;
+  error.contractMemberIds = (contractMembers || []).map((client) => client?.id).filter(Boolean);
+  error.contextKeys = contextKeys || [];
+  return error;
+};
+
+const buildBulkContractUnits = ({
+  exportClients,
+  programClients,
+  clientLookups,
+  program,
+  travelGroupById,
+} = {}) => {
+  const renderedContractClientIds = new Set();
+  const units = [];
+
+  for (let index = 0; index < exportClients.length; index += 1) {
+    const sourceClient = exportClients[index];
+    const contractClient = resolveContractClient({ sourceClient, programClients, clientLookups });
+    if (renderedContractClientIds.has(contractClient.id)) continue;
+    renderedContractClientIds.add(contractClient.id);
+
+    const representedMinors = getRepresentedMinors({ contractClient, programClients, clientLookups });
+    const contractMembers = [contractClient, ...representedMinors].filter(Boolean);
+    const contextKeys = Array.from(new Set(
+      contractMembers.map((client) => getTravelGroupContextKey(client, travelGroupById))
+    ));
+
+    if (contextKeys.length > 1) {
+      throw createMixedTravelContextError({ contractClient, contractMembers, contextKeys });
+    }
+
+    const travelContext = resolveClientTravelContext(contractClient, program, travelGroupById);
+    units.push({
+      contractClient,
+      representedMinors,
+      program: travelContext.program || program,
+      travelContext,
+    });
+  }
+
+  return units;
+};
+
 export async function downloadSingleContract({
   agencyId,
   client,
@@ -211,6 +263,8 @@ export async function exportProgramWordContractsZip({
   getClientTotalPaid,
   agency,
   lang,
+  travelGroups,
+  travelGroupById,
 } = {}) {
   const exportClients = Array.isArray(clients) ? clients.filter(Boolean) : [];
   if (!exportClients.length) {
@@ -222,24 +276,28 @@ export async function exportProgramWordContractsZip({
   const { templateType, arrayBuffer } = await getTemplateForProgram({ agencyId, program });
   const zip = new PizZip();
   const usedNames = new Set();
-  const renderedContractClientIds = new Set();
   const clientLookups = buildBulkContractClientLookups(programClients);
+  const resolvedTravelGroupById = buildTravelGroupById(
+    travelGroupById === undefined || travelGroupById === null ? travelGroups : travelGroupById
+  );
+  const contractUnits = buildBulkContractUnits({
+    exportClients,
+    programClients,
+    clientLookups,
+    program,
+    travelGroupById: resolvedTravelGroupById,
+  });
   let total = 0;
 
-  for (let index = 0; index < exportClients.length; index += 1) {
-    const sourceClient = exportClients[index];
-    const contractClient = resolveContractClient({ sourceClient, programClients, clientLookups });
-    if (renderedContractClientIds.has(contractClient.id)) continue;
-    renderedContractClientIds.add(contractClient.id);
-
+  for (let index = 0; index < contractUnits.length; index += 1) {
+    const { contractClient, representedMinors, program: contractProgram } = contractUnits[index];
     const payments = typeof getClientPayments === "function" ? getClientPayments(contractClient.id) : [];
     const totalPaid = typeof getClientTotalPaid === "function" ? getClientTotalPaid(contractClient.id) : null;
     const salePrice = contractClient.salePrice || contractClient.price || 0;
-    const representedMinors = getRepresentedMinors({ contractClient, programClients, clientLookups });
     const blob = buildClientContractDocx({
       templateArrayBuffer: arrayBuffer,
       client: contractClient,
-      program,
+      program: contractProgram,
       payments,
       totalPaid,
       salePrice,

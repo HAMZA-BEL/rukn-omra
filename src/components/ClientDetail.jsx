@@ -18,9 +18,14 @@ import {
 } from "./programs/programCosting";
 import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
-import { getParticipantTerminology } from "../utils/participantTerminology";
+import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
 import { downloadSingleContract } from "../features/contracts";
+import {
+  buildTravelGroupById,
+  getTravelGroupContextKey,
+  resolveClientTravelContext,
+} from "../features/contracts/utils/contractTravelContext";
 import { clientServiceIncludesAccommodation, getClientServiceType, getClientServiceTypeLabel } from "../utils/clientServiceTypes";
 import {
   getClientEffectiveOfficialPrice,
@@ -162,6 +167,7 @@ export default function ClientDetail({
   linkedPayments = EMPTY_LINKED_PAYMENTS,
   programOverride = null,
   programClientsOverride = null,
+  travelGroups = null,
   paymentsOverride = null,
   paymentsReadyOverride = undefined,
   onRequireGlobalData = null,
@@ -171,7 +177,8 @@ export default function ClientDetail({
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const { getProgramById, getClientPayments, getClientTotalPaid, getClientStatus,
-          getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi } = store;
+          getClientLastPayment, deletePayment, agency, clients = [], badgePhotoApi,
+          getProgramTravelGroups, loadProgramTravelGroups, programTravelGroups = [] } = store;
   const scopedPaymentsReady = paymentsReadyOverride === true && Array.isArray(paymentsOverride);
   const globalPaymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const globalClientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
@@ -190,6 +197,7 @@ export default function ClientDetail({
   const [notificationHighlightActive, setNotificationHighlightActive] = React.useState(false);
   const [locallyHiddenPaymentIds, setLocallyHiddenPaymentIds] = React.useState(() => new Set());
   const paymentsHydrationRequestedRef = React.useRef(false);
+  const travelGroupsHydrationPromisesRef = React.useRef(new Map());
 
   React.useEffect(() => {
     if (!highlightFromNotification || !notificationHighlightToken) return undefined;
@@ -204,6 +212,53 @@ export default function ClientDetail({
 
   const clientProgramId = getClientProgramId(client);
   const program     = programOverride || getProgramById(clientProgramId);
+  const explicitTravelGroups = Array.isArray(travelGroups) ? travelGroups : null;
+  const getStoredProgramTravelGroups = React.useCallback((programId) => {
+    const targetProgramId = String(programId || "");
+    if (!targetProgramId) return [];
+    if (typeof getProgramTravelGroups === "function") {
+      return getProgramTravelGroups(targetProgramId);
+    }
+    return programTravelGroups.filter((group) => (
+      String(group.programId || group.program_id || "") === targetProgramId
+    ));
+  }, [getProgramTravelGroups, programTravelGroups]);
+  const resolveTravelGroupsForContractProgram = React.useCallback(async (targetProgram) => {
+    const targetProgramId = String(targetProgram?.id || "");
+    if (!targetProgramId) return [];
+    if (explicitTravelGroups?.length > 0) return explicitTravelGroups;
+
+    const storedGroups = getStoredProgramTravelGroups(targetProgramId);
+    if (getProgramKind(targetProgram, client) !== "hajj") return storedGroups;
+    if (typeof loadProgramTravelGroups !== "function") return storedGroups;
+
+    let loadPromise = travelGroupsHydrationPromisesRef.current.get(targetProgramId);
+    if (!loadPromise) {
+      loadPromise = Promise.resolve(loadProgramTravelGroups(targetProgramId));
+      travelGroupsHydrationPromisesRef.current.set(targetProgramId, loadPromise);
+    }
+
+    const result = await loadPromise.catch((error) => {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[ClientDetail] Travel groups could not be loaded for contract generation.", error);
+      }
+      return { data: storedGroups, error };
+    });
+    return Array.isArray(result?.data) ? result.data : getStoredProgramTravelGroups(targetProgramId);
+  }, [client, explicitTravelGroups, getStoredProgramTravelGroups, loadProgramTravelGroups]);
+
+  React.useEffect(() => {
+    if (!program || explicitTravelGroups || getProgramKind(program, client) !== "hajj") return undefined;
+    let cancelled = false;
+    resolveTravelGroupsForContractProgram(program).catch((error) => {
+      if (!cancelled && process.env.NODE_ENV === "development") {
+        console.warn("[ClientDetail] Travel groups could not be preloaded for contract generation.", error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, explicitTravelGroups, program, resolveTravelGroupsForContractProgram]);
   const programStatus = String(program?.status || "").trim().toLowerCase();
   const isAssignedToActiveFinancialProgram = Boolean(
     clientProgramId
@@ -413,6 +468,9 @@ export default function ClientDetail({
       representativeContract: lang === "fr" ? "Contrat du représentant téléchargé"
         : lang === "en" ? "Representative contract downloaded"
         : "تم تحميل عقد من ينوب عنه",
+      mixedTravelContext: lang === "fr" ? "Impossible de générer le contrat car le représentant et certains mineurs sont liés à des groupes de voyage différents. Veuillez harmoniser le groupe de voyage ou les remettre dans le programme principal, puis réessayer."
+        : lang === "en" ? "The contract could not be generated because the representative and some minors are assigned to different travel groups. Please align their travel group or move them back to the main program, then try again."
+        : "تعذر إنشاء العقد لأن الممثل وبعض القاصرين مرتبطون بأفواج سفر مختلفة. يرجى توحيد فوج السفر لهم أو إرجاعهم إلى البرنامج الأساسي ثم المحاولة مرة أخرى.",
       missingUmrah: lang === "fr" ? "Aucun modèle de contrat Omra n’est importé."
         : lang === "en" ? "No Umrah contract template is uploaded."
         : "لم يتم رفع قالب عقد العمرة.",
@@ -467,10 +525,21 @@ export default function ClientDetail({
         && getRepresentedByClientId(item) === contractClient.id
         && isClientMinorWithoutCin(item)
       ));
+      const contractTravelGroups = await resolveTravelGroupsForContractProgram(contractProgram);
+      const travelGroupById = buildTravelGroupById(contractTravelGroups);
+      const contractMembers = [contractClient, ...representedMinors].filter(Boolean);
+      const contractContextKeys = Array.from(new Set(
+        contractMembers.map((item) => getTravelGroupContextKey(item, travelGroupById))
+      ));
+      if (contractContextKeys.length > 1) {
+        onToast?.(labels.mixedTravelContext, "error");
+        return null;
+      }
+      const travelContext = resolveClientTravelContext(contractClient, contractProgram, travelGroupById);
       const result = await downloadSingleContract({
         agencyId: store.agencyId,
         client: contractClient,
-        program: contractProgram,
+        program: travelContext.program || contractProgram,
         payments: contractPayments,
         totalPaid: contractTotalPaid,
         salePrice: contractSalePrice,
@@ -496,7 +565,7 @@ export default function ClientDetail({
     } finally {
       setContractBusy(false);
     }
-  }, [agency, client, clients, contractsEnabled, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, store]);
+  }, [agency, client, clients, contractsEnabled, displayName, getClientPayments, getClientTotalPaid, getProgramById, globalDetailReady, lang, onToast, program, requestGlobalDetailDataForAction, resolveTravelGroupsForContractProgram, store]);
 
   const buildSharedReceiptDraftFromGroup = React.useCallback((paymentGroup = {}) => {
     const coveredClients = Array.isArray(paymentGroup.coveredClients || paymentGroup.covered_clients)

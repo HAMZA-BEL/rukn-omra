@@ -10,6 +10,7 @@ import {
 } from "../../utils/programPackages";
 import { translateProgramType } from "../../utils/i18nValues";
 import { formatProgramCapacityValue } from "../../utils/programCapacity";
+import { getProgramKind } from "../../utils/participantTerminology";
 
 const tc = theme.colors;
 
@@ -42,9 +43,17 @@ function SmallBtn({ icon, onClick, color, title, active = false }) {
   );
 }
 
+const getTravelGroupCountLabel = (count, lang) => {
+  if (lang === "fr") return `${count} groupe${count === 1 ? "" : "s"}`;
+  if (lang === "en") return `${count} group${count === 1 ? "" : "s"}`;
+  if (count <= 2) return `${count} فوج`;
+  return `${count} أفواج`;
+};
+
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, lang, formatCurrencyForLang,
-  highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null }) {
+  highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null,
+  travelGroupCount = 0 }) {
   const [hov, setHov] = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const [hoveredAction, setHoveredAction] = React.useState("");
@@ -64,6 +73,8 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const primaryHotelMadina = hasProgramSummary ? programSummary.primaryHotelMadina : packages[0]?.hotelMadina;
   const remainingLabel = formatCurrencyForLang(totalRemaining);
   const seatFillValue = formatProgramCapacityValue(program, registered);
+  const normalizedTravelGroupCount = Math.max(0, Number(travelGroupCount) || 0);
+  const showTravelGroupIndicator = getProgramKind(program) === "hajj" && normalizedTravelGroupCount > 0;
   const infoRows = [
     ["hotel", t.hotelMecca, hotelSummary || primaryHotelMecca || program.hotelMecca],
     ["building", t.hotelMadina, hotelSummary || primaryHotelMadina || program.hotelMadina],
@@ -184,7 +195,30 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
           <div style={{ flex:1, paddingInlineStart: selectionMode ? 34 : 0 }}>
             <p style={{ fontSize:16, fontWeight:800, color:tc.white, marginBottom:6, lineHeight:1.3 }}>{program.name}</p>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, color:tc.gold, background:"rgba(212,175,55,.12)", padding:"2px 10px", borderRadius:20 }}>{translateProgramType(program.type, lang)}</span>
+              <span style={{
+                display:"inline-flex",
+                alignItems:"center",
+                gap:showTravelGroupIndicator ? 4 : 0,
+                maxWidth:showTravelGroupIndicator ? 112 : undefined,
+                fontSize:11,
+                color:tc.gold,
+                background:"rgba(212,175,55,.12)",
+                padding:"2px 10px",
+                borderRadius:20,
+                whiteSpace:"nowrap",
+                overflow:"hidden",
+              }}>
+                <span>{translateProgramType(program.type, lang)}</span>
+                {showTravelGroupIndicator && (
+                  <>
+                    <span aria-hidden="true" style={{ opacity:.55 }}>•</span>
+                    <AppIcon name="users" size={10} color={tc.gold} />
+                    <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {getTravelGroupCountLabel(normalizedTravelGroupCount, lang)}
+                    </span>
+                  </>
+                )}
+              </span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
             </div>

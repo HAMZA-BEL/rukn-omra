@@ -12,6 +12,7 @@ export default function ProgramClientModals({
   tr,
   program,
   packages,
+  travelGroups = [],
   registeredCount = 0,
   participantTerms,
   completionLabels,
@@ -78,6 +79,7 @@ export default function ProgramClientModals({
             onDataChanged={onClientDataChanged}
             programOverride={programOverride}
             programClientsOverride={programClientsOverride}
+            travelGroups={travelGroups}
             paymentsOverride={paymentsOverride}
             paymentsReadyOverride={paymentsReadyOverride}
             onRequireGlobalData={onRequireGlobalData}
@@ -91,6 +93,7 @@ export default function ProgramClientModals({
           store={store}
           defaultProgramId={program.id}
           lockProgramId={program.id}
+          travelGroups={travelGroups}
           badgesEnabled={badgesEnabled}
           contractsEnabled={contractsEnabled}
           onSave={onSaveAddClient}
@@ -129,6 +132,7 @@ export default function ProgramClientModals({
           <ClientForm
             client={editingClient}
             store={store}
+            travelGroups={travelGroups}
             badgesEnabled={badgesEnabled}
             contractsEnabled={contractsEnabled}
             onSave={onSaveEditClient}

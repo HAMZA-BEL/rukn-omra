@@ -204,6 +204,18 @@ const getProgramPlaceholder = (lang) => {
   return "اختيار برنامج";
 };
 
+const getTravelGroupLabel = (lang) => {
+  if (lang === "fr") return "Groupe de voyage";
+  if (lang === "en") return "Travel group";
+  return "فوج السفر";
+};
+
+const getMainProgramLabel = (lang) => {
+  if (lang === "fr") return "Programme principal";
+  if (lang === "en") return "Main program";
+  return "البرنامج الأساسي";
+};
+
 const getNoAccommodationServiceNote = (lang) => {
   if (lang === "fr") return "Ce type de service ne nécessite pas d’hébergement.";
   if (lang === "en") return "This service type does not require accommodation.";
@@ -382,6 +394,7 @@ const buildFormState = (client, defaultProgramId, programs) => {
     cin:         pickString(client?.cin, client?.CIN, client?.nationalId, client?.national_id, passport.cin, passport.nationalId),
     city:        pickString(client?.city, client?.ville, client?.addressCity),
     programId:   programId || "",
+    travelGroupId: pickString(client?.travelGroupId, client?.travel_group_id) || null,
     packageId: selectedProgram ? packageId : "",
     hotelLevel:  selectedProgram ? packageLevel : "",
     packageLevel: selectedProgram ? packageLevel : "",
@@ -428,6 +441,7 @@ export default function ClientForm({
   onToast,
   defaultProgramId,
   lockProgramId = "",
+  travelGroups = null,
   badgesEnabled = true,
   contractsEnabled = true,
 }) {
@@ -614,10 +628,45 @@ export default function ClientForm({
     [programs, form.programId]
   );
   const hasSelectedProgram = Boolean(selectedProgram);
+  const selectedProgramIsHajj = getProgramKind(selectedProgram) === "hajj";
+  const availableTravelGroups = React.useMemo(() => (
+    (Array.isArray(travelGroups) ? travelGroups : (store.programTravelGroups || []))
+      .filter((group) => (
+        String(group.programId || group.program_id || "") === String(form.programId || "")
+      ))
+      .slice()
+      .sort((a, b) => (
+        (Number(a.sortOrder ?? a.sort_order) || 0) - (Number(b.sortOrder ?? b.sort_order) || 0)
+        || String(a.name || "").localeCompare(String(b.name || ""), lang)
+      ))
+  ), [form.programId, lang, store.programTravelGroups, travelGroups]);
+  const showTravelGroupField = selectedProgramIsHajj && availableTravelGroups.length > 0;
+  const travelGroupOptions = React.useMemo(() => ([
+    { value: "", label: getMainProgramLabel(lang) },
+    ...availableTravelGroups.map((group) => ({
+      value: String(group.id || ""),
+      label: group.name || group.code || String(group.id || ""),
+    })),
+  ]), [availableTravelGroups, lang]);
   const addSubmitLabel = React.useMemo(
     () => getProgramAddLabel(selectedProgram, lang, t.addClient),
     [lang, selectedProgram, t.addClient]
   );
+
+  React.useEffect(() => {
+    if (Array.isArray(travelGroups) || !selectedProgramIsHajj || !form.programId) return undefined;
+    if (typeof store.loadProgramTravelGroups !== "function") return undefined;
+    let cancelled = false;
+    store.loadProgramTravelGroups(form.programId).catch((error) => {
+      if (!cancelled && process.env.NODE_ENV === "development") {
+        console.warn("[ClientForm] Travel groups could not be loaded.", error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.programId, selectedProgramIsHajj, store.loadProgramTravelGroups, travelGroups]);
+
   const representationClient = React.useMemo(() => ({
     ...form,
     id: client?.id || "",
@@ -835,6 +884,7 @@ export default function ClientForm({
     setAutoPriceNote("");
     setForm(f => ({
       ...f,
+      travelGroupId: null,
       packageId: "",
       hotelLevel: "",
       packageLevel: "",
@@ -1243,6 +1293,20 @@ export default function ClientForm({
             onChange={handleServiceTypeChange}
             options={serviceTypeOptions}
           />
+          {showTravelGroupField && (
+            <Select
+              label={getTravelGroupLabel(lang)}
+              value={form.travelGroupId || ""}
+              onChange={(event) => {
+                const value = event.target.value;
+                setForm((current) => ({
+                  ...current,
+                  travelGroupId: value || null,
+                }));
+              }}
+              options={travelGroupOptions}
+            />
+          )}
           {hasSelectedProgram ? (
             <Select
               label={t.level || "المستوى"}

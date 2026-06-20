@@ -73,6 +73,12 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
       { placeholder: "{{program.departure_date}}", description: { ar: "تاريخ الذهاب", fr: "Date de départ", en: "Departure date" } },
       { placeholder: "{{program.return_date}}", description: { ar: "تاريخ الرجوع", fr: "Date de retour", en: "Return date" } },
       { placeholder: "{{program.airline}}", description: { ar: "شركة الطيران", fr: "Compagnie aérienne", en: "Airline" } },
+      { placeholder: "{{program.route}}", description: { ar: "خط الرحلة", fr: "Itinéraire", en: "Travel route" } },
+      { placeholder: "{{program.travel_route}}", description: { ar: "خط الرحلة", fr: "Itinéraire", en: "Travel route" } },
+      { placeholder: "{{program.itinerary}}", description: { ar: "مسار الرحلة", fr: "Itinéraire", en: "Itinerary" } },
+      { placeholder: "{{program.route_text}}", description: { ar: "نص خط الرحلة", fr: "Texte de l’itinéraire", en: "Route text" } },
+      { placeholder: "{{program.travelRoute}}", description: { ar: "خط الرحلة", fr: "Itinéraire", en: "Travel route" } },
+      { placeholder: "{{program.routeText}}", description: { ar: "نص خط الرحلة", fr: "Texte de l’itinéraire", en: "Route text" } },
     ],
   },
   {

@@ -17,6 +17,7 @@ import { getClientDisplayName as resolveClientDisplayName } from "../../utils/cl
 import { getClientCompletionBadges, getClientCompletionTooltip } from "../../utils/clientCompletionStatus";
 import { translateHotelLevel, translateRoomType } from "../../utils/i18nValues";
 import { isMinor } from "../../utils/age";
+import { getProgramKind } from "../../utils/participantTerminology";
 
 const tc = theme.colors;
 const MENU_OFFSET_PX = 6;
@@ -42,6 +43,12 @@ const getOverpaidLabel = (lang) => {
   return "زائد";
 };
 
+const getMoveToTravelGroupLabel = (lang) => {
+  if (lang === "fr") return "Déplacer vers un groupe de voyage";
+  if (lang === "en") return "Move to travel group";
+  return "نقل إلى فوج سفر";
+};
+
 export default function ProgramClientRow({
   client,
   program,
@@ -55,6 +62,7 @@ export default function ProgramClientRow({
   onEdit,
   onDelete,
   onTransfer,
+  onMoveToTravelGroup,
   selectMode = false,
   showCheckbox = false,
   isChecked = false,
@@ -62,6 +70,7 @@ export default function ProgramClientRow({
   gridTemplate,
   completionTooltip = "",
   badgePhotoApi = null,
+  travelGroups = [],
 }) {
   const [hov, setHov] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -97,6 +106,17 @@ export default function ProgramClientRow({
   const bookingLabel = [packageLabel, hasAccommodation ? roomLabel : ""].filter(Boolean).join(" / ");
   const registrationSource = (client.registrationSource || client.registration_source || "").trim();
   const infoLine = [phoneLabel, cityLabel, bookingLabel, registrationSource].filter(Boolean).join(" • ");
+  const travelGroupId = client.travelGroupId ?? client.travel_group_id ?? null;
+  const travelGroup = getProgramKind(program) === "hajj"
+    && Array.isArray(travelGroups)
+    && travelGroups.length > 0
+    && travelGroupId
+    ? travelGroups.find((group) => String(group.id || "") === String(travelGroupId))
+    : null;
+  const canMoveToTravelGroup = getProgramKind(program) === "hajj"
+    && Array.isArray(travelGroups)
+    && travelGroups.length > 0
+    && typeof onMoveToTravelGroup === "function";
   const minorClient = isMinor(client.passport?.birthDate || client.birthDate || client.dateOfBirth);
   const completionBadges = getClientCompletionBadges(client, lang, program);
   const incompleteBadge = completionBadges.find((badge) => badge.key === "information_incomplete");
@@ -253,7 +273,49 @@ export default function ProgramClientRow({
                 </span>
               ))}
             </div>
-            <p style={{ fontSize: 10.5, color: tc.grey, margin: 0 }}>{infoLine || "—"}</p>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              minWidth: 0,
+              whiteSpace: "nowrap",
+              fontSize: 10.5,
+              lineHeight: 1.4,
+              color: tc.grey,
+            }}>
+              <span style={{
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}>
+                {infoLine || "—"}
+              </span>
+              {travelGroup && (
+                <span
+                  title={travelGroup.name || ""}
+                  style={{
+                    display: "inline-block",
+                    flexShrink: 1,
+                    minWidth: 0,
+                    maxWidth: 110,
+                    padding: "1px 6px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(212,175,55,.2)",
+                    background: "rgba(212,175,55,.08)",
+                    color: tc.gold,
+                    fontSize: 9.5,
+                    lineHeight: 1.35,
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    verticalAlign: "middle",
+                  }}
+                >
+                  {travelGroup.name}
+                </span>
+              )}
+            </div>
           </div>
           <span style={{ color: tc.grey, textAlign: "center", fontSize: 11 }}>
             {displayedRoomLabel || "—"}
@@ -363,6 +425,21 @@ export default function ProgramClientRow({
                     isRTL={isRTL}
                     border
                   />
+                  {canMoveToTravelGroup && (
+                    <InnerMenuBtn
+                      icon="users"
+                      label={getMoveToTravelGroupLabel(lang)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpen(false);
+                        onMoveToTravelGroup();
+                      }}
+                      color="var(--rukn-text-strong)"
+                      hoverBg="var(--rukn-gold-dim)"
+                      isRTL={isRTL}
+                      border
+                    />
+                  )}
                   {onTransfer && (
                     <InnerMenuBtn
                       icon="refresh"

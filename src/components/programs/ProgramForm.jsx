@@ -294,14 +294,881 @@ function RouteSaveOverlay({ done, copy }) {
   return createPortal(overlay, document.body);
 }
 
+const getTravelGroupVisitOrderValue = (source = {}, fallback = "") => {
+  const raw = source.visitOrder ?? source.visit_order ?? "";
+  const value = String(raw || fallback || "").trim();
+  return value ? normalizeVisitOrder(value) : "";
+};
+
+const getTravelGroupHotelCheckInValue = (source = {}, fallback = "") => {
+  const raw = source.hotelCheckIn
+    ?? source.hotel_check_in
+    ?? source.hotelCheckinDay
+    ?? source.hotel_checkin_day
+    ?? "";
+  const value = String(raw || fallback || "").trim();
+  return value ? normalizeHotelCheckinDay(value) : "";
+};
+
+const formatTravelGroupVisitOrder = (value, t = {}) => {
+  if (value === "madinah_first") return t.visitOrderMadinahFirst || "المدينة ثم مكة";
+  if (value === "makkah_first") return t.visitOrderMakkahFirst || "مكة ثم المدينة";
+  return "";
+};
+
+const formatTravelGroupHotelCheckIn = (value, t = {}) => {
+  if (value === "same_day") return t.sameDayAsDeparture || "نفس يوم الذهاب";
+  if (value === "next_day") return t.nextDayAfterDeparture || "اليوم الموالي للذهاب";
+  return "";
+};
+
+const getBlankTravelGroupDraft = (defaults = {}) => ({
+  name: "",
+  code: "",
+  airline: "",
+  departureCity: "",
+  arrivalCity: "",
+  departureDate: "",
+  duration: "",
+  returnDate: "",
+  visitOrder: getTravelGroupVisitOrderValue(defaults),
+  hotelCheckIn: getTravelGroupHotelCheckInValue(defaults),
+  returnDepartureCity: "",
+  returnArrivalCity: "",
+  route: "",
+  flightNumbers: "",
+  seatCapacity: "",
+  notes: "",
+  isDefault: false,
+});
+
+const normalizeTravelGroupName = (value) => String(value || "").trim().replace(/\s+/g, " ");
+
+const createTravelGroupDraftId = () => (
+  `travel-group-draft-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+);
+
+const getTravelGroupUtcDate = (dateValue) => {
+  const match = String(dateValue || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match.map(Number);
+  if ([year, month, day].some((part) => Number.isNaN(part))) return null;
+  return Date.UTC(year, month - 1, day);
+};
+
+const calculateTravelGroupReturnDate = (departureDate, duration) => {
+  const start = getTravelGroupUtcDate(departureDate);
+  const days = Number(duration);
+  if (start === null || !Number.isInteger(days) || days <= 0) return "";
+  return new Date(start + (days - 1) * 86400000).toISOString().split("T")[0];
+};
+
+const getTravelGroupDurationFromDates = (departureDate, returnDate) => {
+  const start = getTravelGroupUtcDate(departureDate);
+  const end = getTravelGroupUtcDate(returnDate);
+  if (start === null || end === null || end < start) return "";
+  return String(Math.round((end - start) / 86400000) + 1);
+};
+
+const getTravelGroupDuration = (group = {}) => (
+  String(group.duration || group.durationDays || group.duration_days || "").trim()
+  || getTravelGroupDurationFromDates(
+    group.departureDate || group.departure_date,
+    group.returnDate || group.return_date
+  )
+);
+
+const isMissingProgramTravelGroupsTableError = (error) => {
+  const text = typeof error === "string"
+    ? error
+    : [error?.code, error?.message, error?.details, error?.hint].filter(Boolean).join(" ");
+  const lower = text.toLowerCase();
+  return lower.includes("program_travel_groups")
+    && (
+      lower.includes("does not exist")
+      || lower.includes("schema cache")
+      || lower.includes("could not find")
+      || lower.includes("pgrst205")
+      || lower.includes("42p01")
+    );
+};
+
+const draftFromTravelGroup = (group = {}, defaults = {}) => ({
+  name: group.name || "",
+  code: group.code || "",
+  airline: group.airline || "",
+  departureCity: group.departureCity || group.departure_city || "",
+  arrivalCity: group.arrivalCity || group.arrival_city || "",
+  departureDate: group.departureDate || group.departure_date || "",
+  duration: getTravelGroupDuration(group),
+  returnDate: group.returnDate || group.return_date || "",
+  visitOrder: getTravelGroupVisitOrderValue(group, getTravelGroupVisitOrderValue(defaults)),
+  hotelCheckIn: getTravelGroupHotelCheckInValue(group, getTravelGroupHotelCheckInValue(defaults)),
+  returnDepartureCity: group.returnDepartureCity || group.return_departure_city || "",
+  returnArrivalCity: group.returnArrivalCity || group.return_arrival_city || "",
+  route: group.route || "",
+  flightNumbers: group.flightNumbers || group.flight_numbers || "",
+  seatCapacity: group.seatCapacity ?? group.seat_capacity ?? "",
+  notes: group.notes || "",
+  isDefault: Boolean(group.isDefault ?? group.is_default),
+});
+
+const formatTravelGroupDateRange = (group = {}) => {
+  const departureDate = group.departureDate || group.departure_date || "";
+  const returnDate = group.returnDate || group.return_date || "";
+  if (departureDate && returnDate) return `${departureDate} → ${returnDate}`;
+  return departureDate || returnDate || "";
+};
+
+const prepareTravelGroupPayload = (draft = {}) => {
+  const seatText = String(draft.seatCapacity ?? "").trim();
+  const seatCapacity = seatText ? Number(seatText) : null;
+  const returnDate = calculateTravelGroupReturnDate(draft.departureDate, draft.duration);
+  return {
+    name: normalizeTravelGroupName(draft.name),
+    code: String(draft.code || "").trim(),
+    airline: String(draft.airline || "").trim(),
+    departureCity: String(draft.departureCity || "").trim(),
+    arrivalCity: String(draft.arrivalCity || "").trim(),
+    departureDate: String(draft.departureDate || "").trim(),
+    returnDate,
+    visitOrder: normalizeVisitOrder(draft.visitOrder),
+    hotelCheckIn: normalizeHotelCheckinDay(draft.hotelCheckIn),
+    returnDepartureCity: String(draft.returnDepartureCity || "").trim(),
+    returnArrivalCity: String(draft.returnArrivalCity || "").trim(),
+    route: String(draft.route || "").trim(),
+    flightNumbers: String(draft.flightNumbers || "").trim(),
+    seatCapacity,
+    notes: String(draft.notes || "").trim(),
+    isDefault: Boolean(draft.isDefault),
+  };
+};
+
+function TravelGroupRouteModal({ open, routeValue, routeCopy, dir, onClose, onSave }) {
+  const [advancedOpen, setAdvancedOpen] = React.useState(Boolean(routeValue));
+  const [draft, setDraft] = React.useState(() => ({
+    outboundRouteStops: ensureRouteStopRows(normalizeRouteStops(routeValue)),
+    returnRouteStops: [""],
+    posterTravelRoute: routeValue || "",
+  }));
+
+  React.useEffect(() => {
+    if (!open) return;
+    setDraft({
+      outboundRouteStops: ensureRouteStopRows(normalizeRouteStops(routeValue)),
+      returnRouteStops: [""],
+      posterTravelRoute: routeValue || "",
+    });
+    setAdvancedOpen(Boolean(routeValue));
+  }, [open, routeValue]);
+
+  const setRouteDraftField = (key) => (event) => {
+    const value = event.target.value;
+    setDraft((current) => ({ ...current, [key]: value }));
+  };
+  const setRouteDraftStop = (key) => (index, value) => {
+    const splitStops = /[\/←]/.test(value) ? normalizeRouteStops(value) : null;
+    setDraft((current) => {
+      const rows = ensureRouteStopRows(current[key]);
+      const next = splitStops?.length
+        ? [...rows.slice(0, index), ...splitStops, ...rows.slice(index + 1)]
+        : rows.map((stop, stopIndex) => (stopIndex === index ? value : stop));
+      return { ...current, [key]: ensureRouteStopRows(next) };
+    });
+  };
+  const addRouteDraftStop = (key) => () => {
+    setDraft((current) => ({ ...current, [key]: [...ensureRouteStopRows(current[key]), ""] }));
+  };
+  const removeRouteDraftStop = (key) => (index) => {
+    setDraft((current) => {
+      const next = ensureRouteStopRows(current[key]).filter((_, stopIndex) => stopIndex !== index);
+      return { ...current, [key]: ensureRouteStopRows(next) };
+    });
+  };
+  const routePreview = React.useMemo(() => {
+    const customRoute = String(draft.posterTravelRoute || "").trim();
+    if (customRoute) return customRoute;
+    const outboundRoute = routeStopsToText(cleanDraftRouteStops(draft.outboundRouteStops));
+    const returnRoute = routeStopsToText(cleanDraftRouteStops(draft.returnRouteStops));
+    return [outboundRoute, returnRoute].filter(Boolean).join(" / ");
+  }, [draft]);
+
+  return (
+    <Modal open={open} onClose={onClose} title={routeCopy.routeTitle} width={520}>
+      <div style={{ display:"grid", gap:14 }}>
+        <RouteStopsEditor
+          title={routeCopy.outbound}
+          stops={draft.outboundRouteStops}
+          placeholder={routeCopy.outboundPlaceholder}
+          addLabel={routeCopy.addStop}
+          removeLabel={routeCopy.removeStop}
+          dir={dir}
+          onChangeStop={setRouteDraftStop("outboundRouteStops")}
+          onAddStop={addRouteDraftStop("outboundRouteStops")}
+          onRemoveStop={removeRouteDraftStop("outboundRouteStops")}
+        />
+        <RouteStopsEditor
+          title={routeCopy.returnRoute}
+          stops={draft.returnRouteStops}
+          placeholder={routeCopy.returnPlaceholder}
+          addLabel={routeCopy.addStop}
+          removeLabel={routeCopy.removeStop}
+          dir={dir}
+          onChangeStop={setRouteDraftStop("returnRouteStops")}
+          onAddStop={addRouteDraftStop("returnRouteStops")}
+          onRemoveStop={removeRouteDraftStop("returnRouteStops")}
+        />
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((current) => !current)}
+          style={{
+            border:"1px solid var(--rukn-border-soft)",
+            background:"var(--rukn-bg-soft)",
+            color:"var(--rukn-text)",
+            borderRadius:12,
+            padding:"9px 11px",
+            cursor:"pointer",
+            display:"flex",
+            alignItems:"center",
+            justifyContent:"space-between",
+            gap:10,
+            fontFamily:"'Cairo',sans-serif",
+            fontSize:12,
+            fontWeight:800,
+          }}
+        >
+          <span>{routeCopy.advanced}</span>
+          <span style={{ color:tc.gold }}>{advancedOpen ? "▴" : "▾"}</span>
+        </button>
+        {advancedOpen && (
+          <div style={{ display:"grid", gap:7 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:tc.grey }}>
+              {routeCopy.posterCustom}
+            </label>
+            <textarea
+              value={draft.posterTravelRoute}
+              onChange={setRouteDraftField("posterTravelRoute")}
+              placeholder={routeCopy.customPlaceholder}
+              rows={2}
+              style={{
+                width:"100%",
+                background:"var(--rukn-bg-input)",
+                border:"1px solid var(--rukn-border-input)",
+                borderRadius:10,
+                padding:"10px 14px",
+                color:"var(--rukn-text)",
+                fontSize:13,
+                fontFamily:"'Cairo',sans-serif",
+                outline:"none",
+                resize:"vertical",
+              }}
+            />
+          </div>
+        )}
+        <div style={{
+          border:"1px solid var(--rukn-border-soft)",
+          background:"var(--rukn-bg-soft)",
+          borderRadius:12,
+          padding:12,
+        }}>
+          <p style={{ fontSize:11, color:tc.grey, fontWeight:800, marginBottom:5 }}>
+            {routeCopy.preview}
+          </p>
+          <p style={{ margin:0, fontSize:13, color:routePreview ? "var(--rukn-text)" : "var(--rukn-text-muted)", lineHeight:1.7 }}>
+            {routePreview || routeCopy.routeUnset}
+          </p>
+        </div>
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+          <Button variant="ghost" onClick={onClose}>{routeCopy.cancel}</Button>
+          <Button
+            variant="primary"
+            icon="save"
+            onClick={() => {
+              onSave(routePreview);
+              onClose();
+            }}
+          >
+            {routeCopy.save}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function TravelGroupMeta({ label, value }) {
+  return (
+    <div style={{ display:"grid", gap:3, minWidth:0 }}>
+      <span style={{ color:"var(--rukn-text-muted)", fontSize:10, fontWeight:800 }}>{label}</span>
+      <span style={{ color:"var(--rukn-text)", fontSize:12, fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ProgramTravelGroupsSection({
+  programId,
+  programDefaults,
+  store,
+  routeCopy,
+  t = {},
+  dir,
+  draftMode = false,
+  draftGroups = [],
+  onDraftGroupsChange,
+  onTravelGroupsChanged,
+  programClientsSource = null,
+  lang = "ar",
+}) {
+  const groups = React.useMemo(() => (
+    (draftMode
+      ? draftGroups
+      : (store.programTravelGroups || [])
+        .filter((group) => String(group.programId || group.program_id || "") === String(programId || "")))
+      .slice()
+      .sort((a, b) => (
+        (Number(a.sortOrder ?? a.sort_order) || 0) - (Number(b.sortOrder ?? b.sort_order) || 0)
+        || String(a.name || "").localeCompare(String(b.name || ""), "ar")
+      ))
+  ), [draftGroups, draftMode, programId, store.programTravelGroups]);
+  const [loading, setLoading] = React.useState(false);
+  const [loadError, setLoadError] = React.useState("");
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState("");
+  const [draft, setDraft] = React.useState(getBlankTravelGroupDraft);
+  const [errors, setErrors] = React.useState({});
+  const [saving, setSaving] = React.useState(false);
+  const [routeModalOpen, setRouteModalOpen] = React.useState(false);
+  const [programClients, setProgramClients] = React.useState([]);
+  const [deletingId, setDeletingId] = React.useState("");
+
+  const loadProgramTravelGroups = store.loadProgramTravelGroups;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (draftMode || !programId || !loadProgramTravelGroups) return undefined;
+    setLoading(true);
+    setLoadError("");
+    loadProgramTravelGroups(programId)
+      .then((result) => {
+        if (cancelled) return;
+        if (result?.error) {
+          if (isMissingProgramTravelGroupsTableError(result.error)) {
+            console.warn("[ProgramTravelGroups] program_travel_groups table is not available yet:", result.error);
+            setLoadError("");
+            return;
+          }
+          setLoadError("تعذر تحميل أفواج السفر");
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (isMissingProgramTravelGroupsTableError(error)) {
+          console.warn("[ProgramTravelGroups] program_travel_groups table is not available yet:", error);
+          setLoadError("");
+          return;
+        }
+        setLoadError("تعذر تحميل أفواج السفر");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [draftMode, loadProgramTravelGroups, programId]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (draftMode || !programId) {
+      setProgramClients([]);
+      return undefined;
+    }
+    const localClients = (store.clients || []).filter((client) => (
+      String(client.programId || client.program_id || "") === String(programId)
+      && !client.deleted
+      && !client.deletedAt
+      && !client.deleted_at
+      && !client.archived
+      && !client.archivedAt
+      && !client.archived_at
+    ));
+    if (Array.isArray(programClientsSource)) {
+      setProgramClients(programClientsSource.filter((client) => (
+        String(client.programId || client.program_id || "") === String(programId)
+        && !client.deleted
+        && !client.deletedAt
+        && !client.deleted_at
+        && !client.archived
+        && !client.archivedAt
+        && !client.archived_at
+      )));
+      return undefined;
+    }
+    if (!store.isSupabaseEnabled || store.clientsLoaded) {
+      setProgramClients(localClients);
+      return undefined;
+    }
+    if (typeof store.loadProgramDetailData !== "function") {
+      setProgramClients(localClients);
+      return undefined;
+    }
+    store.loadProgramDetailData(programId)
+      .then((result) => {
+        if (!cancelled && !result?.error) {
+          setProgramClients(Array.isArray(result?.clients) ? result.clients : localClients);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled && process.env.NODE_ENV === "development") {
+          console.warn("[ProgramTravelGroups] Program clients could not be loaded for counts.", error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    draftMode,
+    programId,
+    programClientsSource,
+    store.clients,
+    store.clientsLoaded,
+    store.isSupabaseEnabled,
+    store.loadProgramDetailData,
+  ]);
+
+  const assignedClientCounts = React.useMemo(() => (
+    programClients.reduce((counts, client) => {
+      const travelGroupId = client.travelGroupId ?? client.travel_group_id ?? null;
+      if (travelGroupId) {
+        const key = String(travelGroupId);
+        counts[key] = (counts[key] || 0) + 1;
+      }
+      return counts;
+    }, {})
+  ), [programClients]);
+
+  const updateDraft = (key) => (event) => {
+    const value = event.target.value;
+    setDraft((current) => ({ ...current, [key]: value }));
+    setErrors((current) => (current[key] ? { ...current, [key]: "" } : current));
+  };
+
+  React.useEffect(() => {
+    setDraft((current) => {
+      const returnDate = calculateTravelGroupReturnDate(current.departureDate, current.duration);
+      return current.returnDate === returnDate ? current : { ...current, returnDate };
+    });
+  }, [draft.departureDate, draft.duration]);
+
+  const openAddForm = () => {
+    setEditingId("");
+    setDraft(getBlankTravelGroupDraft(programDefaults));
+    setErrors({});
+    setFormOpen(true);
+  };
+
+  const openEditForm = (group) => {
+    setEditingId(group.id);
+    setDraft(draftFromTravelGroup(group, programDefaults));
+    setErrors({});
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    if (saving) return;
+    setFormOpen(false);
+    setEditingId("");
+    setDraft(getBlankTravelGroupDraft());
+    setErrors({});
+  };
+
+  const validateDraft = () => {
+    const nextErrors = {};
+    const cleanName = normalizeTravelGroupName(draft.name);
+    if (!cleanName) nextErrors.name = "اسم الفوج مطلوب";
+    const duplicate = groups.some((group) => (
+      String(group.id || "") !== String(editingId || "")
+      && normalizeTravelGroupName(group.name).toLowerCase() === cleanName.toLowerCase()
+    ));
+    if (duplicate) nextErrors.name = "يوجد فوج سفر بنفس الاسم داخل هذا البرنامج";
+    if (String(draft.seatCapacity ?? "").trim()) {
+      const seats = Number(draft.seatCapacity);
+      if (!Number.isInteger(seats) || seats <= 0) {
+        nextErrors.seatCapacity = "عدد المقاعد يجب أن يكون رقماً صحيحاً موجباً";
+      }
+    }
+    if (String(draft.duration ?? "").trim()) {
+      const days = Number(draft.duration);
+      if (!Number.isInteger(days) || days <= 0) {
+        nextErrors.duration = "المدة يجب أن تكون رقماً صحيحاً موجباً";
+      }
+    }
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleSaveGroup = async () => {
+    if (!validateDraft()) return;
+    const payload = prepareTravelGroupPayload(draft);
+    if (draftMode) {
+      onDraftGroupsChange?.((current = []) => {
+        if (editingId) {
+          return current.map((group) => (
+            String(group.id || "") === String(editingId)
+              ? { ...group, ...payload, id: group.id }
+              : group
+          ));
+        }
+        return [
+          ...current,
+          {
+            ...payload,
+            id: createTravelGroupDraftId(),
+            sortOrder: current.length,
+          },
+        ];
+      });
+      setFormOpen(false);
+      setEditingId("");
+      setDraft(getBlankTravelGroupDraft());
+      setErrors({});
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = editingId
+        ? await store.updateProgramTravelGroup?.(editingId, payload)
+        : await store.createProgramTravelGroup?.(programId, payload);
+      if (result?.error) {
+        setErrors({ form: "تعذر حفظ فوج السفر. حاول مرة أخرى." });
+        return;
+      }
+      setFormOpen(false);
+      setEditingId("");
+      setDraft(getBlankTravelGroupDraft());
+      setErrors({});
+    } catch (error) {
+      console.error("[ProgramTravelGroups]", error);
+      setErrors({ form: "تعذر حفظ فوج السفر. حاول مرة أخرى." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteGroup = async (group) => {
+    if (!group?.id) return;
+    const assignedClients = programClients.filter((client) => (
+      String(client.travelGroupId ?? client.travel_group_id ?? "") === String(group.id)
+    ));
+    const assignedCount = assignedClients.length;
+    const confirmationMessage = assignedCount > 0
+      ? (
+        lang === "fr"
+          ? `Ce groupe contient ${assignedCount} pèlerins. Si vous le supprimez, ils seront automatiquement replacés dans le programme principal. Voulez-vous continuer ?`
+          : lang === "en"
+            ? `This group contains ${assignedCount} pilgrims. If you delete it, they will be moved back to the main program. Do you want to continue?`
+            : `هذا الفوج يحتوي على ${assignedCount} حاجا. إذا حذفته، سيتم إرجاعهم تلقائيا إلى البرنامج الأساسي. هل تريد المتابعة؟`
+      )
+      : "هل تريد حذف فوج السفر؟\nسيتم حذف هذا الفوج من البرنامج.";
+    if (!window.confirm(confirmationMessage)) return;
+    if (draftMode) {
+      onDraftGroupsChange?.((current = []) => (
+        current.filter((item) => String(item.id || "") !== String(group.id || ""))
+      ));
+      if (String(editingId || "") === String(group.id || "")) closeForm();
+      return;
+    }
+    setDeletingId(String(group.id));
+    setLoadError("");
+    try {
+      if (typeof store.clearProgramTravelGroupAssignments !== "function") {
+        setLoadError("تعذر إعادة حجاج الفوج إلى البرنامج الأساسي. لم يتم حذف الفوج.");
+        return;
+      }
+      const moveResult = await store.clearProgramTravelGroupAssignments(
+        programId,
+        group.id,
+        assignedClients
+      );
+      if (moveResult?.error) {
+        setLoadError("تعذر إعادة حجاج الفوج إلى البرنامج الأساسي. لم يتم حذف الفوج.");
+        return;
+      }
+      setProgramClients((current) => current.map((client) => (
+        String(client.travelGroupId ?? client.travel_group_id ?? "") === String(group.id)
+          ? { ...client, travelGroupId: null }
+          : client
+      )));
+      const deleteResult = await store.deleteProgramTravelGroup?.(group.id);
+      if (deleteResult?.error) {
+        setLoadError("تمت إعادة الحجاج إلى البرنامج الأساسي، لكن تعذر حذف فوج السفر.");
+        onTravelGroupsChanged?.({
+          programId,
+          deletedGroupId: null,
+          clients: moveResult?.data || [],
+        });
+        return;
+      }
+      if (String(editingId || "") === String(group.id || "")) closeForm();
+      onTravelGroupsChanged?.({
+        programId,
+        deletedGroupId: group.id,
+        clients: moveResult?.data || [],
+      });
+    } catch (error) {
+      console.error("[ProgramTravelGroups] Safe group delete failed:", error);
+      setLoadError("تعذر حذف فوج السفر. لم يتم إجراء تغييرات غير آمنة.");
+    } finally {
+      setDeletingId("");
+    }
+  };
+
+  return (
+    <GlassCard style={{ padding:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:14 }}>
+        <div>
+          <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>أفواج السفر</p>
+          <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>
+            أضف أفواج السفر إذا كان برنامج الحج يحتوي على رحلات أو مدن انطلاق أو شركات طيران مختلفة.
+          </p>
+        </div>
+        <Button variant="primary" size="sm" icon="plus" onClick={openAddForm}>
+          إضافة فوج سفر
+        </Button>
+      </div>
+      {loadError && (
+        <p style={{ margin:"0 0 10px", color:"var(--rukn-danger)", fontSize:12, fontWeight:800 }}>
+          {loadError}
+        </p>
+      )}
+      {loading && (
+        <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:12 }}>جاري تحميل أفواج السفر...</p>
+      )}
+      {!loading && groups.length === 0 && !formOpen && (
+        <div style={{
+          padding:"4px 0 2px",
+        }}>
+          <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:12, fontWeight:800 }}>
+            لا توجد أفواج سفر حاليا
+          </p>
+        </div>
+      )}
+      {groups.length > 0 && (
+        <div style={{ display:"grid", gap:10, marginBottom:formOpen ? 14 : 0 }}>
+          {groups.map((group) => {
+            const dateRange = formatTravelGroupDateRange(group);
+            const duration = getTravelGroupDuration(group);
+            const visitOrder = getTravelGroupVisitOrderValue(group);
+            const hotelCheckIn = getTravelGroupHotelCheckInValue(group);
+            const seatCapacity = group.seatCapacity ?? group.seat_capacity;
+            const assignedCount = assignedClientCounts[String(group.id || "")] || 0;
+            const assignedCountLabel = seatCapacity
+              ? `${assignedCount} / ${seatCapacity}`
+              : (
+                lang === "fr"
+                  ? `${assignedCount} pèlerin${assignedCount === 1 ? "" : "s"}`
+                  : lang === "en"
+                    ? `${assignedCount} pilgrim${assignedCount === 1 ? "" : "s"}`
+                    : `${assignedCount} حاج`
+              );
+            return (
+              <div
+                key={group.id}
+                style={{
+                  border:"1px solid rgba(212,175,55,.16)",
+                  background:"rgba(255,255,255,.025)",
+                  borderRadius:12,
+                  padding:12,
+                  display:"grid",
+                  gap:10,
+                }}
+              >
+                <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", flexWrap:"wrap" }}>
+                  <div style={{ minWidth:0, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                    <strong style={{ color:"var(--rukn-text-strong)", fontSize:13 }}>{group.name}</strong>
+                    {!draftMode && (
+                      <span style={{
+                        display:"inline-flex",
+                        alignItems:"center",
+                        padding:"1px 7px",
+                        borderRadius:999,
+                        border:"1px solid rgba(212,175,55,.18)",
+                        background:"rgba(212,175,55,.08)",
+                        color:tc.gold,
+                        fontSize:10,
+                        lineHeight:1.4,
+                        fontWeight:800,
+                        whiteSpace:"nowrap",
+                      }}>
+                        {assignedCountLabel}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <Button variant="ghost" size="sm" onClick={() => openEditForm(group)}>تعديل</Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => handleDeleteGroup(group)}
+                      disabled={Boolean(deletingId)}
+                    >
+                      {String(deletingId) === String(group.id) ? "جاري الحذف..." : "حذف"}
+                    </Button>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:8 }}>
+                  {group.airline && <TravelGroupMeta label="شركة الطيران" value={group.airline} />}
+                  {dateRange && <TravelGroupMeta label="التواريخ" value={dateRange} />}
+                  {duration && <TravelGroupMeta label="المدة" value={`${duration} يوم`} />}
+                  {visitOrder && <TravelGroupMeta label="ترتيب الزيارة" value={formatTravelGroupVisitOrder(visitOrder, t)} />}
+                  {hotelCheckIn && <TravelGroupMeta label="الدخول للفندق" value={formatTravelGroupHotelCheckIn(hotelCheckIn, t)} />}
+                  {group.route && <TravelGroupMeta label="خط الرحلة" value={group.route} />}
+                  {seatCapacity ? <TravelGroupMeta label="عدد المقاعد" value={seatCapacity} /> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {formOpen && (
+        <div style={{
+          border:"1px solid rgba(212,175,55,.22)",
+          background:"rgba(255,255,255,.025)",
+          borderRadius:12,
+          padding:14,
+          display:"grid",
+          gap:12,
+        }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <Input label="اسم الفوج" value={draft.name} onChange={updateDraft("name")} placeholder="فوج الدار البيضاء 17 يونيو" required error={errors.name} style={{ gridColumn:"1/-1" }} />
+            <AirlineSelector
+              label="شركة الطيران"
+              value={draft.airline}
+              onChange={(airline) => {
+                setDraft((current) => ({ ...current, airline: formatAirlineLabel(airline) }));
+              }}
+            />
+            <Input label="تاريخ الذهاب" value={draft.departureDate} onChange={updateDraft("departureDate")} type="date" />
+            <Input label="المدة" value={draft.duration} onChange={updateDraft("duration")} type="number" min={1} step={1} error={errors.duration} />
+            <Input
+              label="تاريخ العودة"
+              value={draft.returnDate}
+              onChange={() => {}}
+              type="date"
+              readOnly
+              disabled
+              inputStyle={{ cursor:"not-allowed", opacity:0.8 }}
+            />
+            <Select
+              label={t.visitOrder || "ترتيب الزيارة"}
+              value={draft.visitOrder}
+              onChange={updateDraft("visitOrder")}
+              options={[
+                { value: "madinah_first", label: t.visitOrderMadinahFirst || "المدينة ثم مكة" },
+                { value: "makkah_first", label: t.visitOrderMakkahFirst || "مكة ثم المدينة" },
+              ]}
+            />
+            <Select
+              label={t.hotelCheckin || "الدخول للفندق"}
+              value={draft.hotelCheckIn}
+              onChange={updateDraft("hotelCheckIn")}
+              options={[
+                { value: "same_day", label: t.sameDayAsDeparture || "نفس يوم الذهاب" },
+                { value: "next_day", label: t.nextDayAfterDeparture || "اليوم الموالي للذهاب" },
+              ]}
+            />
+            <div style={{ display:"grid", gap:6, gridColumn:"1/-1" }}>
+              <label style={{ fontSize:12, fontWeight:600, color:tc.grey }}>
+                خط الرحلة
+              </label>
+              <div style={{
+                display:"flex",
+                alignItems:"center",
+                justifyContent:"space-between",
+                gap:8,
+                minHeight:42,
+                border:"1px solid var(--rukn-border-input)",
+                background:"var(--rukn-bg-input)",
+                borderRadius:10,
+                padding:"6px 8px 6px 10px",
+              }}>
+                <span style={{
+                  minWidth:0,
+                  fontSize:12,
+                  color:draft.route ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
+                  fontWeight:800,
+                  overflow:"hidden",
+                  textOverflow:"ellipsis",
+                  whiteSpace:"nowrap",
+                }}>
+                  {draft.route || "غير محدد"}
+                </span>
+                <Button variant="secondary" size="sm" onClick={() => setRouteModalOpen(true)} style={{ padding:"6px 10px", whiteSpace:"nowrap" }}>
+                  {draft.route ? "تعديل المسار" : "تحديد المسار"}
+                </Button>
+              </div>
+            </div>
+            <Input label="عدد المقاعد" value={draft.seatCapacity} onChange={updateDraft("seatCapacity")} type="number" min={1} step={1} error={errors.seatCapacity} />
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ fontSize:12, fontWeight:600, color:tc.grey, display:"block", marginBottom:6 }}>ملاحظات</label>
+              <textarea
+                value={draft.notes}
+                onChange={updateDraft("notes")}
+                rows={2}
+                style={{
+                  width:"100%",
+                  background:"var(--rukn-bg-input)",
+                  border:"1px solid var(--rukn-border-input)",
+                  borderRadius:10,
+                  padding:"10px 14px",
+                  color:"var(--rukn-text)",
+                  fontSize:13,
+                  fontFamily:"'Cairo',sans-serif",
+                  outline:"none",
+                  resize:"vertical",
+                }}
+              />
+            </div>
+          </div>
+          {errors.form && (
+            <p style={{ margin:0, color:"var(--rukn-danger)", fontSize:12, fontWeight:800 }}>{errors.form}</p>
+          )}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+            <Button variant="ghost" onClick={closeForm} disabled={saving}>إلغاء</Button>
+            <Button variant="primary" icon="save" onClick={handleSaveGroup} disabled={saving}>
+              {saving ? "جاري الحفظ..." : "حفظ الفوج"}
+            </Button>
+          </div>
+          <TravelGroupRouteModal
+            open={routeModalOpen}
+            routeValue={draft.route}
+            routeCopy={routeCopy}
+            dir={dir}
+            onClose={() => setRouteModalOpen(false)}
+            onSave={(route) => setDraft((current) => ({ ...current, route }))}
+          />
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
 export default function ProgramForm({
   program,
   store,
   onSave,
   onCancel,
+  onTravelGroupsChanged,
+  programClients = null,
   badgesEnabled = true,
 }) {
-  const { addProgram, updateProgram, programs = [] } = store;
+  const {
+    addProgram,
+    addProgramAndWait,
+    createProgramTravelGroup,
+    updateProgram,
+    programs = [],
+  } = store;
   const { t, lang, dir } = useLang();
   const isEdit = !!program;
   const createPackage = React.useCallback((level = "اقتصادي") => ({
@@ -389,6 +1256,10 @@ export default function ProgramForm({
   const [routeSaving, setRouteSaving] = React.useState(false);
   const [routeSaveDone, setRouteSaveDone] = React.useState(false);
   const [routeSaveError, setRouteSaveError] = React.useState("");
+  const [draftTravelGroups, setDraftTravelGroups] = React.useState([]);
+  const [createdProgramId, setCreatedProgramId] = React.useState("");
+  const [programSaving, setProgramSaving] = React.useState(false);
+  const [programSaveError, setProgramSaveError] = React.useState("");
   const levelMenuRef = React.useRef(null);
   const routeSaveTimersRef = React.useRef([]);
   const clearRouteSaveTimers = React.useCallback(() => {
@@ -409,8 +1280,19 @@ export default function ProgramForm({
   const set = k => e => {
     setForm(f=>({...f,[k]:e.target.value}));
     setErrors(prev => (prev[k] ? { ...prev, [k]: "" } : prev));
+    if (programSaveError) setProgramSaveError("");
   };
   const routeCopy = React.useMemo(() => routeLabels(lang, t), [lang, t]);
+  const isHajjProgram = normalizeProgramType(form.type) === "حج";
+  const showTravelGroupsSection = isHajjProgram;
+  const travelGroupDefaults = React.useMemo(() => ({
+    visitOrder: form.visitOrder,
+    hotelCheckinDay: form.hotelCheckinDay,
+  }), [form.hotelCheckinDay, form.visitOrder]);
+  React.useEffect(() => {
+    if (isEdit || isHajjProgram || !draftTravelGroups.length) return;
+    setDraftTravelGroups([]);
+  }, [draftTravelGroups.length, isEdit, isHajjProgram]);
   const routePreview = React.useMemo(() => buildPosterTravelRoute(form), [form]);
   const routeDraftPreview = React.useMemo(() => buildPosterTravelRoute(routeDraft), [routeDraft]);
   const openRouteModal = () => {
@@ -587,14 +1469,17 @@ export default function ProgramForm({
     label: translateProgramType(option.value, lang),
   }));
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (programSaving) return;
     const nextErrors = {};
     const cleanName = normalizeDuplicateProgramName(form.name);
     if (!cleanName || !String(form.seats || "").trim()) {
       alert(t.programNameSeatsRequired || "يرجى إدخال اسم البرنامج وعدد المقاعد");
       return;
     }
-    if (!isDuplicateProgramNameAvailable(cleanName, programs, { excludeProgramId: program?.id })) {
+    if (!isDuplicateProgramNameAvailable(cleanName, programs, {
+      excludeProgramId: program?.id || createdProgramId,
+    })) {
       nextErrors.name = lang === "ar"
         ? "يوجد برنامج آخر بنفس الاسم"
         : t.programDuplicateNameExists || "يوجد برنامج آخر بنفس الاسم";
@@ -645,8 +1530,69 @@ export default function ProgramForm({
       badgeTemplateId: String(form.badgeTemplateId || "").trim(),
       priceTable,
     };
-    isEdit ? updateProgram(program.id,data) : addProgram(data);
-    onSave();
+    if (isEdit) {
+      updateProgram(program.id, data);
+      onSave();
+      return;
+    }
+
+    setProgramSaving(true);
+    setProgramSaveError("");
+    try {
+      let targetProgramId = createdProgramId;
+      if (!targetProgramId) {
+        const createResult = typeof addProgramAndWait === "function"
+          ? await addProgramAndWait(data)
+          : { data: addProgram(data), error: null };
+        if (createResult?.error || !createResult?.data?.id) {
+          console.error("[ProgramTravelGroups] Program creation failed before saving draft groups:", createResult?.error);
+          setProgramSaveError("تعذر إنشاء البرنامج. لم يتم حفظ أفواج السفر.");
+          return;
+        }
+        targetProgramId = createResult.data.id;
+        setCreatedProgramId(targetProgramId);
+      }
+
+      if (isHajjProgram && draftTravelGroups.length) {
+        const failedGroups = [];
+        for (const group of draftTravelGroups) {
+          const { id: _draftId, sortOrder, ...groupData } = group;
+          try {
+            const result = await createProgramTravelGroup?.(targetProgramId, {
+              ...groupData,
+              sortOrder,
+            });
+            if (result?.error || !result?.data) {
+              failedGroups.push(group);
+              console.error("[ProgramTravelGroups] Draft group save failed:", {
+                programId: targetProgramId,
+                group: group.name,
+                error: result?.error || new Error("missing-created-travel-group"),
+              });
+            }
+          } catch (error) {
+            failedGroups.push(group);
+            console.error("[ProgramTravelGroups] Draft group save failed:", {
+              programId: targetProgramId,
+              group: group.name,
+              error,
+            });
+          }
+        }
+        if (failedGroups.length) {
+          setDraftTravelGroups(failedGroups);
+          setProgramSaveError(
+            `تم إنشاء البرنامج، لكن تعذر حفظ ${failedGroups.length} من أفواج السفر. حاول الحفظ مرة أخرى.`
+          );
+          return;
+        }
+      }
+
+      setDraftTravelGroups([]);
+      onSave();
+    } finally {
+      setProgramSaving(false);
+    }
   };
 
   const packageCount = packages.length;
@@ -884,6 +1830,23 @@ export default function ProgramForm({
         </div>
       </Modal>
 
+      {showTravelGroupsSection && (
+        <ProgramTravelGroupsSection
+          programId={program?.id || createdProgramId}
+          programDefaults={travelGroupDefaults}
+          store={store}
+          routeCopy={routeCopy}
+          t={t}
+          dir={dir}
+          draftMode={!isEdit}
+          draftGroups={draftTravelGroups}
+          onDraftGroupsChange={setDraftTravelGroups}
+          onTravelGroupsChanged={onTravelGroupsChanged}
+          programClientsSource={programClients}
+          lang={lang}
+        />
+      )}
+
       {badgesEnabled && (
         <GlassCard style={{ padding:16 }}>
           <p style={{ fontSize:13, fontWeight:800, color:tc.gold, marginBottom:6 }}>
@@ -1039,9 +2002,14 @@ export default function ProgramForm({
       </GlassCard>
 
       <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:2 }}>
-        <Button variant="ghost" onClick={onCancel}>{t.cancel}</Button>
-        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave}>
-          {isEdit?t.save:t.addProgram}
+        {programSaveError && (
+          <p style={{ flex:"1 1 100%", margin:0, color:"var(--rukn-danger)", fontSize:12, fontWeight:800, lineHeight:1.7 }}>
+            {programSaveError}
+          </p>
+        )}
+        <Button variant="ghost" onClick={onCancel} disabled={programSaving}>{t.cancel}</Button>
+        <Button variant="primary" icon={isEdit?"save":"plus"} onClick={handleSave} disabled={programSaving}>
+          {programSaving ? (routeCopy.saving || "جاري الحفظ...") : isEdit ? t.save : t.addProgram}
         </Button>
       </div>
     </div>

@@ -32,6 +32,7 @@ import ProgramClientRow from "./programs/ProgramClientRow";
 import ProgramClientModals from "./programs/ProgramClientModals";
 import ProgramDetailOverview from "./programs/ProgramDetailOverview";
 import ProgramCostingModal from "./programs/ProgramCostingModal";
+import ProgramActionScopeDialog from "./programs/ProgramActionScopeDialog";
 import {
   getProgramCostingLabels,
   getProgramServiceCostingReferenceCost,
@@ -109,6 +110,7 @@ import {
 import {
   exportProgramWordContractsZip,
 } from "../features/contracts";
+import { resolveClientTravelContext } from "../features/contracts/utils/contractTravelContext";
 import {
   fetchPosterTemplates,
   getPosterTemplateImageUrl,
@@ -134,6 +136,12 @@ import {
   normalizePosterTemplateType,
 } from "../features/posterTemplates/utils/posterTemplateData";
 import { downloadPassportListWord } from "../features/programs/exports/passportListWordExport";
+import {
+  PROGRAM_ACTION_SCOPES,
+  buildProgramActionScopeOptions,
+  isTravelGroupScope,
+  resolveProgramActionClients,
+} from "../features/programs/utils/programActionScope";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
   AlignCenter,
@@ -191,6 +199,13 @@ const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
 const PROGRAMS_FILTERS_STORAGE_VERSION = 1;
 const PROGRAMS_TYPE_FILTER_KEYS = new Set(["all", "umrah", "hajj"]);
 const PROGRAMS_STATUS_FILTER_KEYS = new Set(["all", "cleared", "not_cleared", "full", "not_full"]);
+const PROGRAM_EXPORT_ACTIONS = Object.freeze({
+  PDF: "program_pdf",
+  PILGRIMS_LIST: "pilgrims_list",
+  AMADEUS_EXCEL: "amadeus_excel",
+  CONTRACTS_EXCEL: "contracts_excel",
+  WORD_CONTRACTS: "word_contracts",
+});
 
 const getProgramsFiltersStorageKey = (agencyId = null) => (
   `rukn_programs_filters_${String(agencyId || "local")}`
@@ -2210,6 +2225,7 @@ export default function ProgramsPage({
   const [bulkPosterTitleOverride, setBulkPosterTitleOverride] = React.useState("");
   const [bulkPosterShowDates, setBulkPosterShowDates] = React.useState(true);
   const [editing,       setEditing]       = React.useState(null);
+  const [editingProgramClients, setEditingProgramClients] = React.useState(null);
   const [activeProgram, setActiveProgram] = React.useState(null);
   const currentYear = React.useMemo(() => new Date().getFullYear(), []);
   const nextYear = currentYear + 1;
@@ -2232,6 +2248,9 @@ export default function ProgramsPage({
   const [programSearchOpen, setProgramSearchOpen] = React.useState(false);
   const [highlightProgramId, setHighlightProgramId] = React.useState("");
   const [programRealtimeRefreshKey, setProgramRealtimeRefreshKey] = React.useState(0);
+  const [programDetailRefreshKey, setProgramDetailRefreshKey] = React.useState(0);
+  const [travelGroupCountsRefreshKey, setTravelGroupCountsRefreshKey] = React.useState(0);
+  const [remoteTravelGroupCountsByProgramId, setRemoteTravelGroupCountsByProgramId] = React.useState({});
   const [programTypeMenuOpen, setProgramTypeMenuOpen] = React.useState(false);
   const [programStatusMenuOpen, setProgramStatusMenuOpen] = React.useState(false);
   const [yearMenuOpen, setYearMenuOpen] = React.useState(false);
@@ -2617,6 +2636,57 @@ export default function ProgramsPage({
     const start = (safeProgramsPage - 1) * programsPageSize;
     return filteredPrograms.slice(start, start + programsPageSize);
   }, [filteredPrograms, programsPageSize, safeProgramsPage, serverProgramPageReady, serverVisiblePrograms]);
+
+  const visibleHajjProgramIds = React.useMemo(() => (
+    visiblePrograms
+      .filter((program) => getProgramKind(program) === "hajj")
+      .map((program) => String(program.id || ""))
+      .filter(Boolean)
+  ), [visiblePrograms]);
+
+  React.useEffect(() => {
+    if (!store.isSupabaseEnabled || !store.agencyId || !visibleHajjProgramIds.length) return undefined;
+    let cancelled = false;
+    db.programTravelGroups.fetchCountsForPrograms(store.agencyId, visibleHajjProgramIds)
+      .then((result) => {
+        if (cancelled) return;
+        if (result?.error || !result?.data) {
+          if (process.env.NODE_ENV === "development") {
+            console.warn("[ProgramsPage] Travel-group counts could not be loaded.", result?.error);
+          }
+          return;
+        }
+        setRemoteTravelGroupCountsByProgramId((current) => ({
+          ...current,
+          ...result.data,
+        }));
+      })
+      .catch((error) => {
+        if (!cancelled && process.env.NODE_ENV === "development") {
+          console.warn("[ProgramsPage] Travel-group counts could not be loaded.", error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    store.agencyId,
+    store.isSupabaseEnabled,
+    travelGroupCountsRefreshKey,
+    visibleHajjProgramIds,
+  ]);
+
+  const localTravelGroupCountsByProgramId = React.useMemo(() => (
+    (store.programTravelGroups || []).reduce((counts, group) => {
+      const programId = String(group.programId || group.program_id || "");
+      if (programId) counts[programId] = (counts[programId] || 0) + 1;
+      return counts;
+    }, {})
+  ), [store.programTravelGroups]);
+
+  const travelGroupCountsByProgramId = store.isSupabaseEnabled
+    ? { ...localTravelGroupCountsByProgramId, ...remoteTravelGroupCountsByProgramId }
+    : localTravelGroupCountsByProgramId;
 
   const visibleProgramIds = React.useMemo(() => (
     new Set(visiblePrograms.map((program) => String(program.id)))
@@ -3133,6 +3203,8 @@ export default function ProgramsPage({
   const closeProgramForm = React.useCallback(() => {
     setShowForm(false);
     setEditing(null);
+    setEditingProgramClients(null);
+    setTravelGroupCountsRefreshKey((key) => key + 1);
   }, []);
   const handleProgramFormSaved = React.useCallback(() => {
     const wasEditing = Boolean(editing);
@@ -3147,12 +3219,16 @@ export default function ProgramsPage({
       <>
         <ProgramInner
           program={prog} store={store} onToast={onToast}
+          externalRefreshKey={programDetailRefreshKey}
           programSummaryById={programSummaryById}
           badgesEnabled={badgesEnabled}
           contractsEnabled={contractsEnabled}
           programPostersEnabled={programPostersEnabled}
           onBack={() => closeProgramDetail(true)}
-          onEditProgram={() => setEditing(prog)}
+          onEditProgram={(programClients) => {
+            setEditing(prog);
+            setEditingProgramClients(programClients);
+          }}
         />
         <ProgramEditorModal
           open={!!editing}
@@ -3162,6 +3238,11 @@ export default function ProgramsPage({
           badgesEnabled={badgesEnabled}
           onSaved={handleProgramFormSaved}
           onClose={closeProgramForm}
+          programClients={editingProgramClients}
+          onTravelGroupsChanged={() => {
+            setTravelGroupCountsRefreshKey((key) => key + 1);
+            setProgramDetailRefreshKey((key) => key + 1);
+          }}
         />
       </>
     );
@@ -3861,6 +3942,7 @@ export default function ProgramsPage({
                     registered={summary.registeredCount || 0} pct={summary.capacityPct || 0}
                     totalPaid={summary.totalPaid || 0} totalRemaining={summary.remainingTotal || 0}
                     cleared={summary.clearedCount || 0} unpaid={summary.unpaidCount || 0} delay={i*.06}
+                    travelGroupCount={travelGroupCountsByProgramId[String(p.id)] || 0}
                     programSummary={summary}
                     highlighted={String(highlightProgramId) === String(p.id)}
                     selected={programSelectionMode && selected}
@@ -3870,7 +3952,13 @@ export default function ProgramsPage({
                       if (programSelectionMode) return;
                       openProgramDetail(p.id);
                     }}
-                    onEdit={e => { e.stopPropagation(); setEditing(p); }}
+                    onEdit={e => {
+                      e.stopPropagation();
+                      setEditing(p);
+                      setEditingProgramClients(clientsReady
+                        ? clients.filter((client) => String(client.programId || "") === String(p.id))
+                        : null);
+                    }}
                     onDuplicate={e => {
                       e.stopPropagation();
                       openDuplicatePrompt(p);
@@ -3931,6 +4019,11 @@ export default function ProgramsPage({
         badgesEnabled={badgesEnabled}
         onSaved={handleProgramFormSaved}
         onClose={closeProgramForm}
+        programClients={editingProgramClients}
+        onTravelGroupsChanged={() => {
+          setTravelGroupCountsRefreshKey((key) => key + 1);
+          setProgramDetailRefreshKey((key) => key + 1);
+        }}
       />
       <DuplicateProgramModal
         prompt={duplicatePrompt}
@@ -4069,6 +4162,7 @@ function ProgramInner({
   badgesEnabled = true,
   contractsEnabled = true,
   programPostersEnabled = true,
+  externalRefreshKey = 0,
 }) {
   const {
     clients,
@@ -4081,6 +4175,7 @@ function ProgramInner({
     transferClients,
     deleteClientsBulk,
     deleteClient,
+    updateClientAndWait,
     updateProgram,
   } = store;
   const { t, lang, dir } = useLang();
@@ -4101,6 +4196,9 @@ function ProgramInner({
   const [filter,         setFilter]         = React.useState("all");
   const [search,         setSearch]         = React.useState("");
   const [selectedClient, setSelectedClient] = React.useState(null);
+  const [travelGroupMoveClient, setTravelGroupMoveClient] = React.useState(null);
+  const [travelGroupMoveValue, setTravelGroupMoveValue] = React.useState("");
+  const [travelGroupMoveSaving, setTravelGroupMoveSaving] = React.useState(false);
   const [showAddClient,  setShowAddClient]  = React.useState(false);
   const [showExcelImport, setShowExcelImport] = React.useState(false);
   const [excelImportSaving, setExcelImportSaving] = React.useState(false);
@@ -4118,18 +4216,21 @@ function ProgramInner({
   const [bulkActionsOpen, setBulkActionsOpen] = React.useState(false);
   const [packageFilter, setPackageFilter] = React.useState("all");
   const [serviceTypeFilter, setServiceTypeFilter] = React.useState("all");
+  const [travelGroupFilter, setTravelGroupFilter] = React.useState("all");
   const [programClientPage, setProgramClientPage] = React.useState(1);
   const [programClientPageSize, setProgramClientPageSize] = React.useState(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
   const [programTab, setProgramTab] = React.useState("clients");
   const [costingOpen, setCostingOpen] = React.useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [serviceTypeFilterOpen, setServiceTypeFilterOpen] = React.useState(false);
+  const [travelGroupFilterOpen, setTravelGroupFilterOpen] = React.useState(false);
   const [packageFilterOpen, setPackageFilterOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [headerActionsOpen, setHeaderActionsOpen] = React.useState(false);
   const [badgeExportBusy, setBadgeExportBusy] = React.useState(false);
   const [badgeExportProgress, setBadgeExportProgress] = React.useState(null);
   const [wordContractExportBusy, setWordContractExportBusy] = React.useState(false);
+  const [exportScopeDialogAction, setExportScopeDialogAction] = React.useState(null);
   const [posterExportBusy, setPosterExportBusy] = React.useState(false);
   const [posterTemplateChoice, setPosterTemplateChoice] = React.useState(null);
   const [posterTemplateChoiceId, setPosterTemplateChoiceId] = React.useState("");
@@ -4143,6 +4244,7 @@ function ProgramInner({
   const packageFilterRef = React.useRef(null);
   const statusFilterRef = React.useRef(null);
   const serviceTypeFilterRef = React.useRef(null);
+  const travelGroupFilterRef = React.useRef(null);
   const detailHydrationRequestedRef = React.useRef(false);
   const scopedProgramDetailHiddenPaymentIdsRef = React.useRef(new Set());
   const scopedRealtimeRefreshTimerRef = React.useRef(null);
@@ -4157,6 +4259,70 @@ function ProgramInner({
   });
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const isHajjProgram = getProgramKind(program) === "hajj";
+  const currentProgramTravelGroups = React.useMemo(() => (
+    (store.programTravelGroups || [])
+      .filter((group) => (
+        String(group.programId || group.program_id || "") === String(program.id || "")
+      ))
+  ), [program.id, store.programTravelGroups]);
+  const travelGroupMoveOptions = React.useMemo(() => ([
+    {
+      value: "",
+      label: lang === "fr" ? "Programme principal" : lang === "en" ? "Main program" : "البرنامج الأساسي",
+    },
+    ...currentProgramTravelGroups.map((group) => ({
+      value: String(group.id || ""),
+      label: group.name || group.code || String(group.id || ""),
+    })),
+  ]), [currentProgramTravelGroups, lang]);
+  const showTravelGroupFilter = isHajjProgram && currentProgramTravelGroups.length > 0;
+  const travelGroupFilters = React.useMemo(() => ([
+    {
+      key: "all",
+      label: lang === "fr" ? "Tous les pèlerins" : lang === "en" ? "All pilgrims" : "كل الحجاج",
+    },
+    {
+      key: "__main_program",
+      label: lang === "fr" ? "Programme principal" : lang === "en" ? "Main program" : "البرنامج الأساسي",
+    },
+    ...currentProgramTravelGroups.map((group) => ({
+      key: String(group.id || ""),
+      label: group.name || group.code || String(group.id || ""),
+    })),
+  ]), [currentProgramTravelGroups, lang]);
+  const activeTravelGroupFilter = travelGroupFilters.find(
+    (option) => option.key === travelGroupFilter
+  ) || travelGroupFilters[0];
+
+  const openTravelGroupMove = React.useCallback((client) => {
+    const currentTravelGroupId = client?.travelGroupId ?? client?.travel_group_id ?? null;
+    const currentGroupExists = currentTravelGroupId && currentProgramTravelGroups.some(
+      (group) => String(group.id || "") === String(currentTravelGroupId)
+    );
+    setTravelGroupMoveClient(client);
+    setTravelGroupMoveValue(currentGroupExists ? String(currentTravelGroupId) : "");
+  }, [currentProgramTravelGroups]);
+
+  const closeTravelGroupMove = React.useCallback(() => {
+    if (travelGroupMoveSaving) return;
+    setTravelGroupMoveClient(null);
+    setTravelGroupMoveValue("");
+  }, [travelGroupMoveSaving]);
+
+  React.useEffect(() => {
+    if (!isHajjProgram) return undefined;
+    if (typeof store.loadProgramTravelGroups !== "function") return undefined;
+    let cancelled = false;
+    store.loadProgramTravelGroups(program.id).catch((error) => {
+      if (!cancelled && process.env.NODE_ENV === "development") {
+        console.warn("[Programs] Travel groups could not be loaded for the client form.", error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isHajjProgram, program.id, store.loadProgramTravelGroups]);
   const participantExcelImportLabel = React.useMemo(() => {
     if (lang === "fr") return `${participantTerms.importAction} depuis Excel / CSV`;
     if (lang === "en") return `${participantTerms.importAction} from Excel / CSV`;
@@ -4392,6 +4558,55 @@ function ProgramInner({
     });
   }, [isVisibleScopedProgramClient, program.id]);
 
+  const saveTravelGroupMove = React.useCallback(async () => {
+    if (!travelGroupMoveClient || travelGroupMoveSaving) return;
+    const currentTravelGroupId = travelGroupMoveClient.travelGroupId
+      ?? travelGroupMoveClient.travel_group_id
+      ?? null;
+    const nextTravelGroupId = travelGroupMoveValue || null;
+    if (String(currentTravelGroupId || "") === String(nextTravelGroupId || "")) {
+      closeTravelGroupMove();
+      return;
+    }
+    setTravelGroupMoveSaving(true);
+    try {
+      const result = await updateClientAndWait(
+        travelGroupMoveClient.id,
+        { travelGroupId: nextTravelGroupId },
+        travelGroupMoveClient
+      );
+      if (result?.error || !result?.data) {
+        onToast?.("تعذر حفظ فوج السفر لهذا الحاج. يرجى تحديث الصفحة والمحاولة مرة أخرى.", "error");
+        return;
+      }
+      upsertScopedProgramClients(result.data);
+      setTravelGroupMoveClient(null);
+      setTravelGroupMoveValue("");
+      onToast?.(
+        lang === "fr"
+          ? "Groupe de voyage mis à jour"
+          : lang === "en"
+            ? "Travel group updated"
+            : "تم تحديث فوج السفر",
+        "success"
+      );
+    } catch (error) {
+      console.error("[Programs] Travel-group assignment update failed.", error);
+      onToast?.("تعذر حفظ فوج السفر لهذا الحاج. يرجى تحديث الصفحة والمحاولة مرة أخرى.", "error");
+    } finally {
+      setTravelGroupMoveSaving(false);
+    }
+  }, [
+    closeTravelGroupMove,
+    lang,
+    onToast,
+    travelGroupMoveClient,
+    travelGroupMoveSaving,
+    travelGroupMoveValue,
+    updateClientAndWait,
+    upsertScopedProgramClients,
+  ]);
+
   const isActiveScopedPayment = React.useCallback((payment) => {
     if (!payment) return false;
     const status = String(payment.status || "active").toLowerCase();
@@ -4618,6 +4833,7 @@ function ProgramInner({
     };
   }, [
     program.id,
+    externalRefreshKey,
     scopedProgramDetailRefreshKey,
     store.loadProgramDetailData,
     store.lastSynced,
@@ -4712,25 +4928,34 @@ function ProgramInner({
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
     return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
   }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program]);
+  const travelGroupFiltered = React.useMemo(() => filtered.filter((client) => {
+    if (!showTravelGroupFilter || travelGroupFilter === "all") return true;
+    const clientTravelGroupId = client.travelGroupId ?? client.travel_group_id ?? null;
+    const normalizedTravelGroupId = typeof clientTravelGroupId === "string"
+      ? clientTravelGroupId.trim()
+      : clientTravelGroupId;
+    if (travelGroupFilter === "__main_program") return !normalizedTravelGroupId;
+    return String(normalizedTravelGroupId || "") === travelGroupFilter;
+  }), [filtered, showTravelGroupFilter, travelGroupFilter]);
 
-  const totalProgramClientItems = filtered.length;
+  const totalProgramClientItems = travelGroupFiltered.length;
   const totalProgramClientPages = Math.max(1, Math.ceil(totalProgramClientItems / programClientPageSize));
   const safeProgramClientPage = Math.min(Math.max(1, programClientPage), totalProgramClientPages);
   const programClientStartIndex = (safeProgramClientPage - 1) * programClientPageSize;
   const programClientEndIndex = programClientStartIndex + programClientPageSize;
   const paginatedProgramClients = React.useMemo(
-    () => filtered.slice(programClientStartIndex, programClientEndIndex),
-    [filtered, programClientStartIndex, programClientEndIndex]
+    () => travelGroupFiltered.slice(programClientStartIndex, programClientEndIndex),
+    [travelGroupFiltered, programClientStartIndex, programClientEndIndex]
   );
   const filteredPaymentTotals = React.useMemo(() => (
-    filtered.reduce((acc, client) => {
+    travelGroupFiltered.reduce((acc, client) => {
       const paid = getListClientTotalPaid(client.id);
       acc.amount += getProgramClientSalePrice(program, client);
       acc.paid += paid;
       acc.remaining += getProgramClientRemainingAmount(program, client, paid);
       return acc;
     }, { amount: 0, paid: 0, remaining: 0 })
-  ), [filtered, getListClientTotalPaid, program]);
+  ), [travelGroupFiltered, getListClientTotalPaid, program]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
   const programClientPageSizeOptions = React.useMemo(() => (
@@ -4747,7 +4972,21 @@ function ProgramInner({
   React.useEffect(() => {
     setPackageFilter("all");
     setServiceTypeFilter("all");
+    setTravelGroupFilter("all");
   }, [program.id]);
+
+  React.useEffect(() => {
+    if (travelGroupFilter === "all") return;
+    if (!showTravelGroupFilter) {
+      setTravelGroupFilter("all");
+      return;
+    }
+    if (travelGroupFilter === "__main_program") return;
+    const selectedGroupExists = currentProgramTravelGroups.some(
+      (group) => String(group.id || "") === travelGroupFilter
+    );
+    if (!selectedGroupExists) setTravelGroupFilter("all");
+  }, [currentProgramTravelGroups, showTravelGroupFilter, travelGroupFilter]);
 
   React.useEffect(() => {
     setProgramClientPageSize(PROGRAM_DETAIL_DEFAULT_PAGE_SIZE);
@@ -4760,7 +4999,7 @@ function ProgramInner({
     setProgramClientPage(1);
     setCheckedIds(new Set());
     setBulkActionsOpen(false);
-  }, [search, filter, packageFilter, serviceTypeFilter, programTab]);
+  }, [search, filter, packageFilter, serviceTypeFilter, travelGroupFilter, programTab]);
 
   React.useEffect(() => {
     setProgramClientPage((current) => Math.min(Math.max(1, current), totalProgramClientPages));
@@ -4788,7 +5027,7 @@ function ProgramInner({
   }, [headerActionsOpen]);
 
   React.useEffect(() => {
-    if (!packageFilterOpen && !statusFilterOpen && !serviceTypeFilterOpen) return undefined;
+    if (!packageFilterOpen && !statusFilterOpen && !serviceTypeFilterOpen && !travelGroupFilterOpen) return undefined;
     const handleOutside = (event) => {
       if (packageFilterOpen && packageFilterRef.current && !packageFilterRef.current.contains(event.target)) {
         setPackageFilterOpen(false);
@@ -4799,12 +5038,16 @@ function ProgramInner({
       if (serviceTypeFilterOpen && serviceTypeFilterRef.current && !serviceTypeFilterRef.current.contains(event.target)) {
         setServiceTypeFilterOpen(false);
       }
+      if (travelGroupFilterOpen && travelGroupFilterRef.current && !travelGroupFilterRef.current.contains(event.target)) {
+        setTravelGroupFilterOpen(false);
+      }
     };
     const handleKeyDown = (event) => {
       if (event.key !== "Escape") return;
       setPackageFilterOpen(false);
       setStatusFilterOpen(false);
       setServiceTypeFilterOpen(false);
+      setTravelGroupFilterOpen(false);
     };
     document.addEventListener("pointerdown", handleOutside);
     document.addEventListener("keydown", handleKeyDown);
@@ -4812,7 +5055,7 @@ function ProgramInner({
       document.removeEventListener("pointerdown", handleOutside);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [packageFilterOpen, statusFilterOpen, serviceTypeFilterOpen]);
+  }, [packageFilterOpen, statusFilterOpen, serviceTypeFilterOpen, travelGroupFilterOpen]);
 
   React.useEffect(() => {
     if (!bulkActionsOpen) return undefined;
@@ -5282,19 +5525,94 @@ function ProgramInner({
   const posterOptionsVisible = posterTemplateChoiceId === OFFICIAL_RUKN_POSTER_CHOICE_ID
     || posterTemplateChoiceId === TIZNIT_VOYAGES_SIGNATURE_TEMPLATE_KEY;
   const getCurrentExportClients = React.useCallback(() => filtered, [filtered]);
-  const getCurrentWordContractExportClients = React.useCallback(() => {
-    if (checkedIds.size > 0) return progClients.filter((client) => checkedIds.has(client.id));
-    return getCurrentExportClients();
-  }, [checkedIds, getCurrentExportClients, progClients]);
   const notifyNoExportClients = React.useCallback(() => {
     onToast(participantTerms.noMatching, "info");
   }, [onToast, participantTerms.noMatching]);
-  const handleProgramPdfExport = React.useCallback(async () => {
+  const exportScopeDialogTitle = React.useMemo(() => (
+    lang === "fr"
+      ? "Choisir la portée de l’export"
+      : lang === "en"
+        ? "Choose export scope"
+        : "اختر نطاق التصدير"
+  ), [lang]);
+  const exportScopeConfirmLabel = React.useMemo(() => (
+    lang === "fr" ? "Exporter" : lang === "en" ? "Export" : "تصدير"
+  ), [lang]);
+  const exportScopeCancelLabel = React.useMemo(() => (
+    lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء"
+  ), [lang]);
+  const exportScopeEmptyMessage = React.useMemo(() => (
+    lang === "fr"
+      ? `Aucun ${participantTerms.plural || "pèlerin"} dans cette portée.`
+      : lang === "en"
+        ? `No ${participantTerms.plural || "pilgrims"} in this scope.`
+        : `لا يوجد ${participantTerms.plural || "حجاج"} في هذا النطاق.`
+  ), [lang, participantTerms.plural]);
+  const exportScopeInvalidMessage = React.useMemo(() => (
+    lang === "fr"
+      ? "Impossible de déterminer la portée de l’export. Actualisez la page et réessayez."
+      : lang === "en"
+        ? "Unable to determine the export scope. Please refresh the page and try again."
+        : "تعذر تحديد نطاق التصدير. يرجى تحديث الصفحة والمحاولة مرة أخرى."
+  ), [lang]);
+  const wordContractsMixedTravelGroupMessage = React.useMemo(() => (
+    lang === "fr"
+      ? "Impossible de générer certains contrats car le représentant et certains mineurs sont liés à des groupes de voyage différents. Veuillez harmoniser le groupe de voyage ou les remettre dans le programme principal, puis réessayer."
+      : lang === "en"
+        ? "Some contracts could not be generated because the representative and some minors are assigned to different travel groups. Please align their travel group or move them back to the main program, then try again."
+        : "تعذر إنشاء بعض العقود لأن الممثل وبعض القاصرين مرتبطون بأفواج سفر مختلفة. يرجى توحيد فوج السفر لهم أو إرجاعهم إلى البرنامج الأساسي ثم المحاولة مرة أخرى."
+  ), [lang]);
+  const exportScopeInitialScope = React.useMemo(() => (
+    exportScopeDialogAction === PROGRAM_EXPORT_ACTIONS.WORD_CONTRACTS && checkedIds.size > 0
+      ? PROGRAM_ACTION_SCOPES.SELECTED
+      : PROGRAM_ACTION_SCOPES.CURRENT_FILTERED
+  ), [checkedIds.size, exportScopeDialogAction]);
+  const resolveCurrentExportScope = React.useCallback((scope) => (
+    resolveProgramActionClients({
+      scope,
+      programClients: progClients,
+      filteredClients: travelGroupFiltered,
+      checkedIds,
+      travelGroups: isHajjProgram ? currentProgramTravelGroups : [],
+    })
+  ), [checkedIds, currentProgramTravelGroups, isHajjProgram, progClients, travelGroupFiltered]);
+  const exportScopeOptions = React.useMemo(() => (
+    buildProgramActionScopeOptions({
+      checkedIds,
+      travelGroups: isHajjProgram ? currentProgramTravelGroups : [],
+      includeCurrentFiltered: true,
+    })
+      .filter((option) => (
+        isHajjProgram
+        || (
+          option.scope !== PROGRAM_ACTION_SCOPES.MAIN_PROGRAM
+          && !isTravelGroupScope(option.scope)
+        )
+      ))
+      .map((option) => {
+        const resolved = resolveCurrentExportScope(option.scope);
+        return {
+          ...option,
+          label: resolved.label || option.label,
+          count: resolved.count,
+          isValid: resolved.isValid,
+          reason: resolved.reason,
+        };
+      })
+  ), [checkedIds, currentProgramTravelGroups, isHajjProgram, resolveCurrentExportScope]);
+  const openExportScopeDialog = React.useCallback(async (action) => {
     closeHeaderActions();
-    const ready = await ensureGlobalDetailDataForCurrentAction();
-    if (!ready) return;
-    const exportClients = getCurrentExportClients();
-    if (exportClients.length === 0) { notifyNoExportClients(); return; }
+    const requiresGlobalDetail = action === PROGRAM_EXPORT_ACTIONS.PDF || !useScopedProgramDetail;
+    if (requiresGlobalDetail) {
+      const ready = await ensureGlobalDetailDataForCurrentAction();
+      if (!ready) return;
+    }
+    setExportScopeDialogAction(action);
+  }, [closeHeaderActions, ensureGlobalDetailDataForCurrentAction, useScopedProgramDetail]);
+  const closeExportScopeDialog = React.useCallback(() => {
+    setExportScopeDialogAction(null);
+  }, []);
+  const runProgramPdfExport = React.useCallback((exportClients) => {
     printProgramPDF({
       program,
       clients: exportClients,
@@ -5308,15 +5626,11 @@ function ProgramInner({
       t,
       agency,
     });
-  }, [agency, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentExportClients, lang, notifyNoExportClients, program, t]);
-  const handleAmadeusExport = React.useCallback(async () => {
-    closeHeaderActions();
-    if (!useScopedProgramDetail) {
-      const ready = await ensureGlobalDetailDataForCurrentAction();
-      if (!ready) return;
-    }
-    const exportClients = getCurrentExportClients();
-    if (exportClients.length === 0) { notifyNoExportClients(); return; }
+  }, [agency, getClientPayments, getClientTotalPaid, lang, program, t]);
+  const handleProgramPdfExport = React.useCallback(() => {
+    openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.PDF);
+  }, [openExportScopeDialog]);
+  const runAmadeusExcelExport = React.useCallback(async (exportClients) => {
     try {
       const selectedLevelLabel = packageFilter === "all"
         ? allLevelsExportLabel
@@ -5349,7 +5663,10 @@ function ProgramInner({
         "error"
       );
     }
-  }, [activePackageChip?.label, agency, allLevelsExportLabel, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, program, useScopedProgramDetail]);
+  }, [activePackageChip?.label, agency, allLevelsExportLabel, lang, onToast, packageFilter, program]);
+  const handleAmadeusExport = React.useCallback(() => {
+    openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.AMADEUS_EXCEL);
+  }, [openExportScopeDialog]);
   const handlePassportListWordExport = React.useCallback(async () => {
     closeHeaderActions();
     if (!useScopedProgramDetail) {
@@ -5420,8 +5737,8 @@ function ProgramInner({
   }, [closeHeaderActions, ensureCurrentProgramCanAdd, runWithGlobalDetailData]);
   const handleEditProgram = React.useCallback(() => {
     closeHeaderActions();
-    onEditProgram?.();
-  }, [closeHeaderActions, onEditProgram]);
+    onEditProgram?.(progClients);
+  }, [closeHeaderActions, onEditProgram, progClients]);
   const handleCostingOpen = React.useCallback(() => {
     closeHeaderActions();
     setCostingOpen(true);
@@ -5430,14 +5747,7 @@ function ProgramInner({
     setProgramTab(nextTab);
     if (nextTab === "rooming") ensureGlobalDetailData({ notify: true });
   }, [ensureGlobalDetailData]);
-  const handlePilgrimsListExport = React.useCallback(async () => {
-    closeHeaderActions();
-    if (!useScopedProgramDetail) {
-      const ready = await ensureGlobalDetailDataForCurrentAction();
-      if (!ready) return;
-    }
-    const exportClients = getCurrentExportClients();
-    if (exportClients.length === 0) { notifyNoExportClients(); return; }
+  const runPilgrimsListExport = React.useCallback(async (exportClients) => {
     const XLSX = await import("xlsx");
     const labels = {
       localName: "الاسم الكامل",
@@ -5458,23 +5768,17 @@ function ProgramInner({
       { bookType: "xlsx", compression: true }
     );
     onToast(participantTerms.listExportReady || t.pilgrimsListExportReady || (lang === "fr" ? "Liste des pèlerins exportée" : lang === "en" ? "Pilgrims list exported" : "تم تصدير لائحة المعتمرين"), "success");
-  }, [activePackageChip?.label, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType, useScopedProgramDetail]);
-  const handleContractsExcelExport = React.useCallback(async () => {
-    if (!contractsEnabled) {
-      onToast?.(contractsDisabledMessage, "info");
-      return;
-    }
-    closeHeaderActions();
-    if (!useScopedProgramDetail) {
-      const ready = await ensureGlobalDetailDataForCurrentAction();
-      if (!ready) return;
-    }
-    const exportClients = getCurrentExportClients();
-    if (exportClients.length === 0) { notifyNoExportClients(); return; }
+  }, [activePackageChip?.label, lang, onToast, packageFilter, participantTerms.kind, participantTerms.listExportReady, program.name, t.pilgrimsListExportReady, t.serviceType]);
+  const handlePilgrimsListExport = React.useCallback(() => {
+    openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.PILGRIMS_LIST);
+  }, [openExportScopeDialog]);
+  const runContractsExcelExport = React.useCallback(async (exportClients) => {
     const XLSX = await import("xlsx");
     const rows = [
       CONTRACT_EXPORT_HEADERS,
       ...exportClients.map((client) => {
+        const travelContext = resolveClientTravelContext(client, program, currentProgramTravelGroups);
+        const contractProgram = travelContext.program || program;
         const pkgLevel = client.packageLevel || client.hotelLevel || "";
         const pkg = packageById.get(client.packageId || client.package_id) || packageByLevel.get(pkgLevel) || null;
         const fullName = getClientArabicName(client) || getClientLatinName(client) || resolveClientDisplayName(client, "");
@@ -5483,18 +5787,20 @@ function ProgramInner({
           "cin", "CIN", "cinNumber", "cin_number", "nationalId", "national_id",
           "identityNumber", "identity_number", "idCardNumber", "id_card_number",
         ]);
-        const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(program, ["hotelMadina", "hotel_madina"]);
-        const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(program, ["hotelMecca", "hotel_mecca"]);
+        const departureDate = pickFirstText(contractProgram, ["departure", "departureDate", "departure_date"]);
+        const returnDate = pickFirstText(contractProgram, ["returnDate", "return_date"]);
+        const medinaHotel = pickFirstText(client, ["hotelMadina", "hotel_madina"]) || pkg?.hotelMadina || pickFirstText(contractProgram, ["hotelMadina", "hotel_madina"]);
+        const makkahHotel = pickFirstText(client, ["hotelMecca", "hotel_mecca"]) || pkg?.hotelMecca || pickFirstText(contractProgram, ["hotelMecca", "hotel_mecca"]);
         const stayDates = calculateHotelStayDates({
-          departureDate: program.departure,
-          returnDate: program.returnDate,
-          visitOrder: program.visitOrder || program.visit_order,
-          hotelCheckinDay: program.hotelCheckinDay || program.hotel_checkin_day,
+          departureDate,
+          returnDate,
+          visitOrder: pickFirstText(contractProgram, ["visitOrder", "visit_order"]),
+          hotelCheckinDay: pickFirstText(contractProgram, ["hotelCheckinDay", "hotel_checkin_day", "hotelCheckIn", "hotel_check_in"]),
           madinahNights: pkg?.madinahNights,
         });
         const roomType = safeCellValue(client.roomTypeLabel || getRoomTypeLabel(client.roomType) || "");
         const address = pickFirstText(client, ["address", "adress", "addressLine", "address_line", "homeAddress", "home_address"]);
-        const company = pickFirstText(program, ["company", "compagnie", "airline", "carrier", "transport"]);
+        const company = pickFirstText(contractProgram, ["company", "compagnie", "airline", "carrier", "transport"]);
         return [
           safeCellValue(fullName),
           safeCellValue(passportNumber),
@@ -5508,8 +5814,8 @@ function ProgramInner({
           safeCellValue(roomType),
           safeCellValue(address),
           safeCellValue(company),
-          safeCellValue(formatDateForExcel(program.departure)),
-          safeCellValue(formatDateForExcel(program.returnDate)),
+          safeCellValue(formatDateForExcel(departureDate)),
+          safeCellValue(formatDateForExcel(returnDate)),
         ];
       }),
     ];
@@ -5523,7 +5829,79 @@ function ProgramInner({
     XLSX.utils.book_append_sheet(wb, ws, "contracts");
     XLSX.writeFile(wb, `Contrats-${slugifyFilePart(program.name)}.xlsx`, { bookType: "xlsx", compression: true });
     onToast(lang === "fr" ? "Export contrats prêt" : lang === "en" ? "Contracts export ready" : "تم تصدير Excel العقود", "success");
-  }, [closeHeaderActions, contractsDisabledMessage, contractsEnabled, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, packageById, packageByLevel, program, useScopedProgramDetail]);
+  }, [currentProgramTravelGroups, lang, onToast, packageById, packageByLevel, program]);
+  const handleContractsExcelExport = React.useCallback(() => {
+    if (!contractsEnabled) {
+      onToast?.(contractsDisabledMessage, "info");
+      return;
+    }
+    openExportScopeDialog(PROGRAM_EXPORT_ACTIONS.CONTRACTS_EXCEL);
+  }, [contractsDisabledMessage, contractsEnabled, onToast, openExportScopeDialog]);
+  const runWordContractsExport = React.useCallback(async (exportClients) => {
+    setWordContractExportBusy(true);
+    try {
+      await exportProgramWordContractsZip({
+        agencyId: store.agencyId,
+        clients: exportClients,
+        programClients: progClients,
+        program,
+        travelGroups: currentProgramTravelGroups,
+        getClientPayments,
+        getClientTotalPaid,
+        agency,
+        lang,
+      });
+      onToast(wordContractsExportLabels.success, "success");
+    } catch (error) {
+      if (error?.code === "missing-contract-template") {
+        onToast(wordContractsExportLabels.missingTemplate, "error");
+      } else if (error?.code === "mixed-contract-travel-context") {
+        onToast(wordContractsMixedTravelGroupMessage, "error");
+      } else if (error?.code === "no-contract-clients") {
+        onToast(wordContractsExportLabels.noClients, "info");
+      } else {
+        console.error("[Contracts] Bulk Word export failed:", error);
+        onToast(wordContractsExportLabels.error, "error");
+      }
+    } finally {
+      setWordContractExportBusy(false);
+    }
+  }, [agency, currentProgramTravelGroups, getClientPayments, getClientTotalPaid, lang, onToast, progClients, program, store.agencyId, wordContractsExportLabels, wordContractsMixedTravelGroupMessage]);
+  const handleConfirmExportScope = React.useCallback(async (scope) => {
+    const action = exportScopeDialogAction;
+    if (!action) return;
+
+    const result = resolveCurrentExportScope(scope);
+    if (!result.isValid) {
+      onToast(exportScopeInvalidMessage, "error");
+      return;
+    }
+    if (result.count === 0) {
+      onToast(exportScopeEmptyMessage, "info");
+      return;
+    }
+
+    setExportScopeDialogAction(null);
+    if (action === PROGRAM_EXPORT_ACTIONS.PDF) {
+      runProgramPdfExport(result.clients);
+      return;
+    }
+    if (action === PROGRAM_EXPORT_ACTIONS.PILGRIMS_LIST) {
+      await runPilgrimsListExport(result.clients);
+      return;
+    }
+    if (action === PROGRAM_EXPORT_ACTIONS.AMADEUS_EXCEL) {
+      await runAmadeusExcelExport(result.clients);
+      return;
+    }
+    if (action === PROGRAM_EXPORT_ACTIONS.CONTRACTS_EXCEL) {
+      await runContractsExcelExport(result.clients);
+      return;
+    }
+    if (action === PROGRAM_EXPORT_ACTIONS.WORD_CONTRACTS) {
+      await runWordContractsExport(result.clients);
+    }
+  }, [exportScopeDialogAction, exportScopeEmptyMessage, exportScopeInvalidMessage, onToast, resolveCurrentExportScope, runAmadeusExcelExport, runContractsExcelExport, runPilgrimsListExport, runProgramPdfExport, runWordContractsExport]);
   const handleWordContractsExport = React.useCallback(async () => {
     if (!contractsEnabled) {
       onToast?.(contractsDisabledMessage, "info");
@@ -5537,35 +5915,8 @@ function ProgramInner({
       onToast(wordContractsExportLabels.loading, "info");
       return;
     }
-    const exportClients = getCurrentWordContractExportClients();
-    if (exportClients.length === 0) {
-      onToast(wordContractsExportLabels.noClients, "info");
-      return;
-    }
-    setWordContractExportBusy(true);
-    try {
-      await exportProgramWordContractsZip({
-        agencyId: store.agencyId,
-        clients: exportClients,
-        programClients: progClients,
-        program,
-        getClientPayments,
-        getClientTotalPaid,
-        agency,
-        lang,
-      });
-      onToast(wordContractsExportLabels.success, "success");
-    } catch (error) {
-      if (error?.code === "missing-contract-template") {
-        onToast(wordContractsExportLabels.missingTemplate, "error");
-      } else {
-        console.error("[Contracts] Bulk Word export failed:", error);
-        onToast(wordContractsExportLabels.error, "error");
-      }
-    } finally {
-      setWordContractExportBusy(false);
-    }
-  }, [agency, closeHeaderActions, contractsDisabledMessage, contractsEnabled, ensureGlobalDetailDataForCurrentAction, getClientPayments, getClientTotalPaid, getCurrentWordContractExportClients, lang, onToast, paymentsReady, progClients, program, store.agencyId, wordContractExportBusy, wordContractsExportLabels]);
+    setExportScopeDialogAction(PROGRAM_EXPORT_ACTIONS.WORD_CONTRACTS);
+  }, [closeHeaderActions, contractsDisabledMessage, contractsEnabled, ensureGlobalDetailDataForCurrentAction, onToast, paymentsReady, wordContractExportBusy, wordContractsExportLabels.loading]);
   const headerActions = React.useMemo(() => ([
     {
       key: "edit",
@@ -5921,6 +6272,7 @@ function ProgramInner({
         onToggleStatusFilter={() => {
           setStatusFilterOpen(open => !open);
           setServiceTypeFilterOpen(false);
+          setTravelGroupFilterOpen(false);
         }}
         activeStatusFilter={activeStatusFilter}
         filter={filter}
@@ -5930,10 +6282,22 @@ function ProgramInner({
         onToggleServiceTypeFilter={() => {
           setServiceTypeFilterOpen(open => !open);
           setStatusFilterOpen(false);
+          setTravelGroupFilterOpen(false);
         }}
         activeServiceTypeFilter={activeServiceTypeFilter}
         serviceTypeFilter={serviceTypeFilter}
         serviceTypeFilters={serviceTypeFilters}
+        showTravelGroupFilter={showTravelGroupFilter}
+        travelGroupFilterRef={travelGroupFilterRef}
+        travelGroupFilterOpen={travelGroupFilterOpen}
+        onToggleTravelGroupFilter={() => {
+          setTravelGroupFilterOpen(open => !open);
+          setStatusFilterOpen(false);
+          setServiceTypeFilterOpen(false);
+        }}
+        activeTravelGroupFilter={activeTravelGroupFilter}
+        travelGroupFilter={travelGroupFilter}
+        travelGroupFilters={travelGroupFilters}
         filterMenuBaseStyle={filterMenuBaseStyle}
         filterMenuItemStyle={filterMenuItemStyle}
         filterMenuCountStyle={filterMenuCountStyle}
@@ -5944,6 +6308,10 @@ function ProgramInner({
         onSelectServiceTypeFilter={(key) => {
           setServiceTypeFilter(key);
           setServiceTypeFilterOpen(false);
+        }}
+        onSelectTravelGroupFilter={(key) => {
+          setTravelGroupFilter(key);
+          setTravelGroupFilterOpen(false);
         }}
         searchExpanded={searchExpanded}
         search={search}
@@ -5965,7 +6333,7 @@ function ProgramInner({
           setSearch("");
           requestAnimationFrame(() => searchInputRef.current?.focus());
         }}
-        filteredCount={filtered.length}
+        filteredCount={travelGroupFiltered.length}
         onToggleSelectMode={() => {
           if (selectMode) {
             exitSelectMode();
@@ -6012,7 +6380,7 @@ function ProgramInner({
       )}
 
       <ProgramClientsTable
-        filteredCount={filtered.length}
+        filteredCount={travelGroupFiltered.length}
         tableGridTemplate={tableGridTemplate}
         selectMode={selectMode}
         headerSelectControl={(
@@ -6034,7 +6402,9 @@ function ProgramInner({
           status: t.statusLabel || t.status || "الحالة",
         }}
         emptyTitle={participantTerms.emptyTitle || t.programNoPilgrimsTitle}
-        emptySub={filter!=="all" ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered) : (participantTerms.emptySub || t.programNoPilgrimsSub)}
+        emptySub={filter !== "all" || travelGroupFilter !== "all"
+          ? (participantTerms.emptyFiltered || t.programNoPilgrimsFiltered)
+          : (participantTerms.emptySub || t.programNoPilgrimsSub)}
         rows={paginatedProgramClients}
         renderRow={(c,i)=>{
             const paid = getListClientTotalPaid(c.id);
@@ -6049,6 +6419,7 @@ function ProgramInner({
             return (
               <ProgramClientRow key={c.id} client={c} index={programClientStartIndex + i}
                 program={program}
+                travelGroups={currentProgramTravelGroups}
                 amount={amount} paid={paid} remaining={rem} overpaid={overpaid} status={stat}
                 completionTooltip={completionTooltip}
                 badgePhotoApi={store.badgePhotoApi}
@@ -6059,6 +6430,7 @@ function ProgramInner({
                 isChecked={checkedIds.has(c.id)}
                 onCheck={()=>toggleCheck(c.id)}
                 onTransfer={()=>openTransferSheet([c.id])}
+                onMoveToTravelGroup={()=>openTravelGroupMove(c)}
                 onDelete={async ()=>{
                   const ready = await ensureGlobalDetailDataForCurrentAction();
                   if(!ready) return;
@@ -6073,7 +6445,7 @@ function ProgramInner({
             );
           }}
         totalsGridColumn={totalsGridColumn}
-        totalLabel={participantTerms.totalLabel ? participantTerms.totalLabel(filtered.length) : tr("programTotalsLabel", { count: filtered.length })}
+        totalLabel={participantTerms.totalLabel ? participantTerms.totalLabel(travelGroupFiltered.length) : tr("programTotalsLabel", { count: travelGroupFiltered.length })}
         summaryLabel={t.summary || participantTerms.plural || t.clients}
         amountTotalLabel={formatCurrencyForLang(filteredPaymentTotals.amount)}
         paidTotalLabel={formatCurrencyForLang(filteredPaymentTotals.paid)}
@@ -6092,6 +6464,50 @@ function ProgramInner({
         onUpdateProgram={(nextProgram) => updateProgram?.(program.id, nextProgram)}
         onToast={onToast}
       />
+      <Modal
+        open={!!travelGroupMoveClient}
+        onClose={closeTravelGroupMove}
+        title={lang === "fr"
+          ? "Déplacer vers un groupe de voyage"
+          : lang === "en"
+            ? "Move to travel group"
+            : "نقل إلى فوج سفر"}
+        width={440}
+        closeOnBackdrop={!travelGroupMoveSaving}
+        closeOnEscape={!travelGroupMoveSaving}
+      >
+        {travelGroupMoveClient && (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <Select
+              label={lang === "fr" ? "Groupe de voyage" : lang === "en" ? "Travel group" : "فوج السفر"}
+              value={travelGroupMoveValue}
+              onChange={(event) => setTravelGroupMoveValue(event.target.value)}
+              options={travelGroupMoveOptions}
+              disabled={travelGroupMoveSaving}
+            />
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:10, flexWrap:"wrap" }}>
+              <Button variant="ghost" onClick={closeTravelGroupMove} disabled={travelGroupMoveSaving}>
+                {t.cancel || (lang === "fr" ? "Annuler" : lang === "en" ? "Cancel" : "إلغاء")}
+              </Button>
+              <Button variant="primary" icon="save" onClick={saveTravelGroupMove} disabled={travelGroupMoveSaving}>
+                {travelGroupMoveSaving
+                  ? (lang === "fr" ? "Enregistrement..." : lang === "en" ? "Saving..." : "جارٍ الحفظ...")
+                  : (t.save || (lang === "fr" ? "Enregistrer" : lang === "en" ? "Save" : "حفظ"))}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <ProgramActionScopeDialog
+        open={Boolean(exportScopeDialogAction)}
+        title={exportScopeDialogTitle}
+        options={exportScopeOptions}
+        initialScope={exportScopeInitialScope}
+        onClose={closeExportScopeDialog}
+        onConfirm={handleConfirmExportScope}
+        confirmLabel={exportScopeConfirmLabel}
+        cancelLabel={exportScopeCancelLabel}
+      />
       <ProgramClientModals
         store={store}
         onToast={onToast}
@@ -6099,6 +6515,7 @@ function ProgramInner({
         tr={tr}
         program={currentProgram}
         packages={packages}
+        travelGroups={currentProgramTravelGroups}
         registeredCount={progClients.length}
         participantTerms={participantTerms}
         completionLabels={completionLabels}

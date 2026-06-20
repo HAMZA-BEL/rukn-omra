@@ -72,6 +72,17 @@ const getProgramAirlineLabel = (program = {}, lang = "ar") => {
   return formatAirlineNameForDocument(translatedName, lang);
 };
 
+const getProgramRouteText = (program = {}) => (
+  firstValue(
+    program.route,
+    program.itinerary,
+    program.travelRoute,
+    program.travel_route,
+    program.routeText,
+    program.route_text
+  )
+);
+
 const getClientRoomType = (client = {}, lang = "ar") => {
   const raw = firstValue(client.roomTypeLabel, client.room_type_label, client.roomType, client.room_type);
   return formatRoomTypeForDocument(raw, lang) || getRoomTypeLabel(raw) || raw;
@@ -209,6 +220,7 @@ export const buildContractTemplateData = ({
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
   const hotelStayDates = getProgramHotelStayDates(program, client);
   const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems);
+  const programRoute = getProgramRouteText(program);
 
   return {
     ...numberedRepresentedFields,
@@ -235,6 +247,12 @@ export const buildContractTemplateData = ({
       departure_date: formatDateValue(firstValue(program.departure, program.departureDate, program.departure_date)),
       return_date: formatDateValue(firstValue(program.returnDate, program.return_date)),
       airline: getProgramAirlineLabel(program, lang),
+      route: programRoute,
+      itinerary: programRoute,
+      travelRoute: programRoute,
+      travel_route: programRoute,
+      routeText: programRoute,
+      route_text: programRoute,
       madinah_hotel: firstValue(client.hotelMadina, client.hotel_madina, program.hotelMadina, program.hotel_madina),
       madinah_checkin: formatDateValue(hotelStayDates.medinaCheckIn),
       madinah_checkout: formatDateValue(hotelStayDates.medinaCheckOut),

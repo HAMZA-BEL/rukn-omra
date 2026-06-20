@@ -9,11 +9,25 @@ import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
 import { getClientServiceType } from "../utils/clientServiceTypes";
-import { normalizeHotelCheckinDay } from "../utils/hotelDates";
+import { normalizeHotelCheckinDay, normalizeVisitOrder } from "../utils/hotelDates";
 import { normalizeRouteStops } from "../utils/programRoutes";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
+);
+
+const hasOwn = (source, key) => Object.prototype.hasOwnProperty.call(source || {}, key);
+
+const hasClientTravelGroupAssignment = (client = {}) => (
+  hasOwn(client, "travelGroupId") || hasOwn(client, "travel_group_id")
+);
+
+const getClientTravelGroupAssignment = (client = {}) => (
+  normalizeForeignKey(
+    hasOwn(client, "travelGroupId")
+      ? client.travelGroupId
+      : client.travel_group_id
+  )
 );
 
 const UUID_SEARCH_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -313,9 +327,35 @@ const PROGRAM_SELECT_COLUMNS = [
   "created_at",
 ].join(", ");
 
+const PROGRAM_TRAVEL_GROUP_SELECT_COLUMNS = [
+  "id",
+  "agency_id",
+  "program_id",
+  "name",
+  "code",
+  "airline",
+  "departure_city",
+  "arrival_city",
+  "return_departure_city",
+  "return_arrival_city",
+  "departure_date",
+  "return_date",
+  "visit_order",
+  "hotel_check_in",
+  "route",
+  "flight_numbers",
+  "seat_capacity",
+  "notes",
+  "is_default",
+  "sort_order",
+  "created_at",
+  "updated_at",
+].join(", ");
+
 const CLIENT_SELECT_COLUMNS = [
   "id",
   "program_id",
+  "travel_group_id",
   "name",
   "first_name",
   "last_name",
@@ -486,6 +526,81 @@ const fromProgram = (row) => ({
   status:      row.status,
 });
 
+const toNullableVisitOrder = (value) => {
+  const text = cleanString(value);
+  return text ? normalizeVisitOrder(text) : null;
+};
+
+const toNullableHotelCheckIn = (value) => {
+  const text = cleanString(value);
+  return text ? normalizeHotelCheckinDay(text) : null;
+};
+
+const toProgramTravelGroup = (group = {}, agencyId) => ({
+  id:                  group.id,
+  agency_id:           agencyId,
+  program_id:          normalizeForeignKey(group.programId ?? group.program_id),
+  name:                cleanString(group.name) || "",
+  code:                cleanString(group.code),
+  airline:             cleanString(group.airline),
+  departure_city:      cleanString(group.departureCity ?? group.departure_city),
+  arrival_city:        cleanString(group.arrivalCity ?? group.arrival_city),
+  return_departure_city: cleanString(group.returnDepartureCity ?? group.return_departure_city),
+  return_arrival_city: cleanString(group.returnArrivalCity ?? group.return_arrival_city),
+  departure_date:      cleanString(group.departureDate ?? group.departure_date),
+  return_date:         cleanString(group.returnDate ?? group.return_date),
+  visit_order:         toNullableVisitOrder(group.visitOrder ?? group.visit_order),
+  hotel_check_in:      toNullableHotelCheckIn(group.hotelCheckIn ?? group.hotel_check_in ?? group.hotelCheckinDay ?? group.hotel_checkin_day),
+  route:               cleanString(group.route),
+  flight_numbers:      cleanString(group.flightNumbers ?? group.flight_numbers),
+  seat_capacity:       toNullableFiniteNumber(group.seatCapacity ?? group.seat_capacity),
+  notes:               cleanString(group.notes),
+  is_default:          Boolean(group.isDefault ?? group.is_default),
+  sort_order:          toFiniteNumber(group.sortOrder ?? group.sort_order),
+  updated_at:          new Date().toISOString(),
+});
+
+const fromProgramTravelGroup = (row = {}) => ({
+  id: row.id,
+  agencyId: row.agency_id,
+  agency_id: row.agency_id,
+  programId: row.program_id,
+  program_id: row.program_id,
+  name: row.name || "",
+  code: row.code || "",
+  airline: row.airline || "",
+  departureCity: row.departure_city || "",
+  departure_city: row.departure_city || "",
+  arrivalCity: row.arrival_city || "",
+  arrival_city: row.arrival_city || "",
+  returnDepartureCity: row.return_departure_city || "",
+  return_departure_city: row.return_departure_city || "",
+  returnArrivalCity: row.return_arrival_city || "",
+  return_arrival_city: row.return_arrival_city || "",
+  departureDate: row.departure_date || "",
+  departure_date: row.departure_date || "",
+  returnDate: row.return_date || "",
+  return_date: row.return_date || "",
+  visitOrder: row.visit_order ? normalizeVisitOrder(row.visit_order) : "",
+  visit_order: row.visit_order ? normalizeVisitOrder(row.visit_order) : "",
+  hotelCheckIn: row.hotel_check_in ? normalizeHotelCheckinDay(row.hotel_check_in) : "",
+  hotel_check_in: row.hotel_check_in ? normalizeHotelCheckinDay(row.hotel_check_in) : "",
+  route: row.route || "",
+  flightNumbers: row.flight_numbers || "",
+  flight_numbers: row.flight_numbers || "",
+  seatCapacity: toNullableFiniteNumber(row.seat_capacity),
+  seat_capacity: toNullableFiniteNumber(row.seat_capacity),
+  notes: row.notes || "",
+  isDefault: Boolean(row.is_default),
+  is_default: Boolean(row.is_default),
+  sortOrder: toFiniteNumber(row.sort_order),
+  sort_order: toFiniteNumber(row.sort_order),
+  createdAt: row.created_at || "",
+  created_at: row.created_at || "",
+  updatedAt: row.updated_at || "",
+  updated_at: row.updated_at || "",
+});
+
 const toClient = (c, agencyId) => {
   const normalizedGender = normalizeGender(c.gender || c.passport?.gender);
   const serviceType = getClientServiceType(c);
@@ -511,6 +626,9 @@ const toClient = (c, agencyId) => {
   id:                c.id,
   agency_id:         agencyId,
   program_id:        normalizeForeignKey(c.programId),
+  ...(hasClientTravelGroupAssignment(c)
+    ? { travel_group_id: getClientTravelGroupAssignment(c) }
+    : {}),
   name:              cleanString(getClientIdentityName(c)),
   first_name:        cleanString(c.firstName),
   last_name:         cleanString(c.lastName),
@@ -549,6 +667,7 @@ const fromClient = (row) => {
   return {
   id:               row.id,
   programId:        row.program_id,
+  travelGroupId:    row.travel_group_id ?? null,
   name:             composeClientName(row),
   firstName:        row.first_name,
   lastName:         row.last_name,
@@ -1301,6 +1420,65 @@ export const db = {
     },
   },
 
+  programTravelGroups: {
+    async fetchCountsForPrograms(agencyId, programIds = []) {
+      const ids = Array.from(new Set((programIds || []).map(String).filter(Boolean)));
+      if (!agencyId || !ids.length) return { data: {}, error: null };
+      const { data, error } = await supabase
+        .from("program_travel_groups")
+        .select("program_id")
+        .eq("agency_id", agencyId)
+        .in("program_id", ids);
+      if (error) return { data: null, error };
+      const counts = Object.fromEntries(ids.map((id) => [id, 0]));
+      (data || []).forEach((row) => {
+        const programId = String(row.program_id || "");
+        if (programId) counts[programId] = (counts[programId] || 0) + 1;
+      });
+      return { data: counts, error: null };
+    },
+    async fetchByProgram(agencyId, programId) {
+      if (!agencyId || !programId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("program_travel_groups")
+        .select(PROGRAM_TRAVEL_GROUP_SELECT_COLUMNS)
+        .eq("agency_id", agencyId)
+        .eq("program_id", programId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+      return { data: data?.map(fromProgramTravelGroup) ?? [], error };
+    },
+    async create(group, agencyId) {
+      if (!agencyId || !group?.programId) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("program_travel_groups")
+        .insert(toProgramTravelGroup(group, agencyId))
+        .select(PROGRAM_TRAVEL_GROUP_SELECT_COLUMNS)
+        .single();
+      return { data: data ? fromProgramTravelGroup(data) : null, error };
+    },
+    async update(group, agencyId) {
+      if (!agencyId || !group?.id || !group?.programId) return { data: null, error: null };
+      const { data, error } = await supabase
+        .from("program_travel_groups")
+        .update(toProgramTravelGroup(group, agencyId))
+        .eq("id", group.id)
+        .eq("agency_id", agencyId)
+        .select(PROGRAM_TRAVEL_GROUP_SELECT_COLUMNS)
+        .single();
+      return { data: data ? fromProgramTravelGroup(data) : null, error };
+    },
+    async delete(id, agencyId) {
+      if (!agencyId || !id) return { error: null };
+      const { error } = await supabase
+        .from("program_travel_groups")
+        .delete()
+        .eq("id", id)
+        .eq("agency_id", agencyId);
+      return { error };
+    },
+  },
+
   clients: {
     async fetchAll(agencyId) {
       const { data, error } = await supabase
@@ -1323,6 +1501,17 @@ export const db = {
         .or("archived.is.null,archived.eq.false")
         .order("created_at", { ascending: false, nullsFirst: false })
         .order("registration_date", { ascending: false, nullsFirst: false });
+      return { data: data?.map(fromClient) ?? [], error };
+    },
+    async clearTravelGroupAssignments(agencyId, programId, travelGroupId) {
+      if (!agencyId || !programId || !travelGroupId) return { data: [], error: null };
+      const { data, error } = await supabase
+        .from("clients")
+        .update({ travel_group_id: null })
+        .eq("agency_id", agencyId)
+        .eq("program_id", programId)
+        .eq("travel_group_id", travelGroupId)
+        .select(CLIENT_SELECT_COLUMNS);
       return { data: data?.map(fromClient) ?? [], error };
     },
     async fetchPage(agencyId, {

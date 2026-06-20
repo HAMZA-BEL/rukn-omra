@@ -85,7 +85,14 @@ export function useClientsSlice() {
     setClientsState((prev) =>
       prev.map((item) =>
         idSet.has(item.id)
-          ? { ...item, programId, lastModified: stamp }
+          ? {
+              ...item,
+              programId,
+              travelGroupId: String(item.programId || "") === String(programId || "")
+                ? (item.travelGroupId ?? item.travel_group_id ?? null)
+                : null,
+              lastModified: stamp,
+            }
           : item
       )
     );

@@ -35,6 +35,10 @@ import {
   restoreProgramRecord as restoreProgramRecordRemote,
   restoreProgram,
   deleteProgramsPermanent,
+  fetchProgramTravelGroups as fetchProgramTravelGroupsRemote,
+  createProgramTravelGroup as createProgramTravelGroupRemote,
+  updateProgramTravelGroup as updateProgramTravelGroupRemote,
+  deleteProgramTravelGroup as deleteProgramTravelGroupRemote,
 } from "../services/programsService";
 import { useNotificationsSlice } from "./useNotificationsSlice";
 import { useActivitySlice } from "./useActivitySlice";
@@ -591,6 +595,33 @@ const buildDeletedProgramSnapshot = (program = {}, client = {}, deletedAt = new 
   deletedAt,
 });
 
+const hasOwnClientField = (source, key) => Object.prototype.hasOwnProperty.call(source || {}, key);
+
+const hasClientTravelGroupAssignment = (client = {}) => (
+  hasOwnClientField(client, "travelGroupId") || hasOwnClientField(client, "travel_group_id")
+);
+
+const normalizeClientTravelGroupId = (client = {}) => {
+  const value = hasOwnClientField(client, "travelGroupId")
+    ? client.travelGroupId
+    : client.travel_group_id;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+};
+
+const hasClientProgramAssignment = (client = {}) => (
+  hasOwnClientField(client, "programId") || hasOwnClientField(client, "program_id")
+);
+
+const preserveClientTravelGroupAssignment = (previous, data = {}) => {
+  if (hasClientTravelGroupAssignment(data) || !previous || !hasClientTravelGroupAssignment(previous)) {
+    return data;
+  }
+  return {
+    ...data,
+    travelGroupId: normalizeClientTravelGroupId(previous),
+  };
+};
+
 const prepareClientForSave = (data) => {
   const gender = normalizeClientGender(data.gender || data.passport?.gender);
   const passport = sanitizePassport(data.passport);
@@ -623,6 +654,10 @@ const prepareClientForSave = (data) => {
       ...(rooming ? { rooming } : {}),
     },
   };
+  if (hasClientTravelGroupAssignment(data)) {
+    cleaned.travelGroupId = normalizeClientTravelGroupId(data);
+  }
+  delete cleaned.travel_group_id;
   cleaned.roomingGroupId = rooming?.groupId || "";
   cleaned.roomingGroupName = rooming?.groupName || "";
   cleaned.roomCategory = rooming?.category || "";
@@ -730,6 +765,86 @@ function useLS(key, init, sanitize = (value) => value) {
   return [val, setVal];
 }
 
+const sanitizeProgramTravelGroups = (items = []) => (
+  Array.isArray(items) ? items.filter((item) => item && item.id && (item.programId || item.program_id)) : []
+);
+
+const normalizeProgramTravelGroupForStore = (group = {}) => {
+  const seatCapacity = group.seatCapacity ?? group.seat_capacity;
+  const numericSeatCapacity = seatCapacity === "" || seatCapacity === null || seatCapacity === undefined
+    ? null
+    : Number(seatCapacity);
+  const visitOrder = trimString(group.visitOrder || group.visit_order);
+  const hotelCheckIn = trimString(
+    group.hotelCheckIn || group.hotel_check_in || group.hotelCheckinDay || group.hotel_checkin_day
+  );
+  return {
+    id: String(group.id || generateUUID()),
+    agencyId: group.agencyId || group.agency_id || "",
+    agency_id: group.agencyId || group.agency_id || "",
+    programId: group.programId || group.program_id || "",
+    program_id: group.programId || group.program_id || "",
+    name: trimString(group.name),
+    code: trimString(group.code),
+    airline: trimString(group.airline),
+    departureCity: trimString(group.departureCity || group.departure_city),
+    departure_city: trimString(group.departureCity || group.departure_city),
+    arrivalCity: trimString(group.arrivalCity || group.arrival_city),
+    arrival_city: trimString(group.arrivalCity || group.arrival_city),
+    returnDepartureCity: trimString(group.returnDepartureCity || group.return_departure_city),
+    return_departure_city: trimString(group.returnDepartureCity || group.return_departure_city),
+    returnArrivalCity: trimString(group.returnArrivalCity || group.return_arrival_city),
+    return_arrival_city: trimString(group.returnArrivalCity || group.return_arrival_city),
+    departureDate: trimString(group.departureDate || group.departure_date),
+    departure_date: trimString(group.departureDate || group.departure_date),
+    returnDate: trimString(group.returnDate || group.return_date),
+    return_date: trimString(group.returnDate || group.return_date),
+    visitOrder: visitOrder ? normalizeVisitOrder(visitOrder) : "",
+    visit_order: visitOrder ? normalizeVisitOrder(visitOrder) : "",
+    hotelCheckIn: hotelCheckIn ? normalizeHotelCheckinDay(hotelCheckIn) : "",
+    hotel_check_in: hotelCheckIn ? normalizeHotelCheckinDay(hotelCheckIn) : "",
+    route: trimString(group.route),
+    flightNumbers: trimString(group.flightNumbers || group.flight_numbers),
+    flight_numbers: trimString(group.flightNumbers || group.flight_numbers),
+    seatCapacity: Number.isFinite(numericSeatCapacity) ? numericSeatCapacity : null,
+    seat_capacity: Number.isFinite(numericSeatCapacity) ? numericSeatCapacity : null,
+    notes: trimString(group.notes),
+    isDefault: Boolean(group.isDefault ?? group.is_default),
+    is_default: Boolean(group.isDefault ?? group.is_default),
+    sortOrder: Number(group.sortOrder ?? group.sort_order ?? 0) || 0,
+    sort_order: Number(group.sortOrder ?? group.sort_order ?? 0) || 0,
+    createdAt: group.createdAt || group.created_at || new Date().toISOString(),
+    created_at: group.createdAt || group.created_at || new Date().toISOString(),
+    updatedAt: group.updatedAt || group.updated_at || new Date().toISOString(),
+    updated_at: group.updatedAt || group.updated_at || new Date().toISOString(),
+  };
+};
+
+const sortProgramTravelGroups = (items = []) => (
+  sanitizeProgramTravelGroups(items)
+    .map(normalizeProgramTravelGroupForStore)
+    .sort((a, b) => (
+      (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
+      || String(a.name || "").localeCompare(String(b.name || ""), "ar")
+    ))
+);
+
+const replaceProgramTravelGroupsForProgram = (current = [], programId = "", incoming = []) => {
+  const targetProgramId = String(programId || "");
+  const rest = sanitizeProgramTravelGroups(current).filter((item) => String(item.programId || "") !== targetProgramId);
+  return sortProgramTravelGroups([...rest, ...sanitizeProgramTravelGroups(incoming)]);
+};
+
+const upsertProgramTravelGroupInList = (current = [], group = {}) => {
+  const normalized = normalizeProgramTravelGroupForStore(group);
+  if (!normalized.id || !normalized.programId) return sanitizeProgramTravelGroups(current);
+  const exists = sanitizeProgramTravelGroups(current).some((item) => String(item.id) === String(normalized.id));
+  const next = exists
+    ? current.map((item) => (String(item.id) === String(normalized.id) ? { ...item, ...normalized } : item))
+    : [...current, normalized];
+  return sortProgramTravelGroups(next);
+};
+
 // ── Stable UUID generation ────────────────────────────────────────────────────
 function genId() {
   return generateUUID();
@@ -757,6 +872,11 @@ export function useStore(agencyId, onToast) {
     transferClientsLocal,
   } = useClientsSlice();
   const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY, stripAgencyRuntimeFields);
+  const [programTravelGroups, setProgramTravelGroups] = useLS(
+    `rukn_program_travel_groups_${ns}`,
+    [],
+    sortProgramTravelGroups
+  );
   const {
     activityLog,
     latestRealtimeActivity,
@@ -846,6 +966,7 @@ export function useStore(agencyId, onToast) {
   const fetchedRef = useRef(false);
   const clientsRef = useRef(clients);
   const paymentsRef = useRef(payments);
+  const programTravelGroupsRef = useRef(programTravelGroups);
   const notificationsRef = useRef(notifications);
   const agencyUsersRef = useRef(agencyUsers);
   const clientsLoadedRef = useRef(clientsLoaded);
@@ -865,6 +986,7 @@ export function useStore(agencyId, onToast) {
 
   useEffect(() => { clientsRef.current = clients; }, [clients]);
   useEffect(() => { paymentsRef.current = payments; }, [payments]);
+  useEffect(() => { programTravelGroupsRef.current = programTravelGroups; }, [programTravelGroups]);
   useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
   useEffect(() => { agencyUsersRef.current = agencyUsers; }, [agencyUsers]);
   useEffect(() => { clientsLoadedRef.current = clientsLoaded; }, [clientsLoaded]);
@@ -1693,6 +1815,7 @@ export function useStore(agencyId, onToast) {
       } : {}),
       id: row.id,
       programId: row.program_id,
+      travelGroupId: row.travel_group_id ?? null,
       name: row.name,
       firstName: row.first_name,
       lastName: row.last_name,
@@ -2593,9 +2716,17 @@ export function useStore(agencyId, onToast) {
 
   const updateClientFromPassportImport = useCallback(async (id, data) => {
     const now      = new Date().toISOString().split("T")[0];
-    const prepared = prepareClientForSave(data);
-    const updated  = { ...prepared, id, lastModified: now };
     const previous = clients.find((client) => client.id === id) || null;
+    const programChanged = Boolean(
+      previous
+      && hasClientProgramAssignment(data)
+      && String(getClientProgramId(previous) || "") !== String(getClientProgramId(data) || "")
+    );
+    const source = programChanged
+      ? { ...data, travelGroupId: null }
+      : preserveClientTravelGroupAssignment(previous, data);
+    const prepared = prepareClientForSave(source);
+    const updated  = { ...prepared, id, lastModified: now };
     const targetProgramId = getClientProgramId(updated);
     const capacityDelta = getProgramCapacityDeltaForClientChange({
       targetProgramId,
@@ -2618,9 +2749,17 @@ export function useStore(agencyId, onToast) {
 
   const updateClient = useCallback((id, data) => {
     const now      = new Date().toISOString().split("T")[0];
-    const prepared = prepareClientForSave(data);
-    const updated  = { ...prepared, lastModified: now };
     const previous = clients.find(c => c.id === id);
+    const programChanged = Boolean(
+      previous
+      && hasClientProgramAssignment(data)
+      && String(getClientProgramId(previous) || "") !== String(getClientProgramId(data) || "")
+    );
+    const source = programChanged
+      ? { ...data, travelGroupId: null }
+      : preserveClientTravelGroupAssignment(previous, data);
+    const prepared = prepareClientForSave(source);
+    const updated  = { ...prepared, lastModified: now };
     if (getClientIdentityName(previous) && !getClientIdentityName(updated)) {
       notify(trKey("nameEmptyGuard") || "تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
       return null;
@@ -2646,6 +2785,104 @@ export function useStore(agencyId, onToast) {
     sync(() => saveClient({ id, ...updated }, agencyId));
     return updated;
   }, [clients, programs, updateClientLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify, ensureProgramCapacityForStore]);
+
+  const updateClientAndWait = useCallback(async (id, patch, fallbackClient = null) => {
+    const now      = new Date().toISOString().split("T")[0];
+    const previous = clients.find(c => c.id === id) || fallbackClient || null;
+    const data = previous ? { ...previous, ...patch } : patch;
+    const programChanged = Boolean(
+      previous
+      && hasClientProgramAssignment(patch)
+      && String(getClientProgramId(previous) || "") !== String(getClientProgramId(data) || "")
+    );
+    const source = programChanged
+      ? { ...data, travelGroupId: null }
+      : preserveClientTravelGroupAssignment(previous, data);
+    const prepared = prepareClientForSave(source);
+    const updated  = { ...prepared, id, lastModified: now };
+    if (getClientIdentityName(previous) && !getClientIdentityName(updated)) {
+      notify(trKey("nameEmptyGuard") || "تم إيقاف حفظ ملف المعتمر لأن الاسم سيصبح فارغًا", "error");
+      return { data: null, error: new Error("client-name-empty") };
+    }
+    const targetProgramId = getClientProgramId(updated);
+    const capacityDelta = getProgramCapacityDeltaForClientChange({
+      targetProgramId,
+      previousClient: previous,
+      nextClient: updated,
+    });
+    if (!ensureProgramCapacityForStore(targetProgramId, capacityDelta, "transfer")) {
+      return { data: null, error: new Error("program-capacity-full") };
+    }
+    const result = await sync(() => saveClient(updated, agencyId));
+    if (result?.error) return { data: null, error: result.error };
+    updateClientLocal(id, updated);
+    queueProgramArchiveSuggestionCheck([
+      getClientProgramId(previous),
+      getClientProgramId(updated),
+    ]);
+    if (previous && previous.programId !== updated.programId) {
+      const programName = programs.find(p => p.id === updated.programId)?.name || updated.programId || "";
+      logActivity("client_transfer", translateActivityDescription(`تم نقل المعتمر إلى ${programName}`), getClientDisplayName(updated, id));
+    } else {
+      logActivity("client_update", translateActivityDescription("تم تعديل ملف المعتمر"), getClientDisplayName(updated, id));
+    }
+    return { data: updated, error: null };
+  }, [agencyId, clients, ensureProgramCapacityForStore, logActivity, notify, programs, queueProgramArchiveSuggestionCheck, sync, updateClientLocal]);
+
+  const clearProgramTravelGroupAssignments = useCallback(async (programId, travelGroupId, fallbackClients = []) => {
+    const targetProgramId = trimString(programId);
+    const targetTravelGroupId = trimString(travelGroupId);
+    if (!targetProgramId || !targetTravelGroupId) {
+      return { data: [], error: new Error("missing-travel-group-assignment-scope") };
+    }
+    const knownClientsById = new Map();
+    [
+      ...clients.filter((client) => (
+        String(getClientProgramId(client) || "") === targetProgramId
+        && String(normalizeClientTravelGroupId(client) || "") === targetTravelGroupId
+      )),
+      ...(Array.isArray(fallbackClients) ? fallbackClients : []).filter((client) => (
+        String(getClientProgramId(client) || client.programId || client.program_id || "") === targetProgramId
+        && String(normalizeClientTravelGroupId(client) || "") === targetTravelGroupId
+      )),
+    ].forEach((client) => {
+      if (client?.id) knownClientsById.set(String(client.id), client);
+    });
+    const knownClients = Array.from(knownClientsById.values());
+
+    let updatedClients;
+    if (isSupabaseEnabled && agencyId) {
+      const result = await sync(() => (
+        db.clients.clearTravelGroupAssignments(agencyId, targetProgramId, targetTravelGroupId)
+      ));
+      if (result?.error) return { data: [], error: result.error };
+      updatedClients = Array.isArray(result?.data) ? result.data : [];
+    } else {
+      updatedClients = knownClients.map((client) => ({ ...client, travelGroupId: null }));
+    }
+
+    updatedClients.forEach((client) => {
+      if (client?.id) updateClientLocal(client.id, { ...client, travelGroupId: null });
+    });
+    knownClients.forEach((client) => {
+      if (client?.id && !updatedClients.some((updated) => String(updated.id || "") === String(client.id))) {
+        updateClientLocal(client.id, { travelGroupId: null });
+      }
+    });
+    if (updatedClients.length || knownClients.length) {
+      logActivity(
+        "client_update",
+        translateActivityDescription("تمت إعادة حجاج فوج السفر إلى البرنامج الأساسي"),
+        `${Math.max(updatedClients.length, knownClients.length)}`
+      );
+    }
+    return {
+      data: updatedClients.length
+        ? updatedClients.map((client) => ({ ...client, travelGroupId: null }))
+        : knownClients.map((client) => ({ ...client, travelGroupId: null })),
+      error: null,
+    };
+  }, [agencyId, clients, isSupabaseEnabled, logActivity, sync, updateClientLocal]);
 
   const syncRoomingClientFields = useCallback(async (programId, updates = []) => {
     if (!programId || !Array.isArray(updates) || !updates.length) {
@@ -2716,6 +2953,9 @@ export function useStore(agencyId, onToast) {
     const updatedClients = affected.map((client) => ({
       ...client,
       programId,
+      travelGroupId: String(getClientProgramId(client) || "") === String(programId || "")
+        ? normalizeClientTravelGroupId(client)
+        : null,
       lastModified: now,
     }));
     const unsafe = updatedClients.find((updated) => {
@@ -3228,7 +3468,20 @@ export function useStore(agencyId, onToast) {
     setPrograms(prev => [...prev, prg]);
     logActivity("program_add", translateActivityDescription(`تم إضافة برنامج جديد: ${data.name}`), "");
     sync(() => saveProgram(prg, agencyId));
+    return prg;
   }, [setPrograms, logActivity, sync, agencyId]);
+
+  const addProgramAndWait = useCallback(async (data) => {
+    const id = genId("PRG");
+    const prg = { ...data, id, priceTable: data.priceTable || [] };
+    if (isSupabaseEnabled && agencyId) {
+      const result = await sync(() => saveProgram(prg, agencyId));
+      if (result?.error) return { data: null, error: result.error };
+    }
+    setPrograms((current) => [...current, prg]);
+    logActivity("program_add", translateActivityDescription(`تم إضافة برنامج جديد: ${data.name}`), "");
+    return { data: prg, error: null };
+  }, [agencyId, isSupabaseEnabled, logActivity, setPrograms, sync]);
 
   const updateProgram = useCallback((id, data) => {
     const currentProgram = programs.find(p => p.id === id);
@@ -3242,6 +3495,100 @@ export function useStore(agencyId, onToast) {
     );
     return sync(() => saveProgram(nextProgram, agencyId));
   }, [programs, setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
+
+  const getProgramTravelGroups = useCallback((programId) => {
+    const targetProgramId = String(programId || "");
+    if (!targetProgramId) return [];
+    return sortProgramTravelGroups(
+      programTravelGroupsRef.current.filter((group) => String(group.programId || "") === targetProgramId)
+    );
+  }, []);
+
+  const loadProgramTravelGroups = useCallback(async (programId) => {
+    const targetProgramId = String(programId || "");
+    if (!targetProgramId) return { data: [], error: null };
+    if (!isSupabaseEnabled || !agencyId) {
+      return { data: getProgramTravelGroups(targetProgramId), error: null };
+    }
+    const result = await fetchProgramTravelGroupsRemote(agencyId, targetProgramId);
+    if (!result?.error) {
+      const nextGroups = sortProgramTravelGroups(Array.isArray(result?.data) ? result.data : []);
+      setProgramTravelGroups((current) => replaceProgramTravelGroupsForProgram(current, targetProgramId, nextGroups));
+      return { data: nextGroups, error: null };
+    }
+    return result;
+  }, [agencyId, getProgramTravelGroups, isSupabaseEnabled, setProgramTravelGroups]);
+
+  const createProgramTravelGroup = useCallback(async (programId, data = {}) => {
+    const targetProgramId = String(programId || data.programId || data.program_id || "");
+    if (!targetProgramId) return { data: null, error: new Error("missing-program-id") };
+    const now = new Date().toISOString();
+    const existingGroups = getProgramTravelGroups(targetProgramId);
+    const group = normalizeProgramTravelGroupForStore({
+      ...data,
+      id: data.id || generateUUID(),
+      agencyId,
+      agency_id: agencyId,
+      programId: targetProgramId,
+      program_id: targetProgramId,
+      sortOrder: data.sortOrder ?? data.sort_order ?? existingGroups.length,
+      sort_order: data.sortOrder ?? data.sort_order ?? existingGroups.length,
+      createdAt: data.createdAt || data.created_at || now,
+      created_at: data.createdAt || data.created_at || now,
+      updatedAt: now,
+      updated_at: now,
+    });
+    if (!isSupabaseEnabled || !agencyId) {
+      setProgramTravelGroups((current) => upsertProgramTravelGroupInList(current, group));
+      logActivity("program_travel_group_add", translateActivityDescription(`تمت إضافة فوج سفر ${group.name}`), "");
+      return { data: group, error: null };
+    }
+
+    const result = await sync(() => createProgramTravelGroupRemote(group, agencyId));
+    if (result?.error) return { data: null, error: result.error };
+    const savedGroup = normalizeProgramTravelGroupForStore(result.data || group);
+    setProgramTravelGroups((current) => upsertProgramTravelGroupInList(current, savedGroup));
+    logActivity("program_travel_group_add", translateActivityDescription(`تمت إضافة فوج سفر ${savedGroup.name}`), "");
+    return { data: savedGroup, error: null };
+  }, [agencyId, getProgramTravelGroups, isSupabaseEnabled, logActivity, setProgramTravelGroups, sync]);
+
+  const updateProgramTravelGroup = useCallback(async (id, data = {}) => {
+    const currentGroup = programTravelGroupsRef.current.find((group) => String(group.id || "") === String(id || ""));
+    if (!currentGroup) return { data: null, error: new Error("travel-group-not-found") };
+    const now = new Date().toISOString();
+    const nextGroup = normalizeProgramTravelGroupForStore({
+      ...currentGroup,
+      ...data,
+      id: currentGroup.id,
+      agencyId: currentGroup.agencyId || agencyId,
+      agency_id: currentGroup.agencyId || agencyId,
+      programId: currentGroup.programId,
+      program_id: currentGroup.programId,
+      updatedAt: now,
+      updated_at: now,
+    });
+    setProgramTravelGroups((current) => upsertProgramTravelGroupInList(current, nextGroup));
+    logActivity("program_travel_group_update", translateActivityDescription(`تم تعديل فوج سفر ${nextGroup.name}`), "");
+    if (!isSupabaseEnabled || !agencyId) return { data: nextGroup, error: null };
+
+    const result = await sync(() => updateProgramTravelGroupRemote(nextGroup, agencyId));
+    if (result?.error) return result;
+    const savedGroup = normalizeProgramTravelGroupForStore(result.data || nextGroup);
+    setProgramTravelGroups((current) => upsertProgramTravelGroupInList(current, savedGroup));
+    return { data: savedGroup, error: null };
+  }, [agencyId, isSupabaseEnabled, logActivity, setProgramTravelGroups, sync]);
+
+  const deleteProgramTravelGroup = useCallback(async (id) => {
+    const currentGroup = programTravelGroupsRef.current.find((group) => String(group.id || "") === String(id || ""));
+    if (!currentGroup) return { error: null };
+    if (isSupabaseEnabled && agencyId) {
+      const result = await sync(() => deleteProgramTravelGroupRemote(id, agencyId));
+      if (result?.error) return result;
+    }
+    setProgramTravelGroups((current) => current.filter((group) => String(group.id || "") !== String(id || "")));
+    logActivity("program_travel_group_delete", translateActivityDescription(`تم حذف فوج سفر ${currentGroup.name}`), "");
+    return { error: null };
+  }, [agencyId, isSupabaseEnabled, logActivity, setProgramTravelGroups, sync]);
 
   const archiveProgramRecord = useCallback((programId) => {
     const prog = programs.find(p => p.id === programId);
@@ -3472,6 +3819,7 @@ export function useStore(agencyId, onToast) {
       return {
         ...client,
         programId: null,
+        travelGroupId: null,
         deleted: false,
         deletedAt: null,
         deletedBatchId: null,
@@ -3796,6 +4144,7 @@ export function useStore(agencyId, onToast) {
 
   return {
     programs, clients, payments, agency, agencyId, activityLog, latestRealtimeActivity,
+    programTravelGroups,
     latestProgramRealtimeEvent, latestClientRealtimeEvent, latestPaymentRealtimeEvent, stats,
     agencyUsers,
     deletedPrograms, deletedClients, deletedPayments,
@@ -3818,13 +4167,14 @@ export function useStore(agencyId, onToast) {
     paymentsByClient, paidByClient, lastPaymentByClient,
     getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds, getClientPermanentDeleteBlockMap, getClientPermanentDeleteLinkedDetails,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
-    addClient, addClientFromPassportImport, updateClient, updateClientFromPassportImport, syncRoomingClientFields, deleteClient, deleteClientsBulk,
+    addClient, addClientFromPassportImport, updateClient, updateClientAndWait, updateClientFromPassportImport, clearProgramTravelGroupAssignments, syncRoomingClientFields, deleteClient, deleteClientsBulk,
     transferClients,
     createAgencyUser,
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, createSharedReceipt, fetchPaymentGroup, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
-    addProgram, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
+    addProgram, addProgramAndWait, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
+    getProgramTravelGroups, loadProgramTravelGroups, createProgramTravelGroup, updateProgramTravelGroup, deleteProgramTravelGroup,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
     loadProgramDetailData,

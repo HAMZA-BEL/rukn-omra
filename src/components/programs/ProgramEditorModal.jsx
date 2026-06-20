@@ -8,6 +8,8 @@ export default function ProgramEditorModal({
   title,
   onSaved,
   onClose,
+  onTravelGroupsChanged,
+  programClients = null,
   badgesEnabled = true,
 }) {
   return (
@@ -19,6 +21,8 @@ export default function ProgramEditorModal({
         badgesEnabled={badgesEnabled}
         onSave={onSaved}
         onCancel={onClose}
+        onTravelGroupsChanged={onTravelGroupsChanged}
+        programClients={programClients}
       />
     </Modal>
   );

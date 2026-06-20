@@ -35,3 +35,19 @@ export function restoreProgram(id, agencyId) {
 export function deleteProgramsPermanent(ids, agencyId) {
   return db.programs.deleteMany(ids, agencyId);
 }
+
+export function fetchProgramTravelGroups(agencyId, programId) {
+  return db.programTravelGroups.fetchByProgram(agencyId, programId);
+}
+
+export function createProgramTravelGroup(group, agencyId) {
+  return db.programTravelGroups.create(group, agencyId);
+}
+
+export function updateProgramTravelGroup(group, agencyId) {
+  return db.programTravelGroups.update(group, agencyId);
+}
+
+export function deleteProgramTravelGroup(id, agencyId) {
+  return db.programTravelGroups.delete(id, agencyId);
+}
