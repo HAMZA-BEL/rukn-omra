@@ -228,6 +228,104 @@ const getManualSellingPriceHelpText = (lang) => {
   return "يمكنك تحديد سعر البيع حسب الاتفاق مع العميل.";
 };
 
+const getRegistrationSourceHelpText = (lang) => {
+  if (lang === "fr") {
+    return "Indique la ville ou l’origine d’enregistrement du client dans l’agence. Elle sert à l’organisation, la recherche et les rapports.";
+  }
+  if (lang === "en") {
+    return "Indicates the city or registration source of the client within the agency. It is used for organization, search, and reports.";
+  }
+  return "المقصود جهة أو مدينة تسجيل العميل داخل الوكالة، وتستعمل للتنظيم والبحث والتقارير.";
+};
+
+function RegistrationSourceLabel({ label, inputId, lang, dir }) {
+  const [open, setOpen] = React.useState(false);
+  const tooltipId = React.useId();
+  const helpText = React.useMemo(() => getRegistrationSourceHelpText(lang), [lang]);
+  const ariaLabel = lang === "fr"
+    ? "Aide sur la source d’inscription"
+    : lang === "en"
+      ? "Help about registration source"
+      : "مساعدة حول جهة التسجيل";
+
+  return (
+    <span style={{
+      position: "relative",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 4,
+      fontSize: 13,
+      fontWeight: 600,
+      lineHeight: 1.25,
+      color: "var(--rukn-text-muted)",
+      width: "fit-content",
+    }}>
+      <label htmlFor={inputId}>{label}</label>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-describedby={open ? tooltipId : undefined}
+        aria-expanded={open}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        style={{
+          width: 15,
+          height: 15,
+          borderRadius: 999,
+          border: "1px solid rgba(212,175,55,.32)",
+          background: "rgba(212,175,55,.075)",
+          color: "var(--rukn-gold-light)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 0,
+          fontSize: 9.5,
+          fontWeight: 700,
+          lineHeight: 1,
+          cursor: "help",
+          fontFamily: "'Cairo',sans-serif",
+          transform: "translateY(1px)",
+          outline: "none",
+        }}
+      >
+        ؟
+      </button>
+      {open && (
+        <span
+          id={tooltipId}
+          role="tooltip"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 9px)",
+            insetInlineStart: dir === "rtl" ? "auto" : 0,
+            insetInlineEnd: dir === "rtl" ? 0 : "auto",
+            width: 290,
+            maxWidth: "min(290px, 78vw)",
+            padding: "9px 11px",
+            borderRadius: 11,
+            border: "1px solid rgba(212,175,55,.26)",
+            background: "linear-gradient(135deg, rgba(20,28,44,.98), rgba(9,15,29,.98))",
+            color: "#f8fafc",
+            boxShadow: "0 14px 34px rgba(0,0,0,.42), 0 0 0 1px rgba(255,255,255,.03) inset",
+            fontSize: 11.5,
+            fontWeight: 600,
+            lineHeight: 1.6,
+            textAlign: dir === "rtl" ? "right" : "left",
+            direction: dir,
+            zIndex: 60,
+            whiteSpace: "normal",
+            pointerEvents: "none",
+          }}
+        >
+          {helpText}
+        </span>
+      )}
+    </span>
+  );
+}
+
 const getMissingCostingHint = (lang) => {
   if (lang === "fr") return "Aucune tarification enregistrée pour ce programme. Vous pouvez saisir le prix de vente manuellement.";
   if (lang === "en") return "No saved costing was found for this program. You can enter the selling price manually.";
@@ -446,9 +544,10 @@ export default function ClientForm({
   contractsEnabled = true,
 }) {
   const { t, tr, dir, lang } = useLang();
-  const { programs = [], clients = [], activeClients = [], addClient, updateClient } = store;
+  const { programs = [], clients = [], activeClients = [], addClient, addClientAndWait, updateClient } = store;
   const storeNotify = typeof store.notify === "function" ? store.notify : null;
   const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
+  const registrationSourceInputId = React.useId();
   const isEdit = !!client;
   const numberLocale = LOCALE_BY_LANG[lang] || "ar-MA";
   const currencyLabel = CURRENCY_BY_LANG[lang] || "د.م";
@@ -540,6 +639,16 @@ export default function ClientForm({
     if (lang === "fr") return "Veuillez compléter les informations obligatoires";
     if (lang === "en") return "Please complete the required information";
     return "يرجى إكمال المعلومات المطلوبة";
+  }, [lang]);
+  const clientSaveFailedMessage = React.useMemo(() => {
+    if (lang === "fr") return "Impossible d’enregistrer le client dans la base de données. Vérifiez la connexion puis réessayez.";
+    if (lang === "en") return "Could not save the client to the database. Check the connection, then try again.";
+    return "تعذر حفظ العميل في قاعدة البيانات. تحقق من الاتصال ثم حاول مرة أخرى.";
+  }, [lang]);
+  const getGroupSaveFailedMessage = React.useCallback((failedCount, totalCount) => {
+    if (lang === "fr") return `Impossible d’enregistrer ${failedCount} client(s) sur ${totalCount}. Vérifiez la connexion puis réessayez.`;
+    if (lang === "en") return `Could not save ${failedCount} of ${totalCount} clients. Check the connection, then try again.`;
+    return `تعذر حفظ ${failedCount} من ${totalCount} عملاء في قاعدة البيانات. تحقق من الاتصال ثم حاول مرة أخرى.`;
   }, [lang]);
   const capacityClients = React.useMemo(
     () => (Array.isArray(activeClients) && activeClients.length ? activeClients : clients),
@@ -1005,6 +1114,16 @@ export default function ClientForm({
     return false;
   }, [capacityClients, notifyCapacityFailure]);
 
+  const createManualClient = React.useCallback(async (payload) => {
+    if (typeof addClientAndWait === "function") {
+      return addClientAndWait(payload);
+    }
+    const legacyClient = typeof addClient === "function" ? addClient(payload) : null;
+    return legacyClient
+      ? { data: legacyClient, error: null }
+      : { data: null, error: new Error("client-save-failed") };
+  }, [addClient, addClientAndWait]);
+
   const createClientId = () => (
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -1094,46 +1213,61 @@ export default function ClientForm({
         representedByRelationship: "",
       };
       const addedClients = [];
-      groupPeople.forEach((person, index) => {
-        const personName = buildGroupPersonName(person);
-        const addedClient = addClient({
-          ...sharedBase,
-          firstName: pickString(person.firstName),
-          lastName: pickString(person.lastName),
-          name: personName,
-          nom: "",
-          prenom: "",
-          phone: pickString(person.phone, form.phone),
-          gender: person.gender,
-          roomingSeatIndex: index + 1,
-          passport: {
-            ...form.passport,
-            number: "",
-            birthDate: "",
-            expiry: "",
-            issueDate: "",
-            gender: genderToPassportValue(person.gender),
-          },
-          docs: {
-            passportCopy: false,
-            photo: false,
-            vaccine: false,
-            contract: false,
-            rooming: {
-              groupId: roomingGroupId,
-              groupName: roomingGroupName,
-              category: form.roomCategory,
-              categoryLabel: getRoomCategoryLabel(form.roomCategory),
-              groupSize: groupPeople.length,
-              seatIndex: index + 1,
+      const failures = [];
+      setSaving(true);
+      try {
+        for (const [index, person] of groupPeople.entries()) {
+          const personName = buildGroupPersonName(person);
+          const result = await createManualClient({
+            ...sharedBase,
+            firstName: pickString(person.firstName),
+            lastName: pickString(person.lastName),
+            name: personName,
+            nom: "",
+            prenom: "",
+            phone: pickString(person.phone, form.phone),
+            gender: person.gender,
+            roomingSeatIndex: index + 1,
+            passport: {
+              ...form.passport,
+              number: "",
+              birthDate: "",
+              expiry: "",
+              issueDate: "",
+              gender: genderToPassportValue(person.gender),
             },
-          },
-          ticketNo: "",
-          notes: form.notes,
-        });
-        if (addedClient) addedClients.push(addedClient);
-      });
-      onSave(addedClients);
+            docs: {
+              passportCopy: false,
+              photo: false,
+              vaccine: false,
+              contract: false,
+              rooming: {
+                groupId: roomingGroupId,
+                groupName: roomingGroupName,
+                category: form.roomCategory,
+                categoryLabel: getRoomCategoryLabel(form.roomCategory),
+                groupSize: groupPeople.length,
+                seatIndex: index + 1,
+              },
+            },
+            ticketNo: "",
+            notes: form.notes,
+          });
+          if (result?.data) {
+            addedClients.push(result.data);
+          } else {
+            failures.push({ person, error: result?.error || new Error("client-save-failed") });
+          }
+        }
+        if (failures.length) {
+          const notify = typeof onToast === "function" ? onToast : storeNotify;
+          notify?.(getGroupSaveFailedMessage(failures.length, groupPeople.length), "error");
+          return;
+        }
+        onSave(addedClients);
+      } finally {
+        setSaving(false);
+      }
       return;
     }
     const targetProgramId = lockProgramId || form.programId || "";
@@ -1193,8 +1327,13 @@ export default function ClientForm({
         if (updateResult === null) return;
         savedClient = { ...client, ...data, id: client.id };
       } else {
-        savedClient = addClient(targetId ? { ...data, id: targetId } : data);
-        if (!savedClient) return;
+        const result = await createManualClient(targetId ? { ...data, id: targetId } : data);
+        if (result?.error || !result?.data) {
+          const notify = typeof onToast === "function" ? onToast : storeNotify;
+          notify?.(clientSaveFailedMessage, "error");
+          return;
+        }
+        savedClient = result.data;
       }
       onSave(savedClient);
     } finally {
@@ -1542,12 +1681,20 @@ export default function ClientForm({
         <div className="form-grid form-grid--two">
           <Input label={entryMode === ROOM_ENTRY_MODES.GROUP ? (t.sharedPhoneOptional || "هاتف مشترك اختياري") : t.phone} value={form.phone} onChange={set("phone")}
             placeholder={t.phonePlaceholder} required={entryMode === ROOM_ENTRY_MODES.SINGLE} error={entryMode === ROOM_ENTRY_MODES.SINGLE ? errors.phone : ""} data-client-field="phone" />
-          <Input
-            label={t.registrationSource || "جهة التسجيل"}
-            value={form.registrationSource}
-            onChange={set("registrationSource")}
-            error={errors.registrationSource}
-          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <RegistrationSourceLabel
+              label={t.registrationSource || "جهة التسجيل"}
+              inputId={registrationSourceInputId}
+              lang={lang}
+              dir={dir}
+            />
+            <Input
+              id={registrationSourceInputId}
+              value={form.registrationSource}
+              onChange={set("registrationSource")}
+              error={errors.registrationSource}
+            />
+          </div>
           <Input
             label={t.address || "العنوان"}
             value={form.address}

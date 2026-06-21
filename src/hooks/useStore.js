@@ -2660,13 +2660,13 @@ export function useStore(agencyId, onToast) {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  const addClient = useCallback((data) => {
+  const buildClientForCreate = useCallback((data) => {
     const id  = trimString(data.id) || genId("CL");
     const nowIso = new Date().toISOString();
     const now = nowIso.split("T")[0];
     const prepared = prepareClientForSave(data);
     const createdAt = prepared.createdAt || prepared.created_at || nowIso;
-    const newClient = {
+    return {
       ...prepared,
       id,
       createdAt,
@@ -2676,13 +2676,34 @@ export function useStore(agencyId, onToast) {
       archived:         false,
       archivedAt:       null,
     };
-    if (!ensureProgramCapacityForStore(getClientProgramId(newClient), 1, "add")) return null;
+  }, []);
+
+  const commitCreatedClient = useCallback((newClient) => {
     addClientLocal(newClient);
     queueProgramArchiveSuggestionCheck(getClientProgramId(newClient));
     logActivity("client_add", translateActivityDescription("تم تسجيل معتمر جديد"), newClient.name);
+  }, [addClientLocal, logActivity, queueProgramArchiveSuggestionCheck]);
+
+  const addClient = useCallback((data) => {
+    const newClient = buildClientForCreate(data);
+    if (!ensureProgramCapacityForStore(getClientProgramId(newClient), 1, "add")) return null;
+    commitCreatedClient(newClient);
     sync(() => saveClient(newClient, agencyId));
     return newClient;
-  }, [addClientLocal, ensureProgramCapacityForStore, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
+  }, [agencyId, buildClientForCreate, commitCreatedClient, ensureProgramCapacityForStore, sync]);
+
+  const addClientAndWait = useCallback(async (data) => {
+    const newClient = buildClientForCreate(data);
+    if (!ensureProgramCapacityForStore(getClientProgramId(newClient), 1, "add")) {
+      return { data: null, error: { code: "program_capacity_full", message: trKey("programFull", getUiLang()) || "Program is full" } };
+    }
+    if (isSupabaseEnabled && agencyId) {
+      const result = await sync(() => saveClient(newClient, agencyId));
+      if (result?.error) return { data: null, error: result.error };
+    }
+    commitCreatedClient(newClient);
+    return { data: newClient, error: null };
+  }, [agencyId, buildClientForCreate, commitCreatedClient, ensureProgramCapacityForStore, isSupabaseEnabled, sync]);
 
   const addClientFromPassportImport = useCallback(async (data) => {
     const id  = trimString(data.id) || genId("CL");
@@ -4167,7 +4188,7 @@ export function useStore(agencyId, onToast) {
     paymentsByClient, paidByClient, lastPaymentByClient,
     getClientPayments, getClientTotalPaid, getClientStatus, getActivePaymentCountsForClientIds, getClientPermanentDeleteBlockMap, getClientPermanentDeleteLinkedDetails,
     getClientLastPayment, getProgramClients, getProgramById, getArchiveSuggestions,
-    addClient, addClientFromPassportImport, updateClient, updateClientAndWait, updateClientFromPassportImport, clearProgramTravelGroupAssignments, syncRoomingClientFields, deleteClient, deleteClientsBulk,
+    addClient, addClientAndWait, addClientFromPassportImport, updateClient, updateClientAndWait, updateClientFromPassportImport, clearProgramTravelGroupAssignments, syncRoomingClientFields, deleteClient, deleteClientsBulk,
     transferClients,
     createAgencyUser,
     updateAgencyUser,
