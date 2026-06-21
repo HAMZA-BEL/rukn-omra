@@ -35,8 +35,6 @@ import ProgramCostingModal from "./programs/ProgramCostingModal";
 import ProgramActionScopeDialog from "./programs/ProgramActionScopeDialog";
 import {
   getProgramCostingLabels,
-  getProgramServiceCostingReferenceCost,
-  getProgramStandaloneServiceSalePrice,
 } from "./programs/programCosting";
 import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
@@ -66,9 +64,6 @@ import {
   getClientServiceTypeLabel,
 } from "../utils/clientServiceTypes";
 import {
-  getClientEffectiveOfficialPrice,
-  getClientEffectiveSalePrice,
-  getClientOverpaidAmount,
   getClientRemainingAmount,
 } from "../utils/clientPricing";
 import {
@@ -94,7 +89,6 @@ import {
   INCOMPLETE_INFO_FILTER,
   getClientCompletionLabels,
   getClientCompletionTooltip,
-  getClientDisplayStatus,
   getClientProgramId,
 } from "../utils/clientCompletionStatus";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
@@ -142,6 +136,23 @@ import {
   isTravelGroupScope,
   resolveProgramActionClients,
 } from "../features/programs/utils/programActionScope";
+import {
+  getProgramsFiltersStorageKey,
+  readProgramsFiltersFromStorage,
+  writeProgramsFiltersToStorage,
+} from "../features/programs/utils/programsFilterStorage";
+import {
+  getProgramClientDisplayStatus,
+  getProgramClientOfficialPrice,
+  getProgramClientOverpaidAmount,
+  getProgramClientPaymentStatus,
+  getProgramClientRemainingAmount,
+  getProgramClientSalePrice,
+  getProgramPricingReferenceCost,
+  getProgramStandaloneSalePrice,
+  sortProgramClientsNewestFirst,
+  upsertProgramClientsNewestFirst,
+} from "../features/programs/utils/programClientMetrics";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
   AlignCenter,
@@ -196,9 +207,6 @@ const PROGRAMS_REALTIME_SUMMARY_REFRESH_DEBOUNCE_MS = 250;
 const PROGRAMS_LIST_PAGE_SIZE_OPTIONS = [12, 24, 48];
 const SCOPED_PROGRAM_DETAIL_REFRESH_DEBOUNCE_MS = 75;
 const OFFICIAL_RUKN_POSTER_CHOICE_ID = OFFICIAL_RUKN_CODE_TEMPLATE_KEY;
-const PROGRAMS_FILTERS_STORAGE_VERSION = 1;
-const PROGRAMS_TYPE_FILTER_KEYS = new Set(["all", "umrah", "hajj"]);
-const PROGRAMS_STATUS_FILTER_KEYS = new Set(["all", "cleared", "not_cleared", "full", "not_full"]);
 const PROGRAM_EXPORT_ACTIONS = Object.freeze({
   PDF: "program_pdf",
   PILGRIMS_LIST: "pilgrims_list",
@@ -207,77 +215,6 @@ const PROGRAM_EXPORT_ACTIONS = Object.freeze({
   CONTRACTS_EXCEL: "contracts_excel",
   WORD_CONTRACTS: "word_contracts",
 });
-
-const getProgramsFiltersStorageKey = (agencyId = null) => (
-  `rukn_programs_filters_${String(agencyId || "local")}`
-);
-
-const normalizeProgramsYearFilter = (value, currentYear) => {
-  const text = String(value ?? "").trim();
-  if (text === "all") return "all";
-  if (/^\d{4}$/.test(text)) return text;
-  return String(currentYear);
-};
-
-const normalizeProgramsFilterOption = (value, allowedKeys, fallback = "all") => {
-  const text = String(value ?? "").trim();
-  return allowedKeys.has(text) ? text : fallback;
-};
-
-const getDefaultProgramsFilters = (currentYear) => ({
-  search: "",
-  selectedYear: String(currentYear),
-  programTypeFilter: "all",
-  programStatusFilter: "all",
-});
-
-const normalizeProgramsFilters = (value, currentYear) => {
-  const source = value && typeof value === "object" ? value : {};
-  return {
-    search: typeof source.search === "string" ? source.search : "",
-    selectedYear: normalizeProgramsYearFilter(
-      source.selectedYear ?? source.yearFilter ?? source.year,
-      currentYear
-    ),
-    programTypeFilter: normalizeProgramsFilterOption(
-      source.programTypeFilter ?? source.typeFilter ?? source.type,
-      PROGRAMS_TYPE_FILTER_KEYS
-    ),
-    programStatusFilter: normalizeProgramsFilterOption(
-      source.programStatusFilter ?? source.statusFilter ?? source.status,
-      PROGRAMS_STATUS_FILTER_KEYS
-    ),
-  };
-};
-
-const readProgramsFiltersFromStorage = (storageKey, currentYear) => {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return getDefaultProgramsFilters(currentYear);
-  }
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return getDefaultProgramsFilters(currentYear);
-    return normalizeProgramsFilters(JSON.parse(raw), currentYear);
-  } catch (error) {
-    console.warn("[ProgramsPage] Failed to read saved filters", error);
-    return getDefaultProgramsFilters(currentYear);
-  }
-};
-
-const writeProgramsFiltersToStorage = (storageKey, filters, currentYear) => {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  try {
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({
-        version: PROGRAMS_FILTERS_STORAGE_VERSION,
-        ...normalizeProgramsFilters(filters, currentYear),
-      })
-    );
-  } catch (error) {
-    console.warn("[ProgramsPage] Failed to save filters", error);
-  }
-};
 
 const getDefaultPosterTitle = (program = {}, lang = "ar") => (
   String(resolvePosterAreaValue("program_name", program, { lang })
@@ -743,105 +680,6 @@ const isActiveTransferDestinationProgram = (program = {}) => (
   && !program.archivedAt
   && !program.archived_at
   && String(program.status || "active").toLowerCase() !== "archived"
-);
-
-const getProgramPricingReferenceCost = (program, client) => {
-  if (!program || !client) return 0;
-  return getProgramServiceCostingReferenceCost(program, getClientServiceType(client));
-};
-
-const getProgramStandaloneSalePrice = (program, client) => {
-  if (!program || !client) return 0;
-  return getProgramStandaloneServiceSalePrice(program, getClientServiceType(client));
-};
-
-const getProgramClientSalePrice = (program, client) => (
-  getClientEffectiveSalePrice(client, {
-    referencePrice: getProgramPricingReferenceCost(program, client),
-    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
-    program,
-  })
-);
-
-const getProgramClientOfficialPrice = (program, client) => {
-  const referencePrice = getProgramPricingReferenceCost(program, client);
-  return getClientEffectiveOfficialPrice(client, {
-    referencePrice,
-    program,
-  }) || referencePrice;
-};
-
-const getProgramClientRemainingAmount = (program, client, paid) => (
-  getClientRemainingAmount(client, paid, {
-    referencePrice: getProgramPricingReferenceCost(program, client),
-    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
-    program,
-  })
-);
-
-const getProgramClientOverpaidAmount = (program, client, paid) => (
-  getClientOverpaidAmount(client, paid, {
-    referencePrice: getProgramPricingReferenceCost(program, client),
-    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
-    program,
-  })
-);
-
-const getClientCreatedSortTime = (client = {}) => {
-  const candidates = [
-    client.createdAt,
-    client.created_at,
-    client.registrationDate,
-    client.registration_date,
-    client.lastModified,
-    client.last_modified,
-  ];
-  for (const value of candidates) {
-    const time = Date.parse(value || "");
-    if (Number.isFinite(time)) return time;
-  }
-  return 0;
-};
-
-const sortProgramClientsNewestFirst = (items = []) => (
-  [...items]
-    .map((client, index) => ({ client, index, createdTime: getClientCreatedSortTime(client) }))
-    .sort((a, b) => (b.createdTime - a.createdTime) || (a.index - b.index))
-    .map(({ client }) => client)
-);
-
-const upsertProgramClientsNewestFirst = (currentClients = [], incomingClients = []) => {
-  const currentById = new Map((Array.isArray(currentClients) ? currentClients : [])
-    .map((client) => [String(client?.id || ""), client])
-    .filter(([id]) => Boolean(id)));
-  const incoming = (Array.isArray(incomingClients) ? incomingClients : [incomingClients]).filter((client) => client?.id);
-  const incomingIds = new Set(incoming.map((client) => String(client.id)));
-  const mergedIncoming = incoming.map((client) => ({
-    ...(currentById.get(String(client.id)) || {}),
-    ...client,
-  }));
-  const rest = (Array.isArray(currentClients) ? currentClients : [])
-    .filter((client) => !incomingIds.has(String(client?.id || "")));
-  return sortProgramClientsNewestFirst([...mergedIncoming, ...rest]);
-};
-
-const getProgramClientPaymentStatus = (program, client, paid) => {
-  const price = getProgramClientSalePrice(program, client);
-  if (paid === 0) return "unpaid";
-  if (paid >= price) return "cleared";
-  return "partial";
-};
-
-const getProgramClientDisplayStatus = (program, client, paid) => (
-  getClientDisplayStatus(
-    client,
-    program,
-    getProgramClientPaymentStatus(program, client, paid),
-    {
-      referencePrice: getProgramPricingReferenceCost(program, client),
-      standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
-    },
-  )
 );
 
 const ROOMING_ROWS = 60;
