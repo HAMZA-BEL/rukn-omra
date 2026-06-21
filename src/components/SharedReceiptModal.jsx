@@ -318,6 +318,7 @@ export default function SharedReceiptModal({
         id,
         client,
         name: getClientDisplayName(client),
+        displayName: getClientDisplayName(client, "—", lang),
         phone: getClientPhone(client),
         passport: getClientPassport(client),
         totalPrice,
@@ -328,7 +329,7 @@ export default function SharedReceiptModal({
         statusLabel: getPaymentStatusLabel(paidBefore, totalPrice, t),
       };
     })
-  ), [equalAllocations, form.distributionMode, getPricingOptions, manualAllocations, payments, selectedClients, t]);
+  ), [equalAllocations, form.distributionMode, getPricingOptions, lang, manualAllocations, payments, selectedClients, t]);
 
   const allocatedCents = allocationRows.reduce((sum, row) => sum + toCents(row.allocatedAmount), 0);
   const allocationDiffCents = totalCents - allocatedCents;
@@ -336,11 +337,11 @@ export default function SharedReceiptModal({
     const query = normalizeSearch(search);
     if (!query) return eligibleClients;
     return eligibleClients.filter((client) => normalizeSearch([
-      getClientDisplayName(client),
+      getClientDisplayName(client, "", lang),
       getClientPhone(client),
       getClientPassport(client),
     ].join(" ")).includes(query));
-  }, [eligibleClients, search]);
+  }, [eligibleClients, lang, search]);
 
   const toggleClient = (clientId) => {
     const id = String(clientId || "");
@@ -621,7 +622,7 @@ export default function SharedReceiptModal({
     <GlassCard style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <p style={{ fontSize: 13, fontWeight: 700, color: theme.colors.gold }}>
-          {labels.title} — {getClientDisplayName(payerClient)}
+          {labels.title} — {getClientDisplayName(payerClient, "—", lang)}
         </p>
         <div style={{
           display: "grid",
@@ -636,7 +637,7 @@ export default function SharedReceiptModal({
           />
           <Input
             label={labels.payer}
-            value={getClientDisplayName(payerClient)}
+            value={getClientDisplayName(payerClient, "—", lang)}
             onChange={() => {}}
             disabled
             inputStyle={{ color: "var(--rukn-text-strong)", fontWeight: 700, opacity: 0.85 }}
@@ -784,7 +785,7 @@ export default function SharedReceiptModal({
                     }}
                   >
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {getClientDisplayName(client)}
+                      {getClientDisplayName(client, "—", lang)}
                     </span>
                     {id !== payerId && (
                       <button
@@ -891,7 +892,7 @@ export default function SharedReceiptModal({
                       <AppIcon name={disabled ? "alert" : selected ? "checked" : "user"} size={16} color={disabled ? tc.warning : selected ? tc.gold : tc.grey} />
                       <span style={{ minWidth: 0 }}>
                         <span style={{ display: "block", fontSize: 13, fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {getClientDisplayName(client)}
+                          {getClientDisplayName(client, "—", lang)}
                         </span>
                         <span style={{ display: "block", fontSize: 11, color: tc.grey, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {disabled
@@ -961,7 +962,7 @@ export default function SharedReceiptModal({
               >
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 850, color: "var(--rukn-text-strong)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {row.name}
+                    {row.displayName || row.name}
                   </span>
                   <span style={{ display: "block", fontSize: 11, color: tc.grey }}>
                     {row.statusLabel} · {t.sharedReceiptRemainingAfterPayment || t.remaining}: {formatCurrency(row.remainingAfter, lang)}

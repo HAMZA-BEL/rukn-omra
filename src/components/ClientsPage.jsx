@@ -132,13 +132,13 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
       const okType = typeFilter === CLIENT_TYPE_FILTERS.ALL || clientType === typeFilter;
       const ok2 = typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED || filterProg === "all" || getClientProgramId(c) === filterProg;
       const q   = search.toLowerCase();
-      const displayName = getClientDisplayName(c, "");
+      const displayName = getClientDisplayName(c, "", lang);
       const ok3 = !q || displayName.toLowerCase().includes(q) ||
         (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
         (c.ticketNo||"").toLowerCase().includes(q);
       return ok1 && okType && ok2 && ok3;
     });
-  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, typeFilter, shouldUseFullFallback]);
+  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, typeFilter, shouldUseFullFallback, lang]);
 
   // Reset to page 1 whenever filters change.
   React.useEffect(() => { setCurrentPage(1); }, [search, filter, typeFilter, filterProg]);
@@ -1164,7 +1164,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   }, [menuOpen]);
 
   const reference = formatClientReference(client);
-  const displayName = getClientDisplayName(client);
+  const displayName = getClientDisplayName(client, "—", lang);
   const phoneLine = client.phone ? client.phone.trim() : "";
   const cityLine  = client.city ? client.city.trim() : "";
   const ticketLine = client.ticketNo ? client.ticketNo.trim() : "";

@@ -1827,7 +1827,7 @@ const normalizeSheetData = (data, rows = ROOMING_ROWS, cols = ROOMING_COLS) => {
   );
 };
 
-const getClientDisplayName = (client) => resolveClientDisplayName(client, trKey("pilgrimFallback") || "معتمر");
+const getClientDisplayName = (client, lang) => resolveClientDisplayName(client, trKey("pilgrimFallback", lang) || "معتمر", lang);
 const getClientRegistrationSource = (client = {}) => pickFirstText(client, [
   "registrationSource",
   "registration_source",
@@ -1847,8 +1847,8 @@ const normalizeRoomingSearchText = (value) => String(value || "")
   .trim()
   .toLowerCase();
 
-const getRoomingClientSearchText = (client = {}) => normalizeRoomingSearchText([
-  getClientDisplayName(client),
+const getRoomingClientSearchText = (client = {}, lang = "ar") => normalizeRoomingSearchText([
+  getClientDisplayName(client, lang),
   getClientArabicName(client),
   getClientLatinName(client),
   client.name,
@@ -4923,12 +4923,12 @@ function ProgramInner({
       || clientPackageLevel === packageFilter;
     const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(c) === serviceTypeFilter;
     const q   = search.toLowerCase();
-    const name = resolveClientDisplayName(c, "").toLowerCase();
+    const name = resolveClientDisplayName(c, "", lang).toLowerCase();
     const phone = (c.phone || "").toLowerCase();
     const id = (c.id || "").toLowerCase();
     const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
     return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
-  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program]);
+  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program, lang]);
   const travelGroupFiltered = React.useMemo(() => filtered.filter((client) => {
     if (!showTravelGroupFilter || travelGroupFilter === "all") return true;
     const clientTravelGroupId = client.travelGroupId ?? client.travel_group_id ?? null;
@@ -6999,7 +6999,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const roomType = normalizeRoomingRoomType(client.roomType, client.roomTypeLabel, client.room) || "";
     const gender = normalizeRoomingGender(client.gender);
     return {
-      name: getClientDisplayName(client),
+      name: getClientDisplayName(client, lang),
       registrationSource: getClientRegistrationSource(client),
       gender,
       genderLabel: gender === "male" ? t.male : gender === "female" ? t.female : "—",
@@ -8357,8 +8357,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const filteredCompatibleUnassigned = React.useMemo(() => {
     const query = normalizeRoomingSearchText(pickerSearch);
     if (!query) return compatibleUnassigned;
-    return compatibleUnassigned.filter(({ client }) => getRoomingClientSearchText(client).includes(query));
-  }, [compatibleUnassigned, pickerSearch]);
+    return compatibleUnassigned.filter(({ client }) => getRoomingClientSearchText(client, lang).includes(query));
+  }, [compatibleUnassigned, lang, pickerSearch]);
 
   const filteredUnassigned = React.useMemo(() => {
     const query = panelSearch.trim().toLowerCase();
@@ -8427,7 +8427,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const setUnassignedGroupDragImage = React.useCallback((event, dragIds = [], fallbackName = "") => {
     if (!event?.dataTransfer?.setDragImage || dragIds.length <= 1 || typeof document === "undefined") return;
     const firstClient = clientsById[dragIds[0]];
-    const firstName = getClientDisplayName(firstClient) || fallbackName || "—";
+    const firstName = getClientDisplayName(firstClient, lang) || fallbackName || "—";
     const extraCount = Math.max(0, dragIds.length - 1);
     const title = extraCount ? `${firstName} +${extraCount}` : firstName;
     const subtitle = lang === "fr"
@@ -13216,7 +13216,7 @@ const RoomingFlowNode = React.memo(function RoomingFlowNode({ data, selected }) 
             }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden" }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {client ? getClientDisplayName(client) : "—"}
+                  {client ? getClientDisplayName(client, lang) : "—"}
                 </span>
                 {source && (
                   <span style={{
@@ -14033,7 +14033,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
       : (client.hotelMadina || pkg?.hotelMadina || program.hotelMadina || "");
     const roomTypeKey = client.roomType || "";
     return {
-      name: getClientDisplayName(client),
+      name: getClientDisplayName(client, lang),
       level,
       roomType: client.roomTypeLabel || getRoomTypeLabel(roomTypeKey) || roomTypeKey || "",
       roomTypeKey,
@@ -14043,7 +14043,7 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
       genderLabel: client.gender === "male" ? "ذكر" : client.gender === "female" ? "أنثى" : "",
       familyKey: getRoomingFamilyKey(client),
     };
-  }, [city, packageByLevel, program]);
+  }, [city, lang, packageByLevel, program]);
 
   const clientsById = React.useMemo(
     () => Object.fromEntries(clients.map((client) => [client.id, client])),
@@ -14138,9 +14138,9 @@ function RoomingSheetWorkspace({ program, clients, packages, agency, onToast }) 
       const leftExact = left.roomType === room.roomType ? 1 : 0;
       const rightExact = right.roomType === room.roomType ? 1 : 0;
       if (leftExact !== rightExact) return rightExact - leftExact;
-      return getClientDisplayName(left).localeCompare(getClientDisplayName(right), "ar");
+      return getClientDisplayName(left, lang).localeCompare(getClientDisplayName(right, lang), lang === "fr" ? "fr" : lang === "en" ? "en" : "ar");
     });
-  }, [clientsById, getClientContext]);
+  }, [clientsById, getClientContext, lang]);
 
   const pickerRoom = roomPickerState.open ? getRoomById(roomPickerState.roomId) : null;
   const compatiblePilgrims = React.useMemo(

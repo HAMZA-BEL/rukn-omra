@@ -150,14 +150,14 @@ const pickString = (...candidates) => {
 
 const normalizeSearchValue = (value) => pickString(value).toLowerCase();
 
-const getRepresentativeDisplayName = (client = {}) => (
-  pickString(getClientDisplayName(client, ""), client.name, client.displayName, client.fullName, client.id)
+const getRepresentativeDisplayName = (client = {}, lang = "ar") => (
+  pickString(getClientDisplayName(client, "", lang), client.name, client.displayName, client.fullName, client.id)
 );
 
-const getRepresentativeSearchText = (client = {}) => {
+const getRepresentativeSearchText = (client = {}, lang = "ar") => {
   const passport = client.passport || {};
   return [
-    getRepresentativeDisplayName(client),
+    getRepresentativeDisplayName(client, lang),
     client.name,
     client.displayName,
     client.fullName,
@@ -918,19 +918,20 @@ export default function ClientForm({
       clients,
       programId: form.programId,
       currentClientId: client?.id || "",
+      lang,
     })
-  ), [client?.id, clients, form.programId]);
+  ), [client?.id, clients, form.programId, lang]);
   const selectedRepresentative = React.useMemo(() => (
     representativeOptions.find((item) => String(item.id || "") === String(form.representedByClientId || "")) || null
   ), [form.representedByClientId, representativeOptions]);
-  const selectedRepresentativeLabel = selectedRepresentative ? getRepresentativeDisplayName(selectedRepresentative) : "";
+  const selectedRepresentativeLabel = selectedRepresentative ? getRepresentativeDisplayName(selectedRepresentative, lang) : "";
   const filteredRepresentativeOptions = React.useMemo(() => {
     const term = normalizeSearchValue(representativeSearch);
     if (!term) return representativeOptions;
     return representativeOptions.filter((item) => (
-      getRepresentativeSearchText(item).includes(term)
+      getRepresentativeSearchText(item, lang).includes(term)
     ));
-  }, [representativeOptions, representativeSearch]);
+  }, [lang, representativeOptions, representativeSearch]);
   const representativeInputValue = representativeSearch || selectedRepresentativeLabel;
   const relationshipOptions = React.useMemo(() => {
     const options = REPRESENTED_BY_RELATIONSHIPS.map((item) => ({ value: item.value, label: item.label[lang] || item.label.ar }));
@@ -2136,7 +2137,7 @@ export default function ClientForm({
 	                      }}
 	                    >
 	                      {filteredRepresentativeOptions.length ? filteredRepresentativeOptions.map((item) => {
-		                        const label = getRepresentativeDisplayName(item);
+		                        const label = getRepresentativeDisplayName(item, lang);
 	                        const selected = String(item.id || "") === String(form.representedByClientId || "");
 	                        return (
 	                          <button

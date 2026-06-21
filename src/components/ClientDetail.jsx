@@ -328,7 +328,7 @@ export default function ClientDetail({
     ? (sortedPayments[0] || (scopedPaymentsReady ? null : getClientLastPayment(client.id)))
     : null;
   const p           = client.passport || {};
-  const displayName = getClientDisplayName(client);
+  const displayName = getClientDisplayName(client, "—", lang);
   const completionBadges = React.useMemo(() => getClientCompletionBadges(client, lang, program, pricingOptions), [client, lang, program, pricingOptions]);
   const completionLabels = React.useMemo(() => getClientCompletionLabels(lang), [lang]);
   const paymentEligibility = React.useMemo(() => getClientPaymentEligibility(client, program, pricingOptions), [client, program, pricingOptions]);

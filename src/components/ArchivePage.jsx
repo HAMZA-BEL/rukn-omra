@@ -50,8 +50,8 @@ const getProgramSearchText = (program = {}) => ([
   program.title,
 ].filter(Boolean).join(" ").toLowerCase());
 
-const getClientArchiveSearchText = (client = {}, program = {}) => ([
-  getClientDisplayName(client, ""),
+const getClientArchiveSearchText = (client = {}, program = {}, lang = "ar") => ([
+  getClientDisplayName(client, "", lang),
   client.phone,
   client.serviceType,
   client.service_type,
@@ -258,14 +258,14 @@ export default function ArchivePage({ store, onToast }) {
       const program = getProgramForClient(client);
       const kind = getExplicitProgramKind(program, client);
       const archiveYear = parseYear(client.archivedAt || client.archived_at) || getProgramDepartureYear(program);
-      const searchText = getClientArchiveSearchText(client, program);
+      const searchText = getClientArchiveSearchText(client, program, lang);
       metaById.set(client.id, { program, kind, archiveYear, searchText });
       if (kind === ARCHIVE_FILTERS.HAJJ || kind === ARCHIVE_FILTERS.UMRAH) {
         kindCounts[kind] += 1;
       }
     });
     return { metaById, kindCounts };
-  }, [archivedClientsAll, getProgramForClient]);
+  }, [archivedClientsAll, getProgramForClient, lang]);
 
   const yearOptions = React.useMemo(() => {
     const years = new Set();
@@ -418,7 +418,7 @@ export default function ArchivePage({ store, onToast }) {
           <div style={archiveRowMainStyle}>
             <div style={archiveTitleLineStyle}>
               <p style={{ minWidth:0, maxWidth:"100%", fontSize:14, fontWeight:900, color:"var(--rukn-text-strong)", lineHeight:1.35, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {getClientDisplayName(client, client.id)}
+                {getClientDisplayName(client, client.id, lang)}
               </p>
               <span style={archiveBadgeStyle("gold")}>
                 {serviceLabel}
@@ -675,7 +675,7 @@ export default function ArchivePage({ store, onToast }) {
             <p style={{ fontSize:15, fontWeight:800, color:"var(--rukn-text-strong)", lineHeight:1.45 }}>
               {tr(
                 restorePrompt.type === "client" ? "clientRestoreQuestion" : "programRestoreQuestion",
-                { name: restorePrompt.type === "client" ? getClientDisplayName(restorePrompt.item, restorePrompt.item.id) : restorePrompt.item.name }
+                { name: restorePrompt.type === "client" ? getClientDisplayName(restorePrompt.item, restorePrompt.item.id, lang) : restorePrompt.item.name }
               )}
             </p>
             <GlassCard style={{ padding:12, background:"var(--rukn-bg-soft)", borderColor:"var(--rukn-border-soft)" }}>

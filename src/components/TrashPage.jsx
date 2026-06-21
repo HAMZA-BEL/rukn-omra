@@ -675,10 +675,10 @@ export default function TrashPage({ store, onToast, onOpenClientFile, onOpenInvo
     const map = new Map();
     [...(store.clients || []), ...deletedClients].forEach((client) => {
       if (!client?.id || map.has(client.id)) return;
-      map.set(client.id, getClientDisplayName(client, client.name || client.id));
+      map.set(client.id, getClientDisplayName(client, client.name || client.id, lang));
     });
     return map;
-  }, [store.clients, deletedClients]);
+  }, [store.clients, deletedClients, lang]);
 
   const clientsByBatch = React.useMemo(() => {
     const map = new Map();

@@ -97,7 +97,7 @@ export const isEligibleRepresentative = (client = {}, referenceDate = new Date()
 );
 
 export const getRepresentativeLabel = (client = {}, lang = "ar") => {
-  const name = getClientDisplayName(client) || client.name || client.id || "";
+  const name = getClientDisplayName(client, "", lang) || client.name || client.id || "";
   const cin = getClientCin(client);
   if (cin) return `${name} — CIN: ${cin}`;
   if (isClientAdult(client)) {
@@ -107,7 +107,7 @@ export const getRepresentativeLabel = (client = {}, lang = "ar") => {
   return name;
 };
 
-export const sortRepresentativeOptions = (items = []) => (
+export const sortRepresentativeOptions = (items = [], lang = "ar") => (
   [...items].sort((left, right) => {
     const leftCin = clientHasCin(left) ? 1 : 0;
     const rightCin = clientHasCin(right) ? 1 : 0;
@@ -115,7 +115,7 @@ export const sortRepresentativeOptions = (items = []) => (
     const leftAdult = isClientAdult(left) ? 1 : 0;
     const rightAdult = isClientAdult(right) ? 1 : 0;
     if (leftAdult !== rightAdult) return rightAdult - leftAdult;
-    return String(getClientDisplayName(left)).localeCompare(String(getClientDisplayName(right)), "ar");
+    return String(getClientDisplayName(left, "", lang)).localeCompare(String(getClientDisplayName(right, "", lang)), lang === "fr" ? "fr" : lang === "en" ? "en" : "ar");
   })
 );
 
@@ -124,6 +124,7 @@ export const getSameProgramRepresentativeOptions = ({
   programId = "",
   currentClientId = "",
   referenceDate = new Date(),
+  lang = "ar",
 } = {}) => sortRepresentativeOptions(
   clients.filter((item) => (
     item
@@ -136,5 +137,6 @@ export const getSameProgramRepresentativeOptions = ({
     && !item.archivedAt
     && !item.archived_at
     && isClientAdult(item, referenceDate)
-  ))
+  )),
+  lang
 );

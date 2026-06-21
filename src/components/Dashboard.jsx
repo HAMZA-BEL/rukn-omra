@@ -371,7 +371,7 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
   const [hov, setHov] = React.useState(false);
   const paidLabel = formatCurrency(paid, lang);
   const remainingLabel = formatCurrency(remaining, lang);
-  const displayName = getClientDisplayName(client);
+  const displayName = getClientDisplayName(client, "—", lang);
   return (
     <div onClick={onClick}
       onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
