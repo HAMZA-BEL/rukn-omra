@@ -22,6 +22,7 @@ import { Button, GlassCard, Modal, Input, Select, EmptyState, preventNumberInput
 import { theme } from "./styles";
 import ProgramCard from "./programs/ProgramCard";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
+import ProgramLifecycleModals from "./programs/ProgramLifecycleModals";
 import PackageDetailCard from "./programs/PackageDetailCard";
 import ProgramEditorModal from "./programs/ProgramEditorModal";
 import ProgramDetailHeader from "./programs/ProgramDetailHeader";
@@ -3892,98 +3893,20 @@ export default function ProgramsPage({
           posterOptionsVisible={false}
         />
       )}
-      <Modal
-        open={!!archivePrompt}
-        onClose={() => setArchivePrompt(null)}
-        title={t.programArchiveTitle}
-        width={560}
-      >
-        {archivePrompt && (
-          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-            <div>
-              <p style={{ fontSize:15, fontWeight:800, color:"var(--rukn-text-strong)", marginBottom:8 }}>
-                {tr("programArchiveQuestion", { name: archivePrompt.program.name })}
-              </p>
-              <p style={{ fontSize:13, color:"var(--rukn-text-muted)", lineHeight:1.7 }}>
-                {t.programArchiveHiddenFromPrograms}
-              </p>
-            </div>
-            <GlassCard style={{ padding:12, background:"var(--rukn-bg-soft)", borderColor:"var(--rukn-border-soft)" }}>
-              <div style={{ display:"grid", gap:9 }}>
-                {[
-                  ["shieldCheck", t.programArchiveNotDeletion],
-                  ["archive", t.programArchiveDataSafe],
-                  ["restore", t.programArchiveRestoreLater],
-                ].map(([icon, label]) => (
-                  <div key={icon} style={{ display:"flex", alignItems:"flex-start", gap:9, color:"var(--rukn-text)", fontSize:12.5, lineHeight:1.55 }}>
-                    <AppIcon name={icon} size={15} color={tc.gold} style={{ marginTop:2 }} />
-                    <span>{label}</span>
-                  </div>
-                ))}
-              </div>
-            </GlassCard>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:12, flexWrap:"wrap" }}>
-              <Button variant="ghost" onClick={() => setArchivePrompt(null)}>
-                {t.cancel}
-              </Button>
-              <Button variant="secondary" icon="archive" onClick={handleConfirmArchiveProgram}>
-                {t.programArchiveConfirm}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
-      <Modal
-        open={!!bulkTrashPrompt}
-        onClose={() => setBulkTrashPrompt(null)}
-        title={t.programBulkTrashTitle}
-        width={560}
-      >
-        {bulkTrashPrompt && (
-          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-            <p style={{ fontSize:14, color:"var(--rukn-text)", lineHeight:1.7 }}>
-              {t.programBulkTrashBody}
-            </p>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:12, flexWrap:"wrap" }}>
-              <Button variant="ghost" onClick={() => setBulkTrashPrompt(null)}>
-                {t.cancel}
-              </Button>
-              <Button variant="danger" icon="trash" onClick={handleConfirmBulkTrashPrograms}>
-                {t.programBulkTrashConfirmAction}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
-      <Modal
-        open={!!deletePrompt}
-        onClose={() => setDeletePrompt(null)}
-        title={t.programTrashTitle}
-        width={520}
-      >
-        {deletePrompt && (
-          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-            <p style={{ fontSize:14, color:tc.white }}>
-              {tr("programTrashMessage", { name: deletePrompt.program.name })}
-            </p>
-            {deletePrompt.clients.length > 0 && (
-              <GlassCard style={{ padding:12, background:"rgba(239,68,68,.08)", borderColor:"rgba(239,68,68,.3)" }}>
-                <p style={{ margin:0, fontSize:13, color:tc.danger }}>
-                  {tr("programTrashClientsWarning", { count: deletePrompt.clients.length })}
-                </p>
-              </GlassCard>
-            )}
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:12 }}>
-              <Button variant="ghost" onClick={() => setDeletePrompt(null)}>
-                {t.cancel}
-              </Button>
-              <Button variant="danger" onClick={handleConfirmDeleteProgram}>
-                {t.programTrashConfirm || t.delete}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <ProgramLifecycleModals
+        archivePrompt={archivePrompt}
+        bulkTrashPrompt={bulkTrashPrompt}
+        deletePrompt={deletePrompt}
+        onCloseArchive={() => setArchivePrompt(null)}
+        onCloseBulkTrash={() => setBulkTrashPrompt(null)}
+        onCloseDelete={() => setDeletePrompt(null)}
+        onConfirmArchive={handleConfirmArchiveProgram}
+        onConfirmBulkTrash={handleConfirmBulkTrashPrograms}
+        onConfirmDelete={handleConfirmDeleteProgram}
+        t={t}
+        tr={tr}
+        tc={tc}
+      />
     </div>
   );
 }
