@@ -93,7 +93,7 @@ export default function ProgramClientRow({
     offset: MENU_OFFSET_PX,
   });
 
-  const fallbackName = resolveClientDisplayName(client, "؟");
+  const fallbackName = resolveClientDisplayName(client, "؟", lang);
   const avatarInitial = fallbackName ? fallbackName[0] : "؟";
   const phoneLabel = client.phone ? `${client.phone}` : "";
   const cityLabel = client.city ? `• ${client.city}` : "";

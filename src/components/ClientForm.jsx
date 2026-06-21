@@ -172,6 +172,125 @@ const getRepresentativeSearchText = (client = {}) => {
   ].map(normalizeSearchValue).filter(Boolean).join(" ");
 };
 
+const normalizeDuplicateDocumentNumber = (value) => (
+  String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\u00A0\-‐‑‒–—―]+/g, "")
+);
+
+const getClientProgramKey = (client = {}) => pickString(client.programId, client.program_id);
+
+const getClientPassportDuplicateKey = (client = {}) => normalizeDuplicateDocumentNumber(
+  client.passport?.number
+  || client.passportNumber
+  || client.passportNo
+  || client.passport_no
+  || client.docs?.passportNumber
+);
+
+const getClientCinDuplicateKey = (client = {}) => normalizeDuplicateDocumentNumber(
+  client.cin
+  || client.CIN
+  || client.nationalId
+  || client.national_id
+  || client.idNumber
+  || client.id_number
+  || client.carteIdentite
+  || client.carte_identite
+  || client.passport?.cin
+  || client.passport?.nationalId
+  || client.passport?.national_id
+);
+
+const isActiveDuplicateCandidate = (client = {}) => (
+  !client.archived
+  && !client.archivedAt
+  && !client.archived_at
+  && !client.deleted
+  && !client.deletedAt
+  && !client.deleted_at
+);
+
+const getDuplicateFallbackName = (lang) => {
+  if (lang === "fr") return "un autre client";
+  if (lang === "en") return "another client";
+  return "عميل آخر";
+};
+
+const getDuplicateDisplayName = (duplicateClient, lang) => (
+  getClientDisplayName(duplicateClient, getDuplicateFallbackName(lang), lang)
+);
+
+const getDuplicateClientMessage = (duplicate, lang) => {
+  const name = getDuplicateDisplayName(duplicate?.client, lang);
+  if (duplicate?.type === "passport") {
+    if (lang === "fr") {
+      return `Un client est déjà inscrit dans ce programme avec le même numéro de passeport : ${name}. Le même passeport ne peut pas être enregistré deux fois dans le même programme.`;
+    }
+    if (lang === "en") {
+      return `A client is already registered in this program with the same passport number: ${name}. The same passport cannot be registered twice in the same program.`;
+    }
+    return `يوجد عميل مسجل في هذا البرنامج بنفس رقم الجواز: ${name}. لا يمكن تسجيل نفس رقم الجواز مرتين في نفس البرنامج.`;
+  }
+  if (lang === "fr") {
+    return `Un client est déjà inscrit dans ce programme avec le même numéro de CIN : ${name}. Le même CIN ne peut pas être enregistré deux fois dans le même programme.`;
+  }
+  if (lang === "en") {
+    return `A client is already registered in this program with the same national ID number: ${name}. The same national ID cannot be registered twice in the same program.`;
+  }
+  return `يوجد عميل مسجل في هذا البرنامج بنفس رقم البطاقة الوطنية: ${name}. لا يمكن تسجيل نفس رقم البطاقة الوطنية مرتين في نفس البرنامج.`;
+};
+
+const findSameProgramDuplicateClient = (candidate = {}, existingClients = [], currentClientId = "") => {
+  const programId = getClientProgramKey(candidate);
+  if (!programId) return null;
+  const passportKey = getClientPassportDuplicateKey(candidate);
+  const cinKey = getClientCinDuplicateKey(candidate);
+  if (!passportKey && !cinKey) return null;
+
+  const sameProgramClients = existingClients.filter((existing) => (
+    isActiveDuplicateCandidate(existing)
+    && String(existing.id || "") !== String(currentClientId || "")
+    && getClientProgramKey(existing) === programId
+  ));
+
+  if (passportKey) {
+    const client = sameProgramClients.find((existing) => getClientPassportDuplicateKey(existing) === passportKey);
+    if (client) return { type: "passport", client };
+  }
+  if (cinKey) {
+    const client = sameProgramClients.find((existing) => getClientCinDuplicateKey(existing) === cinKey);
+    if (client) return { type: "cin", client };
+  }
+  return null;
+};
+
+const findSameProgramDuplicateInBatch = (payloads = [], existingClients = []) => {
+  const seenPassports = new Map();
+  const seenCins = new Map();
+  for (const payload of payloads) {
+    const existingDuplicate = findSameProgramDuplicateClient(payload, existingClients);
+    if (existingDuplicate) return existingDuplicate;
+
+    const programId = getClientProgramKey(payload);
+    if (!programId) continue;
+    const passportKey = getClientPassportDuplicateKey(payload);
+    const cinKey = getClientCinDuplicateKey(payload);
+    if (passportKey) {
+      const seenClient = seenPassports.get(`${programId}:${passportKey}`);
+      if (seenClient) return { type: "passport", client: seenClient };
+      seenPassports.set(`${programId}:${passportKey}`, payload);
+    }
+    if (cinKey) {
+      const seenClient = seenCins.get(`${programId}:${cinKey}`);
+      if (seenClient) return { type: "cin", client: seenClient };
+      seenCins.set(`${programId}:${cinKey}`, payload);
+    }
+  }
+  return null;
+};
+
 const pickNumber = (...candidates) => {
   for (const candidate of candidates) {
     if (candidate === null || candidate === undefined || candidate === "") continue;
@@ -654,6 +773,10 @@ export default function ClientForm({
     () => (Array.isArray(activeClients) && activeClients.length ? activeClients : clients),
     [activeClients, clients]
   );
+  const duplicateClientSource = React.useMemo(
+    () => capacityClients.filter(isActiveDuplicateCandidate),
+    [capacityClients]
+  );
   const localizedRoomCategoryOptions = React.useMemo(() => ROOM_CATEGORY_OPTIONS.map((option) => ({
     ...option,
     label: option.value === "male_only"
@@ -1114,6 +1237,12 @@ export default function ClientForm({
     return false;
   }, [capacityClients, notifyCapacityFailure]);
 
+  const notifyDuplicateFailure = React.useCallback((duplicate) => {
+    if (!duplicate) return;
+    const notify = typeof onToast === "function" ? onToast : storeNotify;
+    notify?.(getDuplicateClientMessage(duplicate, lang), "error");
+  }, [lang, onToast, storeNotify]);
+
   const createManualClient = React.useCallback(async (payload) => {
     if (typeof addClientAndWait === "function") {
       return addClientAndWait(payload);
@@ -1212,51 +1341,59 @@ export default function ClientForm({
         representedByClientId: "",
         representedByRelationship: "",
       };
+      const groupPayloads = groupPeople.map((person, index) => {
+        const personName = buildGroupPersonName(person);
+        return {
+          ...sharedBase,
+          firstName: pickString(person.firstName),
+          lastName: pickString(person.lastName),
+          name: personName,
+          nom: "",
+          prenom: "",
+          phone: pickString(person.phone, form.phone),
+          gender: person.gender,
+          roomingSeatIndex: index + 1,
+          passport: {
+            ...form.passport,
+            number: "",
+            birthDate: "",
+            expiry: "",
+            issueDate: "",
+            gender: genderToPassportValue(person.gender),
+          },
+          docs: {
+            passportCopy: false,
+            photo: false,
+            vaccine: false,
+            contract: false,
+            rooming: {
+              groupId: roomingGroupId,
+              groupName: roomingGroupName,
+              category: form.roomCategory,
+              categoryLabel: getRoomCategoryLabel(form.roomCategory),
+              groupSize: groupPeople.length,
+              seatIndex: index + 1,
+            },
+          },
+          ticketNo: "",
+          notes: form.notes,
+        };
+      });
+      const duplicate = findSameProgramDuplicateInBatch(groupPayloads, duplicateClientSource);
+      if (duplicate) {
+        notifyDuplicateFailure(duplicate);
+        return;
+      }
       const addedClients = [];
       const failures = [];
       setSaving(true);
       try {
-        for (const [index, person] of groupPeople.entries()) {
-          const personName = buildGroupPersonName(person);
-          const result = await createManualClient({
-            ...sharedBase,
-            firstName: pickString(person.firstName),
-            lastName: pickString(person.lastName),
-            name: personName,
-            nom: "",
-            prenom: "",
-            phone: pickString(person.phone, form.phone),
-            gender: person.gender,
-            roomingSeatIndex: index + 1,
-            passport: {
-              ...form.passport,
-              number: "",
-              birthDate: "",
-              expiry: "",
-              issueDate: "",
-              gender: genderToPassportValue(person.gender),
-            },
-            docs: {
-              passportCopy: false,
-              photo: false,
-              vaccine: false,
-              contract: false,
-              rooming: {
-                groupId: roomingGroupId,
-                groupName: roomingGroupName,
-                category: form.roomCategory,
-                categoryLabel: getRoomCategoryLabel(form.roomCategory),
-                groupSize: groupPeople.length,
-                seatIndex: index + 1,
-              },
-            },
-            ticketNo: "",
-            notes: form.notes,
-          });
+        for (const payload of groupPayloads) {
+          const result = await createManualClient(payload);
           if (result?.data) {
             addedClients.push(result.data);
           } else {
-            failures.push({ person, error: result?.error || new Error("client-save-failed") });
+            failures.push({ payload, error: result?.error || new Error("client-save-failed") });
           }
         }
         if (failures.length) {
@@ -1281,7 +1418,6 @@ export default function ClientForm({
         })
       : (targetProgramId ? 1 : 0);
     if (!ensureProgramCanAdd(targetProgram, capacityDelta)) return;
-    setSaving(true);
     setBadgePhotoError("");
     const nextRepresentedByClientId = contractsEnabled
       ? (hasCin ? "" : form.representedByClientId)
@@ -1316,7 +1452,15 @@ export default function ClientForm({
       representedByClientId: nextRepresentedByClientId,
       representedByRelationship: nextRepresentedByRelationship,
     };
+    if (!isEdit) {
+      const duplicate = findSameProgramDuplicateClient(baseData, duplicateClientSource, client?.id || "");
+      if (duplicate) {
+        notifyDuplicateFailure(duplicate);
+        return;
+      }
+    }
     try {
+      setSaving(true);
       const targetId = isEdit ? client.id : (badgePhotoFile ? createClientId() : "");
       const photoResult = await resolveBadgePhotoPath(targetId || client?.id, form.badgePhotoPath);
       if (!photoResult.ok) return;
