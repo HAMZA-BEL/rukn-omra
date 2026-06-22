@@ -20,10 +20,10 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, preventNumberInputWheelChange } from "./UI";
 import { theme } from "./styles";
-import ProgramCard from "./programs/ProgramCard";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
 import ProgramLifecycleModals from "./programs/ProgramLifecycleModals";
 import ProgramPackageLevelsPanel from "./programs/ProgramPackageLevelsPanel";
+import ProgramsListResults from "./programs/ProgramsListResults";
 import ProgramEditorModal from "./programs/ProgramEditorModal";
 import ProgramDetailHeader from "./programs/ProgramDetailHeader";
 import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
@@ -3057,6 +3057,28 @@ export default function ProgramsPage({
     closeProgramForm();
     onToast(wasEditing ? t.updateSuccess : t.addSuccess, "success");
   }, [closeProgramForm, editing, onToast, t.addSuccess, t.updateSuccess]);
+  const handleProgramCardRef = React.useCallback((programId, node) => {
+    if (node) programCardRefs.current.set(String(programId), node);
+    else programCardRefs.current.delete(String(programId));
+  }, []);
+  const handleProgramCardEdit = React.useCallback((program) => {
+    setEditing(program);
+    setEditingProgramClients(clientsReady
+      ? clients.filter((client) => String(client.programId || "") === String(program.id))
+      : null);
+  }, [clients, clientsReady]);
+  const handleProgramCardArchive = React.useCallback((program) => {
+    setArchivePrompt({ program });
+  }, []);
+  const handleProgramCardDelete = React.useCallback((program, programClients) => {
+    setDeletePrompt({ program, clients: programClients });
+  }, []);
+  const goToPreviousProgramsPage = React.useCallback(() => {
+    setProgramsCurrentPage((page) => Math.max(1, page - 1));
+  }, []);
+  const goToNextProgramsPage = React.useCallback(() => {
+    setProgramsCurrentPage((page) => Math.min(totalProgramsPages, page + 1));
+  }, [totalProgramsPages]);
 
   if (activeProgram) {
     const prog = programs.find(p => p.id === activeProgram);
@@ -3712,150 +3734,40 @@ export default function ProgramsPage({
         </div>
       </div>
 
-      {activePrograms.length === 0 ? (
-        <EmptyState icon="program" title={t.noProgramsTitle} sub={t.noProgramsSub} />
-      ) : !programMetricsReady ? (
-        <GlassCard style={{ padding:18, textAlign:"center", color:tc.grey, fontSize:13 }}>
-          {t.loading || "Loading..."}
-        </GlassCard>
-      ) : totalProgramsCount === 0 ? (
-        <EmptyState icon="search" title={t.noResultsTitle} sub={t.noResultsSub} />
-      ) : (
-        <div>
-          {programSelectionMode && selectedProgramsCount > 0 && (
-            <GlassCard style={{ padding:"12px 16px", marginBottom:14 }}>
-              <div style={{
-                display:"flex",
-                flexWrap:"wrap",
-                gap:12,
-                alignItems:"center",
-                justifyContent:"space-between",
-                direction:dir,
-              }}>
-                <span style={{ fontSize:13, color:tc.gold, fontWeight:800 }}>
-                  {tr("programBulkSelectedCount", { count: selectedProgramsCount })}
-                </span>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon="archive"
-                    onClick={handleBulkArchivePrograms}
-                  >
-                    {t.programArchiveSelected}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon="trash"
-                    onClick={openBulkTrashProgramsPrompt}
-                    style={{
-                      border:"1px solid rgba(239,68,68,.28)",
-                      color:tc.danger,
-                      background:"rgba(239,68,68,.06)",
-                    }}
-                  >
-                    {t.programTrashSelected}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearProgramSelection}
-                  >
-                    {t.programClearSelection}
-                  </Button>
-                </div>
-              </div>
-            </GlassCard>
-          )}
-          <div className="cards-grid program-card-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))", gap:20 }}>
-            {visiblePrograms.map((p, i) => {
-              const pc = clientsByProgramId.get(String(p.id)) || [];
-              const summary = programSummaryById.get(String(p.id)) || {};
-              const deletePromptClients = clientsReady
-                ? pc
-                : Array.from({ length: summary.registeredCount || 0 });
-              const selected = selectedProgramIds.has(String(p.id));
-              return (
-                <div
-                  key={p.id}
-                  ref={(node) => {
-                    if (node) programCardRefs.current.set(String(p.id), node);
-                    else programCardRefs.current.delete(String(p.id));
-                  }}
-                >
-                  <ProgramCard program={p}
-                    registered={summary.registeredCount || 0} pct={summary.capacityPct || 0}
-                    totalPaid={summary.totalPaid || 0} totalRemaining={summary.remainingTotal || 0}
-                    cleared={summary.clearedCount || 0} unpaid={summary.unpaidCount || 0} delay={i*.06}
-                    travelGroupCount={travelGroupCountsByProgramId[String(p.id)] || 0}
-                    programSummary={summary}
-                    highlighted={String(highlightProgramId) === String(p.id)}
-                    selected={programSelectionMode && selected}
-                    selectionLabel={t.programSelectVisible}
-                    onSelectionChange={programSelectionMode ? (checked) => toggleProgramSelection(p.id, checked) : undefined}
-                    onClick={() => {
-                      if (programSelectionMode) return;
-                      openProgramDetail(p.id);
-                    }}
-                    onEdit={e => {
-                      e.stopPropagation();
-                      setEditing(p);
-                      setEditingProgramClients(clientsReady
-                        ? clients.filter((client) => String(client.programId || "") === String(p.id))
-                        : null);
-                    }}
-                    onDuplicate={e => {
-                      e.stopPropagation();
-                      openDuplicatePrompt(p);
-                    }}
-                    onArchive={e => {
-                      e.stopPropagation();
-                      setArchivePrompt({ program: p });
-                    }}
-                    onDelete={e => {
-                      e.stopPropagation();
-                      setDeletePrompt({ program: p, clients: deletePromptClients });
-                    }}
-                    lang={lang}
-                    formatCurrencyForLang={formatCurrencyForLang}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          {totalProgramsPages > 1 && (
-            <div style={{
-              display:"flex",
-              justifyContent:"center",
-              alignItems:"center",
-              gap:10,
-              marginTop:20,
-              flexWrap:"wrap",
-            }}>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={safeProgramsPage <= 1}
-                onClick={() => setProgramsCurrentPage((page) => Math.max(1, page - 1))}
-              >
-                {t.programPagePrevious}
-              </Button>
-              <span style={{ color:"var(--rukn-text-muted)", fontSize:12, fontWeight:800 }}>
-                {tr("programPageIndicator", { page: safeProgramsPage, total: totalProgramsPages })}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={safeProgramsPage >= totalProgramsPages}
-                onClick={() => setProgramsCurrentPage((page) => Math.min(totalProgramsPages, page + 1))}
-              >
-                {t.programPageNext}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
+      <ProgramsListResults
+        activePrograms={activePrograms}
+        programMetricsReady={programMetricsReady}
+        totalProgramsCount={totalProgramsCount}
+        programSelectionMode={programSelectionMode}
+        selectedProgramsCount={selectedProgramsCount}
+        visiblePrograms={visiblePrograms}
+        clientsByProgramId={clientsByProgramId}
+        programSummaryById={programSummaryById}
+        clientsReady={clientsReady}
+        selectedProgramIds={selectedProgramIds}
+        travelGroupCountsByProgramId={travelGroupCountsByProgramId}
+        highlightProgramId={highlightProgramId}
+        totalProgramsPages={totalProgramsPages}
+        safeProgramsPage={safeProgramsPage}
+        onBulkArchivePrograms={handleBulkArchivePrograms}
+        onOpenBulkTrashProgramsPrompt={openBulkTrashProgramsPrompt}
+        onClearProgramSelection={clearProgramSelection}
+        onProgramCardRef={handleProgramCardRef}
+        onOpenProgramDetail={openProgramDetail}
+        onEditProgram={handleProgramCardEdit}
+        onDuplicateProgram={openDuplicatePrompt}
+        onArchiveProgram={handleProgramCardArchive}
+        onDeleteProgram={handleProgramCardDelete}
+        onToggleProgramSelection={toggleProgramSelection}
+        onPreviousProgramsPage={goToPreviousProgramsPage}
+        onNextProgramsPage={goToNextProgramsPage}
+        lang={lang}
+        dir={dir}
+        formatCurrencyForLang={formatCurrencyForLang}
+        t={t}
+        tr={tr}
+        tc={tc}
+      />
 
       <ProgramEditorModal
         open={showForm || !!editing}
