@@ -3,6 +3,17 @@ import { theme } from "./styles";
 import { supabase } from "../lib/supabase";
 import { AppIcon, IconBubble } from "./Icon";
 import { useLang } from "../hooks/useLang";
+import {
+  AUTO_LOGOUT_REASON_INACTIVITY,
+  AUTO_LOGOUT_REASON_STORAGE_KEY,
+  LAST_ACTIVITY_STORAGE_KEY,
+  getAutoLogoutMessage,
+} from "./session/sessionTimeoutConfig";
+import {
+  clearAutoLogoutResumeContext,
+  readAutoLogoutResumeContext,
+  restoreResumeRoute,
+} from "./session/sessionResumeStorage";
 
 const tc = theme.colors;
 
@@ -222,6 +233,45 @@ const PASSWORD_TOGGLE_LABELS = {
   },
 };
 
+const RESUME_LABELS = {
+  ar: {
+    title: "استئناف الجلسة",
+    message: "تم تسجيل خروجك تلقائيا بسبب عدم النشاط. أدخل كلمة المرور لمتابعة العمل من حيث توقفت.",
+    emailLabel: "الحساب",
+    passwordLabel: "كلمة المرور",
+    primary: "متابعة العمل",
+    loading: "جاري استئناف الجلسة...",
+    switchAccount: "تسجيل الدخول بحساب آخر",
+    invalidCredentials: "كلمة المرور غير صحيحة. يرجى المحاولة مرة أخرى.",
+    expired: "انتهت صلاحية استئناف الجلسة. يرجى تسجيل الدخول من جديد.",
+    passwordRequired: "الرجاء إدخال كلمة المرور",
+  },
+  fr: {
+    title: "Reprendre la session",
+    message: "Votre session a expiré en raison de votre inactivité. Saisissez votre mot de passe pour reprendre votre travail là où vous vous êtes arrêté.",
+    emailLabel: "Compte",
+    passwordLabel: "Mot de passe",
+    primary: "Reprendre le travail",
+    loading: "Reprise de la session...",
+    switchAccount: "Se connecter avec un autre compte",
+    invalidCredentials: "Mot de passe incorrect. Veuillez réessayer.",
+    expired: "La reprise de session a expiré. Veuillez vous reconnecter.",
+    passwordRequired: "Veuillez saisir votre mot de passe",
+  },
+  en: {
+    title: "Resume session",
+    message: "You were automatically signed out due to inactivity. Enter your password to continue where you left off.",
+    emailLabel: "Account",
+    passwordLabel: "Password",
+    primary: "Continue working",
+    loading: "Resuming session...",
+    switchAccount: "Sign in with another account",
+    invalidCredentials: "Incorrect password. Please try again.",
+    expired: "The resume session has expired. Please sign in again.",
+    passwordRequired: "Please enter your password",
+  },
+};
+
 export default function LoginPage({ onLogin }) {
   const { lang, dir } = useLang();
   const [email,    setEmail]    = React.useState("");
@@ -229,6 +279,9 @@ export default function LoginPage({ onLogin }) {
   const [showPassword, setShowPassword] = React.useState(false);
   const [loading,  setLoading]  = React.useState(false);
   const [error,    setError]    = React.useState("");
+  const [sessionNoticeReason, setSessionNoticeReason] = React.useState("");
+  const [resumeContext, setResumeContext] = React.useState(null);
+  const [resumeExpired, setResumeExpired] = React.useState(false);
   const styleInjected = React.useRef(false);
   const cardRef       = React.useRef(null);
 
@@ -251,6 +304,24 @@ export default function LoginPage({ onLogin }) {
     style.innerHTML = LOGIN_MOTION_STYLES;
     document.head.appendChild(style);
     styleInjected.current = true;
+  }, []);
+
+  React.useEffect(() => {
+    const { context, expired } = readAutoLogoutResumeContext();
+    if (context?.email) {
+      setResumeContext(context);
+      setEmail(context.email);
+    } else if (expired) {
+      setResumeExpired(true);
+    }
+
+    try {
+      const reason = window.sessionStorage.getItem(AUTO_LOGOUT_REASON_STORAGE_KEY);
+      if (reason === AUTO_LOGOUT_REASON_INACTIVITY && !context?.email) setSessionNoticeReason(reason);
+      window.sessionStorage.removeItem(AUTO_LOGOUT_REASON_STORAGE_KEY);
+    } catch {
+      /* Ignore sessionStorage errors on the login screen. */
+    }
   }, []);
 
   React.useEffect(() => {
@@ -295,9 +366,16 @@ export default function LoginPage({ onLogin }) {
     e.preventDefault();
     if (!email || !password) { setError("الرجاء إدخال البريد الإلكتروني وكلمة السر"); return; }
     setError("");
+    setSessionNoticeReason("");
+    setResumeExpired(false);
     setLoading(true);
     try {
       await onLogin(email.trim().toLowerCase(), password);
+      try {
+        window.localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, String(Date.now()));
+      } catch {
+        /* Ignore activity persistence failure; authenticated guard will recover. */
+      }
     } catch (err) {
       const code = err?.message || "";
       if (code.includes("Invalid login credentials"))
@@ -312,8 +390,64 @@ export default function LoginPage({ onLogin }) {
     // setLoading(false) not needed here — the component will unmount
   };
 
+  const handleResumeSubmit = async (e) => {
+    e.preventDefault();
+    const resumeEmail = String(resumeContext?.email || "").trim().toLowerCase();
+    const resumeLabels = RESUME_LABELS[lang] || RESUME_LABELS.ar;
+    if (!resumeEmail) {
+      clearAutoLogoutResumeContext();
+      setResumeContext(null);
+      setResumeExpired(true);
+      setError("");
+      return;
+    }
+    if (!password) {
+      setError(resumeLabels.passwordRequired);
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    try {
+      await onLogin(resumeEmail, password);
+      try {
+        window.localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, String(Date.now()));
+      } catch {
+        /* Ignore activity persistence failure; authenticated guard will recover. */
+      }
+      const route = resumeContext?.route || "";
+      clearAutoLogoutResumeContext();
+      setPassword("");
+      restoreResumeRoute(route);
+    } catch {
+      setError(resumeLabels.invalidCredentials);
+      setPassword("");
+      setLoading(false);
+    }
+  };
+
+  const handleSwitchAccount = () => {
+    clearAutoLogoutResumeContext();
+    setResumeContext(null);
+    setResumeExpired(false);
+    setSessionNoticeReason("");
+    setError("");
+    setPassword("");
+    setEmail("");
+    setShowReset(false);
+    setResetSent(false);
+    setResetError("");
+  };
+
   const isRTL = dir === "rtl" || lang === "ar";
   const passwordLabels = PASSWORD_TOGGLE_LABELS[lang] || PASSWORD_TOGGLE_LABELS.ar;
+  const resumeLabels = RESUME_LABELS[lang] || RESUME_LABELS.ar;
+  const isResumeMode = Boolean(resumeContext?.email);
+  const sessionNotice = resumeExpired
+    ? resumeLabels.expired
+    : sessionNoticeReason === AUTO_LOGOUT_REASON_INACTIVITY
+      ? getAutoLogoutMessage(lang)
+      : "";
   const inputBaseStyle = {
     width: "100%", boxSizing: "border-box",
     padding: "12px 14px", borderRadius: 12,
@@ -377,11 +511,72 @@ export default function LoginPage({ onLogin }) {
             background: "linear-gradient(135deg,#f0d060,#d4af37)",
             WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
             marginBottom: 6,
-          }}>نظام إدارة العمرة</h1>
-          <p style={{ fontSize: 12, color: "var(--login-muted)" }}>سجّل دخولك للمتابعة</p>
+          }}>{isResumeMode ? resumeLabels.title : "نظام إدارة العمرة"}</h1>
+          <p style={{
+            fontSize: 12,
+            color: "var(--login-muted)",
+            lineHeight: 1.7,
+            maxWidth: isResumeMode ? 330 : "none",
+            margin: "0 auto",
+          }}>
+            {isResumeMode ? resumeLabels.message : "سجّل دخولك للمتابعة"}
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <form onSubmit={isResumeMode ? handleResumeSubmit : handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {isResumeMode ? (
+            <>
+              <div>
+                <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
+                  {resumeLabels.emailLabel}
+                </label>
+                <input
+                  type="email"
+                  value={resumeContext.email}
+                  readOnly
+                  autoComplete="username"
+                  className="login-input"
+                  style={{
+                    ...inputBaseStyle,
+                    background: "var(--login-accent-soft)",
+                    borderColor: "var(--login-accent-border)",
+                    fontWeight: 800,
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
+                  {resumeLabels.passwordLabel}
+                </label>
+                <div className="login-password-wrap">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder={resumeLabels.passwordLabel}
+                    autoComplete="current-password"
+                    disabled={loading}
+                    className="login-input"
+                    style={passwordInputStyle}
+                  />
+                  <button
+                    type="button"
+                    className="login-password-toggle"
+                    style={passwordToggleStyle}
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    disabled={loading}
+                    aria-label={showPassword ? passwordLabels.hide : passwordLabels.show}
+                    title={showPassword ? passwordLabels.hide : passwordLabels.show}
+                    aria-pressed={showPassword}
+                  >
+                    <AppIcon name={showPassword ? "eyeOff" : "eye"} size={18} color="currentColor" />
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
           {/* Email */}
           <div>
             <label style={{ fontSize: 12, color: "var(--login-muted)", display: "block", marginBottom: 6 }}>
@@ -429,8 +624,20 @@ export default function LoginPage({ onLogin }) {
               </button>
             </div>
           </div>
+            </>
+          )}
 
           {/* Error message */}
+          {sessionNotice && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 10, fontSize: 13,
+              background: "rgba(212,175,55,.1)", border: "1px solid rgba(212,175,55,.28)",
+              color: "var(--login-text)", fontWeight: 600, textAlign: "center",
+              lineHeight: 1.6,
+            }}>
+              <AppIcon name="shieldCheck" size={14} color="#d4af37" /> {sessionNotice}
+            </div>
+          )}
           {error && (
             <div className="login-error" style={{
               padding: "10px 14px", borderRadius: 10, fontSize: 13,
@@ -455,14 +662,29 @@ export default function LoginPage({ onLogin }) {
                   borderTop: "2px solid #d4af37", borderRadius: "50%",
                   display: "inline-block",
                 }} />
-                جاري تسجيل الدخول...
+                {isResumeMode ? resumeLabels.loading : "جاري تسجيل الدخول..."}
               </span>
-            ) : "تسجيل الدخول"}
+            ) : isResumeMode ? resumeLabels.primary : "تسجيل الدخول"}
           </button>
         </form>
 
         {/* Forgot password link */}
-        {!showReset ? (
+        {isResumeMode ? (
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <button
+              type="button"
+              onClick={handleSwitchAccount}
+              disabled={loading}
+              style={{
+                background: "transparent", border: "none", color: "#d4af37",
+                fontSize: 13, fontFamily: "'Cairo', sans-serif", cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.65 : 1,
+              }}
+            >
+              {resumeLabels.switchAccount}
+            </button>
+          </div>
+        ) : !showReset ? (
           <div style={{ textAlign: "center", marginTop: 16 }}>
             <button
               type="button"

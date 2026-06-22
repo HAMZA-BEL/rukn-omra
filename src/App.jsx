@@ -2,6 +2,7 @@ import React from "react";
 import { globalCSS } from "./components/styles";
 import { useStore } from "./hooks/useStore";
 import { useAuth } from "./hooks/useAuth";
+import { useInactivityLogout } from "./hooks/useInactivityLogout";
 import { AGENCY_FEATURES, useAgencyFeature } from "./hooks/useAgencyFeature";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
@@ -24,6 +25,8 @@ import { formatNotificationMessage, resolveNotificationTarget } from "./utils/no
 import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
+import InactivityLogoutModal from "./components/session/InactivityLogoutModal";
+import { clearAutoLogoutResumeContext } from "./components/session/sessionResumeStorage";
 
 const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
 
@@ -48,10 +51,16 @@ function getInitialThemeMode() {
   return resolvedTheme;
 }
 
-function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
+function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentUserEmail = "", currentUserDisplayName = "" }) {
   const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
+  const inactivityLogout = useInactivityLogout({
+    enabled: Boolean(onLogout && agencyId),
+    onLogout,
+    currentUserEmail,
+    currentUserDisplayName,
+  });
   const store = useStore(agencyId, showToast);
   const badgesFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.BADGES, { fallbackEnabled: true });
   const contractsFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.CONTRACTS, { fallbackEnabled: true });
@@ -93,6 +102,11 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
   const toggleThemeMode = React.useCallback(() => {
     setThemeMode((current) => current === "dark" ? "light" : "dark");
   }, []);
+
+  const handleManualLogout = React.useCallback(async () => {
+    clearAutoLogoutResumeContext();
+    await onLogout?.();
+  }, [onLogout]);
 
   const navigate = React.useCallback((target) => {
     setPageHistory(h => [...h, page]);
@@ -295,7 +309,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
             }
           }}
           onImport={async(f)=>{ try{ await store.importData(f); showToast(t.importSuccess, "success"); }catch{ showToast(t.importError, "error"); } }}
-          onLogout={onLogout} />
+          onLogout={handleManualLogout} />
 
         <main className="app-main" style={{ flex:1, overflowY:"auto", minHeight:"100vh" }}>
           {/* DB loading skeleton */}
@@ -499,6 +513,13 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId }) {
           </div>
         )}
       </Modal>
+
+      <InactivityLogoutModal
+        open={inactivityLogout.warningVisible}
+        remainingMs={inactivityLogout.remainingMs}
+        warningDurationMs={inactivityLogout.warningDurationMs}
+        lang={lang}
+      />
 
       {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={()=>setToast(null)} />}
     </>
@@ -1142,6 +1163,16 @@ function AuthGate() {
       onLogout={logout}
       currentUserRole={user?.profile?.role || null}
       currentUserId={user?.id || null}
+      currentUserEmail={user?.email || ""}
+      currentUserDisplayName={
+        user?.profile?.displayName
+        || user?.profile?.display_name
+        || user?.profile?.fullName
+        || user?.profile?.full_name
+        || user?.profile?.name
+        || user?.email
+        || ""
+      }
     />
   );
 }
