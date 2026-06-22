@@ -5,13 +5,65 @@ import { useLang } from "../hooks/useLang";
 import { formatCurrency } from "../utils/currency";
 import { AppIcon, IconBubble } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
-import { translateActivityDescription } from "../utils/i18nValues";
+import { translateActivityDescription, translateProgramType } from "../utils/i18nValues";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import { createActivityProgramResolver, getActivityProgramLabel } from "../utils/activityProgramContext";
+import { normalizeProgramPackages } from "../utils/programPackages";
 
 const tc = theme.colors;
+const normalizeSearchText = (value) => String(value || "").toLowerCase();
 
-export default function Dashboard({ store, onNavigate, onSelectClient, headerActions, onBrandNavigate }) {
+const getProgramDepartureValue = (program = {}) => (
+  program.departure
+  || program.departureDate
+  || program.departure_date
+  || program.startDate
+  || program.start_date
+  || ""
+);
+
+const getProgramReturnValue = (program = {}) => (
+  program.returnDate
+  || program.return_date
+  || ""
+);
+
+const getSearchSectionLabels = (lang) => ({
+  programs: lang === "fr"
+    ? "Résultats des programmes"
+    : lang === "en"
+      ? "Program results"
+      : "نتائج البرامج",
+  clients: lang === "fr"
+    ? "Résultats des pèlerins"
+    : lang === "en"
+      ? "Pilgrim and client results"
+      : "نتائج الحجاج والمعتمرين",
+});
+
+const getProgramSearchFields = (program = {}, lang = "ar") => {
+  const packages = normalizeProgramPackages(program);
+  return [
+    program.name,
+    program.type,
+    translateProgramType(program.type, lang),
+    getProgramDepartureValue(program),
+    getProgramReturnValue(program),
+    program.duration,
+    program.hotelMecca,
+    program.hotelMadina,
+    program.mealPlan,
+    ...packages.flatMap((pkg) => [
+      pkg.level,
+      pkg.hotelMecca,
+      pkg.hotelMadina,
+      pkg.mealPlan,
+      pkg.notes,
+    ]),
+  ];
+};
+
+export default function Dashboard({ store, onNavigate, onSelectClient, onSelectProgram, headerActions, onBrandNavigate }) {
   const { t, dir, lang } = useLang();
   const isRTL = dir === "rtl";
   const { stats, clients, deletedClients = [], programs, deletedPrograms = [], payments = [], deletedPayments = [], activityLog,
@@ -55,19 +107,33 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
     ))
   ), [programs]);
 
-  const results = React.useMemo(() => {
-    if (!search.trim()) return [];
-    if (!clientsReady) return [];
-    const q = search.toLowerCase();
+  const searchSectionLabels = React.useMemo(() => getSearchSectionLabels(lang), [lang]);
+  const { clientResults, programResults } = React.useMemo(() => {
+    if (!search.trim()) return { clientResults: [], programResults: [] };
+    if (!clientsReady) return { clientResults: [], programResults: [] };
+    const q = normalizeSearchText(search);
+    const matchingPrograms = activePrograms.filter((program) => (
+      getProgramSearchFields(program, lang).some((field) => normalizeSearchText(field).includes(q))
+    ));
+    const matchingProgramIds = new Set(matchingPrograms.map((program) => String(program.id)));
     const byClient = clients.filter(c =>
-      c.name.toLowerCase().includes(q) || c.phone.includes(q) ||
-      c.id.toLowerCase().includes(q) || (c.ticketNo||"").toLowerCase().includes(q) ||
-      (c.nameLatin||"").toLowerCase().includes(q) || (c.passport?.number||"").toLowerCase().includes(q)
+      normalizeSearchText(c.name).includes(q)
+      || normalizeSearchText(c.phone).includes(q)
+      || normalizeSearchText(c.id).includes(q)
+      || normalizeSearchText(c.ticketNo).includes(q)
+      || normalizeSearchText(c.nameLatin).includes(q)
+      || normalizeSearchText(c.passport?.number).includes(q)
     );
-    const progMatch = activePrograms.find(p => p.name.toLowerCase().includes(q));
-    const byProg = progMatch ? clients.filter(c => c.programId === progMatch.id) : [];
-    return [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
-  }, [search, clients, clientsReady, activePrograms]);
+    const byProg = matchingProgramIds.size
+      ? clients.filter(c => matchingProgramIds.has(String(c.programId)))
+      : [];
+    return {
+      clientResults: [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()],
+      programResults: matchingPrograms,
+    };
+  }, [search, clients, clientsReady, activePrograms, lang]);
+  const totalSearchResults = clientResults.length + programResults.length;
+  const showSearchGroupTitles = programResults.length > 0 && clientResults.length > 0;
 
   const programClientCounts = stats.programClientCounts || {};
 
@@ -153,7 +219,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
               </span>
               <span style={{ background:tc.goldDim, color:tc.gold,
                 padding:"2px 10px", borderRadius:20, fontSize:12, fontWeight:700 }}>
-                {results.length}
+                {totalSearchResults}
               </span>
             </div>
             {searchDataLoading ? (
@@ -162,7 +228,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
                 border:"1px solid rgba(255,255,255,.05)" }}>
                 {t.loading || "Loading..."}
               </div>
-            ) : results.length === 0 ? (
+            ) : totalSearchResults === 0 ? (
               <div style={{ padding:28, textAlign:"center", color:tc.grey,
                 background:"rgba(255,255,255,.02)", borderRadius:12,
                 border:"1px solid rgba(255,255,255,.05)" }}>
@@ -170,7 +236,32 @@ export default function Dashboard({ store, onNavigate, onSelectClient, headerAct
               </div>
             ) : (
               <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                {results.map(c => {
+                {showSearchGroupTitles && (
+                  <SearchResultGroupTitle label={searchSectionLabels.programs} count={programResults.length} />
+                )}
+                {programResults.map((program) => {
+                  const registered = Object.prototype.hasOwnProperty.call(programClientCounts, program.id)
+                    ? programClientCounts[program.id]
+                    : getProgramClients(program.id).length;
+                  return (
+                    <ProgramSearchRow
+                      key={program.id}
+                      program={program}
+                      registered={registered}
+                      t={t}
+                      lang={lang}
+                      isRTL={isRTL}
+                      onClick={() => {
+                        if (typeof onSelectProgram === "function") onSelectProgram(program);
+                        else if (typeof onNavigate === "function") onNavigate("programs");
+                      }}
+                    />
+                  );
+                })}
+                {showSearchGroupTitles && (
+                  <SearchResultGroupTitle label={searchSectionLabels.clients} count={clientResults.length} />
+                )}
+                {clientResults.map(c => {
                   const prog  = getProgramById(c.programId);
                   const paid  = getClientTotalPaid(c.id);
                   const price = c.salePrice||c.price||0;
@@ -362,6 +453,82 @@ const ActivityRow = React.memo(function ActivityRow({ activity, index, programCo
           )}
         </div>
         <span style={{ fontSize:11, color:theme.colors.grey, whiteSpace:"nowrap" }}>{timeStr}</span>
+      </div>
+    </div>
+  );
+});
+
+const SearchResultGroupTitle = React.memo(function SearchResultGroupTitle({ label, count }) {
+  return (
+    <div style={{
+      display:"flex",
+      alignItems:"center",
+      justifyContent:"space-between",
+      gap:10,
+      padding:"6px 2px 2px",
+      color:theme.colors.grey,
+      fontSize:11,
+      fontWeight:800,
+    }}>
+      <span>{label}</span>
+      <span style={{
+        color:theme.colors.gold,
+        background:"rgba(212,175,55,.1)",
+        border:"1px solid rgba(212,175,55,.18)",
+        borderRadius:999,
+        padding:"1px 8px",
+        fontSize:10,
+      }}>
+        {count}
+      </span>
+    </div>
+  );
+});
+
+const ProgramSearchRow = React.memo(function ProgramSearchRow({ program, registered, onClick, t, lang, isRTL }) {
+  const [hov, setHov] = React.useState(false);
+  const departure = getProgramDepartureValue(program);
+  const returnDate = getProgramReturnValue(program);
+  const typeLabel = translateProgramType(program.type, lang);
+  const seats = Number(program.seats || 0);
+  const registeredText = seats > 0 ? `${registered}/${seats}` : String(registered || 0);
+  const metaParts = [
+    typeLabel,
+    departure ? `${t.departure || "الذهاب"}: ${departure}` : "",
+    returnDate ? `${t.returnDate || "العودة"}: ${returnDate}` : "",
+  ].filter(Boolean);
+
+  return (
+    <div onClick={onClick}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"11px 14px",
+        background:hov?"rgba(212,175,55,.06)":"rgba(255,255,255,.02)",
+        border:`1px solid ${hov?"rgba(212,175,55,.28)":"rgba(255,255,255,.06)"}`,
+        borderRadius:12, cursor:"pointer", transition:"all .2s",
+        transform:hov?"translateX(-2px)":"none" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
+        <div style={{ width:38, height:38, borderRadius:10, flexShrink:0,
+          background:"linear-gradient(135deg,rgba(26,107,58,.3),rgba(212,175,55,.08))",
+          border:"1px solid rgba(212,175,55,.2)",
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <AppIcon name="program" size={17} color={theme.colors.gold} />
+        </div>
+        <div style={{ minWidth:0 }}>
+          <p style={{ fontWeight:700, fontSize:14, color:theme.colors.white,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{program.name || "—"}</p>
+          <p style={{ fontSize:11, color:theme.colors.grey, marginTop:2,
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {metaParts.join(" • ") || "—"}
+          </p>
+        </div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+        <div style={{ textAlign:"center" }}>
+          <p style={{ fontSize:10, color:theme.colors.grey }}>{t.registered}</p>
+          <p style={{ fontSize:13, fontWeight:800, color:theme.colors.gold }}>{registeredText}</p>
+        </div>
+        <AppIcon name="chevronBack" size={18} color={theme.colors.grey} style={{ transform:isRTL?"rotate(180deg)":"none" }} />
       </div>
     </div>
   );

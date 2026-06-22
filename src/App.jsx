@@ -201,6 +201,16 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
     setSelectedClient(client);
   }, []);
 
+  const openProgramFile = React.useCallback((program) => {
+    if (!program?.id) return;
+    setNotificationFocus(null);
+    setPageHistory(h => [...h, page]);
+    setPage("programs");
+    if (typeof window !== "undefined") {
+      window.history.pushState({ page: "programs", programId: program.id }, "", "#programs");
+    }
+  }, [page]);
+
   const handleNotificationAction = React.useCallback((notification) => {
     if (!notification) return;
     store.markNotificationRead?.(notification.id);
@@ -374,6 +384,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
                 store={store}
                 onNavigate={navigate}
                 onSelectClient={openClientFile}
+                onSelectProgram={openProgramFile}
                 headerActions={
                   <HeaderActions
                     lang={lang}
