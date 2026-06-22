@@ -4,12 +4,17 @@ import { ChevronDown } from "lucide-react";
 import { StatusBadge, GlassCard, SearchBar, Button, Modal, Select } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { printClearancePDF } from "../utils/exportPdf";
 import { printInvoice, printProformaInvoice, printInvoiceSnapshot, previewInvoiceSnapshot, InvoiceRecipientModal } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import {
+  buildSearchText,
+  normalizeSearchText,
+} from "../utils/searchUtils";
 import {
   deleteSavedInvoiceSnapshot,
   downloadInvoiceWordDocument,
@@ -65,7 +70,7 @@ const formatFileReference = (client = {}) => {
 
 const CLEARANCE_PROGRAM_STORAGE_KEY = "rukn-clearance-selected-program";
 
-const normalizeText = (value) => String(value ?? "").trim().toLowerCase();
+const normalizeText = normalizeSearchText;
 
 const joinNormalizedValues = (...values) => values
   .flat()
@@ -615,9 +620,11 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
   const [filter, setFilter] = React.useState("all");
   const [statusFilterOpen, setStatusFilterOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 200);
   const [paymentMethodFilter, setPaymentMethodFilter] = React.useState("all");
   const [paymentMethodOpen, setPaymentMethodOpen] = React.useState(false);
   const [paymentContextSearch, setPaymentContextSearch] = React.useState("");
+  const debouncedPaymentContextSearch = useDebouncedValue(paymentContextSearch, 200);
   const [selectedProgramId, setSelectedProgramId] = React.useState(() => {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(CLEARANCE_PROGRAM_STORAGE_KEY) || "";
@@ -717,7 +724,7 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [selectedProgramId, filter, search, paymentMethodFilter, paymentContextSearch, pageSize]);
+  }, [selectedProgramId, filter, debouncedSearch, paymentMethodFilter, debouncedPaymentContextSearch, pageSize]);
 
   React.useEffect(() => {
     setPaymentContextSearch("");
@@ -832,15 +839,13 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
 
   const data = React.useMemo(() => programData.filter(c => {
     const ok1 = filter === "all" || c.status === filter;
-    const q   = search.toLowerCase();
-    const refMatch = (c.displayRef || "").toString().toLowerCase();
+    const q = normalizeSearchText(debouncedSearch);
+    const searchText = buildSearchText(c.displayName || c.name, c.id, c.displayRef);
     const ok2 = !q
-      || (c.displayName || c.name || "").toLowerCase().includes(q)
-      || (c.id || "").toLowerCase().includes(q)
-      || refMatch.includes(q);
+      || searchText.includes(q);
     const methodMatches = paymentMethodFilter === "all"
       || c.clientPayments.some((payment) => normalizePaymentMethod(payment) === paymentMethodFilter);
-    const contextQuery = normalizeText(paymentContextSearch);
+    const contextQuery = normalizeText(debouncedPaymentContextSearch);
     const hasContextSearch = ["cheque", "bank_transfer", "bank_deposit"].includes(paymentMethodFilter);
     const contextMatches = !hasContextSearch || !contextQuery
       || c.clientPayments.some((payment) => (
@@ -852,7 +857,7 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
         )
       ));
     return ok1 && ok2 && methodMatches && contextMatches;
-  }), [paymentContextSearch, programData, filter, paymentMethodFilter, search]);
+  }), [debouncedPaymentContextSearch, debouncedSearch, programData, filter, paymentMethodFilter]);
 
   const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
   const pageData = React.useMemo(() => {
@@ -1425,6 +1430,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
   const [yearFilter, setYearFilter] = React.useState("all");
   const [programFilter, setProgramFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 200);
   const [deleteTarget, setDeleteTarget] = React.useState(null);
   const [highlightedInvoiceId, setHighlightedInvoiceId] = React.useState("");
 
@@ -1458,7 +1464,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
   }, [programs]);
 
   const filteredInvoices = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeSearchText(debouncedSearch);
     return invoices.filter((invoice) => {
       const snapshotProgram = invoice.programSnapshot || {};
       const recipient = invoice.recipientSnapshot || {};
@@ -1467,7 +1473,7 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
         || getProgramYear({ departure: snapshotProgram.departureDate });
       const okYear = yearFilter === "all" || snapshotYear === String(yearFilter);
       const okProgram = programFilter === "all" || programKey === programFilter;
-      const haystack = [
+      const haystack = buildSearchText(
         recipient.name,
         recipient.clientName,
         recipient.companyName,
@@ -1476,10 +1482,10 @@ function InvoicesTab({ invoices = [], programs = [], labels, lang, dir, money, f
         invoice.invoiceDisplayNumber,
         invoice.invoiceNumber,
         invoice.id,
-      ].filter(Boolean).join(" ").toLowerCase();
+      );
       return okYear && okProgram && (!q || haystack.includes(q));
     });
-  }, [invoices, programFilter, search, yearFilter]);
+  }, [debouncedSearch, invoices, programFilter, yearFilter]);
 
   const renderInvoiceTitle = (invoice) => {
     const recipient = invoice.recipientSnapshot || {};

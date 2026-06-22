@@ -38,6 +38,7 @@ import {
   getProgramCostingLabels,
 } from "./programs/programCosting";
 import { useLang } from "../hooks/useLang";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { formatCurrency } from "../utils/currency";
 import { downloadAmadeusExcel } from "../utils/amadeus";
 import { escapeHtml } from "../utils/escapeHtml";
@@ -161,6 +162,10 @@ import {
   filterProgramClientsForList,
 } from "../features/programs/utils/programClientListFilters";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import {
+  includesSearch,
+  normalizeSearchText,
+} from "../utils/searchUtils";
 import {
   AlignCenter,
   AlignLeft,
@@ -2084,6 +2089,7 @@ export default function ProgramsPage({
     [programsFiltersStorageKey, currentYear]
   );
   const [search,        setSearch]        = React.useState(() => initialProgramsFilters.search);
+  const debouncedProgramSearch = useDebouncedValue(search, 200);
   const [selectedYear, setSelectedYear] = React.useState(() => initialProgramsFilters.selectedYear);
   const [programTypeFilter, setProgramTypeFilter] = React.useState(() => initialProgramsFilters.programTypeFilter);
   const [programStatusFilter, setProgramStatusFilter] = React.useState(() => initialProgramsFilters.programStatusFilter);
@@ -2198,7 +2204,7 @@ export default function ProgramsPage({
 
     setServerProgramPage({ status: "loading", data: null });
     db.programs.fetchPageSummary({
-      search,
+      search: debouncedProgramSearch,
       year: Number.isFinite(year) ? year : null,
       type: programTypeFilter,
       status: programStatusFilter,
@@ -2227,7 +2233,7 @@ export default function ProgramsPage({
     };
   }, [
     store.isSupabaseEnabled,
-    search,
+    debouncedProgramSearch,
     selectedYear,
     programTypeFilter,
     programStatusFilter,
@@ -2397,15 +2403,15 @@ export default function ProgramsPage({
   }, [activeProgramById, serverProgramPageData, serverProgramPageReady]);
 
   const baseFilteredPrograms = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeSearchText(debouncedProgramSearch);
     return activePrograms.filter((program) => {
-      const matchesSearch = !q || (program.name || "").toLowerCase().includes(q);
+      const matchesSearch = !q || includesSearch(program.name, q);
       if (!matchesSearch) return false;
       if (selectedYear === "all") return true;
       const departureYear = programSummaryById.get(String(program.id))?.year ?? getProgramDepartureYear(program);
       return departureYear === Number(selectedYear);
     });
-  }, [activePrograms, programSummaryById, search, selectedYear]);
+  }, [activePrograms, debouncedProgramSearch, programSummaryById, selectedYear]);
 
   const programTypeOptions = React.useMemo(() => ([
     { key: "all", label: programTypeLabels.all, count: baseFilteredPrograms.length },
@@ -3875,6 +3881,7 @@ function ProgramInner({
 
   const [filter,         setFilter]         = React.useState("all");
   const [search,         setSearch]         = React.useState("");
+  const debouncedClientSearch = useDebouncedValue(search, 200);
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [travelGroupMoveClient, setTravelGroupMoveClient] = React.useState(null);
   const [travelGroupMoveValue, setTravelGroupMoveValue] = React.useState("");
@@ -4598,10 +4605,10 @@ function ProgramInner({
     filter,
     packageFilter,
     serviceTypeFilter,
-    search,
+    search: debouncedClientSearch,
     getClientTotalPaid: getListClientTotalPaid,
     lang,
-  }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program, lang]);
+  }), [progClients, filter, packageFilter, serviceTypeFilter, debouncedClientSearch, getListClientTotalPaid, program, lang]);
   const travelGroupFiltered = React.useMemo(() => filterProgramClientsByTravelGroup({
     clients: filtered,
     showTravelGroupFilter,
@@ -4665,7 +4672,7 @@ function ProgramInner({
     setProgramClientPage(1);
     setCheckedIds(new Set());
     setBulkActionsOpen(false);
-  }, [search, filter, packageFilter, serviceTypeFilter, travelGroupFilter, programTab]);
+  }, [debouncedClientSearch, filter, packageFilter, serviceTypeFilter, travelGroupFilter, programTab]);
 
   React.useEffect(() => {
     setProgramClientPage((current) => Math.min(Math.max(1, current), totalProgramClientPages));

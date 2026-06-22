@@ -2,6 +2,7 @@ import React from "react";
 import { GlassCard, SearchBar, StatusBadge } from "./UI";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { formatCurrency } from "../utils/currency";
 import { AppIcon, IconBubble } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
@@ -9,9 +10,11 @@ import { translateActivityDescription, translateProgramType } from "../utils/i18
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import { createActivityProgramResolver, getActivityProgramLabel } from "../utils/activityProgramContext";
 import { normalizeProgramPackages } from "../utils/programPackages";
+import { includesSearch, normalizeSearchText } from "../utils/searchUtils";
 
 const tc = theme.colors;
-const normalizeSearchText = (value) => String(value || "").toLowerCase();
+const DASHBOARD_PROGRAM_RESULTS_LIMIT = 10;
+const DASHBOARD_CLIENT_RESULTS_LIMIT = 20;
 
 const getProgramDepartureValue = (program = {}) => (
   program.departure
@@ -41,6 +44,14 @@ const getSearchSectionLabels = (lang) => ({
       : "نتائج الحجاج والمعتمرين",
 });
 
+const getMoreSearchResultsLabel = (lang) => (
+  lang === "fr"
+    ? "D’autres résultats existent, veuillez affiner la recherche"
+    : lang === "en"
+      ? "More results are available, please refine your search"
+      : "توجد نتائج أخرى، يرجى تضييق البحث"
+);
+
 const getProgramSearchFields = (program = {}, lang = "ar") => {
   const packages = normalizeProgramPackages(program);
   return [
@@ -69,10 +80,12 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
   const { stats, clients, deletedClients = [], programs, deletedPrograms = [], payments = [], deletedPayments = [], activityLog,
           getClientStatus, getClientTotalPaid, getProgramClients, getProgramById } = store;
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 200);
   const [brandHover, setBrandHover] = React.useState(false);
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const searchDataLoading = Boolean(search.trim()) && (!clientsReady || !paymentsReady);
+  const searchDebouncing = normalizeSearchText(search) !== normalizeSearchText(debouncedSearch);
   const handleBrandClick = React.useCallback(() => {
     if (typeof onBrandNavigate === "function") {
       onBrandNavigate();
@@ -108,31 +121,40 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
   ), [programs]);
 
   const searchSectionLabels = React.useMemo(() => getSearchSectionLabels(lang), [lang]);
-  const { clientResults, programResults } = React.useMemo(() => {
-    if (!search.trim()) return { clientResults: [], programResults: [] };
-    if (!clientsReady) return { clientResults: [], programResults: [] };
-    const q = normalizeSearchText(search);
+  const moreSearchResultsLabel = React.useMemo(() => getMoreSearchResultsLabel(lang), [lang]);
+  const { clientResults, programResults, totalClientResults, totalProgramResults } = React.useMemo(() => {
+    if (!debouncedSearch.trim()) {
+      return { clientResults: [], programResults: [], totalClientResults: 0, totalProgramResults: 0 };
+    }
+    if (!clientsReady) {
+      return { clientResults: [], programResults: [], totalClientResults: 0, totalProgramResults: 0 };
+    }
+    const q = normalizeSearchText(debouncedSearch);
     const matchingPrograms = activePrograms.filter((program) => (
-      getProgramSearchFields(program, lang).some((field) => normalizeSearchText(field).includes(q))
+      getProgramSearchFields(program, lang).some((field) => includesSearch(field, q))
     ));
     const matchingProgramIds = new Set(matchingPrograms.map((program) => String(program.id)));
     const byClient = clients.filter(c =>
-      normalizeSearchText(c.name).includes(q)
-      || normalizeSearchText(c.phone).includes(q)
-      || normalizeSearchText(c.id).includes(q)
-      || normalizeSearchText(c.ticketNo).includes(q)
-      || normalizeSearchText(c.nameLatin).includes(q)
-      || normalizeSearchText(c.passport?.number).includes(q)
+      includesSearch(c.name, q)
+      || includesSearch(c.phone, q)
+      || includesSearch(c.id, q)
+      || includesSearch(c.ticketNo, q)
+      || includesSearch(c.nameLatin, q)
+      || includesSearch(c.passport?.number, q)
     );
     const byProg = matchingProgramIds.size
       ? clients.filter(c => matchingProgramIds.has(String(c.programId)))
       : [];
+    const allClientResults = [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()];
     return {
-      clientResults: [...new Map([...byClient, ...byProg].map(c => [c.id, c])).values()],
-      programResults: matchingPrograms,
+      clientResults: allClientResults.slice(0, DASHBOARD_CLIENT_RESULTS_LIMIT),
+      programResults: matchingPrograms.slice(0, DASHBOARD_PROGRAM_RESULTS_LIMIT),
+      totalClientResults: allClientResults.length,
+      totalProgramResults: matchingPrograms.length,
     };
-  }, [search, clients, clientsReady, activePrograms, lang]);
-  const totalSearchResults = clientResults.length + programResults.length;
+  }, [debouncedSearch, clients, clientsReady, activePrograms, lang]);
+  const totalSearchResults = totalClientResults + totalProgramResults;
+  const hasHiddenSearchResults = totalProgramResults > programResults.length || totalClientResults > clientResults.length;
   const showSearchGroupTitles = programResults.length > 0 && clientResults.length > 0;
 
   const programClientCounts = stats.programClientCounts || {};
@@ -222,7 +244,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
                 {totalSearchResults}
               </span>
             </div>
-            {searchDataLoading ? (
+            {searchDataLoading || searchDebouncing ? (
               <div style={{ padding:18, textAlign:"center", color:tc.grey,
                 background:"rgba(255,255,255,.02)", borderRadius:12,
                 border:"1px solid rgba(255,255,255,.05)" }}>
@@ -237,7 +259,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
             ) : (
               <div className="list-stack" style={{ display:"flex", flexDirection:"column", gap:6 }}>
                 {showSearchGroupTitles && (
-                  <SearchResultGroupTitle label={searchSectionLabels.programs} count={programResults.length} />
+                  <SearchResultGroupTitle label={searchSectionLabels.programs} count={totalProgramResults} />
                 )}
                 {programResults.map((program) => {
                   const registered = Object.prototype.hasOwnProperty.call(programClientCounts, program.id)
@@ -259,7 +281,7 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
                   );
                 })}
                 {showSearchGroupTitles && (
-                  <SearchResultGroupTitle label={searchSectionLabels.clients} count={clientResults.length} />
+                  <SearchResultGroupTitle label={searchSectionLabels.clients} count={totalClientResults} />
                 )}
                 {clientResults.map(c => {
                   const prog  = getProgramById(c.programId);
@@ -271,6 +293,19 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
                       status={getClientStatus(c)} onClick={()=>onSelectClient(c)} />
                   );
                 })}
+                {hasHiddenSearchResults && (
+                  <div style={{
+                    padding:"8px 12px",
+                    borderRadius:10,
+                    background:"rgba(212,175,55,.08)",
+                    color:tc.gold,
+                    fontSize:12,
+                    fontWeight:700,
+                    textAlign:"center",
+                  }}>
+                    {moreSearchResultsLabel}
+                  </div>
+                )}
               </div>
             )}
           </div>

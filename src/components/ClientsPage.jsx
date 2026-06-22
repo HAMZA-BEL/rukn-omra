@@ -8,6 +8,7 @@ import ImportClientsModal from "./ImportClientsModal";
 import MRZReader from "./MRZReader";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { formatCurrency } from "../utils/currency";
 import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
@@ -21,6 +22,10 @@ import {
   getClientProgramId,
   hasDeletedProgramContext,
 } from "../utils/clientCompletionStatus";
+import {
+  buildSearchText,
+  normalizeSearchText,
+} from "../utils/searchUtils";
 import { fetchClientsPage } from "../services/clientsService";
 
 const tc = theme.colors;
@@ -67,6 +72,7 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
           updateClient, transferClients: transferClientsToProgram } = store;
 
   const [search,     setSearch]     = React.useState("");
+  const debouncedSearch = useDebouncedValue(search, 200);
   const [filter,     setFilter]     = React.useState("all");
   const [typeFilter, setTypeFilter] = React.useState(CLIENT_TYPE_FILTERS.ALL);
   const [filterProg, setFilterProg] = React.useState("all");
@@ -131,17 +137,20 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
       const clientType = getClientType(c);
       const okType = typeFilter === CLIENT_TYPE_FILTERS.ALL || clientType === typeFilter;
       const ok2 = typeFilter === CLIENT_TYPE_FILTERS.UNASSIGNED || filterProg === "all" || getClientProgramId(c) === filterProg;
-      const q   = search.toLowerCase();
-      const displayName = getClientDisplayName(c, "", lang);
-      const ok3 = !q || displayName.toLowerCase().includes(q) ||
-        (c.phone||"").includes(q) || c.id.toLowerCase().includes(q) ||
-        (c.ticketNo||"").toLowerCase().includes(q);
+      const q = normalizeSearchText(debouncedSearch);
+      const searchText = buildSearchText(
+        getClientDisplayName(c, "", lang),
+        c.phone,
+        c.id,
+        c.ticketNo
+      );
+      const ok3 = !q || searchText.includes(q);
       return ok1 && okType && ok2 && ok3;
     });
-  }, [fallbackClients, filter, filterProg, search, getDisplayStatusForClient, getClientType, typeFilter, shouldUseFullFallback, lang]);
+  }, [fallbackClients, filter, filterProg, debouncedSearch, getDisplayStatusForClient, getClientType, typeFilter, shouldUseFullFallback, lang]);
 
   // Reset to page 1 whenever filters change.
-  React.useEffect(() => { setCurrentPage(1); }, [search, filter, typeFilter, filterProg]);
+  React.useEffect(() => { setCurrentPage(1); }, [debouncedSearch, filter, typeFilter, filterProg]);
 
   React.useEffect(() => {
     if (!useRemotePaging) {
@@ -166,7 +175,7 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
       pageSize: CLIENTS_PAGE_SIZE,
       archived: false,
       programId: filterProg === "all" ? null : filterProg,
-      search,
+      search: debouncedSearch,
     }).then((result) => {
       if (cancelled) return;
       setRemotePage({
@@ -182,7 +191,7 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
     });
 
     return () => { cancelled = true; };
-  }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, filterProg, search]);
+  }, [useRemotePaging, store.agencyId, store.lastSynced, currentPage, filterProg, debouncedSearch]);
 
   React.useEffect(() => {
     if (!store.isSupabaseEnabled) return;

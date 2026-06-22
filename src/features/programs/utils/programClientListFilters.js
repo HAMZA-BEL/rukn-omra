@@ -14,6 +14,10 @@ import {
   translateHotelLevel,
 } from "../../../utils/i18nValues";
 import {
+  buildSearchText,
+  normalizeSearchText,
+} from "../../../utils/searchUtils";
+import {
   getProgramClientDisplayStatus,
   getProgramClientRemainingAmount,
   getProgramClientSalePrice,
@@ -38,11 +42,13 @@ export function filterProgramClientsForList({
       || (packageFilter === "__unassigned" && !clientPackageLevel)
       || clientPackageLevel === packageFilter;
     const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(client) === serviceTypeFilter;
-    const q = search.toLowerCase();
-    const name = resolveClientDisplayName(client, "", lang).toLowerCase();
-    const phone = (client.phone || "").toLowerCase();
-    const id = (client.id || "").toLowerCase();
-    const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
+    const q = normalizeSearchText(search);
+    const searchText = buildSearchText(
+      resolveClientDisplayName(client, "", lang),
+      client.phone,
+      client.id
+    );
+    const matchesSearch = !q || searchText.includes(q);
     return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
   });
 }
