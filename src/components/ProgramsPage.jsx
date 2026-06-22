@@ -23,7 +23,7 @@ import { theme } from "./styles";
 import ProgramCard from "./programs/ProgramCard";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
 import ProgramLifecycleModals from "./programs/ProgramLifecycleModals";
-import PackageDetailCard from "./programs/PackageDetailCard";
+import ProgramPackageLevelsPanel from "./programs/ProgramPackageLevelsPanel";
 import ProgramEditorModal from "./programs/ProgramEditorModal";
 import ProgramDetailHeader from "./programs/ProgramDetailHeader";
 import ProgramClientsToolbar from "./programs/ProgramClientsToolbar";
@@ -53,15 +53,11 @@ import { db } from "../lib/db";
 import { AppIcon } from "./Icon";
 import {
   getPackageRoomPrice,
-  getPackageStartingPrice,
   getRoomTypeLabel,
   normalizeProgramPackages,
 } from "../utils/programPackages";
 import {
-  CLIENT_SERVICE_TYPES,
   doesServiceTypeNeedAccommodation,
-  getClientServiceType,
-  getClientServiceTypeAllFilterLabel,
   getClientServiceTypeLabel,
 } from "../utils/clientServiceTypes";
 import {
@@ -154,6 +150,16 @@ import {
   sortProgramClientsNewestFirst,
   upsertProgramClientsNewestFirst,
 } from "../features/programs/utils/programClientMetrics";
+import {
+  buildProgramClientPackageChips,
+  buildProgramClientServiceTypeFilters,
+  buildProgramClientStatusFilters,
+  computeProgramClientPaymentTotals,
+  computeProgramClientStatusCounts,
+  computeProgramClientTotals,
+  filterProgramClientsByTravelGroup,
+  filterProgramClientsForList,
+} from "../features/programs/utils/programClientListFilters";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
   AlignCenter,
@@ -4674,30 +4680,20 @@ function ProgramInner({
     return false;
   }, [currentProgram, lang, onToast, progClients.length, t]);
 
-  const filtered = React.useMemo(() => progClients.filter(c => {
-    const status = getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id));
-    const matchesFilter = filter === "all" || status === filter;
-    const clientPackageLevel = c.packageLevel || c.hotelLevel || "";
-    const matchesPackage = packageFilter === "all"
-      || (packageFilter === INCOMPLETE_INFO_FILTER && status === "information_incomplete")
-      || (packageFilter === "__unassigned" && !clientPackageLevel)
-      || clientPackageLevel === packageFilter;
-    const matchesServiceType = serviceTypeFilter === "all" || getClientServiceType(c) === serviceTypeFilter;
-    const q   = search.toLowerCase();
-    const name = resolveClientDisplayName(c, "", lang).toLowerCase();
-    const phone = (c.phone || "").toLowerCase();
-    const id = (c.id || "").toLowerCase();
-    const matchesSearch = !q || name.includes(q) || phone.includes(q) || id.includes(q);
-    return matchesFilter && matchesPackage && matchesServiceType && matchesSearch;
+  const filtered = React.useMemo(() => filterProgramClientsForList({
+    clients: progClients,
+    program,
+    filter,
+    packageFilter,
+    serviceTypeFilter,
+    search,
+    getClientTotalPaid: getListClientTotalPaid,
+    lang,
   }), [progClients, filter, packageFilter, serviceTypeFilter, search, getListClientTotalPaid, program, lang]);
-  const travelGroupFiltered = React.useMemo(() => filtered.filter((client) => {
-    if (!showTravelGroupFilter || travelGroupFilter === "all") return true;
-    const clientTravelGroupId = client.travelGroupId ?? client.travel_group_id ?? null;
-    const normalizedTravelGroupId = typeof clientTravelGroupId === "string"
-      ? clientTravelGroupId.trim()
-      : clientTravelGroupId;
-    if (travelGroupFilter === "__main_program") return !normalizedTravelGroupId;
-    return String(normalizedTravelGroupId || "") === travelGroupFilter;
+  const travelGroupFiltered = React.useMemo(() => filterProgramClientsByTravelGroup({
+    clients: filtered,
+    showTravelGroupFilter,
+    travelGroupFilter,
   }), [filtered, showTravelGroupFilter, travelGroupFilter]);
 
   const totalProgramClientItems = travelGroupFiltered.length;
@@ -4709,15 +4705,11 @@ function ProgramInner({
     () => travelGroupFiltered.slice(programClientStartIndex, programClientEndIndex),
     [travelGroupFiltered, programClientStartIndex, programClientEndIndex]
   );
-  const filteredPaymentTotals = React.useMemo(() => (
-    travelGroupFiltered.reduce((acc, client) => {
-      const paid = getListClientTotalPaid(client.id);
-      acc.amount += getProgramClientSalePrice(program, client);
-      acc.paid += paid;
-      acc.remaining += getProgramClientRemainingAmount(program, client, paid);
-      return acc;
-    }, { amount: 0, paid: 0, remaining: 0 })
-  ), [travelGroupFiltered, getListClientTotalPaid, program]);
+  const filteredPaymentTotals = React.useMemo(() => computeProgramClientPaymentTotals({
+    clients: travelGroupFiltered,
+    program,
+    getClientTotalPaid: getListClientTotalPaid,
+  }), [travelGroupFiltered, getListClientTotalPaid, program]);
   const programClientRangeStart = totalProgramClientItems ? programClientStartIndex + 1 : 0;
   const programClientRangeEnd = Math.min(programClientEndIndex, totalProgramClientItems);
   const programClientPageSizeOptions = React.useMemo(() => (
@@ -5023,60 +5015,49 @@ function ProgramInner({
     setBulkActionsOpen(false);
   }, [totalProgramClientPages]);
 
-  const totals = React.useMemo(() => ({
-    revenue: progClients.reduce((s,c)=>s + getProgramClientSalePrice(program, c),0),
-    paid:    progClients.reduce((s,c)=>s+getListClientTotalPaid(c.id),0),
-    remaining: progClients.reduce((s,c)=>s + getProgramClientRemainingAmount(program, c, getListClientTotalPaid(c.id)),0),
+  const totals = React.useMemo(() => computeProgramClientTotals({
+    clients: progClients,
+    program,
+    getClientTotalPaid: getListClientTotalPaid,
   }), [progClients, getListClientTotalPaid, program]);
   const totalRem  = totals.remaining;
-  const statusCounts = React.useMemo(() => ({
-    cleared: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="cleared").length,
-    partial: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="partial").length,
-    unpaid:  progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="unpaid").length,
-    information_incomplete: progClients.filter(c=>getProgramClientDisplayStatus(program, c, getListClientTotalPaid(c.id))==="information_incomplete").length,
+  const statusCounts = React.useMemo(() => computeProgramClientStatusCounts({
+    clients: progClients,
+    program,
+    getClientTotalPaid: getListClientTotalPaid,
   }), [progClients, getListClientTotalPaid, program]);
   const pct       = progClients.length > 0 ? Math.round((statusCounts.cleared/progClients.length)*100) : 0;
 
-  const filters = [
-    { key:"all",     label:t.all,          count:progClients.length },
-    { key:"cleared", label:t.clearedFilter, count:statusCounts.cleared },
-    { key:"partial", label:t.partialFilter, count:statusCounts.partial },
-    { key:"unpaid",  label:t.unpaidFilter,  count:statusCounts.unpaid },
-    { key:"information_incomplete", label:t.incompleteInfoFilter, count:statusCounts.information_incomplete },
-  ];
+  const filters = buildProgramClientStatusFilters({
+    clients: progClients,
+    statusCounts,
+    labels: {
+      all: t.all,
+      cleared: t.clearedFilter,
+      partial: t.partialFilter,
+      unpaid: t.unpaidFilter,
+      informationIncomplete: t.incompleteInfoFilter,
+    },
+  });
   const activeStatusFilter = filters.find(f => f.key === filter) || filters[0];
-  const serviceTypeFilters = React.useMemo(() => {
-    const countForServiceType = (serviceType) => (
-      progClients.filter((client) => getClientServiceType(client) === serviceType).length
-    );
-    return [
-      {
-        key: "all",
-        label: getClientServiceTypeAllFilterLabel(t, lang),
-        menuLabel: t.all,
-        count: progClients.length,
-      },
-      ...CLIENT_SERVICE_TYPES.map((serviceType) => ({
-        key: serviceType.value,
-        label: getClientServiceTypeLabel(serviceType.value, t, lang),
-        count: countForServiceType(serviceType.value),
-      })),
-    ];
-  }, [progClients, t, lang]);
+  const serviceTypeFilters = React.useMemo(() => buildProgramClientServiceTypeFilters({
+    clients: progClients,
+    t,
+    lang,
+  }), [progClients, t, lang]);
   const activeServiceTypeFilter = serviceTypeFilters.find(f => f.key === serviceTypeFilter) || serviceTypeFilters[0];
-  const packageChips = React.useMemo(() => {
-    const countForLevel = (level) => progClients.filter(c => (c.packageLevel || c.hotelLevel || "") === level).length;
-    const unassignedCount = progClients.filter(c => !(c.packageLevel || c.hotelLevel)).length;
-    const incompleteCount = progClients.filter((client) => (
-      getProgramClientDisplayStatus(program, client, getListClientTotalPaid(client.id)) === "information_incomplete"
-    )).length;
-    return [
-      { key: "all", label: t.all, count: progClients.length },
-      ...(incompleteCount ? [{ key: INCOMPLETE_INFO_FILTER, label: completionLabels.incompleteFilter, count: incompleteCount }] : []),
-      ...packages.map(pkg => ({ key: pkg.level, label: translateHotelLevel(pkg.level, lang) || pkg.level, count: countForLevel(pkg.level) })),
-      ...(unassignedCount ? [{ key: "__unassigned", label: t.noHotel || "غير محدد", count: unassignedCount }] : []),
-    ];
-  }, [completionLabels.incompleteFilter, getListClientTotalPaid, packages, progClients, program, t, lang]);
+  const packageChips = React.useMemo(() => buildProgramClientPackageChips({
+    clients: progClients,
+    packages,
+    program,
+    getClientTotalPaid: getListClientTotalPaid,
+    labels: {
+      all: t.all,
+      incomplete: completionLabels.incompleteFilter,
+      unassigned: t.noHotel || "غير محدد",
+    },
+    lang,
+  }), [completionLabels.incompleteFilter, getListClientTotalPaid, packages, progClients, program, t, lang]);
   const selectedPackageDetail = packageFilter === "all" || packageFilter === "__unassigned" || packageFilter === INCOMPLETE_INFO_FILTER
     ? null
     : packages.find(pkg => pkg.level === packageFilter) || null;
@@ -5944,138 +5925,26 @@ function ProgramInner({
         )
       ) : (
         <>
-      <GlassCard gold style={{ padding:"14px 16px", marginBottom:18 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", flexWrap:"wrap", marginBottom:10 }}>
-          <div>
-            <p style={{ fontSize:14, fontWeight:800, color:tc.gold }}>{t.programLevelsTitle || "مستويات البرنامج"}</p>
-            <p style={{ fontSize:11, color:tc.grey, marginTop:3 }}>
-              {t.programLevelsHint || "اختر مستوى لعرض تفاصيله وتصفية المعتمرين المرتبطين به."}
-            </p>
-          </div>
-          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-            <span style={{
-              fontSize:12,
-              color:tc.gold,
-              background:"rgba(212,175,55,.08)",
-              border:"1px solid rgba(212,175,55,.18)",
-              borderRadius:999,
-              padding:"4px 10px",
-              fontWeight:800,
-            }}>{packages.length} {t.levels || "مستويات"}</span>
-            <div ref={packageFilterRef} style={{ position:"relative" }}>
-              <button type="button" onClick={() => setPackageFilterOpen(open => !open)}
-                style={{
-                  minWidth:150,
-                  display:"inline-flex",
-                  alignItems:"center",
-                  justifyContent:"space-between",
-                  gap:10,
-                  border:"1px solid rgba(212,175,55,.22)",
-                  background:"rgba(212,175,55,.08)",
-                  color:tc.gold,
-                  borderRadius:12,
-                  padding:"7px 11px",
-                  fontSize:12,
-                  fontWeight:800,
-                  cursor:"pointer",
-                  fontFamily:"'Cairo',sans-serif",
-                }}>
-                <span style={{ display:"inline-flex", alignItems:"center", gap:7, minWidth:0 }}>
-                  <AppIcon name="program" size={14} color={tc.gold} />
-                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{activePackageChip.label}</span>
-                </span>
-                <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
-                  <span style={{
-                    minWidth:20,
-                    textAlign:"center",
-                    borderRadius:999,
-                    padding:"0 6px",
-                    background:"rgba(212,175,55,.16)",
-                    fontSize:10,
-                  }}>{activePackageChip.count}</span>
-                  <AppIcon name="chevronBack" size={13} color={tc.gold} style={{ transform:"rotate(-90deg)" }} />
-                </span>
-              </button>
-              {packageFilterOpen && (
-                <div style={{
-                  ...filterMenuBaseStyle,
-                  insetInlineEnd:0,
-                  width:190,
-                }}>
-                  {packageChips.map(chip => (
-                    <button key={chip.key} type="button" onClick={() => {
-                      setPackageFilter(chip.key);
-                      setPackageFilterOpen(false);
-                    }} style={filterMenuItemStyle(packageFilter === chip.key)}>
-                      <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{chip.label}</span>
-                      <span style={filterMenuCountStyle(packageFilter === chip.key)}>{chip.count}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        {packageFilter === INCOMPLETE_INFO_FILTER ? (
-          <div style={{
-            border:"1px dashed rgba(245,158,11,.28)",
-            background:"rgba(245,158,11,.08)",
-            borderRadius:10,
-            padding:"10px 12px",
-            color:tc.warning,
-            fontSize:12,
-            fontWeight:800,
-          }}>
-            {completionLabels.informationIncomplete}
-          </div>
-        ) : packageFilter === "__unassigned" ? (
-          <div style={{
-            border:"1px dashed rgba(148,163,184,.2)",
-            background:"rgba(148,163,184,.05)",
-            borderRadius:10,
-            padding:"10px 12px",
-            color:tc.grey,
-            fontSize:12,
-          }}>
-            {t.unassignedPackageHint || "يعرض هذا الخيار المعتمرين القدامى الذين لم يتم ربطهم بمستوى بعد."}
-          </div>
-        ) : selectedPackageDetail ? (
-          <PackageDetailCard pkg={selectedPackageDetail} formatCurrencyForLang={formatCurrencyForLang} t={t} />
-        ) : (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:8 }}>
-            {packages.map(pkg => {
-              const start = getPackageStartingPrice(pkg);
-              return (
-                <button key={pkg.id || pkg.level} type="button" onClick={() => setPackageFilter(pkg.level)}
-                  style={{
-                    border:"1px solid rgba(212,175,55,.14)",
-                    background:"rgba(0,0,0,.14)",
-                    borderRadius:10,
-                    padding:"10px 12px",
-                    display:"grid",
-                    gap:5,
-                    textAlign:"start",
-                    cursor:"pointer",
-                    fontFamily:"'Cairo',sans-serif",
-                  }}>
-                  <span style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center" }}>
-                    <strong style={{ color:tc.white, fontSize:13 }}>{translateHotelLevel(pkg.level, lang) || pkg.level}</strong>
-                    <span style={{ color:tc.gold, fontSize:11, fontWeight:800 }}>
-                      {start ? formatCurrencyForLang(start) : "—"}
-                    </span>
-                  </span>
-                  <span style={{ color:tc.grey, fontSize:11, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                    {pkg.hotelMecca || "—"} / {pkg.hotelMadina || "—"}
-                  </span>
-                  <span style={{ color:tc.grey, fontSize:11 }}>
-                    {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </GlassCard>
+      <ProgramPackageLevelsPanel
+        packages={packages}
+        packageFilter={packageFilter}
+        setPackageFilter={setPackageFilter}
+        packageFilterOpen={packageFilterOpen}
+        setPackageFilterOpen={setPackageFilterOpen}
+        packageFilterRef={packageFilterRef}
+        activePackageChip={activePackageChip}
+        packageChips={packageChips}
+        selectedPackageDetail={selectedPackageDetail}
+        incompleteInfoFilter={INCOMPLETE_INFO_FILTER}
+        incompleteInformationLabel={completionLabels.informationIncomplete}
+        filterMenuBaseStyle={filterMenuBaseStyle}
+        filterMenuItemStyle={filterMenuItemStyle}
+        filterMenuCountStyle={filterMenuCountStyle}
+        formatCurrencyForLang={formatCurrencyForLang}
+        lang={lang}
+        t={t}
+        tc={tc}
+      />
 
       {/* filters + search */}
       <ProgramClientsToolbar
