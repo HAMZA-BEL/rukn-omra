@@ -5,7 +5,7 @@ import TransferSheet from "./TransferSheet";
 import ClientDetail from "./ClientDetail";
 import ClientForm from "./ClientForm";
 import ImportClientsModal from "./ImportClientsModal";
-import MRZReader from "./MRZReader";
+import LazyMRZReader from "./LazyMRZReader";
 import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -1107,7 +1107,7 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
       </Modal>
       <Modal open={showPassportImport} onClose={() => setShowPassportImport(false)} title={t.passportImport || globalPassportImportLabel} width={1040}>
         {showPassportImport && (
-          <MRZReader
+          <LazyMRZReader
             store={store}
             onClose={() => setShowPassportImport(false)}
             onToast={onToast}

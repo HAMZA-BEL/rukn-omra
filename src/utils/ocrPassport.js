@@ -26,6 +26,7 @@ const performanceNow = () => (
 const roundedDuration = (startedAt) => Math.round((performanceNow() - startedAt) * 10) / 10;
 
 const logPassportPerformance = (event, payload = {}) => {
+  if (!MRZ_DEBUG) return;
   console.info(PASSPORT_PERF_PREFIX, event, payload);
 };
 

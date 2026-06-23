@@ -34,6 +34,7 @@ const performanceNow = () => (
 const passportDuration = (startedAt) => Math.round((performanceNow() - startedAt) * 10) / 10;
 
 const logPassportPerformance = (event, payload = {}) => {
+  if (!MRZ_DEV) return;
   console.info(PASSPORT_PERF_PREFIX, event, payload);
 };
 

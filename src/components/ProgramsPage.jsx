@@ -1030,6 +1030,7 @@ const retryRoomingOperation = async (operation, {
 };
 
 const logRoomingDiagnostic = (action, details = {}) => {
+  if (process.env.NODE_ENV === "production") return;
   try {
     console.info("[rooming]", { action, ...details });
   } catch {}
@@ -9660,6 +9661,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   }, []);
 
   const logRoomingUnifiedPrintDebug = React.useCallback((exportData, rooms = []) => {
+    if (process.env.NODE_ENV === "production") return;
     const debug = exportData?.roomingPrintDebug || {};
     console.log("unified rooming print debug", {
       unifyMakkahMadinah: Boolean(debug.unifyMakkahMadinah),

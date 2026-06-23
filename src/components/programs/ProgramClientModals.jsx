@@ -2,7 +2,7 @@ import { Button, Modal } from "../UI";
 import ClientDetail from "../ClientDetail";
 import ClientForm from "../ClientForm";
 import ImportClientsModal from "../ImportClientsModal";
-import MRZReader from "../MRZReader";
+import LazyMRZReader from "../LazyMRZReader";
 import TransferClientModal from "./TransferClientModal";
 
 export default function ProgramClientModals({
@@ -119,7 +119,7 @@ export default function ProgramClientModals({
         width={1040}
       >
         {isPassportImportOpen && (
-          <MRZReader
+          <LazyMRZReader
             store={store}
             onToast={onToast}
             onClose={onClosePassportImport}

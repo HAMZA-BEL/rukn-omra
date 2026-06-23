@@ -2071,7 +2071,9 @@ export const db = {
     async upsert(template, agencyId) {
       if (!agencyId) return { data: null, error: null };
       const payload = toBadgeTemplate(template, agencyId);
-      console.log("badge template insert payload", payload);
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("badge template insert payload", payload);
+      }
       if (payload.is_default) {
         await supabase
           .from("badge_templates")
