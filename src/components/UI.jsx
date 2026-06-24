@@ -806,11 +806,12 @@ export function Divider({ label, style }) {
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-export function Toast({ message, type = "success", onClose }) {
+export function Toast({ message, type = "success", onClose, duration = 3000, persistent = false }) {
   React.useEffect(() => {
-    const t = setTimeout(onClose, 3000);
-    return () => clearTimeout(t);
-  }, [onClose]);
+    if (persistent || !duration) return undefined;
+    const t = window.setTimeout(() => onClose?.(), duration);
+    return () => window.clearTimeout(t);
+  }, [duration, persistent, onClose, message, type]);
 
   const colors = {
     success: { bg: "rgba(34,197,94,.15)", border: "#22c55e", icon: "success", text: "var(--rukn-text-strong)", close: "var(--rukn-text-muted)" },

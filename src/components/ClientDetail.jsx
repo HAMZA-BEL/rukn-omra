@@ -20,7 +20,7 @@ import { downloadClientBadgePdf } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
-import { downloadSingleContract } from "../features/contracts";
+import { downloadSingleContract, getContractGenerationErrorMessage } from "../features/contracts";
 import {
   buildTravelGroupById,
   getTravelGroupContextKey,
@@ -495,6 +495,10 @@ export default function ClientDetail({
     if (!globalDetailReady) {
       return null;
     }
+    if (!client) {
+      onToast?.(getContractGenerationErrorMessage({ code: "missing-contract-client" }, lang), "error");
+      return null;
+    }
     if (!program) {
       onToast?.(labels.noProgram, "error");
       return;
@@ -559,7 +563,7 @@ export default function ClientDetail({
         onToast?.(error.templateType === "hajj" ? labels.missingHajj : labels.missingUmrah, "error");
       } else {
         console.error("[Contracts] Download failed:", error);
-        onToast?.(labels.error, "error");
+        onToast?.(getContractGenerationErrorMessage(error, lang) || labels.error, "error");
       }
       return null;
     } finally {

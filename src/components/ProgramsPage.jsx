@@ -101,6 +101,7 @@ import {
 } from "../features/badges";
 import {
   exportProgramWordContractsZip,
+  getContractGenerationErrorMessage,
 } from "../features/contracts";
 import { resolveClientTravelContext } from "../features/contracts/utils/contractTravelContext";
 import {
@@ -5571,7 +5572,7 @@ function ProgramInner({
         onToast(wordContractsExportLabels.noClients, "info");
       } else {
         console.error("[Contracts] Bulk Word export failed:", error);
-        onToast(wordContractsExportLabels.error, "error");
+        onToast(getContractGenerationErrorMessage(error, lang) || wordContractsExportLabels.error, "error");
       }
     } finally {
       setWordContractExportBusy(false);

@@ -13,7 +13,8 @@ import {
   getProgramAirline,
   normalizeAirlineCode,
 } from "../../../utils/airlines";
-import { getClientCin } from "../../../utils/clientRepresentation";
+import { calculateAgeAtDate } from "../../../utils/age";
+import { getClientCin, getRepresentativeRelationshipLabel } from "../../../utils/clientRepresentation";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
@@ -129,25 +130,49 @@ const getRepresentedMinorsText = (representedMinors = [], lang = "ar") => {
   return names.join(lang === "ar" ? "، " : ", ");
 };
 
-const getRepresentedMinorsDetails = (representedMinors = []) => (
+const getRepresentedMinorBirthDate = (minor = {}) => {
+  const passport = minor.passport || {};
+  return formatDateValue(firstValue(passport.birthDate, passport.birth_date, minor.birthDate, minor.birth_date, minor.dateOfBirth));
+};
+
+const getRepresentedMinorRelationship = (minor = {}, lang = "ar") => {
+  const relationship = firstValue(
+    minor.representedByRelationship,
+    minor.represented_by_relationship,
+    minor.guardianRelationship,
+    minor.guardian_relationship,
+    minor.docs?.representedByRelationship,
+    minor.docs?.represented_by_relationship,
+    minor.docs?.guardianRelationship,
+    minor.docs?.guardian_relationship
+  );
+  return relationship ? getRepresentativeRelationshipLabel(relationship, lang) : "";
+};
+
+const getRepresentedMinorsDetails = (representedMinors = [], lang = "ar") => (
   representedMinors.map((minor) => {
     const name = getRepresentedMinorName(minor);
     const cin = getClientCin(minor);
     const passport = firstValue(minor.passport?.number, minor.passportNumber, minor.passport_number);
+    const relationship = getRepresentedMinorRelationship(minor, lang);
     const identity = cin ? `CIN: ${cin}` : passport ? `Passport: ${passport}` : "";
-    return [name, identity].filter(Boolean).join(" — ");
+    return [name, relationship, identity].filter(Boolean).join(" — ");
   }).filter(Boolean).join("\n")
 );
 
-const buildRepresentedMinorTemplateData = (minor = {}) => {
+const buildRepresentedMinorTemplateData = (minor = {}, lang = "ar") => {
   const passport = minor.passport || {};
+  const birthDate = getRepresentedMinorBirthDate(minor);
+  const age = calculateAgeAtDate(birthDate);
   return {
     full_name: getRepresentedMinorName(minor),
     first_name: firstValue(minor.firstName, minor.first_name, minor.prenom, passport.givenNames, passport.givenName, passport.firstName),
     last_name: firstValue(minor.lastName, minor.last_name, minor.nom, passport.surname, passport.lastName),
     cin: getClientCin(minor),
     passport_number: firstValue(passport.number, minor.passportNumber, minor.passport_number, minor.passportNo, minor.passport_no),
-    birth_date: formatDateValue(firstValue(passport.birthDate, passport.birth_date, minor.birthDate, minor.birth_date, minor.dateOfBirth)),
+    birth_date: birthDate,
+    age: age === null ? "" : String(age),
+    relationship: getRepresentedMinorRelationship(minor, lang),
     phone: firstValue(minor.phone),
     address: firstValue(minor.address, minor.adress, minor.addressLine, minor.homeAddress, minor.city),
     gender: firstValue(minor.gender, passport.gender),
@@ -170,9 +195,9 @@ const buildRepresentedMinorTemplateData = (minor = {}) => {
   };
 };
 
-const buildNumberedRepresentedFields = (representedItems = []) => (
+const buildNumberedRepresentedFields = (representedItems = [], lang = "ar") => (
   representedItems.reduce((acc, minor, index) => {
-    acc[`represented_${index + 1}`] = buildRepresentedMinorTemplateData(minor);
+    acc[`represented_${index + 1}`] = buildRepresentedMinorTemplateData(minor, lang);
     return acc;
   }, {})
 );
@@ -219,26 +244,42 @@ export const buildContractTemplateData = ({
   const programLevel = getClientProgramLevel(program, client, lang);
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
   const hotelStayDates = getProgramHotelStayDates(program, client);
-  const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems);
+  const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems, lang);
   const programRoute = getProgramRouteText(program);
+  const representedMinorData = representedMinorItems.map((minor) => buildRepresentedMinorTemplateData(minor, lang));
+  const firstRepresentedMinor = representedMinorData[0] || {};
+  const pilgrimData = {
+    full_name: fullName,
+    first_name: firstValue(client.firstName, client.prenom),
+    last_name: firstValue(client.lastName, client.nom),
+    cin: firstValue(client.cin, client.CIN, client.nationalId, client.national_id, passport.cin, passport.nationalId),
+    passport_number: firstValue(passport.number, client.passportNumber, client.passport_number),
+    address: firstValue(client.address, client.adress, client.addressLine, client.homeAddress, client.city),
+    birth_date: formatDateValue(firstValue(passport.birthDate, passport.birth_date, client.birthDate, client.birth_date)),
+    phone: firstValue(client.phone),
+    room_type: getClientRoomType(client, lang),
+  };
 
   return {
     ...numberedRepresentedFields,
-    represented_minors: representedMinorItems.map(buildRepresentedMinorTemplateData),
+    represented_minors: representedMinorData,
     represented_minors_list: getRepresentedMinorsText(representedMinorItems, lang),
     represented_minors_count: representedMinorItems.length ? String(representedMinorItems.length) : "",
-    represented_minors_details: getRepresentedMinorsDetails(representedMinorItems),
-    pilgrim: {
-      full_name: fullName,
-      first_name: firstValue(client.firstName, client.prenom),
-      last_name: firstValue(client.lastName, client.nom),
-      cin: firstValue(client.cin, client.CIN, client.nationalId, client.national_id, passport.cin, passport.nationalId),
-      passport_number: firstValue(passport.number, client.passportNumber, client.passport_number),
-      address: firstValue(client.address, client.adress, client.addressLine, client.homeAddress, client.city),
-      birth_date: formatDateValue(firstValue(passport.birthDate, passport.birth_date, client.birthDate, client.birth_date)),
-      phone: firstValue(client.phone),
-      room_type: getClientRoomType(client, lang),
-    },
+    represented_minors_details: getRepresentedMinorsDetails(representedMinorItems, lang),
+    pilgrim: pilgrimData,
+    client: pilgrimData,
+    guardian: pilgrimData,
+    representative: pilgrimData,
+    minor: firstRepresentedMinor,
+    full_name: pilgrimData.full_name,
+    first_name: pilgrimData.first_name,
+    last_name: pilgrimData.last_name,
+    cin: pilgrimData.cin,
+    passport_number: pilgrimData.passport_number,
+    address: pilgrimData.address,
+    birth_date: pilgrimData.birth_date,
+    phone: pilgrimData.phone,
+    room_type: pilgrimData.room_type,
     program: {
       name: firstValue(program.name, program.nameFr),
       type: programType,

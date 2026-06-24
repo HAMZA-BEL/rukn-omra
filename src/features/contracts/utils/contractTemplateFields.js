@@ -17,6 +17,11 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
   {
     key: "pilgrim",
     title: { ar: "المعتمر", fr: "Pèlerin", en: "Pilgrim" },
+    help: {
+      ar: "pilgrim.* تخص العميل الرئيسي في العقد. في عقد القاصر المرتبط بولي/ممثل تعرض بيانات الولي أو الممثل.",
+      fr: "pilgrim.* correspond au client principal du contrat. Pour un mineur lié à un tuteur/représentant, ces champs affichent le tuteur ou représentant.",
+      en: "pilgrim.* is the main client in the contract. For a minor linked to a guardian/representative, these fields show the guardian or representative.",
+    },
     fields: [
       {
         placeholder: "{{pilgrim.full_name}}",
@@ -65,6 +70,45 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
     ],
   },
   {
+    key: "main_client_aliases",
+    title: { ar: "أسماء بديلة للعميل الرئيسي", fr: "Alias du client principal", en: "Main client aliases" },
+    help: {
+      ar: "هذه الحقول مرادفات آمنة لبيانات العميل الرئيسي حتى تبقى القوالب القديمة متوافقة.",
+      fr: "Ces champs sont des alias sûrs des données du client principal pour garder les anciens modèles compatibles.",
+      en: "These fields are safe aliases for the main client data to keep older templates compatible.",
+    },
+    fields: [
+      {
+        placeholder: "{{client.full_name}}",
+        description: { ar: "الاسم الكامل للعميل الرئيسي", fr: "Nom complet du client principal", en: "Main client full name" },
+      },
+      {
+        placeholder: "{{guardian.full_name}}",
+        description: { ar: "الاسم الكامل للولي/الممثل عند وجود قاصر", fr: "Nom complet du tuteur/représentant si mineur", en: "Guardian/representative full name when a minor is involved" },
+      },
+      {
+        placeholder: "{{representative.full_name}}",
+        description: { ar: "الاسم الكامل لمن ينوب عن القاصر", fr: "Nom complet du représentant du mineur", en: "Full name of the minor representative" },
+      },
+      {
+        placeholder: "{{full_name}}",
+        description: { ar: "الاسم الكامل للعميل الرئيسي بدون بادئة", fr: "Nom complet du client principal sans préfixe", en: "Main client full name without a prefix" },
+      },
+      {
+        placeholder: "{{passport_number}}",
+        description: { ar: "رقم جواز سفر العميل الرئيسي بدون بادئة", fr: "Passeport du client principal sans préfixe", en: "Main client passport number without a prefix" },
+      },
+      {
+        placeholder: "{{cin}}",
+        description: { ar: "رقم البطاقة الوطنية للعميل الرئيسي بدون بادئة", fr: "CIN du client principal sans préfixe", en: "Main client CIN without a prefix" },
+      },
+      {
+        placeholder: "{{birth_date}}",
+        description: { ar: "تاريخ ازدياد العميل الرئيسي بدون بادئة", fr: "Date de naissance du client principal sans préfixe", en: "Main client birth date without a prefix" },
+      },
+    ],
+  },
+  {
     key: "program",
     title: { ar: "البرنامج", fr: "Programme", en: "Program" },
     fields: [
@@ -104,8 +148,12 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
   },
   {
     key: "representation",
-    hidden: true,
     title: { ar: "النيابة", fr: "Représentation", en: "Representation" },
+    help: {
+      ar: "represented_minors تخص قائمة القاصرين الذين ينوب عنهم العميل الرئيسي.",
+      fr: "represented_minors correspond à la liste des mineurs représentés par le client principal.",
+      en: "represented_minors is the list of minors represented by the main client.",
+    },
     fields: [
       {
         placeholder: "{{represented_minors_list}}",
@@ -134,16 +182,55 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
     ],
   },
   {
+    key: "minor_aliases",
+    title: { ar: "القاصر الأول", fr: "Premier mineur", en: "First minor" },
+    help: {
+      ar: "minor.* يعرض بيانات أول قاصر في قائمة النيابة. إذا لم يوجد قاصر تبقى هذه الحقول فارغة.",
+      fr: "minor.* affiche les données du premier mineur représenté. S’il n’y a pas de mineur, ces champs restent vides.",
+      en: "minor.* shows the first represented minor. If there is no minor, these fields stay empty.",
+    },
+    fields: [
+      {
+        placeholder: "{{minor.full_name}}",
+        description: { ar: "الاسم الكامل لأول قاصر", fr: "Nom complet du premier mineur", en: "First minor full name" },
+      },
+      {
+        placeholder: "{{minor.birth_date}}",
+        description: { ar: "تاريخ ازدياد أول قاصر", fr: "Date de naissance du premier mineur", en: "First minor birth date" },
+      },
+      {
+        placeholder: "{{minor.passport_number}}",
+        description: { ar: "رقم جواز سفر أول قاصر", fr: "Passeport du premier mineur", en: "First minor passport number" },
+      },
+      {
+        placeholder: "{{minor.cin}}",
+        description: { ar: "رقم البطاقة الوطنية لأول قاصر إن وجد", fr: "CIN du premier mineur si disponible", en: "First minor CIN if available" },
+      },
+      {
+        placeholder: "{{minor.age}}",
+        description: { ar: "سن أول قاصر", fr: "Âge du premier mineur", en: "First minor age" },
+      },
+      {
+        placeholder: "{{minor.relationship}}",
+        description: { ar: "صلة أول قاصر بالولي/الممثل", fr: "Lien du premier mineur avec le tuteur/représentant", en: "First minor relationship to guardian/representative" },
+      },
+    ],
+  },
+  {
     key: "represented_minors_loop",
-    hidden: true,
     title: {
       ar: "القاصرون الذين ينوب عنهم هذا المعتمر",
       fr: "Mineurs représentés par ce pèlerin",
       en: "Minors represented by this pilgrim",
     },
+    help: {
+      ar: "داخل الحلقة استعمل الحقول بدون بادئة مثل {{full_name}} و {{relationship}}.",
+      fr: "Dans la boucle, utilisez les champs sans préfixe comme {{full_name}} et {{relationship}}.",
+      en: "Inside the loop, use fields without a prefix such as {{full_name}} and {{relationship}}.",
+    },
     fields: [
       {
-        token: "{{#represented_minors}}\n{{full_name}} - {{cin}} - {{passport_number}}\n{{/represented_minors}}",
+        token: "{{#represented_minors}}\n{{full_name}} - {{relationship}} - {{cin}} - {{passport_number}}\n{{/represented_minors}}",
         description: {
           ar: "مثال حلقة تكرار القاصرين الذين ينوب عنهم هذا المعتمر",
           fr: "Exemple de boucle répétable pour les mineurs représentés par ce pèlerin",
@@ -207,6 +294,22 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
         },
       },
       {
+        token: "{{age}}",
+        description: {
+          ar: "داخل الحلقة: سن القاصر",
+          fr: "Dans la boucle : âge du mineur",
+          en: "Inside the loop: minor age",
+        },
+      },
+      {
+        token: "{{relationship}}",
+        description: {
+          ar: "داخل الحلقة: صلة القاصر بالولي/الممثل",
+          fr: "Dans la boucle : lien avec le tuteur/représentant",
+          en: "Inside the loop: relationship to guardian/representative",
+        },
+      },
+      {
         token: "{{phone}}",
         description: {
           ar: "داخل الحلقة: هاتف القاصر",
@@ -255,7 +358,7 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
         },
       },
       {
-        token: "{{#represented_minors}} | {{full_name}} | {{cin}} | {{passport_number}} | {{/represented_minors}}",
+        token: "{{#represented_minors}} | {{full_name}} | {{relationship}} | {{cin}} | {{passport_number}} | {{/represented_minors}}",
         description: {
           ar: "مثال صف جدول Word: ضع بداية الحلقة في أول خلية ونهايتها في آخر خلية من نفس الصف ليتم تكرار الصف لكل قاصر.",
           fr: "Exemple de ligne de tableau Word : placez le début de la boucle dans la première cellule et la fin dans la dernière cellule de la même ligne.",
@@ -268,45 +371,53 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
     key: "represented_numbered_fields",
     title: { ar: "حقول النيابة", fr: "Champs de représentation", en: "Representation fields" },
     help: {
-      ar: "استبدل number بـ 1 أو 2 أو 3 حسب ترتيب الشخص الذي ينوب عنه المعتمر. مثال: {{represented_1.full_name}}",
-      fr: "Remplacez number par 1, 2 ou 3 selon l’ordre de la personne représentée. Exemple : {{represented_1.full_name}}",
-      en: "Replace number with 1, 2, or 3 based on the represented person order. Example: {{represented_1.full_name}}",
+      ar: "هذه أمثلة للقاصر الأول. لاستعمال القاصر الثاني أو الثالث غيّر الرقم 1 إلى 2 أو 3 حسب الترتيب.",
+      fr: "Ces exemples concernent le premier mineur. Pour le deuxième ou troisième mineur, remplacez 1 par 2 ou 3 selon l’ordre.",
+      en: "These examples target the first minor. For the second or third minor, change 1 to 2 or 3 based on order.",
     },
     fields: [
       {
-        token: "{{represented_number.full_name}}",
+        token: "{{represented_1.full_name}}",
         description: { ar: "الاسم الكامل", fr: "Nom complet", en: "Full name" },
       },
       {
-        token: "{{represented_number.first_name}}",
+        token: "{{represented_1.first_name}}",
         description: { ar: "الاسم الشخصي", fr: "Prénom", en: "First name" },
       },
       {
-        token: "{{represented_number.last_name}}",
+        token: "{{represented_1.last_name}}",
         description: { ar: "الاسم العائلي", fr: "Nom", en: "Last name" },
       },
       {
-        token: "{{represented_number.passport_number}}",
+        token: "{{represented_1.passport_number}}",
         description: { ar: "رقم جواز السفر", fr: "Numéro de passeport", en: "Passport number" },
       },
       {
-        token: "{{represented_number.cin}}",
+        token: "{{represented_1.cin}}",
         description: { ar: "رقم البطاقة الوطنية", fr: "CIN", en: "National ID / CIN" },
       },
       {
-        token: "{{represented_number.nationality}}",
+        token: "{{represented_1.nationality}}",
         description: { ar: "الجنسية", fr: "Nationalité", en: "Nationality" },
       },
       {
-        token: "{{represented_number.address}}",
+        token: "{{represented_1.address}}",
         description: { ar: "العنوان", fr: "Adresse", en: "Address" },
       },
       {
-        token: "{{represented_number.birth_date}}",
+        token: "{{represented_1.birth_date}}",
         description: { ar: "تاريخ الازدياد", fr: "Date de naissance", en: "Birth date" },
       },
       {
-        token: "{{represented_number.file_number}}",
+        token: "{{represented_1.age}}",
+        description: { ar: "السن", fr: "Âge", en: "Age" },
+      },
+      {
+        token: "{{represented_1.relationship}}",
+        description: { ar: "صلة القاصر بالولي/الممثل", fr: "Lien avec le tuteur/représentant", en: "Relationship to guardian/representative" },
+      },
+      {
+        token: "{{represented_1.file_number}}",
         description: { ar: "رقم الملف", fr: "Numéro de dossier", en: "File number" },
       },
     ],

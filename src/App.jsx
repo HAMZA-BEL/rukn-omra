@@ -55,6 +55,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
   const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
+  const closeToast = React.useCallback(() => setToast(null), []);
   const inactivityLogout = useInactivityLogout({
     enabled: Boolean(onLogout && agencyId),
     onLogout,
@@ -532,7 +533,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
         lang={lang}
       />
 
-      {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={()=>setToast(null)} />}
+      {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={closeToast} />}
     </>
   );
 }

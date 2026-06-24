@@ -23,6 +23,66 @@ import {
 
 const ZIP_MIME = "application/zip";
 
+const createContractGenerationError = (code, details = {}) => {
+  const error = new Error(code);
+  error.code = code;
+  Object.assign(error, details);
+  return error;
+};
+
+const hasContractClient = (client) => Boolean(
+  client
+  && typeof client === "object"
+  && (client.id || client.firstName || client.lastName || client.name || getClientDisplayName(client))
+);
+
+const hasContractProgram = (program) => Boolean(
+  program
+  && typeof program === "object"
+  && Object.keys(program).length > 0
+);
+
+const formatUnknownPlaceholderList = (unknownTags = []) => {
+  const tags = (Array.isArray(unknownTags) ? unknownTags : []).filter(Boolean).slice(0, 6);
+  return tags.length ? `: ${tags.join("، ")}` : "";
+};
+
+export const getContractGenerationErrorMessage = (error, lang = "ar") => {
+  const unknownList = formatUnknownPlaceholderList(error?.unknownTags);
+  switch (error?.code) {
+    case "missing-contract-client":
+      return lang === "fr" ? "Veuillez sélectionner un client avant de générer le contrat."
+        : lang === "en" ? "Please select a client before generating the contract."
+        : "يرجى اختيار عميل قبل إنشاء العقد.";
+    case "missing-contract-program":
+      return lang === "fr" ? "Aucun programme valide n’est lié à ce contrat."
+        : lang === "en" ? "No valid program is linked to this contract."
+        : "لا يوجد برنامج صالح مرتبط بهذا العقد.";
+    case "missing-contract-template-file":
+      return lang === "fr" ? "Le fichier du modèle de contrat est introuvable. Veuillez réimporter le modèle."
+        : lang === "en" ? "The contract template file could not be loaded. Please upload the template again."
+        : "تعذر تحميل ملف قالب العقد. يرجى رفع القالب مرة أخرى.";
+    case "invalid-contract-template":
+      return lang === "fr" ? "Impossible de lire le modèle. Veuillez importer un fichier Word .docx valide."
+        : lang === "en" ? "Unable to read the template. Please upload a valid Word .docx file."
+        : "تعذر قراءة قالب العقد. يرجى رفع قالب Word صالح بصيغة .docx.";
+    case "unknown-contract-placeholders":
+      return lang === "fr" ? `Le modèle contient des champs inconnus${unknownList}. Veuillez les corriger depuis la liste des champs disponibles.`
+        : lang === "en" ? `The template contains unknown fields${unknownList}. Please correct them using the available fields list.`
+        : `قالب العقد يحتوي على حقول غير معروفة${unknownList}. يرجى تصحيحها من قائمة الحقول المتاحة.`;
+    case "empty-contract-template":
+      return lang === "fr" ? "Le contrat généré est vide. Veuillez vérifier que le modèle contient du texte ou des champs valides."
+        : lang === "en" ? "The generated contract is empty. Please make sure the template contains text or valid fields."
+        : "العقد الناتج فارغ. يرجى التأكد من أن القالب يحتوي على نص أو حقول صالحة.";
+    case "contract-generation-failed":
+      return lang === "fr" ? "La génération du contrat a échoué. Veuillez vérifier le modèle puis réessayer."
+        : lang === "en" ? "Contract generation failed. Please check the template and try again."
+        : "فشل إنشاء العقد. يرجى مراجعة القالب ثم المحاولة مرة أخرى.";
+    default:
+      return "";
+  }
+};
+
 const cleanFilePart = (value, fallback = "contract") => {
   const cleaned = String(value || fallback)
     .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, " ")
@@ -58,6 +118,7 @@ const buildContractsZipFileName = (program) => {
 };
 
 const getTemplateForProgram = async ({ agencyId, program } = {}) => {
+  if (!hasContractProgram(program)) throw createContractGenerationError("missing-contract-program");
   const templateType = getContractTemplateType(program);
   const { data: templates, error: fetchError } = await fetchContractTemplates({ agencyId });
   if (fetchError) throw fetchError;
@@ -71,6 +132,7 @@ const getTemplateForProgram = async ({ agencyId, program } = {}) => {
 
   const { data: arrayBuffer, error: downloadError } = await getContractTemplateArrayBuffer({ template });
   if (downloadError) throw downloadError;
+  if (!arrayBuffer) throw createContractGenerationError("missing-contract-template-file");
   return { templateType, arrayBuffer };
 };
 
@@ -85,6 +147,8 @@ const buildClientContractDocx = ({
   representedMinors,
   lang,
 } = {}) => {
+  if (!templateArrayBuffer) throw createContractGenerationError("missing-contract-template-file");
+  if (!hasContractClient(client)) throw createContractGenerationError("missing-contract-client");
   const contractData = buildContractTemplateData({
     client,
     program,
@@ -262,6 +326,7 @@ export async function downloadSingleContract({
   representedMinors,
   lang,
 } = {}) {
+  if (!hasContractClient(client)) throw createContractGenerationError("missing-contract-client");
   const { templateType, arrayBuffer } = await getTemplateForProgram({ agencyId, program });
   const blob = buildClientContractDocx({
     templateArrayBuffer: arrayBuffer,

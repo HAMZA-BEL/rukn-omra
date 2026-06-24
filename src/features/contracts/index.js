@@ -2,6 +2,7 @@ export { ContractTemplatesSettings } from "./components/ContractTemplatesSetting
 export {
   downloadSingleContract,
   exportProgramWordContractsZip,
+  getContractGenerationErrorMessage,
 } from "./services/contractGeneration";
 export {
   fetchContractTemplates,
