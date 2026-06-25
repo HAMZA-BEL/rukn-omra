@@ -17,10 +17,11 @@ export default function ProgramDetailHeader({
   headerActions,
   hoveredHeaderAction,
   setHoveredHeaderAction,
+  nusukUploadToggleEnabled = false,
   onAddClient,
   addClientLabel,
 }) {
-  const nusukUploadEnabled = Boolean(program?.nusukUploadEnabled ?? program?.nusuk_upload_enabled);
+  const nusukUploadEnabled = Boolean(nusukUploadToggleEnabled && (program?.nusukUploadEnabled ?? program?.nusuk_upload_enabled));
 
   return (
     <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:24, flexWrap:"wrap" }}>

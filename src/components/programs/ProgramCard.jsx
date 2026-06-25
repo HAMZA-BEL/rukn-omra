@@ -53,7 +53,9 @@ const getTravelGroupCountLabel = (count, lang) => {
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, onToggleNusukUpload, lang, formatCurrencyForLang,
   highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null,
-  travelGroupCount = 0 }) {
+  travelGroupCount = 0, nusukUploadToggleEnabled = false,
+  nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
+  nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا." }) {
   const [hov, setHov] = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const [hoveredAction, setHoveredAction] = React.useState("");
@@ -63,6 +65,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
   const nusukUploadEnabled = Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled);
+  const showNusukUploadEnabledState = Boolean(nusukUploadToggleEnabled && nusukUploadEnabled);
   const hasProgramSummary = programSummary && Number.isFinite(Number(programSummary.packageCount));
   const packages = hasProgramSummary ? [] : normalizeProgramPackages(program);
   const packageCount = hasProgramSummary ? Number(programSummary.packageCount) : getProgramPackageCount(program);
@@ -96,8 +99,13 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
     },
     typeof onToggleNusukUpload === "function" ? {
       key: "nusuk-upload",
-      icon: nusukUploadEnabled ? "check" : "upload",
-      label: nusukUploadEnabled ? "إيقاف الرفع لنسك" : "رفع لنسك",
+      icon: showNusukUploadEnabledState ? "check" : "upload",
+      label: nusukUploadToggleEnabled
+        ? (showNusukUploadEnabledState ? "إيقاف الرفع لنسك" : "رفع لنسك")
+        : nusukUploadLaunchLabel,
+      disabled: !nusukUploadToggleEnabled,
+      helper: !nusukUploadToggleEnabled ? nusukUploadLaunchHelper : "",
+      title: !nusukUploadToggleEnabled ? nusukUploadLaunchHelper : undefined,
       onClick: onToggleNusukUpload,
     } : null,
     canArchive ? {
@@ -137,6 +145,10 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
 
   const runMenuAction = React.useCallback((event, action) => {
     event.stopPropagation();
+    if (action.disabled) {
+      event.preventDefault();
+      return;
+    }
     setActionsOpen(false);
     setHoveredAction("");
     action.onClick?.(event);
@@ -228,7 +240,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
               </span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
-              {nusukUploadEnabled && (
+              {showNusukUploadEnabledState && (
                 <span style={{
                   display:"inline-flex",
                   alignItems:"center",
@@ -282,6 +294,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
                   }}
                 >
                   {menuActions.map((action, index) => {
+                    const disabled = Boolean(action.disabled);
                     const hovered = hoveredAction === action.key;
                     const isDelete = action.danger;
                     return (
@@ -292,31 +305,41 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
                         <button
                           type="button"
                           role="menuitem"
-                          onMouseEnter={() => setHoveredAction(action.key)}
+                          disabled={disabled}
+                          title={action.title || action.helper || action.label}
+                          onMouseEnter={() => !disabled && setHoveredAction(action.key)}
                           onMouseLeave={() => setHoveredAction(current => current === action.key ? "" : current)}
                           onClick={(event) => runMenuAction(event, action)}
                           style={{
                             width:"100%",
                             border:0,
                             borderRadius:8,
-                            background:hovered
+                            background:hovered && !disabled
                               ? isDelete ? "var(--rukn-danger-dim)" : "var(--rukn-gold-dim)"
                               : "transparent",
-                            color:isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-strong)",
+                            color:disabled ? "var(--rukn-text-muted)" : isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-strong)",
                             display:"flex",
                             alignItems:"center",
                             gap:9,
                             padding:"9px 10px",
                             fontSize:12,
                             fontWeight:800,
-                            cursor:"pointer",
+                            cursor:disabled ? "not-allowed" : "pointer",
+                            opacity:disabled ? 0.66 : 1,
                             textAlign:"start",
                             fontFamily:"'Cairo',sans-serif",
                             transition:"background .16s ease, color .16s ease",
                           }}
                         >
-                          <AppIcon name={action.icon} size={14} color={isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-muted)"} />
-                          <span style={{ flex:1 }}>{action.label}</span>
+                          <AppIcon name={action.icon} size={14} color={disabled ? "var(--rukn-text-muted)" : isDelete ? tc.danger : hovered ? tc.gold : "var(--rukn-text-muted)"} />
+                          <span style={{ flex:1, minWidth:0 }}>
+                            <span>{action.label}</span>
+                            {action.helper && (
+                              <span style={{ display:"block", marginTop:3, color:"var(--rukn-text-muted)", fontSize:10, fontWeight:700, lineHeight:1.45 }}>
+                                {action.helper}
+                              </span>
+                            )}
+                          </span>
                         </button>
                       </React.Fragment>
                     );

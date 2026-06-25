@@ -45,6 +45,7 @@ export default function ProgramActionsMenu({
                 key={action.key}
                 type="button"
                 disabled={disabled}
+                title={action.title || action.helper || action.label}
                 onMouseEnter={() => !disabled && onHoverAction(action.key)}
                 onMouseLeave={() => onHoverAction(current => current === action.key ? "" : current)}
                 onClick={(event) => {
@@ -74,7 +75,14 @@ export default function ProgramActionsMenu({
                 }}
               >
                 <AppIcon name={action.icon} size={15} color={hovered && !disabled ? tc.gold : "var(--rukn-text-muted)"} />
-                <span>{action.label}</span>
+                <span style={{ minWidth:0 }}>
+                  <span>{action.label}</span>
+                  {action.helper && (
+                    <span style={{ display:"block", marginTop:3, color:"var(--rukn-text-muted)", fontSize:10, fontWeight:700, lineHeight:1.45 }}>
+                      {action.helper}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}

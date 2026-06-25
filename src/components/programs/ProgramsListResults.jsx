@@ -27,6 +27,9 @@ export default function ProgramsListResults({
   onArchiveProgram,
   onDeleteProgram,
   onToggleProgramNusukUpload,
+  nusukUploadToggleEnabled = false,
+  nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
+  nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.",
   onToggleProgramSelection,
   onPreviousProgramsPage,
   onNextProgramsPage,
@@ -153,6 +156,9 @@ export default function ProgramsListResults({
                   event.stopPropagation();
                   onToggleProgramNusukUpload?.(program);
                 }}
+                nusukUploadToggleEnabled={nusukUploadToggleEnabled}
+                nusukUploadLaunchLabel={nusukUploadLaunchLabel}
+                nusukUploadLaunchHelper={nusukUploadLaunchHelper}
                 lang={lang}
                 formatCurrencyForLang={formatCurrencyForLang}
               />
