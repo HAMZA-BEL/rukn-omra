@@ -1,2 +1,3 @@
 /api/extension/auth/login    /.netlify/functions/extension-auth-login   200!
+/api/extension/programs    /.netlify/functions/extension-programs   200!
 /*    /index.html   200

@@ -9,6 +9,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/extension/programs"
+  to = "/.netlify/functions/extension-programs"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
