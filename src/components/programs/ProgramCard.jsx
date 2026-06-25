@@ -51,7 +51,7 @@ const getTravelGroupCountLabel = (count, lang) => {
 };
 
 export default function ProgramCard({ program, registered, pct, totalPaid, totalRemaining,
-  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, lang, formatCurrencyForLang,
+  cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, onToggleNusukUpload, lang, formatCurrencyForLang,
   highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null,
   travelGroupCount = 0 }) {
   const [hov, setHov] = React.useState(false);
@@ -62,6 +62,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const selectionMode = typeof onSelectionChange === "function";
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
+  const nusukUploadEnabled = Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled);
   const hasProgramSummary = programSummary && Number.isFinite(Number(programSummary.packageCount));
   const packages = hasProgramSummary ? [] : normalizeProgramPackages(program);
   const packageCount = hasProgramSummary ? Number(programSummary.packageCount) : getProgramPackageCount(program);
@@ -93,6 +94,12 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
       label: t.edit,
       onClick: onEdit,
     },
+    typeof onToggleNusukUpload === "function" ? {
+      key: "nusuk-upload",
+      icon: nusukUploadEnabled ? "check" : "upload",
+      label: nusukUploadEnabled ? "إيقاف الرفع لنسك" : "رفع لنسك",
+      onClick: onToggleNusukUpload,
+    } : null,
     canArchive ? {
       key: "archive",
       icon: "archive",
@@ -221,6 +228,21 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
               </span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
               <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
+              {nusukUploadEnabled && (
+                <span style={{
+                  display:"inline-flex",
+                  alignItems:"center",
+                  gap:4,
+                  fontSize:11,
+                  color:tc.greenLight,
+                  background:"rgba(34,197,94,.12)",
+                  padding:"2px 10px",
+                  borderRadius:20,
+                }}>
+                  <AppIcon name="upload" size={10} color={tc.greenLight} />
+                  مفعل لنسك
+                </span>
+              )}
             </div>
           </div>
           <div style={{ display:"flex", gap:6, alignItems:"center", position:"relative", direction:dir }} onClick={e=>e.stopPropagation()}>

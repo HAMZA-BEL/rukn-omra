@@ -242,6 +242,8 @@ const fromProgramPageSummaryItem = (row = {}) => {
     deleted: false,
     deletedAt: null,
     status: row.status || "active",
+    nusukUploadEnabled: Boolean(row.nusuk_upload_enabled ?? row.nusukUploadEnabled),
+    nusuk_upload_enabled: Boolean(row.nusuk_upload_enabled ?? row.nusukUploadEnabled),
     programSummary: summary,
   };
 };
@@ -324,6 +326,7 @@ const PROGRAM_SELECT_COLUMNS = [
   "deleted_at",
   "deleted_batch_id",
   "status",
+  "nusuk_upload_enabled",
   "created_at",
 ].join(", ");
 
@@ -491,6 +494,7 @@ const toProgram = (p, agencyId) => ({
   deleted_at:   p.deletedAt    ?? null,
   deleted_batch_id: p.deletedBatchId ?? null,
   status:       p.status       ?? "active",
+  nusuk_upload_enabled: Boolean(p.nusukUploadEnabled ?? p.nusuk_upload_enabled ?? false),
   updated_at:   new Date().toISOString(),
 });
 
@@ -524,6 +528,8 @@ const fromProgram = (row) => ({
   deletedAt:   row.deleted_at,
   deletedBatchId: row.deleted_batch_id,
   status:      row.status,
+  nusukUploadEnabled: Boolean(row.nusuk_upload_enabled),
+  nusuk_upload_enabled: Boolean(row.nusuk_upload_enabled),
 });
 
 const toNullableVisitOrder = (value) => {

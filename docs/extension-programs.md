@@ -21,6 +21,8 @@ Authorization: Bearer <accessToken>
 
 The extension must not send `agencyId`. The endpoint resolves `agencyId` from the authenticated Rukn user profile and ignores any query/body agency value.
 
+Only programs explicitly enabled from Rukn with the `رفع لنسك` action are returned. Programs that have not been enabled for Nusuk Assistant upload are hidden from this endpoint.
+
 ## Successful response
 
 ```json

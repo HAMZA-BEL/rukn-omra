@@ -165,7 +165,10 @@ exports.handler = async (event) => {
       .from("programs")
       .select("id, agency_id, name, name_fr, type, departure, return_date, status")
       .eq("agency_id", profile.agency_id)
+      .eq("nusuk_upload_enabled", true)
       .or("deleted.is.null,deleted.eq.false")
+      .is("deleted_at", null)
+      .or("status.is.null,status.neq.archived")
       .order("created_at", { ascending: true });
 
     if (programsError) {

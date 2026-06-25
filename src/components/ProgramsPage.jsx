@@ -695,6 +695,10 @@ const isActiveTransferDestinationProgram = (program = {}) => (
   && String(program.status || "active").toLowerCase() !== "archived"
 );
 
+const isProgramNusukUploadEnabled = (program = {}) => (
+  Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled)
+);
+
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
 const ROOMING_BASE_CELL_WIDTH = 132;
@@ -3081,6 +3085,20 @@ export default function ProgramsPage({
   const handleProgramCardDelete = React.useCallback((program, programClients) => {
     setDeletePrompt({ program, clients: programClients });
   }, []);
+  const handleProgramCardNusukUploadToggle = React.useCallback((program) => {
+    if (!program?.id) return;
+    const nextEnabled = !isProgramNusukUploadEnabled(program);
+    updateProgram(program.id, {
+      nusukUploadEnabled: nextEnabled,
+      nusuk_upload_enabled: nextEnabled,
+    });
+    onToast(
+      nextEnabled
+        ? "تم تفعيل البرنامج لنسك"
+        : "تم إيقاف رفع البرنامج لنسك",
+      nextEnabled ? "success" : "info"
+    );
+  }, [onToast, updateProgram]);
   const goToPreviousProgramsPage = React.useCallback(() => {
     setProgramsCurrentPage((page) => Math.max(1, page - 1));
   }, []);
@@ -3766,6 +3784,7 @@ export default function ProgramsPage({
         onDuplicateProgram={openDuplicatePrompt}
         onArchiveProgram={handleProgramCardArchive}
         onDeleteProgram={handleProgramCardDelete}
+        onToggleProgramNusukUpload={handleProgramCardNusukUploadToggle}
         onToggleProgramSelection={toggleProgramSelection}
         onPreviousProgramsPage={goToPreviousProgramsPage}
         onNextProgramsPage={goToNextProgramsPage}
@@ -3948,6 +3967,7 @@ function ProgramInner({
   });
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
+  const currentNusukUploadEnabled = isProgramNusukUploadEnabled(program);
   const isHajjProgram = getProgramKind(program) === "hajj";
   const currentProgramTravelGroups = React.useMemo(() => (
     (store.programTravelGroups || [])
@@ -5448,6 +5468,20 @@ function ProgramInner({
     closeHeaderActions();
     setCostingOpen(true);
   }, [closeHeaderActions]);
+  const handleToggleNusukUpload = React.useCallback(() => {
+    closeHeaderActions();
+    const nextEnabled = !currentNusukUploadEnabled;
+    updateProgram?.(program.id, {
+      nusukUploadEnabled: nextEnabled,
+      nusuk_upload_enabled: nextEnabled,
+    });
+    onToast?.(
+      nextEnabled
+        ? "تم تفعيل البرنامج لنسك"
+        : "تم إيقاف رفع البرنامج لنسك",
+      nextEnabled ? "success" : "info"
+    );
+  }, [closeHeaderActions, currentNusukUploadEnabled, onToast, program.id, updateProgram]);
   const handleProgramTabChange = React.useCallback((nextTab) => {
     setProgramTab(nextTab);
     if (nextTab === "rooming") ensureGlobalDetailData({ notify: true });
@@ -5640,6 +5674,12 @@ function ProgramInner({
       onClick: handleEditProgram,
     },
     {
+      key: "nusuk-upload",
+      icon: currentNusukUploadEnabled ? "check" : "upload",
+      label: currentNusukUploadEnabled ? "إيقاف الرفع لنسك" : "رفع لنسك",
+      onClick: handleToggleNusukUpload,
+    },
+    {
       key: "costing",
       icon: "coins",
       label: costingLabels.action,
@@ -5709,7 +5749,7 @@ function ProgramInner({
   ].filter((action) => (
     (badgesEnabled || action.key !== "badges")
     && (contractsEnabled || (action.key !== "word-contracts" && action.key !== "contracts"))
-  ))), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, badgesEnabled, completionLabels.passportImport, contractsEnabled, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ))), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, badgesEnabled, completionLabels.passportImport, contractsEnabled, costingLabels.action, currentNusukUploadEnabled, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleToggleNusukUpload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>

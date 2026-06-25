@@ -26,6 +26,7 @@ export default function ProgramsListResults({
   onDuplicateProgram,
   onArchiveProgram,
   onDeleteProgram,
+  onToggleProgramNusukUpload,
   onToggleProgramSelection,
   onPreviousProgramsPage,
   onNextProgramsPage,
@@ -147,6 +148,10 @@ export default function ProgramsListResults({
                 onDelete={(event) => {
                   event.stopPropagation();
                   onDeleteProgram(program, deletePromptClients);
+                }}
+                onToggleNusukUpload={(event) => {
+                  event.stopPropagation();
+                  onToggleProgramNusukUpload?.(program);
                 }}
                 lang={lang}
                 formatCurrencyForLang={formatCurrencyForLang}

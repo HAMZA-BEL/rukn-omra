@@ -350,6 +350,12 @@ const PROGRAM_ACTIVITY_DIFF_FIELDS = [
   { label: "مسار الرحلة", getValue: getActivityProgramRoute },
   { label: "فندق مكة", getValue: (program) => getFirstActivityValue(program, ["hotelMecca", "hotel_mecca"]) },
   { label: "فندق المدينة", getValue: (program) => getFirstActivityValue(program, ["hotelMadina", "hotel_madina"]) },
+  {
+    label: "رفع نسك",
+    getValue: (program) => (
+      (program?.nusukUploadEnabled ?? program?.nusuk_upload_enabled) ? "مفعل" : "غير مفعل"
+    ),
+  },
 ];
 
 const buildProgramUpdateActivityDetails = (previousProgram, nextProgram) => {
@@ -1800,6 +1806,8 @@ export function useStore(agencyId, onToast) {
       priceTable: row.price_table ?? [],
       notes: row.notes,
       status: row.status,
+      nusukUploadEnabled: Boolean(row.nusuk_upload_enabled),
+      nusuk_upload_enabled: Boolean(row.nusuk_upload_enabled),
       deleted: row.deleted ?? false,
       deletedAt: row.deleted_at ?? null,
       deletedBatchId: row.deleted_batch_id ?? null,

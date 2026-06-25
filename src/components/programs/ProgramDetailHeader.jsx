@@ -1,4 +1,5 @@
 import { Button } from "../UI";
+import { AppIcon } from "../Icon";
 import { theme } from "../styles";
 import ProgramActionsMenu from "./ProgramActionsMenu";
 
@@ -19,6 +20,8 @@ export default function ProgramDetailHeader({
   onAddClient,
   addClientLabel,
 }) {
+  const nusukUploadEnabled = Boolean(program?.nusukUploadEnabled ?? program?.nusuk_upload_enabled);
+
   return (
     <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:24, flexWrap:"wrap" }}>
       {typeof onBack === "function" && (
@@ -34,6 +37,24 @@ export default function ProgramDetailHeader({
           {t.hotelMecca}: {program.hotelMecca || "—"} &nbsp;•&nbsp;
           {t.hotelMadina}: {program.hotelMadina || "—"}
         </p>
+        {nusukUploadEnabled && (
+          <span style={{
+            display:"inline-flex",
+            alignItems:"center",
+            gap:5,
+            marginTop:8,
+            padding:"3px 10px",
+            borderRadius:20,
+            border:"1px solid rgba(34,197,94,.24)",
+            background:"rgba(34,197,94,.1)",
+            color:tc.greenLight,
+            fontSize:11,
+            fontWeight:800,
+          }}>
+            <AppIcon name="upload" size={12} color={tc.greenLight} />
+            مفعل لنسك
+          </span>
+        )}
       </div>
       <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", direction:"ltr" }}>
         <ProgramActionsMenu

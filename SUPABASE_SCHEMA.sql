@@ -86,6 +86,7 @@ create table if not exists public.programs (
   deleted_batch_id uuid,
   price_table  jsonb not null default '[]',
   status       text not null default 'active',
+  nusuk_upload_enabled boolean not null default false,
   created_at   timestamptz default now(),
   updated_at   timestamptz default now()
 );
@@ -357,6 +358,9 @@ create index if not exists idx_notifications_dedupe
 -- ── 2. Performance Indexes ────────────────────────────────────
 create index if not exists idx_users_agency       on public.users(agency_id);
 create index if not exists idx_programs_agency    on public.programs(agency_id);
+create index if not exists idx_programs_agency_nusuk_upload_enabled
+  on public.programs(agency_id, nusuk_upload_enabled)
+  where coalesce(deleted, false) = false;
 create index if not exists idx_clients_agency     on public.clients(agency_id);
 create index if not exists idx_clients_program    on public.clients(program_id);
 create index if not exists idx_clients_represented_by on public.clients(agency_id, represented_by_client_id);
