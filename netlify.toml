@@ -6,6 +6,7 @@
   from = "/api/extension/auth/login"
   to = "/.netlify/functions/extension-auth-login"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/*"
