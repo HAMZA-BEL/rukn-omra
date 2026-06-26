@@ -703,9 +703,29 @@ const isProgramNusukUploadEnabled = (program = {}) => (
   Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled)
 );
 
-const isLocalhost = () => {
+const isPrivateLanIpv4 = (hostname = "") => {
+  const match = String(hostname).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return false;
+  const octets = match.slice(1).map(Number);
+  if (octets.some((octet) => octet < 0 || octet > 255)) return false;
+  const [first, second] = octets;
+  return (
+    first === 10
+    || (first === 192 && second === 168)
+    || (first === 172 && second >= 16 && second <= 31)
+  );
+};
+
+const isLocalDevelopmentHost = () => {
   if (typeof window === "undefined") return false;
-  return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const hostname = String(window.location.hostname || "").trim().toLowerCase();
+  return (
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "::1"
+    || hostname === "[::1]"
+    || isPrivateLanIpv4(hostname)
+  );
 };
 
 const NUSUK_UPLOAD_LAUNCH_LABEL = "رفع لنسك — قيد الإطلاق";
@@ -2103,7 +2123,7 @@ export default function ProgramsPage({
     (value) => formatCurrency(value, lang),
     [lang]
   );
-  const nusukUploadToggleEnabled = isLocalhost();
+  const nusukUploadToggleEnabled = isLocalDevelopmentHost();
   const { templates: bulkAssignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const bulkPosterExportLabels = React.useMemo(() => getPosterExportLabels(lang, t), [lang, t]);
   const [showForm,      setShowForm]      = React.useState(false);
@@ -4029,7 +4049,7 @@ function ProgramInner({
     ), String(template));
   }, [t]);
   const formatCurrencyForLang = React.useCallback((value) => formatCurrency(value, lang), [lang]);
-  const nusukUploadToggleEnabled = isLocalhost();
+  const nusukUploadToggleEnabled = isLocalDevelopmentHost();
 
   const [filter,         setFilter]         = React.useState("all");
   const [search,         setSearch]         = React.useState("");

@@ -1,4 +1,5 @@
 /api/extension/auth/login    /.netlify/functions/extension-auth-login   200!
 /api/extension/programs    /.netlify/functions/extension-programs   200!
 /api/extension/program-clients    /.netlify/functions/extension-program-clients   200!
+/api/extension/agency-contact-settings    /.netlify/functions/extension-agency-contact-settings   200!
 /*    /index.html   200

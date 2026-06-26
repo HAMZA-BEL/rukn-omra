@@ -21,6 +21,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/extension/agency-contact-settings"
+  to = "/.netlify/functions/extension-agency-contact-settings"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
