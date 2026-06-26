@@ -19,6 +19,10 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button, GlassCard, Modal, Input, Select, EmptyState, preventNumberInputWheelChange } from "./UI";
+import {
+  NusukSettingsModal,
+  hasCompleteNusukContactSettings,
+} from "./NusukSettingsFields";
 import { theme } from "./styles";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
 import ProgramLifecycleModals from "./programs/ProgramLifecycleModals";
@@ -706,6 +710,26 @@ const isLocalhost = () => {
 
 const NUSUK_UPLOAD_LAUNCH_LABEL = "رفع لنسك — قيد الإطلاق";
 const NUSUK_UPLOAD_LAUNCH_HELPER = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.";
+const NUSUK_UPLOAD_URL = "https://masar.nusuk.sa/pub/login";
+const NUSUK_UPLOAD_OPEN_DEBOUNCE_MS = 4000;
+let lastNusukUploadOpen = { url: "", at: 0 };
+
+const openNusukUploadUrl = (programId = "") => {
+  if (typeof window === "undefined") return false;
+  const encodedProgramId = encodeURIComponent(String(programId || ""));
+  if (!encodedProgramId) return false;
+  const launchUrl = `${NUSUK_UPLOAD_URL}?ruknNusuk=1&programId=${encodedProgramId}`;
+  const now = Date.now();
+  if (
+    lastNusukUploadOpen.url === launchUrl
+    && now - lastNusukUploadOpen.at < NUSUK_UPLOAD_OPEN_DEBOUNCE_MS
+  ) {
+    return false;
+  }
+  lastNusukUploadOpen = { url: launchUrl, at: now };
+  window.open(launchUrl, "_blank", "noopener,noreferrer");
+  return true;
+};
 
 const ROOMING_ROWS = 60;
 const ROOMING_COLS = 20;
@@ -2063,7 +2087,7 @@ export default function ProgramsPage({
   programPostersEnabled = true,
 }) {
   const { programs, clients, addProgram, updateProgram, archiveProgramRecord, trashProgramRecord, deleteProgram,
-          getClientTotalPaid } = store;
+          getClientTotalPaid, ensureAgencyNusukSettings, saveAgencyNusukSettings, setProgramNusukUploadEnabled } = store;
   const { t, lang, dir } = useLang();
   const isRTL = dir === "rtl";
   const clientsReady = !store.isSupabaseEnabled || store.clientsLoaded;
@@ -2128,6 +2152,8 @@ export default function ProgramsPage({
   const [archivePrompt, setArchivePrompt] = React.useState(null);
   const [bulkTrashPrompt, setBulkTrashPrompt] = React.useState(null);
   const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
+  const [nusukSettingsPrompt, setNusukSettingsPrompt] = React.useState(null);
+  const [nusukSettingsSaving, setNusukSettingsSaving] = React.useState(false);
   const [serverProgramPage, setServerProgramPage] = React.useState({ status: "idle", data: null });
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
@@ -3094,21 +3120,96 @@ export default function ProgramsPage({
   const handleProgramCardDelete = React.useCallback((program, programClients) => {
     setDeletePrompt({ program, clients: programClients });
   }, []);
-  const handleProgramCardNusukUploadToggle = React.useCallback((program) => {
+
+  const enableProgramForNusukUploadAndOpen = React.useCallback(async (program) => {
+    if (!program?.id) return { error: new Error("missing-program-id") };
+    const result = typeof setProgramNusukUploadEnabled === "function"
+      ? await setProgramNusukUploadEnabled(program.id, true)
+      : await updateProgram(program.id, {
+        nusukUploadEnabled: true,
+        nusuk_upload_enabled: true,
+      });
+    if (result?.error) {
+      if (typeof setProgramNusukUploadEnabled === "function") {
+        await setProgramNusukUploadEnabled(program.id, false);
+      } else {
+        updateProgram(program.id, {
+          nusukUploadEnabled: false,
+          nusuk_upload_enabled: false,
+        });
+      }
+      onToast("تعذر تفعيل البرنامج لنسك", "error");
+      return result;
+    }
+    onToast("تم تفعيل البرنامج لنسك", "success");
+    openNusukUploadUrl(program.id);
+    return result || { error: null };
+  }, [onToast, setProgramNusukUploadEnabled, updateProgram]);
+
+  const handleProgramCardNusukUploadToggle = React.useCallback(async (program) => {
     if (!nusukUploadToggleEnabled) return;
     if (!program?.id) return;
-    const nextEnabled = !isProgramNusukUploadEnabled(program);
-    updateProgram(program.id, {
-      nusukUploadEnabled: nextEnabled,
-      nusuk_upload_enabled: nextEnabled,
-    });
-    onToast(
-      nextEnabled
-        ? "تم تفعيل البرنامج لنسك"
-        : "تم إيقاف رفع البرنامج لنسك",
-      nextEnabled ? "success" : "info"
-    );
-  }, [nusukUploadToggleEnabled, onToast, updateProgram]);
+    const currentEnabled = isProgramNusukUploadEnabled(program);
+
+    if (currentEnabled) {
+      const result = typeof setProgramNusukUploadEnabled === "function"
+        ? await setProgramNusukUploadEnabled(program.id, false)
+        : await updateProgram(program.id, {
+          nusukUploadEnabled: false,
+          nusuk_upload_enabled: false,
+        });
+      if (result?.error) {
+        onToast("تعذر إيقاف رفع البرنامج لنسك", "error");
+        return;
+      }
+      onToast("تم إيقاف رفع البرنامج لنسك", "info");
+      return;
+    }
+
+    const settingsResult = await ensureAgencyNusukSettings?.();
+    if (settingsResult?.error) {
+      console.error("[Nusuk] Unable to load agency settings:", settingsResult.error);
+      onToast("تعذر تحميل إعدادات نسك", "error");
+      return;
+    }
+
+    if (!hasCompleteNusukContactSettings(settingsResult?.data)) {
+      setNusukSettingsPrompt({ program });
+      return;
+    }
+
+    await enableProgramForNusukUploadAndOpen(program);
+  }, [enableProgramForNusukUploadAndOpen, ensureAgencyNusukSettings, nusukUploadToggleEnabled, onToast, setProgramNusukUploadEnabled, updateProgram]);
+
+  const handleCancelNusukSettingsPrompt = React.useCallback(() => {
+    if (nusukSettingsSaving) return;
+    setNusukSettingsPrompt(null);
+  }, [nusukSettingsSaving]);
+
+  const handleSaveNusukSettingsAndContinue = React.useCallback(async (settings) => {
+    if (!nusukUploadToggleEnabled) return { error: new Error("nusuk-upload-disabled") };
+    const program = nusukSettingsPrompt?.program;
+    if (!program?.id) return { error: new Error("missing-program-id") };
+
+    setNusukSettingsSaving(true);
+    try {
+      if (typeof saveAgencyNusukSettings !== "function") {
+        throw new Error("nusuk-settings-save-unavailable");
+      }
+      const settingsResult = await saveAgencyNusukSettings(settings);
+      if (settingsResult?.error) throw settingsResult.error;
+      const enableResult = await enableProgramForNusukUploadAndOpen(program);
+      if (enableResult?.error) return enableResult;
+      setNusukSettingsPrompt(null);
+      return { data: settingsResult?.data || null, error: null };
+    } catch (error) {
+      console.error("[Nusuk] Unable to save agency settings:", error);
+      onToast("تعذر حفظ إعدادات نسك", "error");
+      return { error };
+    } finally {
+      setNusukSettingsSaving(false);
+    }
+  }, [enableProgramForNusukUploadAndOpen, nusukSettingsPrompt, nusukUploadToggleEnabled, onToast, saveAgencyNusukSettings]);
   const goToPreviousProgramsPage = React.useCallback(() => {
     setProgramsCurrentPage((page) => Math.max(1, page - 1));
   }, []);
@@ -3133,6 +3234,7 @@ export default function ProgramsPage({
             setEditing(prog);
             setEditingProgramClients(programClients);
           }}
+          onToggleProgramNusukUpload={handleProgramCardNusukUploadToggle}
         />
         <ProgramEditorModal
           open={!!editing}
@@ -3147,6 +3249,13 @@ export default function ProgramsPage({
             setTravelGroupCountsRefreshKey((key) => key + 1);
             setProgramDetailRefreshKey((key) => key + 1);
           }}
+        />
+        <NusukSettingsModal
+          open={Boolean(nusukSettingsPrompt)}
+          initialSettings={store.agencyNusukSettings}
+          saving={nusukSettingsSaving}
+          onCancel={handleCancelNusukSettingsPrompt}
+          onSave={handleSaveNusukSettingsAndContinue}
         />
       </>
     );
@@ -3865,6 +3974,13 @@ export default function ProgramsPage({
         tr={tr}
         tc={tc}
       />
+      <NusukSettingsModal
+        open={Boolean(nusukSettingsPrompt)}
+        initialSettings={store.agencyNusukSettings}
+        saving={nusukSettingsSaving}
+        onCancel={handleCancelNusukSettingsPrompt}
+        onSave={handleSaveNusukSettingsAndContinue}
+      />
     </div>
   );
 }
@@ -3883,6 +3999,7 @@ function ProgramInner({
   contractsEnabled = true,
   programPostersEnabled = true,
   externalRefreshKey = 0,
+  onToggleProgramNusukUpload,
 }) {
   const {
     clients,
@@ -5485,18 +5602,8 @@ function ProgramInner({
   const handleToggleNusukUpload = React.useCallback(() => {
     closeHeaderActions();
     if (!nusukUploadToggleEnabled) return;
-    const nextEnabled = !currentNusukUploadEnabled;
-    updateProgram?.(program.id, {
-      nusukUploadEnabled: nextEnabled,
-      nusuk_upload_enabled: nextEnabled,
-    });
-    onToast?.(
-      nextEnabled
-        ? "تم تفعيل البرنامج لنسك"
-        : "تم إيقاف رفع البرنامج لنسك",
-      nextEnabled ? "success" : "info"
-    );
-  }, [closeHeaderActions, currentNusukUploadEnabled, nusukUploadToggleEnabled, onToast, program.id, updateProgram]);
+    onToggleProgramNusukUpload?.(program);
+  }, [closeHeaderActions, nusukUploadToggleEnabled, onToggleProgramNusukUpload, program]);
   const handleProgramTabChange = React.useCallback((nextTab) => {
     setProgramTab(nextTab);
     if (nextTab === "rooming") ensureGlobalDetailData({ notify: true });

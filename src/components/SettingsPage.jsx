@@ -12,6 +12,13 @@ import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import {
+  NUSUK_SETTINGS_MODAL_DESCRIPTION,
+  NusukSettingsFields,
+  hasAnyNusukContactValue,
+  normalizeNusukContactSettings,
+  validateNusukContactSettings,
+} from "./NusukSettingsFields";
 
 const t2 = theme.colors;
 
@@ -113,14 +120,30 @@ export default function SettingsPage({
   contractsEnabled = true,
   programPostersEnabled = true,
 }) {
-  const { agency, updateAgency, syncStatus, lastSynced, forceSync } = store;
+  const {
+    agency,
+    updateAgency,
+    syncStatus,
+    lastSynced,
+    forceSync,
+    agencyNusukSettings,
+    ensureAgencyNusukSettings,
+    saveAgencyNusukSettings,
+  } = store;
   const agencyId = store?.agencyId || agency?.id || "";
   const { lang, setLang, t } = useLang();
+  const normalizedRole = String(currentUserRole || "").toLowerCase();
+  const canManageNusukSettings = !isSupabaseEnabled || ["owner", "manager"].includes(normalizedRole);
   const [form,       setForm]      = React.useState({ ...agency });
+  const [nusukSettingsForm, setNusukSettingsForm] = React.useState(() => (
+    normalizeNusukContactSettings(agencyNusukSettings)
+  ));
+  const [nusukSettingsErrors, setNusukSettingsErrors] = React.useState({});
   const [selectedDefaultPosterTemplateValue, setSelectedDefaultPosterTemplateValue] = React.useState(() => (
     getDefaultPosterTemplateValue(agency)
   ));
   const [agencyOpen, setAgencyOpen] = React.useState(false);
+  const [nusukSettingsOpen, setNusukSettingsOpen] = React.useState(false);
   const [logoOpen, setLogoOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
   const [securityOpen, setSecurityOpen] = React.useState(false);
@@ -150,6 +173,13 @@ export default function SettingsPage({
     setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(agency));
   }, [agency]);
   React.useEffect(() => {
+    ensureAgencyNusukSettings?.();
+  }, [ensureAgencyNusukSettings]);
+  React.useEffect(() => {
+    setNusukSettingsForm(normalizeNusukContactSettings(agencyNusukSettings));
+    setNusukSettingsErrors({});
+  }, [agencyNusukSettings]);
+  React.useEffect(() => {
     let cancelled = false;
     const path = form?.logoPath || "";
     if (form?.logoUrl) {
@@ -171,6 +201,10 @@ export default function SettingsPage({
     loading: agencyCodePosterTemplatesLoading,
   } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const set = k => e => setForm(f => ({...f, [k]: e.target.value}));
+  const handleNusukSettingsChange = React.useCallback((next) => {
+    setNusukSettingsForm(next);
+    setNusukSettingsErrors({});
+  }, []);
 
   const handleForceSync = async () => {
     setIsSyncing(true);
@@ -186,6 +220,19 @@ export default function SettingsPage({
 
   const handleSave = async () => {
     if (settingsSaving) return;
+    const shouldSaveNusukSettings = canManageNusukSettings && (
+      hasAnyNusukContactValue(nusukSettingsForm)
+      || hasAnyNusukContactValue(agencyNusukSettings)
+    );
+    const nusukValidation = shouldSaveNusukSettings
+      ? validateNusukContactSettings(nusukSettingsForm)
+      : null;
+    if (nusukValidation && !nusukValidation.valid) {
+      setNusukSettingsErrors(nusukValidation.errors);
+      setNusukSettingsOpen(true);
+      onToast("يرجى إكمال إعدادات نسك", "error");
+      return;
+    }
     if (programPostersEnabled && posterTemplateOptionsLoading) {
       onToast(posterDefaultLabels.loading, "info");
       return;
@@ -211,6 +258,15 @@ export default function SettingsPage({
           id: selectedBadgeTemplateId,
         });
         if (badgeTemplateError) throw badgeTemplateError;
+      }
+      if (nusukValidation) {
+        if (typeof saveAgencyNusukSettings !== "function") {
+          throw new Error("nusuk-settings-save-unavailable");
+        }
+        const nusukResult = await saveAgencyNusukSettings(nusukValidation.values);
+        if (nusukResult?.error) throw nusukResult.error;
+        setNusukSettingsForm(normalizeNusukContactSettings(nusukResult?.data || nusukValidation.values));
+        setNusukSettingsErrors({});
       }
       const result = await updateAgency(nextForm);
       if (result?.error) throw result.error;
@@ -389,7 +445,6 @@ export default function SettingsPage({
     }
   };
 
-  const normalizedRole = String(currentUserRole || "").toLowerCase();
   const canManageUsers = normalizedRole === "manager" || normalizedRole === "owner";
   const canManageBackups = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
   const canManageContractTemplates = !isSupabaseEnabled || ["manager", "owner", "admin"].includes(normalizedRole);
@@ -737,6 +792,27 @@ export default function SettingsPage({
             style={{ gridColumn:"1/-1" }} />
           <Input label={t.addressAgadirLabel} value={form.addressAgadir || ""} onChange={set("addressAgadir")}
             style={{ gridColumn:"1/-1" }} />
+        </div>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title="إعدادات نسك"
+        description={NUSUK_SETTINGS_MODAL_DESCRIPTION}
+        open={nusukSettingsOpen}
+        onToggle={() => setNusukSettingsOpen((current) => !current)}
+      >
+        <div style={{ display:"grid", gap:12 }}>
+          {!canManageNusukSettings && (
+            <p style={{ margin:0, color:"var(--rukn-text-muted)", fontSize:12, lineHeight:1.7 }}>
+              يمكن تعديل هذه الإعدادات من مالك أو مدير الوكالة فقط.
+            </p>
+          )}
+          <NusukSettingsFields
+            value={nusukSettingsForm}
+            onChange={handleNusukSettingsChange}
+            errors={nusukSettingsErrors}
+            disabled={!canManageNusukSettings || settingsSaving}
+          />
         </div>
       </SettingsSectionCard>
 

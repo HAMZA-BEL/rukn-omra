@@ -851,6 +851,35 @@ const upsertProgramTravelGroupInList = (current = [], group = {}) => {
   return sortProgramTravelGroups(next);
 };
 
+const normalizeAgencyNusukSettingsForStore = (settings = null) => {
+  if (!settings || typeof settings !== "object") return null;
+  const contactEmail = trimString(settings.contactEmail ?? settings.contact_email);
+  const phoneCountryCode = trimString(settings.phoneCountryCode ?? settings.phone_country_code);
+  const phoneNumber = trimString(settings.phoneNumber ?? settings.phone_number);
+  const postalCode = trimString(settings.postalCode ?? settings.postal_code);
+  return {
+    id: settings.id || "",
+    agencyId: settings.agencyId || settings.agency_id || "",
+    agency_id: settings.agencyId || settings.agency_id || "",
+    contactEmail,
+    contact_email: contactEmail,
+    phoneCountryCode,
+    phone_country_code: phoneCountryCode,
+    phoneNumber,
+    phone_number: phoneNumber,
+    postalCode,
+    postal_code: postalCode,
+    createdBy: settings.createdBy || settings.created_by || "",
+    created_by: settings.createdBy || settings.created_by || "",
+    updatedBy: settings.updatedBy || settings.updated_by || "",
+    updated_by: settings.updatedBy || settings.updated_by || "",
+    createdAt: settings.createdAt || settings.created_at || "",
+    created_at: settings.createdAt || settings.created_at || "",
+    updatedAt: settings.updatedAt || settings.updated_at || "",
+    updated_at: settings.updatedAt || settings.updated_at || "",
+  };
+};
+
 // ── Stable UUID generation ────────────────────────────────────────────────────
 function genId() {
   return generateUUID();
@@ -882,6 +911,11 @@ export function useStore(agencyId, onToast) {
     `rukn_program_travel_groups_${ns}`,
     [],
     sortProgramTravelGroups
+  );
+  const [localAgencyNusukSettings, setLocalAgencyNusukSettings] = useLS(
+    `rukn_agency_nusuk_settings_${ns}`,
+    null,
+    normalizeAgencyNusukSettingsForStore
   );
   const {
     activityLog,
@@ -962,6 +996,13 @@ export function useStore(agencyId, onToast) {
   const [notificationsLoaded, setNotificationsLoaded] = useState(!isSupabaseEnabled || !agencyId);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersLoaded, setUsersLoaded] = useState(!isSupabaseEnabled || !agencyId);
+  const [agencyNusukSettings, setAgencyNusukSettings] = useState(() => (
+    !isSupabaseEnabled || !agencyId
+      ? normalizeAgencyNusukSettingsForStore(localAgencyNusukSettings)
+      : null
+  ));
+  const [agencyNusukSettingsLoading, setAgencyNusukSettingsLoading] = useState(false);
+  const [agencyNusukSettingsLoaded, setAgencyNusukSettingsLoaded] = useState(!isSupabaseEnabled || !agencyId);
   const [backgroundHydrationLoading, setBackgroundHydrationLoading] = useState(false);
   const [backgroundHydrationDone, setBackgroundHydrationDone] = useState(!isSupabaseEnabled || !agencyId);
   const [trashedInvoicesCache, setTrashedInvoicesCache] = useState([]);
@@ -975,14 +1016,17 @@ export function useStore(agencyId, onToast) {
   const programTravelGroupsRef = useRef(programTravelGroups);
   const notificationsRef = useRef(notifications);
   const agencyUsersRef = useRef(agencyUsers);
+  const agencyNusukSettingsRef = useRef(agencyNusukSettings);
   const clientsLoadedRef = useRef(clientsLoaded);
   const paymentsLoadedRef = useRef(paymentsLoaded);
   const notificationsLoadedRef = useRef(notificationsLoaded);
   const usersLoadedRef = useRef(usersLoaded);
+  const agencyNusukSettingsLoadedRef = useRef(agencyNusukSettingsLoaded);
   const clientsLoadPromiseRef = useRef(null);
   const paymentsLoadPromiseRef = useRef(null);
   const notificationsLoadPromiseRef = useRef(null);
   const usersLoadPromiseRef = useRef(null);
+  const agencyNusukSettingsLoadPromiseRef = useRef(null);
   const backgroundHydrationStartedRef = useRef(false);
   const dashboardStatsPromiseRef = useRef(null);
   const dashboardRealtimeRefreshTimerRef = useRef(null);
@@ -995,11 +1039,31 @@ export function useStore(agencyId, onToast) {
   useEffect(() => { programTravelGroupsRef.current = programTravelGroups; }, [programTravelGroups]);
   useEffect(() => { notificationsRef.current = notifications; }, [notifications]);
   useEffect(() => { agencyUsersRef.current = agencyUsers; }, [agencyUsers]);
+  useEffect(() => { agencyNusukSettingsRef.current = agencyNusukSettings; }, [agencyNusukSettings]);
   useEffect(() => { clientsLoadedRef.current = clientsLoaded; }, [clientsLoaded]);
   useEffect(() => { paymentsLoadedRef.current = paymentsLoaded; }, [paymentsLoaded]);
   useEffect(() => { notificationsLoadedRef.current = notificationsLoaded; }, [notificationsLoaded]);
   useEffect(() => { usersLoadedRef.current = usersLoaded; }, [usersLoaded]);
+  useEffect(() => { agencyNusukSettingsLoadedRef.current = agencyNusukSettingsLoaded; }, [agencyNusukSettingsLoaded]);
   useEffect(() => { clientPermanentDeletePreflightCacheRef.current.clear(); }, [agencyId]);
+
+  useEffect(() => {
+    agencyNusukSettingsLoadPromiseRef.current = null;
+    if (!isSupabaseEnabled || !agencyId) {
+      const normalized = normalizeAgencyNusukSettingsForStore(localAgencyNusukSettings);
+      agencyNusukSettingsRef.current = normalized;
+      agencyNusukSettingsLoadedRef.current = true;
+      setAgencyNusukSettings(normalized);
+      setAgencyNusukSettingsLoaded(true);
+      setAgencyNusukSettingsLoading(false);
+      return;
+    }
+    agencyNusukSettingsRef.current = null;
+    agencyNusukSettingsLoadedRef.current = false;
+    setAgencyNusukSettings(null);
+    setAgencyNusukSettingsLoaded(false);
+    setAgencyNusukSettingsLoading(false);
+  }, [agencyId, isSupabaseEnabled, localAgencyNusukSettings]);
 
   const invalidateClientPermanentDeletePreflight = useCallback((clientIds = []) => {
     if (!agencyId) return;
@@ -1399,6 +1463,82 @@ export function useStore(agencyId, onToast) {
       return { error: err };
     }
   }, [agencyId, isSupabaseEnabled, ns]);
+
+  const loadAgencyNusukSettings = useCallback(async ({ force = false } = {}) => {
+    if (!isSupabaseEnabled || !agencyId) {
+      const normalized = normalizeAgencyNusukSettingsForStore(localAgencyNusukSettings);
+      agencyNusukSettingsRef.current = normalized;
+      agencyNusukSettingsLoadedRef.current = true;
+      setAgencyNusukSettings(normalized);
+      setAgencyNusukSettingsLoaded(true);
+      setAgencyNusukSettingsLoading(false);
+      return { data: normalized, error: null };
+    }
+
+    if (!force && agencyNusukSettingsLoadedRef.current) {
+      return { data: agencyNusukSettingsRef.current, error: null };
+    }
+    if (agencyNusukSettingsLoadPromiseRef.current) return agencyNusukSettingsLoadPromiseRef.current;
+
+    setAgencyNusukSettingsLoading(true);
+    const promise = db.agencyNusukSettings.fetch()
+      .then((result) => {
+        if (!result?.error) {
+          const normalized = normalizeAgencyNusukSettingsForStore(result?.data);
+          agencyNusukSettingsRef.current = normalized;
+          agencyNusukSettingsLoadedRef.current = true;
+          setAgencyNusukSettings(normalized);
+          setAgencyNusukSettingsLoaded(true);
+          return { ...result, data: normalized };
+        }
+        console.error("[Store] Nusuk settings fetch failed:", result.error);
+        return result;
+      })
+      .catch((error) => {
+        console.error("[Store] Nusuk settings fetch failed:", error);
+        return { data: null, error };
+      })
+      .finally(() => {
+        setAgencyNusukSettingsLoading(false);
+        agencyNusukSettingsLoadPromiseRef.current = null;
+      });
+
+    agencyNusukSettingsLoadPromiseRef.current = promise;
+    return promise;
+  }, [agencyId, isSupabaseEnabled, localAgencyNusukSettings]);
+
+  const saveAgencyNusukSettings = useCallback(async (settings = {}) => {
+    const normalized = normalizeAgencyNusukSettingsForStore(settings);
+    if (!normalized) return { data: null, error: new Error("missing-nusuk-settings") };
+
+    if (!isSupabaseEnabled || !agencyId) {
+      const now = new Date().toISOString();
+      const localSaved = normalizeAgencyNusukSettingsForStore({
+        ...normalized,
+        id: normalized.id || genId(),
+        agencyId: agencyId || "local",
+        createdAt: normalized.createdAt || now,
+        updatedAt: now,
+      });
+      setLocalAgencyNusukSettings(localSaved);
+      agencyNusukSettingsRef.current = localSaved;
+      agencyNusukSettingsLoadedRef.current = true;
+      setAgencyNusukSettings(localSaved);
+      setAgencyNusukSettingsLoaded(true);
+      return { data: localSaved, error: null };
+    }
+
+    const result = await sync(() => db.agencyNusukSettings.upsert(normalized));
+    if (!result?.error) {
+      const saved = normalizeAgencyNusukSettingsForStore(result?.data);
+      agencyNusukSettingsRef.current = saved;
+      agencyNusukSettingsLoadedRef.current = true;
+      setAgencyNusukSettings(saved);
+      setAgencyNusukSettingsLoaded(true);
+      return { ...result, data: saved };
+    }
+    return result;
+  }, [agencyId, isSupabaseEnabled, setLocalAgencyNusukSettings, sync]);
 
   const loadClients = useCallback(async ({ force = false } = {}) => {
     if (!isSupabaseEnabled || !agencyId) {
@@ -3525,6 +3665,32 @@ export function useStore(agencyId, onToast) {
     return sync(() => saveProgram(nextProgram, agencyId));
   }, [programs, setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
+  const setProgramNusukUploadEnabled = useCallback(async (id, enabled) => {
+    const nextEnabled = Boolean(enabled);
+    const currentProgram = programs.find(p => p.id === id);
+    const previousEnabled = Boolean(currentProgram?.nusukUploadEnabled ?? currentProgram?.nusuk_upload_enabled);
+    const nextFlags = {
+      nusukUploadEnabled: nextEnabled,
+      nusuk_upload_enabled: nextEnabled,
+    };
+    setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...nextFlags } : p));
+    const result = await sync(() => db.programs.setNusukUploadEnabled(id, agencyId, nextEnabled));
+    if (result?.error) {
+      const previousFlags = {
+        nusukUploadEnabled: previousEnabled,
+        nusuk_upload_enabled: previousEnabled,
+      };
+      setPrograms(prev => prev.map(p => p.id === id ? { ...p, ...previousFlags } : p));
+      return result;
+    }
+    logActivity(
+      "program_update",
+      translateActivityDescription(`تم تعديل برنامج ${getReadableProgramNameForActivity(currentProgram || { id })}`),
+      `رفع نسك: ${nextEnabled ? "مفعل" : "غير مفعل"}`
+    );
+    return result || { error: null };
+  }, [agencyId, logActivity, programs, setPrograms, sync]);
+
   const getProgramTravelGroups = useCallback((programId) => {
     const targetProgramId = String(programId || "");
     if (!targetProgramId) return [];
@@ -4183,6 +4349,9 @@ export function useStore(agencyId, onToast) {
     clientPermanentDeletePreflightVersion,
     badgePhotoApi,
     agencyLogoApi,
+    agencyNusukSettings,
+    agencyNusukSettingsLoading,
+    agencyNusukSettingsLoaded,
     notifications,
     unreadNotifications,
     unreadNotificationsCount: effectiveUnreadNotificationsCount,
@@ -4202,10 +4371,12 @@ export function useStore(agencyId, onToast) {
     updateAgencyUser,
     archiveClient, archiveClients, restoreClient, archiveProgram,
     addPayment, createSharedReceipt, fetchPaymentGroup, deletePayment, restorePaymentFromTrash, deletePaymentFromTrash,
-    addProgram, addProgramAndWait, updateProgram, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
+    addProgram, addProgramAndWait, updateProgram, setProgramNusukUploadEnabled, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     getProgramTravelGroups, loadProgramTravelGroups, createProgramTravelGroup, updateProgramTravelGroup, deleteProgramTravelGroup,
     restoreTrashItems, purgeTrashItems,
     updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
+    ensureAgencyNusukSettings: loadAgencyNusukSettings,
+    saveAgencyNusukSettings,
     loadProgramDetailData,
     ensureClientsLoaded: loadClients,
     ensurePaymentsLoaded: loadPayments,

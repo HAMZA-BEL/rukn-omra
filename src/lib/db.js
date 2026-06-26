@@ -1102,6 +1102,35 @@ const fromAgency = (row) => ({
   defaultPosterTemplateId: row.default_poster_template_id || "",
 });
 
+const fromAgencyNusukSettings = (row = {}) => row ? ({
+  id: row.id || "",
+  agencyId: row.agency_id || "",
+  agency_id: row.agency_id || "",
+  contactEmail: row.contact_email || "",
+  contact_email: row.contact_email || "",
+  phoneCountryCode: row.phone_country_code || "",
+  phone_country_code: row.phone_country_code || "",
+  phoneNumber: row.phone_number || "",
+  phone_number: row.phone_number || "",
+  postalCode: row.postal_code || "",
+  postal_code: row.postal_code || "",
+  createdBy: row.created_by || "",
+  created_by: row.created_by || "",
+  updatedBy: row.updated_by || "",
+  updated_by: row.updated_by || "",
+  createdAt: row.created_at || "",
+  created_at: row.created_at || "",
+  updatedAt: row.updated_at || "",
+  updated_at: row.updated_at || "",
+}) : null;
+
+const toAgencyNusukSettingsRpcParams = (settings = {}) => ({
+  p_contact_email: cleanString(settings.contactEmail ?? settings.contact_email) || "",
+  p_phone_country_code: cleanString(settings.phoneCountryCode ?? settings.phone_country_code) || "",
+  p_phone_number: cleanString(settings.phoneNumber ?? settings.phone_number) || "",
+  p_postal_code: cleanString(settings.postalCode ?? settings.postal_code) || "",
+});
+
 const normalizeRoomingLocation = (location) => (
   location === "madinah" ? "madinah" : "makkah"
 );
@@ -1366,6 +1395,31 @@ export const db = {
       const { error } = await supabase
         .from("programs").upsert(toProgram(program, agencyId), { onConflict: "id" });
       return { error };
+    },
+    async setNusukUploadEnabled(id, agencyId, enabled) {
+      if (!id || !agencyId) {
+        return { data: null, error: new Error("missing-program-or-agency") };
+      }
+      const { data, error } = await supabase
+        .from("programs")
+        .update({
+          nusuk_upload_enabled: Boolean(enabled),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .eq("agency_id", agencyId)
+        .select("id, nusuk_upload_enabled")
+        .maybeSingle();
+      if (error) return { data: null, error };
+      if (!data) return { data: null, error: new Error("program-not-found") };
+      return {
+        data: {
+          id: data.id,
+          nusukUploadEnabled: Boolean(data.nusuk_upload_enabled),
+          nusuk_upload_enabled: Boolean(data.nusuk_upload_enabled),
+        },
+        error: null,
+      };
     },
     async delete(id, agencyId) {
       const { error } = await supabase
@@ -2329,6 +2383,34 @@ export const db = {
       const { error } = await supabase
         .from("agencies").update(toAgency(agencyData)).eq("id", agencyId);
       return { error };
+    },
+  },
+
+  agencyNusukSettings: {
+    async fetch() {
+      const { data, error } = await supabase
+        .from("agency_nusuk_settings")
+        .select("id, agency_id, contact_email, phone_country_code, phone_number, postal_code, created_by, updated_by, created_at, updated_at")
+        .maybeSingle();
+      return { data: data ? fromAgencyNusukSettings(data) : null, error };
+    },
+    async upsert(settings = {}) {
+      const rpcName = "upsert_agency_nusuk_settings";
+      const { data, error } = await supabase.rpc(
+        rpcName,
+        toAgencyNusukSettingsRpcParams(settings)
+      );
+      if (isMissingRpcError(error, rpcName)) {
+        return {
+          data: null,
+          error: {
+            ...error,
+            isMissingMigration: true,
+            missingRpc: rpcName,
+          },
+        };
+      }
+      return { data: data ? fromAgencyNusukSettings(data) : null, error };
     },
   },
 

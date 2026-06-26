@@ -111,6 +111,15 @@ function toExtensionProgram(row = {}) {
   };
 }
 
+function isProgramAvailableForNusuk(row = {}, agencyId = "") {
+  const status = String(row.status || "active").toLowerCase();
+  return row.nusuk_upload_enabled === true
+    && row.agency_id === agencyId
+    && row.deleted !== true
+    && !row.deleted_at
+    && status !== "archived";
+}
+
 exports.handler = async (event) => {
   try {
     if (event.httpMethod === "OPTIONS") {
@@ -163,7 +172,7 @@ exports.handler = async (event) => {
 
     const { data: programs, error: programsError } = await adminClient
       .from("programs")
-      .select("id, agency_id, name, name_fr, type, departure, return_date, status")
+      .select("id, agency_id, name, name_fr, type, departure, return_date, status, nusuk_upload_enabled, deleted, deleted_at")
       .eq("agency_id", profile.agency_id)
       .eq("nusuk_upload_enabled", true)
       .or("deleted.is.null,deleted.eq.false")
@@ -180,7 +189,9 @@ exports.handler = async (event) => {
         id: agency.id,
         name: agencyName(agency),
       },
-      programs: Array.isArray(programs) ? programs.map(toExtensionProgram) : [],
+      programs: Array.isArray(programs)
+        ? programs.filter((program) => isProgramAvailableForNusuk(program, profile.agency_id)).map(toExtensionProgram)
+        : [],
     });
   } catch (err) {
     console.error("extension-programs error", {
