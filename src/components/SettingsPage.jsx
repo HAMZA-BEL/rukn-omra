@@ -116,6 +116,7 @@ export default function SettingsPage({
   onToast,
   currentUserRole,
   currentUserId,
+  currentUserAgencyId = "",
   badgesEnabled = true,
   contractsEnabled = true,
   programPostersEnabled = true,
@@ -130,7 +131,20 @@ export default function SettingsPage({
     ensureAgencyNusukSettings,
     saveAgencyNusukSettings,
   } = store;
-  const agencyId = store?.agencyId || agency?.id || "";
+  const agencyId = isSupabaseEnabled ? (store?.agencyId || "") : (store?.agencyId || agency?.id || "");
+  const profileAgencyId = currentUserAgencyId || store?.agencyId || "";
+  const loadedAgencyId = agency?.id || agency?.agencyId || agency?.agency_id || "";
+  const agencyAccessError = isSupabaseEnabled
+    ? (
+      !profileAgencyId
+        ? "لم يتم العثور على ملف المستخدم المرتبط بهذا الحساب"
+        : !loadedAgencyId
+          ? "لم يتم العثور على الوكالة المرتبطة بهذا الحساب"
+          : loadedAgencyId !== profileAgencyId
+            ? "تعذر فتح الإعدادات لأن الوكالة المحملة لا تطابق وكالة المستخدم الحالي"
+            : ""
+    )
+    : "";
   const { lang, setLang, t } = useLang();
   const normalizedRole = String(currentUserRole || "").toLowerCase();
   const canManageNusukSettings = !isSupabaseEnabled || ["owner", "manager"].includes(normalizedRole);
@@ -220,6 +234,14 @@ export default function SettingsPage({
 
   const handleSave = async () => {
     if (settingsSaving) return;
+    if (agencyAccessError) {
+      onToast(agencyAccessError, "error");
+      return;
+    }
+    if (isSupabaseEnabled && agencyId !== profileAgencyId) {
+      onToast("تعذر حفظ الإعدادات لأن وكالة المستخدم غير مؤكدة", "error");
+      return;
+    }
     const shouldSaveNusukSettings = canManageNusukSettings && (
       hasAnyNusukContactValue(nusukSettingsForm)
       || hasAnyNusukContactValue(agencyNusukSettings)
@@ -633,6 +655,20 @@ export default function SettingsPage({
       closeBackupConfirm();
     }
   };
+
+  if (agencyAccessError) {
+    return (
+      <div className="page-body settings-page" style={{ padding:"24px 32px" }}>
+        <h1 style={{ fontSize:21, fontWeight:800, color:"#f8fafc", marginBottom:6 }}>{t.settingsTitle}</h1>
+        <GlassCard style={{ padding:18, marginTop:18 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12, color:"var(--rukn-danger)", fontWeight:800 }}>
+            <AppIcon name="alert" size={18} />
+            <span>{agencyAccessError}</span>
+          </div>
+        </GlassCard>
+      </div>
+    );
+  }
 
   return (
     <div className="page-body settings-page" style={{ padding:"24px 32px" }}>

@@ -886,8 +886,17 @@ function genId() {
 }
 
 // ── Main store ────────────────────────────────────────────────────────────────
+const applyStateUpdate = (current, update) => (
+  typeof update === "function" ? update(current) : update
+);
+
+const getAgencyRecordId = (agency = {}) => (
+  agency?.id || agency?.agencyId || agency?.agency_id || ""
+);
+
 // agencyId: null means local-only mode (no Supabase auth).
-export function useStore(agencyId, onToast) {
+export function useStore(agencyId, onToast, options = {}) {
+  const currentAgency = options.currentAgency || null;
   // Namespace localStorage keys per agency so each agency's cache is isolated.
   const ns = agencyId || "local";
 
@@ -906,7 +915,19 @@ export function useStore(agencyId, onToast) {
     softDeleteClientsLocal,
     transferClientsLocal,
   } = useClientsSlice();
-  const [agency,        setAgency]        = useLS(`umrah_agency_v4_${ns}`,    DEFAULT_AGENCY, stripAgencyRuntimeFields);
+  const [localAgency, setLocalAgency] = useLS(`umrah_agency_v4_${ns}`, DEFAULT_AGENCY, stripAgencyRuntimeFields);
+  const [remoteAgency, setRemoteAgency] = useState(() => (
+    isSupabaseEnabled && agencyId && currentAgency ? currentAgency : null
+  ));
+  const isRemoteAgencyStore = Boolean(isSupabaseEnabled && agencyId);
+  const agency = isRemoteAgencyStore ? remoteAgency : localAgency;
+  const setAgency = useCallback((update) => {
+    if (isRemoteAgencyStore) {
+      setRemoteAgency((current) => applyStateUpdate(current || {}, update));
+      return;
+    }
+    setLocalAgency(update);
+  }, [isRemoteAgencyStore, setLocalAgency]);
   const [programTravelGroups, setProgramTravelGroups] = useLS(
     `rukn_program_travel_groups_${ns}`,
     [],
@@ -1046,6 +1067,15 @@ export function useStore(agencyId, onToast) {
   useEffect(() => { usersLoadedRef.current = usersLoaded; }, [usersLoaded]);
   useEffect(() => { agencyNusukSettingsLoadedRef.current = agencyNusukSettingsLoaded; }, [agencyNusukSettingsLoaded]);
   useEffect(() => { clientPermanentDeletePreflightCacheRef.current.clear(); }, [agencyId]);
+
+  useEffect(() => {
+    if (!isRemoteAgencyStore) return;
+    if (currentAgency && getAgencyRecordId(currentAgency) === agencyId) {
+      setRemoteAgency(currentAgency);
+      return;
+    }
+    setRemoteAgency(null);
+  }, [agencyId, currentAgency, isRemoteAgencyStore]);
 
   useEffect(() => {
     agencyNusukSettingsLoadPromiseRef.current = null;
@@ -1481,7 +1511,7 @@ export function useStore(agencyId, onToast) {
     if (agencyNusukSettingsLoadPromiseRef.current) return agencyNusukSettingsLoadPromiseRef.current;
 
     setAgencyNusukSettingsLoading(true);
-    const promise = db.agencyNusukSettings.fetch()
+    const promise = db.agencyNusukSettings.fetch(agencyId)
       .then((result) => {
         if (!result?.error) {
           const normalized = normalizeAgencyNusukSettingsForStore(result?.data);
@@ -1528,7 +1558,7 @@ export function useStore(agencyId, onToast) {
       return { data: localSaved, error: null };
     }
 
-    const result = await sync(() => db.agencyNusukSettings.upsert(normalized));
+    const result = await sync(() => db.agencyNusukSettings.upsert(normalized, agencyId));
     if (!result?.error) {
       const saved = normalizeAgencyNusukSettingsForStore(result?.data);
       agencyNusukSettingsRef.current = saved;
@@ -1885,7 +1915,15 @@ export function useStore(agencyId, onToast) {
     ]).then(([p, ag, _summary, act]) => {
       const programData  = !p.error  && p.data  ? p.data  : [];
       if (programData) setPrograms(programData);
-      if (!ag.error  && ag.data)  setAgency(prev => ({ ...prev, ...ag.data }));
+      if (!ag.error && ag.data && getAgencyRecordId(ag.data) === agencyId) {
+        setAgency(ag.data);
+      } else if (ag.error || !ag.data) {
+        console.error("[Store] Agency load failed:", ag.error || "agency-not-found");
+        notify("لم يتم العثور على الوكالة المرتبطة بهذا الحساب", "error");
+      } else {
+        console.error("[Store] Agency mismatch:", { expected: agencyId, loaded: getAgencyRecordId(ag.data) });
+        notify("تعذر تحميل بيانات الوكالة بسبب عدم تطابق الحساب", "error");
+      }
       if (!act.error && act.data) setInitialActivity(act.data);
       const now = new Date();
       setLastSynced(now);
@@ -4211,10 +4249,30 @@ export function useStore(agencyId, onToast) {
     };
   }, [agencyId, clients, deletedPrograms, deletedClients, deleteClientsPermanent, deleteProgramsPermanent, fetchProgramTrashContext, getClientPermanentDeleteBlockMap, invalidateClientPermanentDeletePreflight, isSupabaseEnabled, permanentlyDeleteClientRemote, permanentlyDeleteClientsRemote, purgePaymentLocal, saveClient, sync]);
 
-  const updateAgency = useCallback((data) => {
-    const nextAgency = { ...agency, ...data };
-    setAgency(prev => ({ ...prev, ...data }));
-    return sync(() => db.agency.update(agencyId, nextAgency));
+  const updateAgency = useCallback(async (data) => {
+    const loadedAgencyId = getAgencyRecordId(agency);
+    if (isSupabaseEnabled) {
+      if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
+      if (loadedAgencyId && loadedAgencyId !== agencyId) {
+        return { data: null, error: new Error("current-agency-mismatch") };
+      }
+    }
+    const nextAgency = {
+      ...(agency || {}),
+      ...data,
+      ...(agencyId ? { id: agencyId, agencyId, agency_id: agencyId } : {}),
+    };
+    setAgency(prev => ({
+      ...(prev || {}),
+      ...data,
+      ...(agencyId ? { id: agencyId, agencyId, agency_id: agencyId } : {}),
+    }));
+    if (!isSupabaseEnabled || !agencyId) return { data: nextAgency, error: null };
+    const result = await sync(() => db.agency.update(agencyId, nextAgency));
+    if (!result?.error && result?.data && getAgencyRecordId(result.data) === agencyId) {
+      setAgency(result.data);
+    }
+    return result;
   }, [agency, setAgency, sync, agencyId]);
 
   // ── Force sync: push all local data to Supabase ───────────────────────────

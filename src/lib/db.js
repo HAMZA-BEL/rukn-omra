@@ -1077,6 +1077,10 @@ const toAgency = (a) => ({
 });
 
 const fromAgency = (row) => ({
+  id:            row.id,
+  agencyId:      row.id,
+  agency_id:     row.id,
+  status:        row.status || "",
   nameAr:        row.name_ar,
   nameFr:        row.name_fr,
   city:          row.agency_city || "",
@@ -2375,26 +2379,41 @@ export const db = {
 
   agency: {
     async fetch(agencyId) {
+      if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
       const { data, error } = await supabase
-        .from("agencies").select("*").eq("id", agencyId).single();
+        .from("agencies").select("*").eq("id", agencyId).maybeSingle();
       return { data: data ? fromAgency(data) : null, error };
     },
     async update(agencyId, agencyData) {
-      const { error } = await supabase
-        .from("agencies").update(toAgency(agencyData)).eq("id", agencyId);
-      return { error };
+      if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
+      const { data, error } = await supabase
+        .from("agencies")
+        .update(toAgency(agencyData))
+        .eq("id", agencyId)
+        .select("*")
+        .maybeSingle();
+      if (error) return { data: null, error };
+      if (!data) return { data: null, error: new Error("agency-not-found") };
+      return { data: fromAgency(data), error: null };
     },
   },
 
   agencyNusukSettings: {
-    async fetch() {
+    async fetch(agencyId) {
+      if (!agencyId) return { data: null, error: null };
       const { data, error } = await supabase
         .from("agency_nusuk_settings")
         .select("id, agency_id, contact_email, phone_country_code, phone_number, postal_code, created_by, updated_by, created_at, updated_at")
+        .eq("agency_id", agencyId)
         .maybeSingle();
       return { data: data ? fromAgencyNusukSettings(data) : null, error };
     },
-    async upsert(settings = {}) {
+    async upsert(settings = {}, agencyId = null) {
+      if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
+      const settingsAgencyId = settings.agencyId || settings.agency_id || "";
+      if (settingsAgencyId && settingsAgencyId !== agencyId) {
+        return { data: null, error: new Error("agency-settings-mismatch") };
+      }
       const rpcName = "upsert_agency_nusuk_settings";
       const { data, error } = await supabase.rpc(
         rpcName,
@@ -2547,7 +2566,7 @@ export const db = {
   users: {
     async fetchProfile(userId) {
       const { data, error } = await supabase
-        .from("users").select("id, agency_id, role, full_name, status")
+        .from("users").select("id, agency_id, email, role, full_name, status")
         .eq("id", userId).single();
       return { data, error };
     },

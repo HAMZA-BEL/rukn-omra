@@ -51,7 +51,16 @@ function getInitialThemeMode() {
   return resolvedTheme;
 }
 
-function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentUserEmail = "", currentUserDisplayName = "" }) {
+function AppInner({
+  agencyId,
+  currentAgency,
+  onLogout,
+  currentUserRole,
+  currentUserId,
+  currentUserEmail = "",
+  currentUserDisplayName = "",
+  currentUserAgencyId = "",
+}) {
   const { t, tr, lang, dir, setLang } = useLang();
   const [toast,          setToast]          = React.useState(null);
   const showToast = React.useCallback((msg, type="success") => setToast({ message: msg, type, id: Date.now() }), []);
@@ -62,7 +71,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
     currentUserEmail,
     currentUserDisplayName,
   });
-  const store = useStore(agencyId, showToast);
+  const store = useStore(agencyId, showToast, { currentAgency });
   const badgesFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.BADGES, { fallbackEnabled: true });
   const contractsFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.CONTRACTS, { fallbackEnabled: true });
   const programPostersFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.PROGRAM_POSTERS, { fallbackEnabled: true });
@@ -455,6 +464,7 @@ function AppInner({ agencyId, onLogout, currentUserRole, currentUserId, currentU
                 onToast={showToast}
                 currentUserRole={currentUserRole}
                 currentUserId={currentUserId}
+                currentUserAgencyId={currentUserAgencyId}
                 badgesEnabled={badgesEnabled}
                 contractsEnabled={contractsEnabled}
                 programPostersEnabled={programPostersEnabled}
@@ -1098,6 +1108,7 @@ function AuthGate() {
   const {
     user,
     agencyId,
+    currentAgency,
     loading,
     login,
     logout,
@@ -1124,8 +1135,12 @@ function AuthGate() {
     return <DisabledAccountScreen onLogout={logout} />;
   }
 
-  // Logged in but no row in public.users → show actionable error
-  if (user && !agencyId && profileReady && profileError === "no_profile") {
+  // Logged in but profile/agency linkage is missing or inconsistent.
+  if (user && profileReady && ["no_profile", "no_agency", "agency_mismatch"].includes(profileError)) {
+    const isProfileError = profileError === "no_profile";
+    const title = isProfileError
+      ? "لم يتم العثور على ملف المستخدم المرتبط بهذا الحساب"
+      : "لم يتم العثور على الوكالة المرتبطة بهذا الحساب";
     return (
       <div style={{
         minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
@@ -1137,10 +1152,10 @@ function AuthGate() {
           border: "1px solid rgba(212,175,55,.3)", borderRadius: 20, padding: 40,
         }}>
           <IconBubble name="alert" boxSize={56} size={26} color="#f59e0b" bg="rgba(245,158,11,.12)" border="rgba(245,158,11,.28)" style={{ margin:"0 auto 16px" }} />
-          <h2 style={{ color: "#d4af37", marginBottom: 12 }}>الحساب غير مرتبط بوكالة</h2>
+          <h2 style={{ color: "#d4af37", marginBottom: 12 }}>{title}</h2>
           <p style={{ color: "rgba(148,163,184,.8)", fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
-            تم تسجيل الدخول بنجاح، لكن هذا الحساب لا يملك ملف وكالة مرتبطًا في قاعدة البيانات.
-            <br />تواصل مع مسؤول النظام لإكمال الربط بشكل آمن.
+            تم تسجيل الدخول بنجاح، لكن لا يمكن فتح النظام بدون ربط مؤكد بين حساب المستخدم والوكالة.
+            <br />تواصل مع مسؤول النظام لمراجعة صف المستخدم والوكالة المرتبطة به.
           </p>
           <pre style={{
             background: "rgba(0,0,0,.4)", border: "1px solid rgba(212,175,55,.2)",
@@ -1169,12 +1184,19 @@ function AuthGate() {
     return <LoginPage onLogin={login} />;
   }
 
+  if (!currentAgency || currentAgency.id !== agencyId) {
+    return <AppLoadingScreen />;
+  }
+
   return (
     <AppInner
+      key={agencyId}
       agencyId={agencyId}
+      currentAgency={currentAgency}
       onLogout={logout}
       currentUserRole={user?.profile?.role || null}
       currentUserId={user?.id || null}
+      currentUserAgencyId={user?.profile?.agency_id || ""}
       currentUserEmail={user?.email || ""}
       currentUserDisplayName={
         user?.profile?.displayName

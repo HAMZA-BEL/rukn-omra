@@ -3,6 +3,78 @@ import { supabase, isSupabaseEnabled } from "../lib/supabase";
 import { db } from "../lib/db";
 import { clearSupabaseLogoutAppStorage } from "../utils/localStorageHardening";
 
+const debugAuthAgencyLoad = ({ authUser, profile, agency }) => {
+  if (process.env.NODE_ENV !== "development") return;
+  console.debug("[Rukn Auth Debug] auth user:", {
+    id: authUser?.id || null,
+    email: authUser?.email || null,
+  });
+  console.debug("[Rukn Auth Debug] profile:", {
+    id: profile?.id || null,
+    email: profile?.email || null,
+    status: profile?.status || null,
+    agency_id: profile?.agency_id || null,
+  });
+  console.debug("[Rukn Auth Debug] agency loaded:", agency ? {
+    id: agency.id || null,
+    status: agency.status || null,
+    name_ar: agency.nameAr || agency.name_ar || null,
+    name_fr: agency.nameFr || agency.name_fr || null,
+  } : null);
+  console.debug(
+    "[Rukn Auth Debug] agency match:",
+    Boolean(agency?.id && profile?.agency_id && agency.id === profile.agency_id)
+  );
+};
+
+const formatSupabaseError = (error) => (
+  error ? {
+    code: error.code || null,
+    message: error.message || null,
+    details: error.details || null,
+    hint: error.hint || null,
+  } : null
+);
+
+const debugAgencyFetchAttempt = async (agencyId) => {
+  if (process.env.NODE_ENV !== "development") return;
+  console.debug("[Rukn Auth Debug] fetching agency id:", agencyId || null);
+  try {
+    const { data, error } = await supabase.rpc("get_agency_id");
+    console.debug("[Rukn Auth Debug] public.get_agency_id result:", {
+      data: data || null,
+      error: formatSupabaseError(error),
+      matchesProfileAgencyId: Boolean(data && agencyId && data === agencyId),
+    });
+  } catch (error) {
+    console.debug("[Rukn Auth Debug] public.get_agency_id threw:", formatSupabaseError(error) || error);
+  }
+};
+
+const debugAgencyFetchResult = ({ profileAgencyId, agency, error }) => {
+  if (process.env.NODE_ENV !== "development") return;
+  const formattedError = formatSupabaseError(error);
+  console.debug("[Rukn Auth Debug] agency fetch result data/error:", {
+    data: agency ? {
+      id: agency.id || null,
+      status: agency.status || null,
+      name_ar: agency.nameAr || agency.name_ar || null,
+      name_fr: agency.nameFr || agency.name_fr || null,
+    } : null,
+    error: formattedError,
+  });
+  if (formattedError) {
+    console.warn("[Rukn Auth Debug] agency fetch returned Supabase error:", formattedError);
+    return;
+  }
+  if (!agency && profileAgencyId) {
+    console.warn(
+      "[Rukn Auth Debug] agency fetch returned empty data with no error. This usually means RLS hid the agencies row, public.get_agency_id() returned null, or the agency row is missing.",
+      { profileAgencyId }
+    );
+  }
+};
+
 /**
  * useAuth — handles Supabase authentication and user profile loading.
  * In local-only mode (no Supabase env vars), user = null and agencyId = null
@@ -20,6 +92,7 @@ export function useAuth() {
 
   const [user,             setUser]             = useState(null);
   const [agencyId,         setAgencyId]         = useState(null);
+  const [currentAgency,    setCurrentAgency]    = useState(null);
   const [loading,          setLoading]          = useState(isSupabaseEnabled);
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
   const [profileError,     setProfileError]     = useState(null);
@@ -27,12 +100,14 @@ export function useAuth() {
   const [profileChecked,   setProfileChecked]   = useState(!isSupabaseEnabled);
   const userRef = useRef(null);
   const agencyIdRef = useRef(null);
+  const currentAgencyRef = useRef(null);
   const profileErrorRef = useRef(null);
   const profileCheckedRef = useRef(!isSupabaseEnabled);
   const profileLoadRef = useRef({ userId: null, promise: null });
 
   useEffect(() => { userRef.current = user; }, [user]);
   useEffect(() => { agencyIdRef.current = agencyId; }, [agencyId]);
+  useEffect(() => { currentAgencyRef.current = currentAgency; }, [currentAgency]);
   useEffect(() => { profileErrorRef.current = profileError; }, [profileError]);
   useEffect(() => { profileCheckedRef.current = profileChecked; }, [profileChecked]);
 
@@ -40,6 +115,7 @@ export function useAuth() {
     if (!authUser) {
       setUser(null);
       setAgencyId(null);
+      setCurrentAgency(null);
       setProfileError(null);
       setProfileLoading(false);
       setProfileChecked(true);
@@ -52,7 +128,10 @@ export function useAuth() {
       && profileCheckedRef.current
       && currentUser?.id
       && currentUser.id === authUser.id
-      && (agencyIdRef.current || profileErrorRef.current)
+      && (
+        (agencyIdRef.current && currentAgencyRef.current?.id === agencyIdRef.current)
+        || profileErrorRef.current
+      )
     );
 
     if (sameCheckedUser) {
@@ -64,7 +143,8 @@ export function useAuth() {
       return;
     }
 
-    if (profileLoadRef.current.promise && profileLoadRef.current.userId === authUser.id) {
+    const loadUserId = authUser.id;
+    if (profileLoadRef.current.promise && profileLoadRef.current.userId === loadUserId) {
       return profileLoadRef.current.promise;
     }
 
@@ -75,44 +155,97 @@ export function useAuth() {
     setProfileError(null);
 
     const promise = (async () => {
-      const { data, error } = await db.users.fetchProfile(authUser.id);
-      if (error || !data?.agency_id) {
-        setUser(authUser);
-        setAgencyId(null);
-        setProfileError("no_profile");
-      } else if ((data.status || "").toLowerCase() === "disabled") {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      const resolvedAuthUser = authData?.user || authUser;
+      if (authError || !resolvedAuthUser?.id) {
         setUser(null);
         setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("no_profile");
+        return;
+      }
+
+      const { data, error } = await db.users.fetchProfile(resolvedAuthUser.id);
+      if (error || !data) {
+        debugAuthAgencyLoad({ authUser: resolvedAuthUser, profile: data, agency: null });
+        setUser(resolvedAuthUser);
+        setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("no_profile");
+        return;
+      }
+
+      if (!data.agency_id) {
+        debugAuthAgencyLoad({ authUser: resolvedAuthUser, profile: data, agency: null });
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("no_agency");
+        return;
+      }
+
+      if ((data.status || "").toLowerCase() === "disabled") {
+        setUser(null);
+        setAgencyId(null);
+        setCurrentAgency(null);
         setProfileError("disabled");
         try {
           await supabase.auth.signOut();
           clearSupabaseLogoutAppStorage(data.agency_id);
         } catch {}
-      } else if ((data.status || "").toLowerCase() === "invited") {
-        setUser({ ...authUser, profile: data });
+        return;
+      }
+
+      if ((data.status || "").toLowerCase() === "invited") {
+        setUser({ ...resolvedAuthUser, profile: data });
         setAgencyId(null);
+        setCurrentAgency(null);
         setProfileError(null);
         setNeedsPasswordSet(true);
-      } else {
-        setProfileError(null);
-        setUser({ ...authUser, profile: data });
-        setAgencyId(data.agency_id);
+        return;
       }
+
+      await debugAgencyFetchAttempt(data.agency_id);
+      const { data: agency, error: agencyError } = await db.agency.fetch(data.agency_id);
+      debugAgencyFetchResult({ profileAgencyId: data.agency_id, agency, error: agencyError });
+      debugAuthAgencyLoad({ authUser: resolvedAuthUser, profile: data, agency });
+
+      if (agencyError || !agency) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("no_agency");
+        return;
+      }
+
+      if (agency.id !== data.agency_id) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("agency_mismatch");
+        return;
+      }
+
+      setProfileError(null);
+      setUser({ ...resolvedAuthUser, profile: data });
+      setCurrentAgency(agency);
+      setAgencyId(data.agency_id);
     })()
       .catch(() => {
         setUser(authUser);
         setAgencyId(null);
+        setCurrentAgency(null);
         setProfileError("no_profile");
       })
       .finally(() => {
         setProfileLoading(false);
         setProfileChecked(true);
-        if (profileLoadRef.current.userId === authUser.id) {
+        if (profileLoadRef.current.userId === loadUserId) {
           profileLoadRef.current = { userId: null, promise: null };
         }
       });
 
-    profileLoadRef.current = { userId: authUser.id, promise };
+    profileLoadRef.current = { userId: loadUserId, promise };
     return promise;
   }, []);
 
@@ -124,12 +257,12 @@ export function useAuth() {
       return;
     }
 
-    // Restore existing session on mount (normal login / page refresh)
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Restore existing user on mount (normal login / page refresh)
+    supabase.auth.getUser().then(({ data: { user: restoredUser } }) => {
       // If the URL had a magic-link type the onAuthStateChange handler
-      // will fire first and set needsPasswordSet — skip getSession logic.
-      if (session?.user && urlType !== "invite" && urlType !== "recovery") {
-        loadProfile(session.user).finally(() => setLoading(false));
+      // will fire first and set needsPasswordSet — skip restore logic.
+      if (restoredUser && urlType !== "invite" && urlType !== "recovery") {
+        loadProfile(restoredUser).finally(() => setLoading(false));
       } else if (!urlType) {
         setProfileLoading(false);
         setProfileChecked(true);
@@ -176,6 +309,7 @@ export function useAuth() {
         } else if (event === "SIGNED_OUT") {
           setUser(null);
           setAgencyId(null);
+          setCurrentAgency(null);
           setProfileError(null);
           setProfileLoading(false);
           setProfileChecked(true);
@@ -185,6 +319,7 @@ export function useAuth() {
         } else {
           setUser(null);
           setAgencyId(null);
+          setCurrentAgency(null);
           setProfileError(null);
           setProfileLoading(false);
           setProfileChecked(true);
@@ -209,6 +344,7 @@ export function useAuth() {
     clearSupabaseLogoutAppStorage(currentAgencyId);
     setUser(null);
     setAgencyId(null);
+    setCurrentAgency(null);
     setProfileError(null);
     setProfileLoading(false);
     setProfileChecked(true);
@@ -217,6 +353,7 @@ export function useAuth() {
   return {
     user,
     agencyId,
+    currentAgency,
     loading,
     login,
     logout,
