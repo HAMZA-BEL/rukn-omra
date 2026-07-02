@@ -14,6 +14,12 @@ import { useDropdownPosition } from "../hooks/useDropdownPosition";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { getExplicitProgramKind, getParticipantTerminology } from "../utils/participantTerminology";
+import { getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientServiceType } from "../utils/clientServiceTypes";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import {
   getClientDisplayStatus,
   getClientCompletionBadges,
@@ -105,6 +111,15 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
     (client) => getParticipantTerminology(getClientProgram(client), client, lang),
     [getClientProgram, lang]
   );
+  const getClientPricingOptions = React.useCallback((client, programOverride = null) => {
+    const program = programOverride || getClientProgram(client);
+    const serviceType = getClientServiceType(client);
+    return {
+      program,
+      referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+      standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+    };
+  }, [getClientProgram]);
   const closeImportModal = React.useCallback(() => {
     if (importSaving) return;
     setShowImport(false);
@@ -995,9 +1010,9 @@ export default function ClientsPage({ store, onToast, contractsEnabled = true })
                   }
                 : { name: unspecifiedProgramLabel });
             const paid      = getClientTotalPaid(c.id);
-            const price     = c.salePrice || c.price || 0;
+            const pricingOptions = getClientPricingOptions(c, liveProgram);
             const status    = getDisplayStatusForClient(c);
-            const remaining = Math.max(0, price - paid);
+            const remaining = getClientRemainingAmount(c, paid, pricingOptions);
             return (
               <ClientRow key={c.id} client={c} program={prog}
                 paid={paid} remaining={remaining}

@@ -6,11 +6,17 @@ import { formatCurrency } from "../utils/currency";
 import { amountInWordsSentence } from "../utils/amountToWords";
 import { getClientDisplayName } from "../utils/clientNames";
 import { escapeHtml } from "../utils/escapeHtml";
+import { getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientServiceType } from "../utils/clientServiceTypes";
 import {
   formatProgramLevelForDocument,
   formatProgramPackageLabelForDocument,
   formatRoomTypeForDocument,
 } from "../utils/documentDisplay";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { translatePaymentMethod, translateRoomType } from "../utils/i18nValues";
 import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
@@ -130,11 +136,23 @@ const sortPaymentsForReceipt = (items = []) => (
     })
     .map(({ payment }) => payment)
 );
-const calculateReceiptAmounts = ({ payment = {}, client = {}, payments = [] } = {}) => {
-  const salePrice = toAmount(client.salePrice ?? client.price);
+const getClientReceiptPricingOptions = (client = {}, program = null) => {
+  const serviceType = getClientServiceType(client);
+  return {
+    program,
+    referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+    standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+  };
+};
+const calculateReceiptAmounts = ({ payment = {}, client = {}, program = null, payments = [] } = {}) => {
+  const pricingOptions = getClientReceiptPricingOptions(client, program);
+  const salePrice = getClientEffectiveSalePrice(client, pricingOptions);
   const paymentAmount = getPaymentAmount(payment);
   const sameClientPayments = Array.isArray(payments)
-    ? payments.filter((item) => !client.id || !item.clientId || item.clientId === client.id)
+    ? payments.filter((item) => {
+      const itemClientId = item.clientId || item.client_id;
+      return !client.id || !itemClientId || itemClientId === client.id;
+    })
     : [];
   const sortedPayments = sortPaymentsForReceipt(sameClientPayments);
   const selectedIndex = sortedPayments.findIndex((item) => isSamePayment(item, payment));
@@ -142,7 +160,7 @@ const calculateReceiptAmounts = ({ payment = {}, client = {}, payments = [] } = 
     ? sortedPayments.slice(0, selectedIndex + 1)
     : (sortedPayments.length ? sortedPayments : [payment]);
   const totalPaidSoFar = paidThroughReceipt.reduce((sum, item) => sum + getPaymentAmount(item), 0);
-  const remaining = salePrice > 0 ? Math.max(0, salePrice - totalPaidSoFar) : 0;
+  const remaining = salePrice > 0 ? getClientRemainingAmount(client, totalPaidSoFar, pricingOptions) : 0;
   return { salePrice, paymentAmount, totalPaidSoFar, remaining };
 };
 const paymentExtraDetails = (payment = {}, lang = "ar", { includeInternal = false } = {}) => {
@@ -394,7 +412,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   const chequeNumber = getPaymentValue(payment, ["chequeNumber", "cheque_number", "checkNumber", "check_number"]);
   const note = getPaymentValue(payment, ["note", "notes"]);
   const extraDetails = paymentExtraDetails(payment, lang, { includeInternal: isAgencyReceipt });
-  const receiptAmounts = calculateReceiptAmounts({ payment, client, payments });
+  const receiptAmounts = calculateReceiptAmounts({ payment, client, program, payments });
   const agencyLogoUrl = cleanDisplay(agency?.logoUrl || agency?.logo_url, "");
   const receiptTitle = isAgencyReceipt
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
@@ -435,13 +453,13 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
     ${extraDetails ? `<tr><td>${label(lang, "تفاصيل الدفع", "Détails paiement", "Payment details")}</td><td>${escapeHtml(extraDetails)}</td></tr>` : ""}
     <tr><td>${label(lang, "التاريخ", "Date", "Date")}</td><td>${escapeHtml(payment.date)}</td></tr>
     ${isAgencyReceipt && note ? `<tr><td>${label(lang, "ملاحظات", "Notes", "Notes")}</td><td>${escapeHtml(note)}</td></tr>` : ""}
-    ${receiptAmounts.salePrice > 0 ? `<tr><td>${label(lang, "إجمالي السعر", "Prix total", "Total price")}</td><td>${escapeHtml(money(receiptAmounts.salePrice))}</td></tr>` : ""}
+    <tr><td>${label(lang, "إجمالي السعر", "Prix total", "Total price")}</td><td>${escapeHtml(receiptAmounts.salePrice > 0 ? money(receiptAmounts.salePrice) : label(lang, "السعر غير محدد", "Prix non défini", "Price not set"))}</td></tr>
     <tr class="amount-row">
       <td>${label(lang, "المبلغ المستلم", "MONTANT REÇU", "AMOUNT RECEIVED")}</td>
       <td>${escapeHtml(money(receiptAmounts.paymentAmount))}</td>
     </tr>
     <tr><td>${label(lang, "إجمالي المدفوع", "Total payé", "Total paid so far")}</td><td>${escapeHtml(money(receiptAmounts.totalPaidSoFar))}</td></tr>
-    <tr class="amount-row"><td>${label(lang, "المبلغ المتبقي", "Montant restant", "Remaining amount")}</td><td>${escapeHtml(money(receiptAmounts.remaining))}</td></tr>
+    <tr class="amount-row"><td>${label(lang, "المبلغ المتبقي", "Montant restant", "Remaining amount")}</td><td>${escapeHtml(receiptAmounts.salePrice > 0 ? money(receiptAmounts.remaining) : label(lang, "السعر غير محدد", "Prix non défini", "Price not set"))}</td></tr>
   </table>
   <div class="signature">
     <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>

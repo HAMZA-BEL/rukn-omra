@@ -12,6 +12,16 @@ import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import {
+  getClientEffectiveOfficialPrice,
+  getClientEffectiveSalePrice,
+  getClientRemainingAmount,
+} from "../utils/clientPricing";
+import { getClientServiceType } from "../utils/clientServiceTypes";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
+import {
   buildSearchText,
   normalizeSearchText,
 } from "../utils/searchUtils";
@@ -651,14 +661,17 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
   const finalInvoiceLabel = t.printInvoice || (lang === "fr" ? "Imprimer facture" : lang === "en" ? "Print Invoice" : "طباعة الفاتورة");
   const proformaInvoiceLabel = lang === "fr" ? "Imprimer proforma" : lang === "en" ? "Print Proforma" : "طباعة فاتورة أولية";
   const invoiceColumnLabel = lang === "fr" ? "Facture" : lang === "en" ? "Invoice" : "الفاتورة";
+  const isInvoiceClientSettled = React.useCallback((client = {}) => (
+    Number(client?.salePrice || 0) > 0 && Number(client?.remaining || 0) <= 0
+  ), []);
   const invoiceActionLabels = React.useMemo(() => ({
     print: lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة",
     downloadWord: lang === "fr" ? "Télécharger Word" : lang === "en" ? "Download Word" : "تحميل Word",
     menu: lang === "fr" ? "Actions facture" : lang === "en" ? "Invoice actions" : "إجراءات الفاتورة",
   }), [lang]);
   const getInvoiceActionLabel = React.useCallback(
-    (client) => (client?.remaining <= 0 ? finalInvoiceLabel : proformaInvoiceLabel),
-    [finalInvoiceLabel, proformaInvoiceLabel]
+    (client) => (isInvoiceClientSettled(client) ? finalInvoiceLabel : proformaInvoiceLabel),
+    [finalInvoiceLabel, isInvoiceClientSettled, proformaInvoiceLabel]
   );
   const tableColumns = "minmax(0,1.05fr) minmax(0,1.6fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1.1fr)";
   const money = React.useCallback((value) => formatCurrency(value, lang), [lang]);
@@ -825,9 +838,15 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
   const programData = React.useMemo(() => selectedProgramClients.map(c => {
     const prog      = selectedProgram || programs.find(p => p.id === c.programId);
     const paid      = getClientTotalPaid(c.id);
-    const salePrice = c.salePrice || c.price || 0;
-    const officialPrice = c.officialPrice || salePrice;
-    const remaining = Math.max(0, salePrice - paid);
+    const serviceType = getClientServiceType(c);
+    const pricingOptions = {
+      program: prog,
+      referencePrice: getProgramServiceCostingReferenceCost(prog, serviceType),
+      standaloneSalePrice: getProgramStandaloneServiceSalePrice(prog, serviceType),
+    };
+    const salePrice = getClientEffectiveSalePrice(c, pricingOptions);
+    const officialPrice = getClientEffectiveOfficialPrice(c, pricingOptions) || salePrice;
+    const remaining = getClientRemainingAmount(c, paid, pricingOptions);
     const discount  = Math.max(0, officialPrice - salePrice);
     const status    = getClientStatus(c);
     const lastPmt   = getClientLastPayment(c.id);
@@ -934,12 +953,13 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
         payments: clientPayments,
         recipient,
         lang,
-        documentType: invoiceClient.remaining <= 0 ? "invoice" : "proforma",
+        documentType: isInvoiceClientSettled(invoiceClient) ? "invoice" : "proforma",
       });
       showStaleTravelGroupWarning(downloaded);
       return downloaded;
     }
-    const printFn = invoiceClient.remaining <= 0 ? printInvoice : printProformaInvoice;
+    const invoiceSettled = isInvoiceClientSettled(invoiceClient);
+    const printFn = invoiceSettled ? printInvoice : printProformaInvoice;
     const printed = await printFn({
       client: invoiceDocumentClient,
       program: invoiceDocumentProgram,
@@ -947,12 +967,12 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
       agency,
       lang,
       recipient,
-      invoiceApi: invoiceClient.remaining <= 0 ? invoiceApi : null,
+      invoiceApi: invoiceSettled ? invoiceApi : null,
     });
     showStaleTravelGroupWarning(printed);
-    if (printed && invoiceClient.remaining <= 0) await refreshSavedInvoices();
+    if (printed && invoiceSettled) await refreshSavedInvoices();
     return printed;
-  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, lang, onToast, programs, refreshSavedInvoices, resolveInvoiceDocumentTravelContext]);
+  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, isInvoiceClientSettled, lang, onToast, programs, refreshSavedInvoices, resolveInvoiceDocumentTravelContext]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
@@ -1418,7 +1438,7 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
           setInvoiceAction("print");
         }}
         lang={lang}
-        documentType={invoiceClient?.remaining <= 0 ? "invoice" : "proforma"}
+        documentType={isInvoiceClientSettled(invoiceClient) ? "invoice" : "proforma"}
         submitLabel={invoiceAction === "word" ? invoiceActionLabels.downloadWord : ""}
         onPrint={handlePrintSelectedInvoice}
       />

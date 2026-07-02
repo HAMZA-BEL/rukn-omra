@@ -1,5 +1,11 @@
 import { getClientDisplayName } from "../clientNames";
+import { getClientEffectiveSalePrice } from "../clientPricing";
+import { getClientServiceType } from "../clientServiceTypes";
 import { formatAirlineNameForDocument } from "../airlines";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "../../components/programs/programCosting";
 import { ensureInvoiceRegistryItem } from "./invoiceRegistry";
 import { buildInvoiceKey, getInvoiceIssueDate, trimInvoiceValue } from "./invoiceNumbering";
 import { getInvoiceProgramDisplayName } from "./invoiceProgramDisplay";
@@ -14,11 +20,20 @@ export const getInvoiceClientCin = (client = {}) => (
   || trimInvoiceValue(client.passport?.nationalId)
 );
 
-export const calculateInvoiceTotals = ({ client = {}, payments = [] } = {}) => {
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-  const salePrice = client.salePrice || client.price || 0;
-  const remaining = Math.max(0, salePrice - totalPaid);
-  return { totalPaid, salePrice, remaining, paidInFull: remaining <= 0 };
+const getInvoicePricingOptions = (client = {}, program = null) => {
+  const serviceType = getClientServiceType(client);
+  return {
+    program,
+    referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+    standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+  };
+};
+
+export const calculateInvoiceTotals = ({ client = {}, program = null, payments = [] } = {}) => {
+  const totalPaid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const salePrice = getClientEffectiveSalePrice(client, getInvoicePricingOptions(client, program));
+  const remaining = salePrice > 0 ? Math.max(0, salePrice - totalPaid) : 0;
+  return { totalPaid, salePrice, remaining, paidInFull: salePrice > 0 && totalPaid >= salePrice };
 };
 
 export const getLatestInvoicePayment = (payments = []) => (
@@ -57,7 +72,7 @@ export const buildInvoiceData = ({
 
   const clientName = getClientDisplayName(safeClient, fallbackName, lang);
   const latinName = safeClient.nameLatin && safeClient.nameLatin !== clientName ? safeClient.nameLatin : "";
-  const { totalPaid, salePrice, remaining, paidInFull } = calculateInvoiceTotals({ client: safeClient, payments });
+  const { totalPaid, salePrice, remaining, paidInFull } = calculateInvoiceTotals({ client: safeClient, program: safeProgram, payments });
   const cin = getInvoiceClientCin(safeClient);
   const passportNo = trimInvoiceValue(safeClient.passport?.number);
   const carrier = formatAirlineNameForDocument(

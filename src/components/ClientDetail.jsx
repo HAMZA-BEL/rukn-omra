@@ -31,6 +31,7 @@ import {
   getClientEffectiveOfficialPrice,
   getClientEffectiveSalePrice,
   getClientOverpaidAmount,
+  getClientPaymentStatus,
   getClientRemainingAmount,
 } from "../utils/clientPricing";
 import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "../utils/paymentRecords";
@@ -312,9 +313,7 @@ export default function ClientDetail({
   const remaining   = paymentsReady ? getClientRemainingAmount(client, totalPaid, pricingOptions) : null;
   const overpaid    = paymentsReady ? getClientOverpaidAmount(client, totalPaid, pricingOptions) : 0;
   const discount    = Math.max(0, offPrice - salePrice);
-  const status      = paymentsReady
-    ? (totalPaid === 0 ? "unpaid" : totalPaid >= salePrice ? "cleared" : "partial")
-    : "";
+  const status      = paymentsReady ? getClientPaymentStatus(client, totalPaid, pricingOptions) : "";
   const displayStatus = paymentsReady ? getClientDisplayStatus(client, program, status, pricingOptions) : "";
   const incompleteTooltip = displayStatus === "information_incomplete"
     ? getClientCompletionTooltip(client, lang, program, pricingOptions)
@@ -522,7 +521,13 @@ export default function ClientDetail({
       const contractProgram = getProgramById(contractClient.programId) || program;
       const contractPayments = getClientPayments(contractClient.id);
       const contractTotalPaid = getClientTotalPaid(contractClient.id);
-      const contractSalePrice = contractClient.salePrice || contractClient.price || 0;
+      const contractServiceType = getClientServiceType(contractClient);
+      const contractPricingOptions = {
+        program: contractProgram,
+        referencePrice: getProgramServiceCostingReferenceCost(contractProgram, contractServiceType),
+        standaloneSalePrice: getProgramStandaloneServiceSalePrice(contractProgram, contractServiceType),
+      };
+      const contractSalePrice = getClientEffectiveSalePrice(contractClient, contractPricingOptions);
       const representedMinors = clients.filter((item) => (
         item.id !== contractClient.id
         && item.programId === contractClient.programId

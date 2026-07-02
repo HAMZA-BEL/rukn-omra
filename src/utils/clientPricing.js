@@ -105,6 +105,14 @@ export const getClientRemainingAmount = (client = {}, paid = 0, options = {}) =>
   Math.max(0, getClientEffectiveSalePrice(client, options) - toClientPriceNumber(paid))
 );
 
+export const getClientPaymentStatus = (client = {}, paid = 0, options = {}) => {
+  const paidTotal = toClientPriceNumber(paid);
+  const totalDue = getClientEffectiveSalePrice(client, options);
+  if (paidTotal <= 0) return "unpaid";
+  if (totalDue > 0 && paidTotal >= totalDue) return "cleared";
+  return "partial";
+};
+
 export const getClientOverpaidAmount = (client = {}, paid = 0, options = {}) => (
   options.program && !getClientAssignmentStatus(client, options.program, options).shouldCalculatePrice
     ? 0

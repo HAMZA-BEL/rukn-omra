@@ -3,6 +3,7 @@ import {
   getClientEffectiveOfficialPrice,
   getClientEffectiveSalePrice,
   getClientOverpaidAmount,
+  getClientPaymentStatus,
   getClientRemainingAmount,
 } from "../../../utils/clientPricing";
 import { getClientServiceType } from "../../../utils/clientServiceTypes";
@@ -92,10 +93,11 @@ export const upsertProgramClientsNewestFirst = (currentClients = [], incomingCli
 };
 
 export const getProgramClientPaymentStatus = (program, client, paid) => {
-  const price = getProgramClientSalePrice(program, client);
-  if (paid === 0) return "unpaid";
-  if (paid >= price) return "cleared";
-  return "partial";
+  return getClientPaymentStatus(client, paid, {
+    referencePrice: getProgramPricingReferenceCost(program, client),
+    standaloneSalePrice: getProgramStandaloneSalePrice(program, client),
+    program,
+  });
 };
 
 export const getProgramClientDisplayStatus = (program, client, paid) => (

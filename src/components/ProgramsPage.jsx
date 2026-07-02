@@ -66,9 +66,6 @@ import {
   getClientServiceTypeLabel,
 } from "../utils/clientServiceTypes";
 import {
-  getClientRemainingAmount,
-} from "../utils/clientPricing";
-import {
   buildDuplicateProgramName,
   createDuplicateProgramPayload,
   getProgramDepartureYear,
@@ -2427,11 +2424,14 @@ export default function ProgramsPage({
       getClientTotalPaid,
       getProgramClientRemainingAmount,
       getProgramClientPaymentStatus,
-      getClientStatusRemainingAmount: getClientRemainingAmount,
+      getClientStatusRemainingAmount: (client, paid) => {
+        const clientProgram = activeProgramById.get(String(client?.programId || client?.program_id || ""));
+        return getProgramClientRemainingAmount(clientProgram, client, paid);
+      },
       getProgramKind,
       getProgramDepartureYear,
     })
-  ), [activePrograms, activeClientsByProgramId, clientsByProgramId, getClientTotalPaid]);
+  ), [activePrograms, activeClientsByProgramId, activeProgramById, clientsByProgramId, getClientTotalPaid]);
 
   const serverProgramSummaryById = React.useMemo(() => {
     const map = new Map();

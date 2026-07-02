@@ -9,6 +9,15 @@ import { buildNotificationStateHash } from "../utils/notifications";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientIdentityName } from "../utils/clientNames";
 import { getClientServiceType } from "../utils/clientServiceTypes";
+import {
+  getClientEffectiveOfficialPrice,
+  getClientEffectiveSalePrice,
+  getClientRemainingAmount,
+} from "../utils/clientPricing";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "../components/programs/programCosting";
 import { normalizeHotelCheckinDay, normalizeVisitOrder } from "../utils/hotelDates";
 import { normalizeRouteStops } from "../utils/programRoutes";
 
@@ -1180,7 +1189,7 @@ export const db = {
       const [clientsResult, paymentsResult, programsResult] = await Promise.all([
         fetchPagedRows(() => supabase
           .from("clients")
-          .select("id, program_id, official_price, sale_price")
+          .select("id, program_id, hotel_level, room_type, official_price, sale_price, docs")
           .eq("agency_id", agencyId)
           .or("deleted.is.null,deleted.eq.false")
           .or("archived.is.null,archived.eq.false")
@@ -1193,7 +1202,7 @@ export const db = {
           .order("id", { ascending: true })),
         fetchPagedRows(() => supabase
           .from("programs")
-          .select("id")
+          .select("id, type, hotel_mecca, hotel_madina, meal_plan, price_table")
           .eq("agency_id", agencyId)
           .or("deleted.is.null,deleted.eq.false")
           .or("status.is.null,status.neq.archived")
@@ -1203,7 +1212,11 @@ export const db = {
       const error = clientsResult.error || paymentsResult.error || programsResult.error;
       if (error) return { data: null, error };
 
-      const activeProgramIds = new Set((programsResult.data || []).map((program) => program.id));
+      const activeProgramsById = new Map((programsResult.data || []).map((row) => {
+        const program = fromProgram(row);
+        return [program.id, program];
+      }));
+      const activeProgramIds = new Set(activeProgramsById.keys());
       const activeClients = (clientsResult.data || []).filter((client) => (
         !client.program_id || activeProgramIds.has(client.program_id)
       ));
@@ -1229,20 +1242,28 @@ export const db = {
 
       activeClients.forEach((client) => {
         const paid = paidMap.get(client.id) || 0;
-        const salePrice = Number(client.sale_price ?? 0);
-        const officialPrice = Number(client.official_price ?? 0);
+        const clientModel = fromClient(client);
+        const program = activeProgramsById.get(client.program_id) || null;
+        const serviceType = getClientServiceType(clientModel);
+        const pricingOptions = {
+          program,
+          referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+          standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+        };
+        const salePrice = getClientEffectiveSalePrice(clientModel, pricingOptions);
+        const officialPrice = getClientEffectiveOfficialPrice(clientModel, pricingOptions) || salePrice;
 
         if (client.program_id) {
           programClientCounts[client.program_id] = (programClientCounts[client.program_id] || 0) + 1;
         }
 
         if (paid === 0) unpaid += 1;
-        else if (paid >= salePrice) cleared += 1;
+        else if (salePrice > 0 && paid >= salePrice) cleared += 1;
         else partial += 1;
 
         totalRevenue += salePrice;
         totalCollected += paid;
-        totalRemaining += Math.max(0, salePrice - paid);
+        totalRemaining += salePrice > 0 ? getClientRemainingAmount(clientModel, paid, pricingOptions) : 0;
         totalDiscount += Math.max(0, officialPrice - salePrice);
       });
 

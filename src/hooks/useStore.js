@@ -58,7 +58,7 @@ import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName, getClientIdentityName } from "../utils/clientNames";
 import { getClientAssignmentStatus, getClientProgramId } from "../utils/clientCompletionStatus";
 import { getClientServiceType } from "../utils/clientServiceTypes";
-import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientEffectiveOfficialPrice, getClientEffectiveSalePrice, getClientPaymentStatus, getClientRemainingAmount } from "../utils/clientPricing";
 import {
   getProgramServiceCostingReferenceCost,
   getProgramStandaloneServiceSalePrice,
@@ -1273,8 +1273,16 @@ export function useStore(agencyId, onToast, options = {}) {
         archiveProgramSuggestionNotifications(programId);
         return;
       }
+      const getProgramClientPricingOptions = (client) => {
+        const serviceType = getClientServiceType(client);
+        return {
+          program,
+          referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+          standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+        };
+      };
       const allCleared = programClients.every((client) => (
-        getClientRemainingAmount(client, getClientTotalPaid(client.id)) <= 0
+        getClientPaymentStatus(client, getClientTotalPaid(client.id), getProgramClientPricingOptions(client)) === "cleared"
       ));
       if (!allCleared) {
         archiveProgramSuggestionNotifications(programId);
@@ -1283,7 +1291,10 @@ export function useStore(agencyId, onToast, options = {}) {
 
       const persistKey = createProgramFullyClearedArchiveKey(
         program,
-        programClients.map((client) => ({ ...client, salePrice: getClientEffectiveSalePrice(client) }))
+        programClients.map((client) => ({
+          ...client,
+          salePrice: getClientEffectiveSalePrice(client, getProgramClientPricingOptions(client)),
+        }))
       );
       if (!persistKey) return;
       archiveProgramSuggestionNotifications(programId, persistKey);
@@ -2162,13 +2173,20 @@ export function useStore(agencyId, onToast, options = {}) {
     };
   }, [agencyId, invalidateClientPermanentDeletePreflight, mapPaymentRow, queueClientProgramArchiveSuggestionCheck, queueProgramArchiveSuggestionCheck]);
   // ── Helpers ───────────────────────────────────────────────────────────────
+  const getClientPricingOptions = useCallback((client = {}, programOverride = null) => {
+    const program = programOverride || programs.find((item) => item.id === getClientProgramId(client)) || null;
+    const serviceType = getClientServiceType(client);
+    return {
+      program,
+      referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+      standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+    };
+  }, [programs]);
+
   const getClientStatus = useCallback((client) => {
-    const paid  = getClientTotalPaid(client.id);
-    const price = getClientEffectiveSalePrice(client);
-    if (paid === 0)    return "unpaid";
-    if (paid >= price) return "cleared";
-    return "partial";
-  }, [getClientTotalPaid]);
+    const paid = getClientTotalPaid(client.id);
+    return getClientPaymentStatus(client, paid, getClientPricingOptions(client));
+  }, [getClientPricingOptions, getClientTotalPaid]);
   const getProgramById    = useCallback((id) => programs.find(p => p.id === id), [programs]);
   const getProgramClients = useCallback((id) => clients.filter(c => c.programId === id), [clients]);
   const getLinkedPaymentsForClientIds = useCallback(async (clientIds = []) => {
@@ -2628,14 +2646,21 @@ export function useStore(agencyId, onToast, options = {}) {
       });
     }
     const getPaid = (clientId) => paidMap.get(clientId) || 0;
-    const getStatus = (client) => {
-      const paid  = getPaid(client.id);
-      const price = getClientEffectiveSalePrice(client);
-      if (paid === 0)    return "unpaid";
-      if (paid >= price) return "cleared";
-      return "partial";
+    const activeProgramsById = new Map(activeProgramRecords.map((program) => [String(program.id || ""), program]));
+    const getPricingOptions = (client = {}) => {
+      const program = activeProgramsById.get(String(getClientProgramId(client) || "")) || null;
+      const serviceType = getClientServiceType(client);
+      return {
+        program,
+        referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+        standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+      };
     };
-    const activeProgramIds = new Set(activeProgramRecords.map((program) => String(program.id || "")));
+    const getStatus = (client) => {
+      const paid = getPaid(client.id);
+      return getClientPaymentStatus(client, paid, getPricingOptions(client));
+    };
+    const activeProgramIds = new Set(activeProgramsById.keys());
     const operationalClients = activeClients.filter((client) => (
       !client.deleted
       && (!getClientProgramId(client) || activeProgramIds.has(getClientProgramId(client)))
@@ -2658,10 +2683,13 @@ export function useStore(agencyId, onToast, options = {}) {
       cleared:        operationalClients.filter(c => getStatus(c) === "cleared").length,
       partial:        operationalClients.filter(c => getStatus(c) === "partial").length,
       unpaid:         operationalClients.filter(c => getStatus(c) === "unpaid").length,
-      totalRevenue:   operationalClients.reduce((s,c) => s + getClientEffectiveSalePrice(c), 0),
+      totalRevenue:   operationalClients.reduce((s,c) => s + getClientEffectiveSalePrice(c, getPricingOptions(c)), 0),
       totalCollected: operationalClients.reduce((s,c) => s+getPaid(c.id), 0),
-      totalRemaining: operationalClients.reduce((s,c) => s + getClientRemainingAmount(c, getPaid(c.id)), 0),
-      totalDiscount:  operationalClients.reduce((s,c) => s + Math.max(0, getClientEffectiveOfficialPrice(c) - getClientEffectiveSalePrice(c)), 0),
+      totalRemaining: operationalClients.reduce((s,c) => s + getClientRemainingAmount(c, getPaid(c.id), getPricingOptions(c)), 0),
+      totalDiscount:  operationalClients.reduce((s,c) => {
+        const pricingOptions = getPricingOptions(c);
+        return s + Math.max(0, getClientEffectiveOfficialPrice(c, pricingOptions) - getClientEffectiveSalePrice(c, pricingOptions));
+      }, 0),
     };
   }, [activeClients, activeProgramRecords, localClientStatsReady, localPaymentStatsReady, payments]);
 

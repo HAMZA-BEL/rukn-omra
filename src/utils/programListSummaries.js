@@ -87,12 +87,15 @@ export function buildProgramListSummaryById({
 
     let paymentStatus = "empty";
     if (activeProgramClients.length) {
-      const hasRemaining = activeProgramClients.some((client) => {
+      const hasUnclearedClient = activeProgramClients.some((client) => {
         const paid = readClientPaid(client);
+        if (typeof getProgramClientPaymentStatus === "function") {
+          return getProgramClientPaymentStatus(program, client, paid) !== "cleared";
+        }
         if (typeof getClientStatusRemainingAmount !== "function") return false;
         return (Number(getClientStatusRemainingAmount(client, paid)) || 0) > 0;
       });
-      paymentStatus = hasRemaining ? "not_cleared" : "cleared";
+      paymentStatus = hasUnclearedClient ? "not_cleared" : "cleared";
     }
 
     const capacityStatus = !hasValidCapacity

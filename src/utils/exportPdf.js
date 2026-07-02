@@ -162,7 +162,7 @@ export function printProgramPDF({
   const resolveStatus = (client = {}, paid = 0, salePrice = 0) => {
     if (typeof getClientStatus === "function") return getClientStatus(client, paid, salePrice);
     if (paid === 0) return "unpaid";
-    return paid >= salePrice ? "cleared" : "partial";
+    return salePrice > 0 && paid >= salePrice ? "cleared" : "partial";
   };
   const getClientPaidTotal = (client = {}) => (
     typeof getClientTotalPaid === "function" ? Number(getClientTotalPaid(client.id)) || 0 : 0
@@ -218,7 +218,7 @@ export function printProgramPDF({
     const salePrice = resolveSalePrice(c);
     const officialPrice = resolveOfficialPrice(c);
     const rem     = resolveRemaining(c, paid);
-    const overpaid = Math.max(0, paid - salePrice);
+    const overpaid = salePrice > 0 ? Math.max(0, paid - salePrice) : 0;
     const status  = resolveStatus(c, paid, salePrice);
     const sLabel  = status === "cleared" ? L.cleared : status === "partial" ? L.partial : L.unpaid;
     const sClass  = status === "cleared" ? "cleared" : status === "partial" ? "partial" : "unpaid";

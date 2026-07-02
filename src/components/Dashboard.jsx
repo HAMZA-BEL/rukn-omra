@@ -9,6 +9,12 @@ import { getClientDisplayName } from "../utils/clientNames";
 import { translateActivityDescription, translateProgramType } from "../utils/i18nValues";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import { createActivityProgramResolver, getActivityProgramLabel } from "../utils/activityProgramContext";
+import { getClientRemainingAmount } from "../utils/clientPricing";
+import { getClientServiceType } from "../utils/clientServiceTypes";
+import {
+  getProgramServiceCostingReferenceCost,
+  getProgramStandaloneServiceSalePrice,
+} from "./programs/programCosting";
 import { normalizeProgramPackages } from "../utils/programPackages";
 import { includesSearch, normalizeSearchText } from "../utils/searchUtils";
 
@@ -86,6 +92,15 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
   const paymentsReady = !store.isSupabaseEnabled || store.paymentsLoaded;
   const searchDataLoading = Boolean(search.trim()) && (!clientsReady || !paymentsReady);
   const searchDebouncing = normalizeSearchText(search) !== normalizeSearchText(debouncedSearch);
+  const getClientPricingOptions = React.useCallback((client = {}, programOverride = null) => {
+    const program = programOverride || getProgramById(client.programId || client.program_id) || null;
+    const serviceType = getClientServiceType(client);
+    return {
+      program,
+      referencePrice: getProgramServiceCostingReferenceCost(program, serviceType),
+      standaloneSalePrice: getProgramStandaloneServiceSalePrice(program, serviceType),
+    };
+  }, [getProgramById]);
   const handleBrandClick = React.useCallback(() => {
     if (typeof onBrandNavigate === "function") {
       onBrandNavigate();
@@ -286,10 +301,10 @@ export default function Dashboard({ store, onNavigate, onSelectClient, onSelectP
                 {clientResults.map(c => {
                   const prog  = getProgramById(c.programId);
                   const paid  = getClientTotalPaid(c.id);
-                  const price = c.salePrice||c.price||0;
+                  const pricingOptions = getClientPricingOptions(c, prog);
                   return (
                     <ClientRow key={c.id} client={c} program={prog} t={t} lang={lang} isRTL={isRTL}
-                      paid={paid} remaining={Math.max(0,price-paid)}
+                      paid={paid} remaining={getClientRemainingAmount(c, paid, pricingOptions)}
                       status={getClientStatus(c)} onClick={()=>onSelectClient(c)} />
                   );
                 })}
