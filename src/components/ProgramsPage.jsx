@@ -4754,6 +4754,8 @@ function ProgramInner({
     )
   ), [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
   const currentProgram = useScopedProgramDetail ? (scopedProgramDetail.program || program) : program;
+  const currentPackages = React.useMemo(() => normalizeProgramPackages(currentProgram), [currentProgram]);
+  const isScopedProgramDetailRefreshing = scopedProgramDetailMatches && scopedProgramDetail.status === "refreshing";
   const registeredCapacityValue = React.useMemo(
     () => formatProgramCapacityValue(currentProgram, progClients.length),
     [currentProgram, progClients.length]
@@ -6021,15 +6023,17 @@ function ProgramInner({
           </GlassCard>
         ) : (
           <RoomingWorkflowCanvas
-            program={program}
+            program={currentProgram}
             clients={progClients}
-            packages={packages}
+            packages={currentPackages}
             agency={agency}
             agencyLogoApi={store.agencyLogoApi}
             agencyId={store.agencyId}
             supabaseRoomingEnabled={store.isSupabaseEnabled}
             syncRoomingClientFields={store.syncRoomingClientFields}
             onToast={onToast}
+            externalDataReady={!isScopedProgramDetailRefreshing}
+            externalDataStatus={scopedProgramDetail.status}
           />
         )
       ) : (
@@ -6378,7 +6382,19 @@ function ProgramInner({
   );
 }
 
-function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoApi, agencyId = null, supabaseRoomingEnabled = false, syncRoomingClientFields, onToast }) {
+function RoomingWorkflowCanvas({
+  program,
+  clients,
+  packages = [],
+  agency,
+  agencyLogoApi,
+  agencyId = null,
+  supabaseRoomingEnabled = false,
+  syncRoomingClientFields,
+  onToast,
+  externalDataReady = true,
+  externalDataStatus = "ready",
+}) {
   const { t, tr, lang } = useLang();
   const [city, setCity] = React.useState("makkah");
   const [rooms, setRooms] = React.useState([]);
@@ -6416,6 +6432,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const [largeRoomGenerationConfirm, setLargeRoomGenerationConfirm] = React.useState(null);
   const [roomingPrintSettingsOpen, setRoomingPrintSettingsOpen] = React.useState(false);
   const [roomingPrintSettings, setRoomingPrintSettings] = React.useState(() => readRoomingPrintSettingsFromStorage(agencyId));
+  const [isGeneratingRooms, setIsGeneratingRooms] = React.useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = React.useState(false);
   const [roomingExportBusy, setRoomingExportBusy] = React.useState("");
   const [roomingPrintBusy, setRoomingPrintBusy] = React.useState("");
@@ -6465,6 +6482,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const roomingDirtyReasonRef = React.useRef("");
   const roomingSaveTriggerCountRef = React.useRef(0);
   const roomingSaveStatusRef = React.useRef(roomingSaveStatus);
+  const isGeneratingRoomsRef = React.useRef(false);
   const dirtyRef = React.useRef(false);
   const draggingClientIdRef = React.useRef(null);
   const roomModalOpenRef = React.useRef(false);
@@ -6684,7 +6702,8 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
   const hasRoomingLoaded = roomingLoadConfirmed && roomingLoadConfirmedKey === roomingLoadKey;
   const isRoomingLoading = roomingLoadStatus === "initialLoading" || roomingLoadStatus === "slowLoading";
   const isRoomingSaving = roomingSaveStatus === "saving" || roomingSaveStatus === "slowSaving";
-  const canShowGenerateRooms = hasRoomingLoaded && !rooms.length && !dirty && !isRoomingSaving;
+  const isRoomingExternalDataRefreshing = externalDataReady === false || externalDataStatus === "refreshing";
+  const canShowGenerateRooms = hasRoomingLoaded && !rooms.length && !dirty;
   const roomingGenerateBlockedMessage = t.roomingGenerateBlockedExisting || (
     lang === "fr"
       ? "Des chambres existent déjà, impossible de générer de nouvelles chambres sur l’hébergement actuel"
@@ -6697,7 +6716,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       ? "Chargement de l’hébergement en cours. Veuillez patienter."
       : lang === "en"
         ? "Rooming is still loading. Please wait."
-        : "جاري تحميل التسكين. يرجى الانتظار."
+        : "جاري تحميل بيانات التسكين، يرجى الانتظار قليلا"
   );
   const roomingCopyPeopleTerm = React.useMemo(() => {
     const isHajj = getProgramKind(program) === "hajj";
@@ -6726,6 +6745,32 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     () => getProgramHotelsForCity(program, packages, city),
     [city, packages, program]
   );
+  const logRoomingGenerateDebug = React.useCallback((phase, details = {}) => {
+    if (process.env.NODE_ENV !== "development") return;
+    try {
+      console.info("[rooming] generateRooms debug", {
+        phase,
+        clientsCount: clients.length,
+        eligibleClientsCount: roomingEligibleClients.length,
+        packagesCount: packages.length,
+        hotelsCount: verifiedCityHotelOptions.length,
+        currentProgramId: program?.id || "",
+        scopedProgramDetailStatus: externalDataStatus,
+        hasRoomingLoaded,
+        roomingLoading: isRoomingLoading,
+        ...details,
+      });
+    } catch {}
+  }, [
+    clients.length,
+    externalDataStatus,
+    hasRoomingLoaded,
+    isRoomingLoading,
+    packages.length,
+    program?.id,
+    roomingEligibleClients.length,
+    verifiedCityHotelOptions.length,
+  ]);
   const getClientContext = React.useCallback((client) => {
     const level = client.packageLevel || client.hotelLevel || "";
     const pkg = packageByLevel.get(level) || packageById.get(client.packageId || client.package_id);
@@ -8426,15 +8471,41 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
 
   const generateRooms = React.useCallback(async (options = {}) => {
     const skipLargeConfirm = Boolean(options?.skipLargeConfirm);
-    if (isRoomingLoading || !hasRoomingLoaded) {
+    const transientBlockers = [];
+    const incompleteBlockers = [];
+    if (isGeneratingRoomsRef.current || isGeneratingRooms) transientBlockers.push("التوليد قيد التنفيذ");
+    if (isRoomingLoading || !hasRoomingLoaded) transientBlockers.push("بيانات التسكين ما زالت تتحمل");
+    if (isRoomingSaving) transientBlockers.push("الحفظ جار");
+    if (isRoomingExternalDataRefreshing) transientBlockers.push("البرنامج ما زال يحدّث");
+    if (!Array.isArray(packages) || !packages.length) incompleteBlockers.push("الباقات غير جاهزة");
+    if (!verifiedCityHotelOptions.length) incompleteBlockers.push("الفندق غير محدد");
+
+    logRoomingGenerateDebug("before", {
+      dirty,
+      isGeneratingRooms: isGeneratingRoomsRef.current || isGeneratingRooms,
+      roomingSaving: isRoomingSaving,
+      externalDataReady,
+      externalDataRefreshing: isRoomingExternalDataRefreshing,
+      blockers: [...transientBlockers, ...incompleteBlockers],
+    });
+
+    if (transientBlockers.length) {
       onToast?.(roomingGenerateWaitMessage, "info");
       return;
     }
-    if (dirty || isRoomingSaving) {
+    if (dirty) {
       onToast?.(roomingGenerateWaitMessage, "info");
       return;
     }
+    if (incompleteBlockers.length) {
+      onToast?.(`لم يتم توليد أي غرفة لأن بيانات التسكين غير مكتملة: ${incompleteBlockers.join("، ")}`, "warning");
+      return;
+    }
+
+    isGeneratingRoomsRef.current = true;
+    setIsGeneratingRooms(true);
     try {
+      try {
       const existingRooms = await loadExistingRoomsBeforeGenerate();
       if (existingRooms.length) {
         onToast?.(roomingGenerateBlockedMessage, "warning");
@@ -8448,19 +8519,29 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     const nextRooms = [];
     const nextUnassignedByClientId = new Map(roomingEligibleClients.map((client) => [client.id, { clientId: client.id, reason: "" }]));
     const grouped = new Map();
-    const addUnassigned = (client, reason) => {
+    const generationIssueCounts = {
+      missingHotel: 0,
+      missingRoomType: 0,
+      missingGender: 0,
+      missingFamily: 0,
+      capacityExceeded: 0,
+    };
+    const addUnassigned = (client, reason, issueKey = "") => {
+      if (issueKey && Object.prototype.hasOwnProperty.call(generationIssueCounts, issueKey)) {
+        generationIssueCounts[issueKey] += 1;
+      }
       nextUnassignedByClientId.set(client.id, { clientId: client.id, reason });
     };
 
     roomingEligibleClients.forEach((client) => {
       const context = getClientContext(client);
-      if (!context.hotel) return addUnassigned(client, t.roomingMissingHotel || "فندق غير محدد");
-      if (!context.roomType) return addUnassigned(client, t.roomingMissingRoomType || "نوع الغرفة غير محدد");
-      if (!context.gender) return addUnassigned(client, t.roomingMissingGender || "الجنس غير محدد");
+      if (!context.hotel) return addUnassigned(client, t.roomingMissingHotel || "فندق غير محدد", "missingHotel");
+      if (!context.roomType) return addUnassigned(client, t.roomingMissingRoomType || "نوع الغرفة غير محدد", "missingRoomType");
+      if (!context.gender) return addUnassigned(client, t.roomingMissingGender || "الجنس غير محدد", "missingGender");
       const roomType = context.roomType;
       const capacity = getRoomingCapacity(roomType);
       const requestedCategory = client.roomCategory || (context.gender === "female" ? "female_only" : "male_only");
-      if (requestedCategory === "family" && !context.familyKey) return addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية");
+      if (requestedCategory === "family" && !context.familyKey) return addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية", "missingFamily");
       const groupKey = [
         context.hotel,
         roomType,
@@ -8471,7 +8552,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
       grouped.get(groupKey).push(client);
       if (grouped.get(groupKey).length > capacity && client.roomingGroupId) {
         grouped.get(groupKey).pop();
-        addUnassigned(client, t.roomingCapacityExceeded || "تجاوز سعة الغرفة");
+        addUnassigned(client, t.roomingCapacityExceeded || "تجاوز سعة الغرفة", "capacityExceeded");
       }
     });
 
@@ -8487,7 +8568,7 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
         const hasUnsafeFamilyMix = category === "family" && new Set(plannedClients.map((client) => client.gender)).size > 1
           && !plannedClients.every((client) => getClientContext(client).familyKey && getClientContext(client).familyKey === getClientContext(first).familyKey);
         if (hasUnsafeFamilyMix) {
-          plannedClients.forEach((client) => addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية"));
+          plannedClients.forEach((client) => addUnassigned(client, t.roomingMissingFamily || "لا توجد مجموعة عائلية", "missingFamily"));
           return;
         }
         nextRooms.push({
@@ -8507,6 +8588,22 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     });
 
     const generatedRooms = autoLayoutGeneratedRoomNodes(nextRooms);
+    if (!generatedRooms.length) {
+      const zeroReasons = [];
+      if (!roomingEligibleClients.length) {
+        zeroReasons.push(clients.length ? "لا يوجد عملاء مؤهلون" : "لا يوجد عملاء في البرنامج");
+      }
+      if (generationIssueCounts.missingHotel) zeroReasons.push(`الفندق غير محدد (${generationIssueCounts.missingHotel})`);
+      if (generationIssueCounts.missingRoomType) zeroReasons.push(`نوع الغرفة غير محدد (${generationIssueCounts.missingRoomType})`);
+      if (generationIssueCounts.missingGender) zeroReasons.push(`الجنس غير محدد (${generationIssueCounts.missingGender})`);
+      if (generationIssueCounts.missingFamily) zeroReasons.push(`المجموعة العائلية غير محددة (${generationIssueCounts.missingFamily})`);
+      if (generationIssueCounts.capacityExceeded) zeroReasons.push(`تجاوز سعة الغرفة (${generationIssueCounts.capacityExceeded})`);
+      setUnassigned(Array.from(nextUnassignedByClientId.values()));
+      logRoomingGenerateDebug("zeroRooms", { zeroReasons, generationIssueCounts });
+      const reasonText = zeroReasons.length ? `: ${zeroReasons.join("، ")}` : "";
+      onToast?.(`لم يتم توليد أي غرفة لأن بيانات التسكين غير مكتملة${reasonText}`, "warning");
+      return;
+    }
     if (!skipLargeConfirm && generatedRooms.length >= ROOMING_LARGE_GENERATION_THRESHOLD) {
       generatedRoomFitPendingRef.current = null;
       setLargeRoomGenerationConfirm({ mode: "generate", roomCount: generatedRooms.length });
@@ -8522,20 +8619,30 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
     setSelectedRoomId(null);
     markDirty();
     onToast?.(t.roomingGenerated || "تم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.", "success");
+    } finally {
+      isGeneratingRoomsRef.current = false;
+      setIsGeneratingRooms(false);
+    }
   }, [
+    clients.length,
     dirty,
+    externalDataReady,
     getClientContext,
     hasRoomingLoaded,
+    isGeneratingRooms,
+    isRoomingExternalDataRefreshing,
     isRoomingLoading,
     isRoomingSaving,
     loadExistingRoomsBeforeGenerate,
+    logRoomingGenerateDebug,
     markDirty,
     onToast,
+    packages,
     roomingEligibleClients,
     roomingGenerateBlockedMessage,
     roomingGenerateWaitMessage,
-    roomingSaveStatus,
     t,
+    verifiedCityHotelOptions.length,
   ]);
 
   const closeRoomModal = React.useCallback(() => {
@@ -10771,7 +10878,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
               icon={<ChevronUp size={15} />}
             />
             {canShowGenerateRooms && (
-              <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
+              <Button variant="primary" icon="refresh" onClick={generateRooms} disabled={isGeneratingRooms || isRoomingSaving}>
+                {t.roomingGenerateRooms || "توليد الغرف"}
+              </Button>
             )}
             {roomingStatusBanner && (
               <div style={{
@@ -11142,7 +11251,9 @@ function RoomingWorkflowCanvas({ program, clients, packages, agency, agencyLogoA
                         : (t.roomingStartDesc || "سيتم توليد الغرف فارغة حسب الاحتياج. سيبقى الحجاج/المعتمرون في قائمة غير المسكنين لتقوم بتسكينهم يدويًا.")}
                   </p>
                   {canShowGenerateRooms && (
-                    <Button variant="primary" icon="refresh" onClick={generateRooms}>{t.roomingGenerateRooms || "توليد الغرف"}</Button>
+                    <Button variant="primary" icon="refresh" onClick={generateRooms} disabled={isGeneratingRooms || isRoomingSaving}>
+                      {t.roomingGenerateRooms || "توليد الغرف"}
+                    </Button>
                   )}
                 </div>
               </div>
