@@ -6,7 +6,7 @@ export const UNASSIGNED_PROGRAM_FILTER = "__unassigned_program";
 export const INCOMPLETE_INFO_FILTER = "__incomplete_info";
 
 const PRICE_KEYS = ["salePrice", "price", "officialPrice", "sale_price", "official_price"];
-const ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint", "kamal"];
+const ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint"];
 
 const LABELS = {
   ar: {

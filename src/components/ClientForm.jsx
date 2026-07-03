@@ -82,7 +82,6 @@ const ROOM_CAPACITY = {
   triple: 3,
   quad: 4,
   quint: 5,
-  kamal: 1,
 };
 
 const getProgramAddLabel = (program, lang, fallback) => {
