@@ -505,7 +505,7 @@ export default function LoginPage({ onLogin }) {
       }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <IconBubble className="login-icon" name="brand" boxSize={64} size={30} style={{ borderRadius:18, margin:"0 auto 16px" }} />
+          <IconBubble className="login-icon" name="brand" boxSize={72} size={72} style={{ margin:"0 auto 18px" }} />
           <h1 style={{
             fontSize: 22, fontWeight: 900, fontFamily: "'Amiri', serif",
             background: "linear-gradient(135deg,#f0d060,#d4af37)",

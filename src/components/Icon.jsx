@@ -70,47 +70,35 @@ import {
   XCircle,
 } from "lucide-react";
 
-function BrandKaabaIcon({
+const RUKN_LOGO_SRC = `${process.env.PUBLIC_URL || ""}/branding/rukn-logo.png`;
+
+function BrandLogoIcon({
   size = 18,
-  color = "currentColor",
-  strokeWidth = 1.9,
+  color,
+  strokeWidth,
   style,
   ...props
 }) {
+  void color;
+  void strokeWidth;
+
   return (
-    <svg
+    <img
+      src={RUKN_LOGO_SRC}
+      alt=""
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ flexShrink: 0, ...style }}
+      style={{
+        width: size,
+        height: size,
+        objectFit: "contain",
+        display: "block",
+        flexShrink: 0,
+        ...style,
+      }}
       aria-hidden="true"
       {...props}
-    >
-      <path
-        d="M6.5 8.5L12 5.5L17.5 8.5V16L12 19L6.5 16V8.5Z"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinejoin="round"
-      />
-      <path
-        d="M6.5 8.5L12 11.5L17.5 8.5"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9 10.25H15"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-      />
-      <path
-        d="M11.15 12.35H12.85V16.1H11.15V12.35Z"
-        fill={color}
-      />
-    </svg>
+    />
   );
 }
 
@@ -120,7 +108,7 @@ export const ICONS = {
   archive: Archive,
   archivedFolder: FolderArchive,
   banknote: Banknote,
-  brand: BrandKaabaIcon,
+  brand: BrandLogoIcon,
   briefcase: Briefcase,
   building: Building2,
   camera: Camera,
@@ -223,19 +211,31 @@ export function IconBubble({
   style,
   ...props
 }) {
+  const isBrand = name === "brand";
+  const brandStyle = isBrand ? {
+    background: "transparent",
+    backgroundColor: "transparent",
+    border: "none",
+    borderRadius: 0,
+    boxShadow: "none",
+  } : null;
+
   return (
     <span
       style={{
         width: boxSize,
         height: boxSize,
-        borderRadius: 12,
-        background: bg,
-        border: `1px solid ${border}`,
+        borderRadius: isBrand ? 0 : 12,
+        background: isBrand ? "transparent" : bg,
+        backgroundColor: isBrand ? "transparent" : undefined,
+        border: isBrand ? "none" : `1px solid ${border}`,
+        boxShadow: isBrand ? "none" : undefined,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
         ...style,
+        ...brandStyle,
       }}
       {...props}
     >
