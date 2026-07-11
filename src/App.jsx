@@ -19,6 +19,7 @@ import ActivityLogPage from "./components/ActivityLogPage";
 import TrashPage from "./components/TrashPage";
 import LoginPage from "./components/LoginPage";
 import SetPasswordPage from "./components/SetPasswordPage";
+import PrivacyPolicyPage from "./components/PrivacyPolicyPage";
 import { Modal, Toast, Button } from "./components/UI";
 import { IconBubble } from "./components/Icon";
 import { formatNotificationMessage, resolveNotificationTarget } from "./utils/notifications";
@@ -29,6 +30,13 @@ import InactivityLogoutModal from "./components/session/InactivityLogoutModal";
 import { clearAutoLogoutResumeContext } from "./components/session/sessionResumeStorage";
 
 const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
+const PUBLIC_PRIVACY_POLICY_PATH = "/privacy-policy";
+
+function isPrivacyPolicyPath() {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return path === PUBLIC_PRIVACY_POLICY_PATH;
+}
 
 function getInitialPage() {
   const hash = window.location.hash.replace("#", "").trim();
@@ -1266,7 +1274,7 @@ function DisabledAccountScreen({ onLogout }) {
 export default function App() {
   return (
     <LangProvider>
-      <AuthGate />
+      {isPrivacyPolicyPath() ? <PrivacyPolicyPage /> : <AuthGate />}
     </LangProvider>
   );
 }
