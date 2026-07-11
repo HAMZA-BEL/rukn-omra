@@ -53,7 +53,7 @@ function json(event, statusCode, body) {
 
 function buildAuthClient() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    throw new Error("Missing Supabase public auth configuration for extension login");
+    throw new Error("Missing Supabase public auth configuration for extension refresh");
   }
 
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -67,7 +67,7 @@ function buildAuthClient() {
 
 function buildAdminClient() {
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    throw new Error("Missing Supabase server configuration for extension login");
+    throw new Error("Missing Supabase server configuration for extension refresh");
   }
 
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -79,8 +79,8 @@ function buildAdminClient() {
   });
 }
 
-function cleanEmail(value) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function isOptionalColumnError(error = {}) {
@@ -139,32 +139,32 @@ exports.handler = async (event) => {
       return json(event, 400, { error: "Invalid JSON" });
     }
 
-    const email = cleanEmail(payload.email);
-    const password = typeof payload.password === "string" ? payload.password : "";
-
-    if (!email || !password) {
-      return json(event, 400, { error: "Email and password are required" });
+    const refreshToken = cleanString(payload.refreshToken);
+    if (!refreshToken) {
+      return json(event, 401, { error: "Missing or invalid refresh token" });
     }
 
     const authClient = buildAuthClient();
-    const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
-      email,
-      password,
+    const { data: authData, error: refreshError } = await authClient.auth.refreshSession({
+      refresh_token: refreshToken,
     });
 
-    if (authError || !authData?.session?.access_token || !authData?.user?.id) {
-      return json(event, 401, { error: "Invalid email or password" });
-    }
-
-    if (!authData.session.refresh_token) {
-      return json(event, 500, { error: "Unable to create extension session" });
+    const session = authData?.session;
+    const user = authData?.user || session?.user;
+    if (
+      refreshError
+      || !session?.access_token
+      || !session?.refresh_token
+      || !user?.id
+    ) {
+      return json(event, 401, { error: "Invalid or expired refresh token" });
     }
 
     const adminClient = buildAdminClient();
     const { data: profile, error: profileError } = await adminClient
       .from("users")
       .select("id, agency_id, email, role, status")
-      .eq("id", authData.user.id)
+      .eq("id", user.id)
       .single();
 
     if (profileError || !profile) {
@@ -192,14 +192,14 @@ exports.handler = async (event) => {
 
     return json(event, 200, {
       session: {
-        accessToken: authData.session.access_token,
-        refreshToken: authData.session.refresh_token,
-        expiresAt: sessionExpiresAt(authData.session),
-        expiresIn: authData.session.expires_in ?? null,
+        accessToken: session.access_token,
+        refreshToken: session.refresh_token,
+        expiresAt: sessionExpiresAt(session),
+        expiresIn: session.expires_in ?? null,
       },
       user: {
-        id: authData.user.id,
-        email: authData.user.email || profile.email || email,
+        id: user.id,
+        email: user.email || profile.email || "",
       },
       profile: {
         userId: profile.id,
@@ -212,9 +212,10 @@ exports.handler = async (event) => {
       },
     });
   } catch (err) {
-    console.error("extension-auth-login error", {
+    console.error("extension-auth-refresh error", {
       message: err?.message || "Unknown error",
     });
     return json(event, 500, { error: "Internal Server Error" });
   }
 };
+

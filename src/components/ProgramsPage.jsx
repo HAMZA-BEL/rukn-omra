@@ -26,6 +26,7 @@ import {
 import { theme } from "./styles";
 import DuplicateProgramModal from "./programs/DuplicateProgramModal";
 import ProgramLifecycleModals from "./programs/ProgramLifecycleModals";
+import NusukAssistantInstallModal from "./programs/NusukAssistantInstallModal";
 import ProgramPackageLevelsPanel from "./programs/ProgramPackageLevelsPanel";
 import ProgramsListResults from "./programs/ProgramsListResults";
 import ProgramEditorModal from "./programs/ProgramEditorModal";
@@ -141,6 +142,13 @@ import {
   readProgramsFiltersFromStorage,
   writeProgramsFiltersToStorage,
 } from "../features/programs/utils/programsFilterStorage";
+import {
+  checkNusukAssistant,
+  disposeNusukAssistantBridge,
+  initializeNusukAssistantBridge,
+  isNusukAssistantReady,
+  warmupNusukAssistant,
+} from "../services/nusukAssistantBridge";
 import {
   getProgramClientDisplayStatus,
   getProgramClientOfficialPrice,
@@ -728,8 +736,20 @@ const isLocalDevelopmentHost = () => {
 const NUSUK_UPLOAD_LAUNCH_LABEL = "رفع لنسك — قيد الإطلاق";
 const NUSUK_UPLOAD_LAUNCH_HELPER = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.";
 const NUSUK_UPLOAD_URL = "https://masar.nusuk.sa/pub/login";
+const CHROME_WEB_STORE_URL = "https://chrome.google.com/webstore/detail/REPLACE_WITH_RUKN_ASSISTANT_EXTENSION_ID";
+const EDGE_ADDONS_URL = "https://microsoftedge.microsoft.com/addons/detail/REPLACE_WITH_RUKN_ASSISTANT_ADDON_ID";
 const NUSUK_UPLOAD_OPEN_DEBOUNCE_MS = 4000;
 let lastNusukUploadOpen = { url: "", at: 0 };
+
+const getNusukAssistantInstallUrl = () => {
+  if (
+    typeof navigator !== "undefined"
+    && String(navigator.userAgent || "").includes("Edg/")
+  ) {
+    return EDGE_ADDONS_URL;
+  }
+  return CHROME_WEB_STORE_URL;
+};
 
 const openNusukUploadUrl = (programId = "") => {
   if (typeof window === "undefined") return false;
@@ -2171,6 +2191,8 @@ export default function ProgramsPage({
   const [duplicatePrompt, setDuplicatePrompt] = React.useState(null);
   const [nusukSettingsPrompt, setNusukSettingsPrompt] = React.useState(null);
   const [nusukSettingsSaving, setNusukSettingsSaving] = React.useState(false);
+  const [isNusukAssistantInstallOpen, setIsNusukAssistantInstallOpen] = React.useState(false);
+  const [pendingNusukUploadProgram, setPendingNusukUploadProgram] = React.useState(null);
   const [serverProgramPage, setServerProgramPage] = React.useState({ status: "idle", data: null });
   const yearMenuRef = React.useRef(null);
   const yearButtonRef = React.useRef(null);
@@ -2182,6 +2204,7 @@ export default function ProgramsPage({
   const programPageSizeButtonRef = React.useRef(null);
   const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
+  const nusukAssistantCheckInFlightRef = React.useRef(false);
   const metricsHydrationRequestedRef = React.useRef(false);
   const programRealtimeSummaryTimerRef = React.useRef(null);
   const programsFiltersStorageKeyRef = React.useRef(programsFiltersStorageKey);
@@ -2194,6 +2217,14 @@ export default function ProgramsPage({
     if (programRealtimeSummaryTimerRef.current !== null) {
       window.clearTimeout(programRealtimeSummaryTimerRef.current);
     }
+  }, []);
+
+  React.useEffect(() => {
+    initializeNusukAssistantBridge();
+    warmupNusukAssistant();
+    return () => {
+      disposeNusukAssistantBridge();
+    };
   }, []);
 
   React.useEffect(() => {
@@ -3166,6 +3197,16 @@ export default function ProgramsPage({
     return result || { error: null };
   }, [onToast, setProgramNusukUploadEnabled, updateProgram]);
 
+  const handleCloseNusukAssistantInstallModal = React.useCallback(() => {
+    setIsNusukAssistantInstallOpen(false);
+    setPendingNusukUploadProgram(null);
+  }, []);
+
+  const handleInstallNusukAssistant = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.open(getNusukAssistantInstallUrl(), "_blank", "noopener,noreferrer");
+  }, []);
+
   const handleProgramCardNusukUploadToggle = React.useCallback(async (program) => {
     if (!nusukUploadToggleEnabled) return;
     if (!program?.id) return;
@@ -3183,6 +3224,25 @@ export default function ProgramsPage({
         return;
       }
       onToast("تم إيقاف رفع البرنامج لنسك", "info");
+      return;
+    }
+
+    let assistantReady = isNusukAssistantReady();
+    if (!assistantReady) {
+      if (nusukAssistantCheckInFlightRef.current) return;
+      nusukAssistantCheckInFlightRef.current = true;
+      try {
+        assistantReady = await checkNusukAssistant();
+      } catch {
+        assistantReady = false;
+      } finally {
+        nusukAssistantCheckInFlightRef.current = false;
+      }
+    }
+
+    if (!assistantReady) {
+      setPendingNusukUploadProgram(program);
+      setIsNusukAssistantInstallOpen(true);
       return;
     }
 
@@ -3237,6 +3297,14 @@ export default function ProgramsPage({
     setProgramsCurrentPage((page) => Math.min(totalProgramsPages, page + 1));
   }, [totalProgramsPages]);
 
+  const nusukAssistantInstallModal = (
+    <NusukAssistantInstallModal
+      isOpen={isNusukAssistantInstallOpen && Boolean(pendingNusukUploadProgram)}
+      onClose={handleCloseNusukAssistantInstallModal}
+      onInstall={handleInstallNusukAssistant}
+    />
+  );
+
   if (activeProgram) {
     const prog = programs.find(p => p.id === activeProgram);
     if (!prog) { setActiveProgram(null); return null; }
@@ -3277,6 +3345,7 @@ export default function ProgramsPage({
           onCancel={handleCancelNusukSettingsPrompt}
           onSave={handleSaveNusukSettingsAndContinue}
         />
+        {nusukAssistantInstallModal}
       </>
     );
   }
@@ -4001,6 +4070,7 @@ export default function ProgramsPage({
         onCancel={handleCancelNusukSettingsPrompt}
         onSave={handleSaveNusukSettingsAndContinue}
       />
+      {nusukAssistantInstallModal}
     </div>
   );
 }
