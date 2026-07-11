@@ -147,6 +147,7 @@ import {
   disposeNusukAssistantBridge,
   initializeNusukAssistantBridge,
   isNusukAssistantReady,
+  openNusukWithAssistant,
   warmupNusukAssistant,
 } from "../services/nusukAssistantBridge";
 import {
@@ -2205,6 +2206,7 @@ export default function ProgramsPage({
   const programSearchInputRef = React.useRef(null);
   const programCardRefs = React.useRef(new Map());
   const nusukAssistantCheckInFlightRef = React.useRef(false);
+  const nusukOpenInFlightProgramIdsRef = React.useRef(new Set());
   const metricsHydrationRequestedRef = React.useRef(false);
   const programRealtimeSummaryTimerRef = React.useRef(null);
   const programsFiltersStorageKeyRef = React.useRef(programsFiltersStorageKey);
@@ -3173,28 +3175,55 @@ export default function ProgramsPage({
   }, []);
 
   const enableProgramForNusukUploadAndOpen = React.useCallback(async (program) => {
-    if (!program?.id) return { error: new Error("missing-program-id") };
-    const result = typeof setProgramNusukUploadEnabled === "function"
-      ? await setProgramNusukUploadEnabled(program.id, true)
-      : await updateProgram(program.id, {
-        nusukUploadEnabled: true,
-        nusuk_upload_enabled: true,
-      });
-    if (result?.error) {
-      if (typeof setProgramNusukUploadEnabled === "function") {
-        await setProgramNusukUploadEnabled(program.id, false);
-      } else {
-        updateProgram(program.id, {
-          nusukUploadEnabled: false,
-          nusuk_upload_enabled: false,
-        });
-      }
-      onToast("تعذر تفعيل البرنامج لنسك", "error");
-      return result;
+    const programId = String(program?.id || "");
+    if (!programId) return { error: new Error("missing-program-id") };
+    if (nusukOpenInFlightProgramIdsRef.current.has(programId)) {
+      return { error: null, skipped: true };
     }
-    onToast("تم تفعيل البرنامج لنسك", "success");
-    openNusukUploadUrl(program.id);
-    return result || { error: null };
+
+    nusukOpenInFlightProgramIdsRef.current.add(programId);
+    try {
+      const result = typeof setProgramNusukUploadEnabled === "function"
+        ? await setProgramNusukUploadEnabled(programId, true)
+        : await updateProgram(programId, {
+          nusukUploadEnabled: true,
+          nusuk_upload_enabled: true,
+        });
+
+      if (result?.error) {
+        if (typeof setProgramNusukUploadEnabled === "function") {
+          await setProgramNusukUploadEnabled(programId, false);
+        } else {
+          updateProgram(programId, {
+            nusukUploadEnabled: false,
+            nusuk_upload_enabled: false,
+          });
+        }
+        onToast("تعذر تفعيل البرنامج لنسك", "error");
+        return result;
+      }
+
+      onToast("تم تفعيل البرنامج لنسك", "success");
+
+      if (isNusukAssistantReady()) {
+        const assistantOpenResult = await openNusukWithAssistant(programId);
+        if (assistantOpenResult?.status === "accepted") {
+          return result || { error: null };
+        }
+        if (assistantOpenResult?.status === "rejected") {
+          onToast(
+            assistantOpenResult.message || "توجد عملية رفع جارية. أكملها أو أوقفها قبل فتح برنامج آخر.",
+            "warning"
+          );
+          return result || { error: null };
+        }
+      }
+
+      openNusukUploadUrl(programId);
+      return result || { error: null };
+    } finally {
+      nusukOpenInFlightProgramIdsRef.current.delete(programId);
+    }
   }, [onToast, setProgramNusukUploadEnabled, updateProgram]);
 
   const handleCloseNusukAssistantInstallModal = React.useCallback(() => {
