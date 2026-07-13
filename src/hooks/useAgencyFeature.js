@@ -5,6 +5,7 @@ export const AGENCY_FEATURES = {
   PROGRAM_POSTERS: "program_posters",
   BADGES: "badges",
   CONTRACTS: "contracts",
+  NUSUK_UPLOAD: "nusuk_upload",
 };
 
 export function useAgencyFeature(agencyId, featureKey, options = {}) {

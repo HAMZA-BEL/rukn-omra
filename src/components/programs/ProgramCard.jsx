@@ -64,7 +64,6 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, onToggleNusukUpload, lang, formatCurrencyForLang,
   highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null,
   travelGroupCount = 0, nusukUploadToggleEnabled = false,
-  nusukUploadDisableToggleEnabled = true,
   nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
   nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا." }) {
   const [hov, setHov] = React.useState(false);
@@ -76,8 +75,8 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const canDuplicate = !program.deleted && !program.deletedAt && program.status !== "archived";
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
   const nusukUploadEnabled = Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled);
-  const showNusukUploadEnabledState = Boolean(nusukUploadToggleEnabled && nusukUploadEnabled);
-  const showNusukUploadDisableAction = Boolean(nusukUploadDisableToggleEnabled && showNusukUploadEnabledState);
+  const showNusukUploadEnabledState = nusukUploadEnabled;
+  const showNusukUploadDisableAction = Boolean(nusukUploadToggleEnabled && nusukUploadEnabled);
   const hasProgramSummary = programSummary && Number.isFinite(Number(programSummary.packageCount));
   const packages = hasProgramSummary ? [] : normalizeProgramPackages(program);
   const packageCount = hasProgramSummary ? Number(programSummary.packageCount) : getProgramPackageCount(program);

@@ -83,9 +83,11 @@ function AppInner({
   const badgesFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.BADGES, { fallbackEnabled: true });
   const contractsFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.CONTRACTS, { fallbackEnabled: true });
   const programPostersFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.PROGRAM_POSTERS, { fallbackEnabled: true });
+  const nusukUploadFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.NUSUK_UPLOAD, { fallbackEnabled: false });
   const badgesEnabled = badgesFeature.enabled;
   const contractsEnabled = contractsFeature.enabled;
   const programPostersEnabled = programPostersFeature.enabled;
+  const agencyNusukUploadFeatureEnabled = nusukUploadFeature.enabled;
   const [page,           setPage]           = React.useState(getInitialPage);
   const [pageHistory,    setPageHistory]    = React.useState([]);
   const [selectedClient, setSelectedClient] = React.useState(null);
@@ -440,6 +442,7 @@ function AppInner({
                 badgesEnabled={badgesEnabled}
                 contractsEnabled={contractsEnabled}
                 programPostersEnabled={programPostersEnabled}
+                agencyNusukUploadFeatureEnabled={agencyNusukUploadFeatureEnabled}
               />
             </ErrorBoundary>
           )}

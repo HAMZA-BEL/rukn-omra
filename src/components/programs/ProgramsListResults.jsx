@@ -29,7 +29,6 @@ export default function ProgramsListResults({
   onToggleProgramNusukUpload,
   nusukUploadToggleEnabled = false,
   canUseNusukUploadForProgram = null,
-  nusukUploadDisableToggleEnabled = true,
   nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
   nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.",
   onToggleProgramSelection,
@@ -162,7 +161,6 @@ export default function ProgramsListResults({
                   onToggleProgramNusukUpload?.(program);
                 }}
                 nusukUploadToggleEnabled={canUseNusukUpload}
-                nusukUploadDisableToggleEnabled={nusukUploadDisableToggleEnabled}
                 nusukUploadLaunchLabel={nusukUploadLaunchLabel}
                 nusukUploadLaunchHelper={nusukUploadLaunchHelper}
                 lang={lang}

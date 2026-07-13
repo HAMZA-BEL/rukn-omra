@@ -709,10 +709,6 @@ const isProgramNusukUploadEnabled = (program = {}) => (
   Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled)
 );
 
-const isProgramNusukUploadLaunchEnabled = (program = {}) => (
-  program?.nusuk_upload_enabled === true
-);
-
 const isPrivateLanIpv4 = (hostname = "") => {
   const match = String(hostname).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!match) return false;
@@ -738,8 +734,11 @@ const isLocalDevelopmentHost = () => {
   );
 };
 
-const getNusukUploadAvailability = (program = {}, { isLocalhost = isLocalDevelopmentHost(), debug = false } = {}) => {
-  const canUseNusukUpload = Boolean(isLocalhost || isProgramNusukUploadLaunchEnabled(program));
+const getNusukUploadAvailability = (
+  program = {},
+  { isLocalhost = isLocalDevelopmentHost(), agencyNusukUploadFeatureEnabled = false, debug = false } = {}
+) => {
+  const canUseNusukUpload = Boolean(isLocalhost || agencyNusukUploadFeatureEnabled === true);
   if (debug && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
     console.debug("[Nusuk Upload Availability]", {
       hostname: window.location.hostname,
@@ -747,6 +746,7 @@ const getNusukUploadAvailability = (program = {}, { isLocalhost = isLocalDevelop
       programId: program?.id,
       agencyId: program?.agency_id,
       nusukUploadEnabled: program?.nusuk_upload_enabled,
+      agencyNusukUploadFeatureEnabled,
       canUseNusukUpload,
     });
   }
@@ -2142,6 +2142,7 @@ export default function ProgramsPage({
   badgesEnabled = true,
   contractsEnabled = true,
   programPostersEnabled = true,
+  agencyNusukUploadFeatureEnabled = false,
 }) {
   const { programs, clients, addProgram, updateProgram, archiveProgramRecord, trashProgramRecord, deleteProgram,
           getClientTotalPaid, ensureAgencyNusukSettings, saveAgencyNusukSettings, setProgramNusukUploadEnabled } = store;
@@ -2162,8 +2163,12 @@ export default function ProgramsPage({
   );
   const isLocalhost = isLocalDevelopmentHost();
   const canUseNusukUploadForProgram = React.useCallback((program, options = {}) => (
-    getNusukUploadAvailability(program, { isLocalhost, debug: options.debug })
-  ), [isLocalhost]);
+    getNusukUploadAvailability(program, {
+      isLocalhost,
+      agencyNusukUploadFeatureEnabled,
+      debug: options.debug,
+    })
+  ), [agencyNusukUploadFeatureEnabled, isLocalhost]);
   const { templates: bulkAssignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const bulkPosterExportLabels = React.useMemo(() => getPosterExportLabels(lang, t), [lang, t]);
   const [showForm,      setShowForm]      = React.useState(false);
@@ -3264,7 +3269,7 @@ export default function ProgramsPage({
     if (!program?.id) return;
     const currentEnabled = isProgramNusukUploadEnabled(program);
 
-    if (isLocalhost && currentEnabled) {
+    if (currentEnabled) {
       const result = typeof setProgramNusukUploadEnabled === "function"
         ? await setProgramNusukUploadEnabled(program.id, false)
         : await updateProgram(program.id, {
@@ -3311,7 +3316,7 @@ export default function ProgramsPage({
     }
 
     await enableProgramForNusukUploadAndOpen(program);
-  }, [canUseNusukUploadForProgram, enableProgramForNusukUploadAndOpen, ensureAgencyNusukSettings, isLocalhost, onToast, setProgramNusukUploadEnabled, updateProgram]);
+  }, [canUseNusukUploadForProgram, enableProgramForNusukUploadAndOpen, ensureAgencyNusukSettings, onToast, setProgramNusukUploadEnabled, updateProgram]);
 
   const handleCancelNusukSettingsPrompt = React.useCallback(() => {
     if (nusukSettingsSaving) return;
@@ -3369,6 +3374,7 @@ export default function ProgramsPage({
           badgesEnabled={badgesEnabled}
           contractsEnabled={contractsEnabled}
           programPostersEnabled={programPostersEnabled}
+          agencyNusukUploadFeatureEnabled={agencyNusukUploadFeatureEnabled}
           onBack={() => closeProgramDetail(true)}
           onEditProgram={(programClients) => {
             setEditing(prog);
@@ -4046,7 +4052,6 @@ export default function ProgramsPage({
         onDeleteProgram={handleProgramCardDelete}
         onToggleProgramNusukUpload={handleProgramCardNusukUploadToggle}
         canUseNusukUploadForProgram={canUseNusukUploadForProgram}
-        nusukUploadDisableToggleEnabled={isLocalhost}
         nusukUploadLaunchLabel={NUSUK_UPLOAD_LAUNCH_LABEL}
         nusukUploadLaunchHelper={NUSUK_UPLOAD_LAUNCH_HELPER}
         onToggleProgramSelection={toggleProgramSelection}
@@ -4141,6 +4146,7 @@ function ProgramInner({
   badgesEnabled = true,
   contractsEnabled = true,
   programPostersEnabled = true,
+  agencyNusukUploadFeatureEnabled = false,
   externalRefreshKey = 0,
   onToggleProgramNusukUpload,
 }) {
@@ -4877,8 +4883,12 @@ function ProgramInner({
   ), [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
   const currentProgram = useScopedProgramDetail ? (scopedProgramDetail.program || program) : program;
   const currentNusukUploadEnabled = isProgramNusukUploadEnabled(currentProgram);
-  const canUseNusukUpload = getNusukUploadAvailability(currentProgram, { isLocalhost, debug: true });
-  const showNusukUploadDisableAction = Boolean(isLocalhost && currentNusukUploadEnabled);
+  const canUseNusukUpload = getNusukUploadAvailability(currentProgram, {
+    isLocalhost,
+    agencyNusukUploadFeatureEnabled,
+    debug: true,
+  });
+  const showNusukUploadDisableAction = Boolean(canUseNusukUpload && currentNusukUploadEnabled);
   const currentPackages = React.useMemo(() => normalizeProgramPackages(currentProgram), [currentProgram]);
   const isScopedProgramDetailRefreshing = scopedProgramDetailMatches && scopedProgramDetail.status === "refreshing";
   const registeredCapacityValue = React.useMemo(
