@@ -224,6 +224,7 @@ const fromProgramPageSummaryItem = (row = {}) => {
 
   return {
     id: programId,
+    agency_id: row.agency_id || row.agencyId || "",
     name: row.name || "",
     nameFr: row.name_fr || row.nameFr || "",
     type: row.type || "",
@@ -509,6 +510,7 @@ const toProgram = (p, agencyId) => ({
 
 const fromProgram = (row) => ({
   id:          row.id,
+  agency_id:   row.agency_id || row.agencyId || "",
   name:        row.name,
   nameFr:      row.name_fr,
   type:        row.type,

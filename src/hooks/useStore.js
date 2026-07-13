@@ -1975,6 +1975,7 @@ export function useStore(agencyId, onToast, options = {}) {
 
     const mapProgramRow = (row) => ({
       id: row.id,
+      agency_id: row.agency_id || "",
       name: row.name,
       nameFr: row.name_fr,
       type: row.type,

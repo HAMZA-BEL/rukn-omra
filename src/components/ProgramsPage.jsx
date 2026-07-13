@@ -709,6 +709,10 @@ const isProgramNusukUploadEnabled = (program = {}) => (
   Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled)
 );
 
+const isProgramNusukUploadLaunchEnabled = (program = {}) => (
+  program?.nusuk_upload_enabled === true
+);
+
 const isPrivateLanIpv4 = (hostname = "") => {
   const match = String(hostname).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!match) return false;
@@ -732,6 +736,21 @@ const isLocalDevelopmentHost = () => {
     || hostname === "[::1]"
     || isPrivateLanIpv4(hostname)
   );
+};
+
+const getNusukUploadAvailability = (program = {}, { isLocalhost = isLocalDevelopmentHost(), debug = false } = {}) => {
+  const canUseNusukUpload = Boolean(isLocalhost || isProgramNusukUploadLaunchEnabled(program));
+  if (debug && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    console.debug("[Nusuk Upload Availability]", {
+      hostname: window.location.hostname,
+      isLocalhost,
+      programId: program?.id,
+      agencyId: program?.agency_id,
+      nusukUploadEnabled: program?.nusuk_upload_enabled,
+      canUseNusukUpload,
+    });
+  }
+  return canUseNusukUpload;
 };
 
 const NUSUK_UPLOAD_LAUNCH_LABEL = "رفع لنسك — قيد الإطلاق";
@@ -2141,7 +2160,10 @@ export default function ProgramsPage({
     (value) => formatCurrency(value, lang),
     [lang]
   );
-  const nusukUploadToggleEnabled = isLocalDevelopmentHost();
+  const isLocalhost = isLocalDevelopmentHost();
+  const canUseNusukUploadForProgram = React.useCallback((program, options = {}) => (
+    getNusukUploadAvailability(program, { isLocalhost, debug: options.debug })
+  ), [isLocalhost]);
   const { templates: bulkAssignedCodePosterTemplates } = useAgencyCodePosterTemplates(store.agencyId, { enabled: programPostersEnabled });
   const bulkPosterExportLabels = React.useMemo(() => getPosterExportLabels(lang, t), [lang, t]);
   const [showForm,      setShowForm]      = React.useState(false);
@@ -3237,11 +3259,12 @@ export default function ProgramsPage({
   }, []);
 
   const handleProgramCardNusukUploadToggle = React.useCallback(async (program) => {
-    if (!nusukUploadToggleEnabled) return;
+    const canUseNusukUpload = canUseNusukUploadForProgram(program, { debug: true });
+    if (!canUseNusukUpload) return;
     if (!program?.id) return;
     const currentEnabled = isProgramNusukUploadEnabled(program);
 
-    if (currentEnabled) {
+    if (isLocalhost && currentEnabled) {
       const result = typeof setProgramNusukUploadEnabled === "function"
         ? await setProgramNusukUploadEnabled(program.id, false)
         : await updateProgram(program.id, {
@@ -3288,7 +3311,7 @@ export default function ProgramsPage({
     }
 
     await enableProgramForNusukUploadAndOpen(program);
-  }, [enableProgramForNusukUploadAndOpen, ensureAgencyNusukSettings, nusukUploadToggleEnabled, onToast, setProgramNusukUploadEnabled, updateProgram]);
+  }, [canUseNusukUploadForProgram, enableProgramForNusukUploadAndOpen, ensureAgencyNusukSettings, isLocalhost, onToast, setProgramNusukUploadEnabled, updateProgram]);
 
   const handleCancelNusukSettingsPrompt = React.useCallback(() => {
     if (nusukSettingsSaving) return;
@@ -3296,8 +3319,8 @@ export default function ProgramsPage({
   }, [nusukSettingsSaving]);
 
   const handleSaveNusukSettingsAndContinue = React.useCallback(async (settings) => {
-    if (!nusukUploadToggleEnabled) return { error: new Error("nusuk-upload-disabled") };
     const program = nusukSettingsPrompt?.program;
+    if (!canUseNusukUploadForProgram(program, { debug: true })) return { error: new Error("nusuk-upload-disabled") };
     if (!program?.id) return { error: new Error("missing-program-id") };
 
     setNusukSettingsSaving(true);
@@ -3318,7 +3341,7 @@ export default function ProgramsPage({
     } finally {
       setNusukSettingsSaving(false);
     }
-  }, [enableProgramForNusukUploadAndOpen, nusukSettingsPrompt, nusukUploadToggleEnabled, onToast, saveAgencyNusukSettings]);
+  }, [canUseNusukUploadForProgram, enableProgramForNusukUploadAndOpen, nusukSettingsPrompt, onToast, saveAgencyNusukSettings]);
   const goToPreviousProgramsPage = React.useCallback(() => {
     setProgramsCurrentPage((page) => Math.max(1, page - 1));
   }, []);
@@ -4022,7 +4045,8 @@ export default function ProgramsPage({
         onArchiveProgram={handleProgramCardArchive}
         onDeleteProgram={handleProgramCardDelete}
         onToggleProgramNusukUpload={handleProgramCardNusukUploadToggle}
-        nusukUploadToggleEnabled={nusukUploadToggleEnabled}
+        canUseNusukUploadForProgram={canUseNusukUploadForProgram}
+        nusukUploadDisableToggleEnabled={isLocalhost}
         nusukUploadLaunchLabel={NUSUK_UPLOAD_LAUNCH_LABEL}
         nusukUploadLaunchHelper={NUSUK_UPLOAD_LAUNCH_HELPER}
         onToggleProgramSelection={toggleProgramSelection}
@@ -4148,7 +4172,7 @@ function ProgramInner({
     ), String(template));
   }, [t]);
   const formatCurrencyForLang = React.useCallback((value) => formatCurrency(value, lang), [lang]);
-  const nusukUploadToggleEnabled = isLocalDevelopmentHost();
+  const isLocalhost = isLocalDevelopmentHost();
 
   const [filter,         setFilter]         = React.useState("all");
   const [search,         setSearch]         = React.useState("");
@@ -4217,7 +4241,6 @@ function ProgramInner({
   });
   const packages = React.useMemo(() => normalizeProgramPackages(program), [program]);
   const participantTerms = React.useMemo(() => getParticipantTerminology(program, lang), [program, lang]);
-  const currentNusukUploadEnabled = isProgramNusukUploadEnabled(program);
   const isHajjProgram = getProgramKind(program) === "hajj";
   const currentProgramTravelGroups = React.useMemo(() => (
     (store.programTravelGroups || [])
@@ -4853,6 +4876,9 @@ function ProgramInner({
     )
   ), [clients, program.id, scopedProgramDetail.clients, useScopedProgramDetail]);
   const currentProgram = useScopedProgramDetail ? (scopedProgramDetail.program || program) : program;
+  const currentNusukUploadEnabled = isProgramNusukUploadEnabled(currentProgram);
+  const canUseNusukUpload = getNusukUploadAvailability(currentProgram, { isLocalhost, debug: true });
+  const showNusukUploadDisableAction = Boolean(isLocalhost && currentNusukUploadEnabled);
   const currentPackages = React.useMemo(() => normalizeProgramPackages(currentProgram), [currentProgram]);
   const isScopedProgramDetailRefreshing = scopedProgramDetailMatches && scopedProgramDetail.status === "refreshing";
   const registeredCapacityValue = React.useMemo(
@@ -5722,9 +5748,9 @@ function ProgramInner({
   }, [closeHeaderActions]);
   const handleToggleNusukUpload = React.useCallback(() => {
     closeHeaderActions();
-    if (!nusukUploadToggleEnabled) return;
-    onToggleProgramNusukUpload?.(program);
-  }, [closeHeaderActions, nusukUploadToggleEnabled, onToggleProgramNusukUpload, program]);
+    if (!canUseNusukUpload) return;
+    onToggleProgramNusukUpload?.(currentProgram);
+  }, [canUseNusukUpload, closeHeaderActions, currentProgram, onToggleProgramNusukUpload]);
   const handleProgramTabChange = React.useCallback((nextTab) => {
     setProgramTab(nextTab);
     if (nextTab === "rooming") ensureGlobalDetailData({ notify: true });
@@ -5918,13 +5944,13 @@ function ProgramInner({
     },
     {
       key: "nusuk-upload",
-      icon: currentNusukUploadEnabled && nusukUploadToggleEnabled ? "check" : "upload",
-      label: nusukUploadToggleEnabled
-        ? (currentNusukUploadEnabled ? "إيقاف الرفع لنسك" : "رفع لنسك")
+      icon: showNusukUploadDisableAction ? "check" : "upload",
+      label: canUseNusukUpload
+        ? (showNusukUploadDisableAction ? "إيقاف الرفع لنسك" : "رفع لنسك")
         : NUSUK_UPLOAD_LAUNCH_LABEL,
-      disabled: !nusukUploadToggleEnabled,
-      helper: !nusukUploadToggleEnabled ? NUSUK_UPLOAD_LAUNCH_HELPER : "",
-      title: !nusukUploadToggleEnabled ? NUSUK_UPLOAD_LAUNCH_HELPER : undefined,
+      disabled: !canUseNusukUpload,
+      helper: !canUseNusukUpload ? NUSUK_UPLOAD_LAUNCH_HELPER : "",
+      title: !canUseNusukUpload ? NUSUK_UPLOAD_LAUNCH_HELPER : undefined,
       onClick: handleToggleNusukUpload,
     },
     {
@@ -5997,7 +6023,7 @@ function ProgramInner({
   ].filter((action) => (
     (badgesEnabled || action.key !== "badges")
     && (contractsEnabled || (action.key !== "word-contracts" && action.key !== "contracts"))
-  ))), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, badgesEnabled, completionLabels.passportImport, contractsEnabled, costingLabels.action, currentNusukUploadEnabled, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleToggleNusukUpload, handleWordContractsExport, lang, nusukUploadToggleEnabled, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
+  ))), [amadeusExportLabel, badgeExportActionLabel, badgeExportBusy, badgesEnabled, canUseNusukUpload, completionLabels.passportImport, contractsEnabled, costingLabels.action, handleAmadeusExport, handleBadgePdfExport, handleContractsExcelExport, handleCostingOpen, handleEditProgram, handleExcelImportOpen, handlePassportImportOpen, handlePassportListWordExport, handlePilgrimsListExport, handleProgramPdfExport, handleProgramPosterDownload, handleToggleNusukUpload, handleWordContractsExport, lang, participantExcelImportLabel, participantTerms.exportListAction, participantTerms.passportImport, posterExportBusy, posterExportLabels.action, posterExportLabels.busy, showNusukUploadDisableAction, t.editProgramTitle, t.exportPassportListWord, t.exportPilgrimsList, wordContractExportBusy, wordContractsExportLabels.action, wordContractsExportLabels.busy]);
 
   return (
     <div style={{ padding:"28px 32px" }}>
@@ -6015,7 +6041,7 @@ function ProgramInner({
         headerActions={headerActions}
         hoveredHeaderAction={hoveredHeaderAction}
         setHoveredHeaderAction={setHoveredHeaderAction}
-        nusukUploadToggleEnabled={nusukUploadToggleEnabled}
+        nusukUploadToggleEnabled={canUseNusukUpload}
         onAddClient={() => runWithGlobalDetailData(() => {
           if (!ensureCurrentProgramCanAdd(1, "add")) return;
           setShowAddClient(true);

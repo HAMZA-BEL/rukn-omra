@@ -14,6 +14,16 @@ import { getProgramKind } from "../../utils/participantTerminology";
 
 const tc = theme.colors;
 
+const programLevelBadgeStyle = {
+  fontSize: 11,
+  color: "var(--rukn-gold)",
+  background: "rgba(212,175,55,.14)",
+  border: "1px solid rgba(128,91,11,.22)",
+  padding: "2px 10px",
+  borderRadius: 20,
+  fontWeight: 800,
+};
+
 function SmallBtn({ icon, onClick, color, title, active = false }) {
   const [hov, setHov] = React.useState(false);
   const activeOrHover = hov || active;
@@ -54,6 +64,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   cleared, unpaid, delay, onClick, onEdit, onDuplicate, onArchive, onDelete, onToggleNusukUpload, lang, formatCurrencyForLang,
   highlighted = false, selected = false, onSelectionChange, selectionLabel = "", programSummary = null,
   travelGroupCount = 0, nusukUploadToggleEnabled = false,
+  nusukUploadDisableToggleEnabled = true,
   nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
   nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا." }) {
   const [hov, setHov] = React.useState(false);
@@ -66,6 +77,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
   const canArchive = !program.deleted && !program.deletedAt && program.status !== "archived" && typeof onArchive === "function";
   const nusukUploadEnabled = Boolean(program.nusukUploadEnabled ?? program.nusuk_upload_enabled);
   const showNusukUploadEnabledState = Boolean(nusukUploadToggleEnabled && nusukUploadEnabled);
+  const showNusukUploadDisableAction = Boolean(nusukUploadDisableToggleEnabled && showNusukUploadEnabledState);
   const hasProgramSummary = programSummary && Number.isFinite(Number(programSummary.packageCount));
   const packages = hasProgramSummary ? [] : normalizeProgramPackages(program);
   const packageCount = hasProgramSummary ? Number(programSummary.packageCount) : getProgramPackageCount(program);
@@ -99,9 +111,9 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
     },
     typeof onToggleNusukUpload === "function" ? {
       key: "nusuk-upload",
-      icon: showNusukUploadEnabledState ? "check" : "upload",
+      icon: showNusukUploadDisableAction ? "check" : "upload",
       label: nusukUploadToggleEnabled
-        ? (showNusukUploadEnabledState ? "إيقاف الرفع لنسك" : "رفع لنسك")
+        ? (showNusukUploadDisableAction ? "إيقاف الرفع لنسك" : "رفع لنسك")
         : nusukUploadLaunchLabel,
       disabled: !nusukUploadToggleEnabled,
       helper: !nusukUploadToggleEnabled ? nusukUploadLaunchHelper : "",
@@ -239,7 +251,7 @@ export default function ProgramCard({ program, registered, pct, totalPaid, total
                 )}
               </span>
               <span style={{ fontSize:11, color:tc.grey, background:"rgba(148,163,184,.1)", padding:"2px 10px", borderRadius:20 }}>{program.duration}</span>
-              <span style={{ fontSize:11, color:tc.greenLight, background:"rgba(34,197,94,.1)", padding:"2px 10px", borderRadius:20 }}>{packageLabel}</span>
+              <span style={programLevelBadgeStyle}>{packageLabel}</span>
               {showNusukUploadEnabledState && (
                 <span style={{
                   display:"inline-flex",

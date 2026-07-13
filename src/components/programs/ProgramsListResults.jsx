@@ -28,6 +28,8 @@ export default function ProgramsListResults({
   onDeleteProgram,
   onToggleProgramNusukUpload,
   nusukUploadToggleEnabled = false,
+  canUseNusukUploadForProgram = null,
+  nusukUploadDisableToggleEnabled = true,
   nusukUploadLaunchLabel = "رفع لنسك — قيد الإطلاق",
   nusukUploadLaunchHelper = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.",
   onToggleProgramSelection,
@@ -112,6 +114,9 @@ export default function ProgramsListResults({
             ? programClients
             : Array.from({ length: summary.registeredCount || 0 });
           const selected = selectedProgramIds.has(String(program.id));
+          const canUseNusukUpload = typeof canUseNusukUploadForProgram === "function"
+            ? canUseNusukUploadForProgram(program, { debug: true })
+            : nusukUploadToggleEnabled;
           return (
             <div
               key={program.id}
@@ -156,7 +161,8 @@ export default function ProgramsListResults({
                   event.stopPropagation();
                   onToggleProgramNusukUpload?.(program);
                 }}
-                nusukUploadToggleEnabled={nusukUploadToggleEnabled}
+                nusukUploadToggleEnabled={canUseNusukUpload}
+                nusukUploadDisableToggleEnabled={nusukUploadDisableToggleEnabled}
                 nusukUploadLaunchLabel={nusukUploadLaunchLabel}
                 nusukUploadLaunchHelper={nusukUploadLaunchHelper}
                 lang={lang}

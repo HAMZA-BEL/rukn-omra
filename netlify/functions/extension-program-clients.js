@@ -181,17 +181,18 @@ exports.handler = async (event) => {
       .select("id, agency_id, status, nusuk_upload_enabled, deleted, deleted_at")
       .eq("id", programId)
       .eq("agency_id", profile.agency_id)
-      .eq("nusuk_upload_enabled", true)
-      .or("deleted.is.null,deleted.eq.false")
-      .is("deleted_at", null)
       .maybeSingle();
 
     if (programError) {
       return json(event, 500, { error: "Unable to verify program availability" });
     }
 
-    if (!program || !isProgramAvailableForNusuk(program, profile.agency_id)) {
-      return json(event, 404, { error: "Program is not available for Nusuk upload" });
+    if (!program) {
+      return json(event, 404, { error: "Program was not found" });
+    }
+
+    if (!isProgramAvailableForNusuk(program, profile.agency_id)) {
+      return json(event, 403, { error: "Program is not enabled for Nusuk upload" });
     }
 
     const { data: clients, error: clientsError } = await adminClient
