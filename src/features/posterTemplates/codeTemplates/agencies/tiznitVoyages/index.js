@@ -5,6 +5,7 @@ import {
 } from "../../../utils/programPosterMapping";
 import { drawPosterTextInBox } from "../../../utils/posterTextRendering";
 import { getLocalizedAgencyName } from "../../../../../utils/agencyDisplay";
+import { getProgramKind } from "../../../../../utils/participantTerminology";
 import tiznitLogoUrl from "./assets/tiznit-logo.png";
 import madinahHeroUrl from "./assets/madinah-hero.png";
 import madinahCircleUrl from "./assets/madinah-circle.jpg";
@@ -54,7 +55,17 @@ const ROOM_COLUMNS = [
   { key: "double", label: "ثنائية" },
 ];
 
-const TIZNIT_NOTES_LINES = [
+const TIZNIT_UMRAH_NOTES_LINES = [
+  "ملاحظات:",
+  "يجب دفع 50% من إجمالي المبلغ عند التسجيل",
+  "حجز الروضة الشريفة في تطبيق نسك",
+  "صلاحية الجواز لا تقل عن 7 أشهر من تاريخ الذهاب",
+  "تاريخ السفر قابل للتأخير أو التغيير من طرف الخطوط الجوية أو السلطات السعودية",
+  "الوكالة غير مسؤولة عن أي رسوم ناتجة عن الأمتعة الزائدة",
+  "كما أنها غير مسؤولة عن ضياع أو تلف الأمتعة",
+];
+
+const TIZNIT_LEGACY_NOTES_LINES = [
   "ملاحظات:",
   "الروضة الشريفة حسب الإمكانية",
   "صلاحية الجواز لا تقل عن 7 أشهر من تاريخ الذهاب",
@@ -68,7 +79,14 @@ const TIZNIT_AGENCY_CONTACT_LINES = [
   "وكالة أكادير: 0528210022 / 0689800037",
 ];
 
-const TIZNIT_PEOPLE_CONTACTS = [
+const TIZNIT_UMRAH_PEOPLE_CONTACTS = [
+  { name: "الحسين بلوقيد", phone: "0661786932" },
+  { name: "الطاهر بن بريك", phone: "0615506049" },
+  { name: "عبد الله واحمان", phone: "0661151420" },
+  { name: "عبد المنعم أغويت", phone: "0699761113" },
+];
+
+const TIZNIT_LEGACY_PEOPLE_CONTACTS = [
   { name: "الحسين بلوقيد", phone: "0661786932" },
   { name: "الطاهر بن بريك", phone: "0615506049" },
   { name: "عبد الله واحمان", phone: "0661151420" },
@@ -760,6 +778,7 @@ const getPosterData = (program = {}, posterOptions = {}) => {
   }];
 
   return {
+    programKind: getProgramKind(program),
     programName,
     startingPrice,
     departureDate,
@@ -1472,7 +1491,7 @@ const getLowerLayout = (rowCount, contentBottom, options = {}) => {
   };
 };
 
-const drawNotesSection = (ctx, data, layout, serviceBand) => {
+const drawNotesSection = (ctx, data, layout, serviceBand, notesLines) => {
   const y = layout.y;
   const height = layout.height;
   const gap = 28;
@@ -1534,7 +1553,7 @@ const drawNotesSection = (ctx, data, layout, serviceBand) => {
     includedY += item.height + item.gap;
   });
 
-  drawText(ctx, TIZNIT_NOTES_LINES[0], {
+  drawText(ctx, notesLines[0], {
     x: left.x + 26,
     y: left.y + 18,
     width: left.width - 52,
@@ -1547,22 +1566,50 @@ const drawNotesSection = (ctx, data, layout, serviceBand) => {
     align: "right",
   }, { type: "notes_title" });
 
-  TIZNIT_NOTES_LINES.slice(1).forEach((item, index) => {
-    const isLong = index === 2 || index === 3 || index === 4;
-    drawText(ctx, item, {
-      x: left.x + 26,
-      y: left.y + 58 + index * 28,
-      width: left.width - 52,
-      height: isLong ? 32 : 26,
-    }, {
-      color: COLORS.text,
-      fontSize: isLong ? 16 : 18,
-      minFontSize: 12,
-      maxLines: isLong ? 2 : 1,
-      align: "right",
-      lineHeight: 1.08,
-    }, { type: `tiznit_note_${index}` });
-  });
+  if (notesLines === TIZNIT_UMRAH_NOTES_LINES) {
+    const noteItems = notesLines.slice(1);
+    const longestNoteIndex = 3;
+    const noteWeights = noteItems.map((_, index) => (index === longestNoteIndex ? 1.45 : 1));
+    const noteUnitHeight = Math.max(0, left.height - 58)
+      / noteWeights.reduce((total, weight) => total + weight, 0);
+    let noteY = left.y + 54;
+    noteItems.forEach((item, index) => {
+      const isLong = index >= 2 && index <= 4;
+      const noteHeight = noteUnitHeight * noteWeights[index];
+      drawText(ctx, item, {
+        x: left.x + 26,
+        y: noteY,
+        width: left.width - 52,
+        height: noteHeight,
+      }, {
+        color: COLORS.text,
+        fontSize: isLong ? 16 : 17,
+        minFontSize: 12,
+        maxLines: index === longestNoteIndex ? 2 : 1,
+        align: "right",
+        lineHeight: 1.05,
+        paddingY: 0,
+      }, { type: `tiznit_note_${index}` });
+      noteY += noteHeight;
+    });
+  } else {
+    notesLines.slice(1).forEach((item, index) => {
+      const isLong = index === 2 || index === 3 || index === 4;
+      drawText(ctx, item, {
+        x: left.x + 26,
+        y: left.y + 58 + index * 28,
+        width: left.width - 52,
+        height: isLong ? 32 : 26,
+      }, {
+        color: COLORS.text,
+        fontSize: isLong ? 16 : 18,
+        minFontSize: 12,
+        maxLines: isLong ? 2 : 1,
+        align: "right",
+        lineHeight: 1.08,
+      }, { type: `tiznit_note_${index}` });
+    });
+  }
 
   return y + height;
 };
@@ -1571,6 +1618,7 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
   const footerY = options.footerY || FOOTER_Y;
   const posterHeight = options.posterHeight || POSTER_HEIGHT;
   const footerH = FOOTER_H;
+  const peopleContacts = options.peopleContacts || TIZNIT_LEGACY_PEOPLE_CONTACTS;
   const box = { x: PAGE_X, y: footerY, width: PAGE_W, height: footerH };
 
   ctx.save();
@@ -1671,17 +1719,18 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
     }, { type: `tiznit_agency_contact_${index}` });
   });
 
-  const compactPeopleContacts = TIZNIT_PEOPLE_CONTACTS.length > 4;
-  const peopleContactTop = compactPeopleContacts ? 9 : 14;
-  const peopleContactGap = compactPeopleContacts ? 17.8 : 25;
-  const peopleContactHeight = compactPeopleContacts ? 16.5 : 24;
-  const peopleContactFontSize = compactPeopleContacts ? 16.8 : 20;
+  const compactPeopleContacts = peopleContacts.length > 4;
+  const peopleContactTop = compactPeopleContacts ? 9 : 8;
+  const peopleContactGap = compactPeopleContacts ? 17.8 : 22.5;
+  const peopleContactHeight = compactPeopleContacts ? 16.5 : 21;
+  const peopleContactFontSize = compactPeopleContacts ? 16.8 : 19;
   const peopleContactMinFontSize = compactPeopleContacts ? 11.5 : 13;
-  const peopleContactLineHeight = compactPeopleContacts ? 1.04 : 1.12;
+  const peopleContactLineHeight = compactPeopleContacts ? 1.04 : 1.05;
+  const peopleContactPaddingY = compactPeopleContacts ? undefined : 0;
   const peopleNameColumn = { x: box.x + 388, width: 160 };
   const peopleSeparatorColumn = { x: box.x + 366, width: 18 };
   const peoplePhoneColumn = { x: box.x + 250, width: 112 };
-  TIZNIT_PEOPLE_CONTACTS.forEach((contact, index) => {
+  peopleContacts.forEach((contact, index) => {
     const y = box.y + peopleContactTop + index * peopleContactGap;
     drawText(ctx, contact.name, {
       x: peopleNameColumn.x,
@@ -1695,6 +1744,7 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       maxLines: 1,
       align: "right",
       lineHeight: peopleContactLineHeight,
+      paddingY: peopleContactPaddingY,
       wrap: false,
     }, { type: `tiznit_people_contact_name_${index}` });
     drawText(ctx, ":", {
@@ -1709,6 +1759,7 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       maxLines: 1,
       align: "center",
       lineHeight: peopleContactLineHeight,
+      paddingY: peopleContactPaddingY,
       wrap: false,
     }, { type: `tiznit_people_contact_separator_${index}`, lang: "en" });
     drawText(ctx, contact.phone, {
@@ -1723,6 +1774,7 @@ const drawFooter = (ctx, serviceBand, options = {}) => {
       maxLines: 1,
       align: "left",
       lineHeight: peopleContactLineHeight,
+      paddingY: peopleContactPaddingY,
       wrap: false,
     }, { type: `tiznit_people_contact_phone_${index}`, lang: "en" });
   });
@@ -1808,8 +1860,19 @@ export const renderPoster = async ({
       ? drawDateRouteSection(ctx, data, tableBottom, { isBulkPoster: posterOptions?.isBulkPoster === true })
       : tableBottom;
     const lowerLayout = getLowerLayout(data.rows.length, contentBottom, { showDates, footerY });
-    drawNotesSection(ctx, data, lowerLayout.notes, lowerLayout.serviceBand);
-    drawFooter(ctx, lowerLayout.serviceBand, { footerY, posterHeight });
+    const isUmrahPoster = data.programKind === "umrah";
+    drawNotesSection(
+      ctx,
+      data,
+      lowerLayout.notes,
+      lowerLayout.serviceBand,
+      isUmrahPoster ? TIZNIT_UMRAH_NOTES_LINES : TIZNIT_LEGACY_NOTES_LINES
+    );
+    drawFooter(ctx, lowerLayout.serviceBand, {
+      footerY,
+      posterHeight,
+      peopleContacts: isUmrahPoster ? TIZNIT_UMRAH_PEOPLE_CONTACTS : TIZNIT_LEGACY_PEOPLE_CONTACTS,
+    });
     drawVersionLabel(ctx, program, posterHeight);
     return await canvasToPngBlob(canvas);
   } finally {
