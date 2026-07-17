@@ -5,6 +5,9 @@ const {
   NUSUK_RELATIONSHIPS,
   buildNusukClientBatch,
 } = require("../_extension-program-clients-contract");
+const {
+  buildProgramClientsHttpResponse,
+} = require("../extension-program-clients");
 
 const AGENCY_ID = "agency-1";
 const PROGRAM_ID = "program-1";
@@ -179,16 +182,58 @@ test("legacy relationships remain recognizable but cannot pass gender compatibil
   assert.ok(errorCodes(result).includes("COMPANION_RELATIONSHIP_GENDER_MISMATCH"));
 });
 
-test("preflight rejects missing companion, relationship, and minor passport", () => {
+test("preflight treats missing companion and relationship as optional but still requires the minor passport", () => {
   const result = build([client("minor", {
     birthDate: "2015-05-10",
     passportNumber: "",
   })]);
-  assert.deepEqual(errorCodes(result).sort(), [
-    "COMPANION_REQUIRED",
-    "MINOR_PASSPORT_REQUIRED",
-    "RELATIONSHIP_REQUIRED",
+  assert.deepEqual(errorCodes(result), ["MINOR_PASSPORT_REQUIRED"]);
+  assert.equal(result.clients[0].companion, null);
+});
+
+test("minor without a companion remains in the batch and produces an HTTP 200 response", () => {
+  const result = build([
+    client("adult"),
+    client("minor", { birthDate: "2014-01-01" }),
   ]);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.executionOrder, ["adult", "minor"]);
+  assert.equal(result.clients.length, 2);
+  assert.equal(result.clients.find((item) => item.clientId === "minor").companion, null);
+  assert.equal(errorCodes(result).includes("COMPANION_REQUIRED"), false);
+
+  const response = buildProgramClientsHttpResponse({ headers: {} }, result);
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.clients.length, 2);
+  assert.equal(body.clients.find((item) => item.clientId === "minor").companion, null);
+});
+
+test("minor companion without a relationship remains in the batch and produces HTTP 200", () => {
+  const companion = client("adult", { gender: "M" });
+  const result = build([
+    companion,
+    client("minor", {
+      birthDate: "2014-01-01",
+      companionId: "adult",
+      relationship: "",
+    }),
+  ]);
+  assert.deepEqual(result.errors, []);
+  assert.equal(errorCodes(result).includes("RELATIONSHIP_REQUIRED"), false);
+  assert.deepEqual(result.clients.find((item) => item.clientId === "minor").companion, {
+    clientId: "adult",
+    fullName: companion.name,
+    passportNumber: "P-adult",
+    gender: "male",
+    nationality: "MAR",
+    relationshipCode: null,
+    relationshipToMinor: null,
+  });
+
+  const response = buildProgramClientsHttpResponse({ headers: {} }, result);
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).clients.length, 2);
 });
 
 test("stable dependency ordering delays minors only until their companion", () => {
@@ -333,5 +378,5 @@ test("unsupported free-text relationships are rejected", () => {
       relationship: "probably-parent",
     }),
   ]);
-  assert.ok(errorCodes(result).includes("RELATIONSHIP_REQUIRED"));
+  assert.ok(errorCodes(result).includes("RELATIONSHIP_UNSUPPORTED"));
 });

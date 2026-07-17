@@ -52,6 +52,27 @@ function json(event, statusCode, body) {
   };
 }
 
+function buildProgramClientsHttpResponse(event, batch) {
+  if (batch.errors.length) {
+    return json(event, 422, {
+      error: "Nusuk upload preflight failed",
+      code: "NUSUK_PREFLIGHT_FAILED",
+      payloadVersion: batch.payloadVersion,
+      programId: batch.programId,
+      agencyId: batch.agencyId,
+      validationErrors: batch.errors,
+    });
+  }
+
+  return json(event, 200, {
+    payloadVersion: batch.payloadVersion,
+    programId: batch.programId,
+    agencyId: batch.agencyId,
+    executionOrder: batch.executionOrder,
+    clients: batch.clients,
+  });
+}
+
 function buildAdminClient() {
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
     throw new Error("Missing Supabase server configuration for extension program clients");
@@ -250,24 +271,7 @@ exports.handler = async (event) => {
       enforceTravelGroup: isHajjProgram(program),
     });
 
-    if (batch.errors.length) {
-      return json(event, 422, {
-        error: "Nusuk upload preflight failed",
-        code: "NUSUK_PREFLIGHT_FAILED",
-        payloadVersion: batch.payloadVersion,
-        programId: batch.programId,
-        agencyId: batch.agencyId,
-        validationErrors: batch.errors,
-      });
-    }
-
-    return json(event, 200, {
-      payloadVersion: batch.payloadVersion,
-      programId: batch.programId,
-      agencyId: batch.agencyId,
-      executionOrder: batch.executionOrder,
-      clients: batch.clients,
-    });
+    return buildProgramClientsHttpResponse(event, batch);
   } catch (err) {
     console.error("extension-program-clients error", {
       message: err?.message || "Unknown error",
@@ -275,3 +279,5 @@ exports.handler = async (event) => {
     return json(event, 500, { error: "Internal Server Error" });
   }
 };
+
+exports.buildProgramClientsHttpResponse = buildProgramClientsHttpResponse;

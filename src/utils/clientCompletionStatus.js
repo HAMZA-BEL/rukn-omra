@@ -1,6 +1,7 @@
 import { getPackageRoomPrice, normalizeProgramPackages, normalizeRoomTypeKey } from "./programPackages";
 import { getClientArabicName } from "./clientNames";
 import { clientServiceIncludesAccommodation } from "./clientServiceTypes";
+import { getMinorRepresentationCompleteness } from "./clientRepresentation";
 
 export const UNASSIGNED_PROGRAM_FILTER = "__unassigned_program";
 export const INCOMPLETE_INFO_FILTER = "__incomplete_info";
@@ -413,6 +414,19 @@ export const getClientCompletionBadges = (client = {}, lang = "ar", program = nu
       tone: "warning",
       title: getClientCompletionTooltip(client, lang, program, options),
       missingItems: getClientMissingCompletionItems(client, lang, program, options),
+    });
+  }
+  const representationCompleteness = getMinorRepresentationCompleteness(client, {
+    lang,
+    referenceDate: options.referenceDate || new Date(),
+  });
+  if (!representationCompleteness.complete) {
+    badges.push({
+      key: "minor_representation_incomplete",
+      label: representationCompleteness.label,
+      tone: "warning",
+      title: representationCompleteness.message,
+      reasonCode: representationCompleteness.reasonCode,
     });
   }
   return badges;

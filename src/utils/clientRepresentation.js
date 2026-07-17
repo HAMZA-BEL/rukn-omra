@@ -118,6 +118,28 @@ export const getRepresentativeRelationshipFieldState = ({
   };
 };
 
+export const getMinorRepresentationValidationIssues = ({
+  minor = false,
+  companionId = "",
+  companionSelectable = false,
+  companionGender = "",
+  relationshipValue = "",
+} = {}) => {
+  if (!minor || !normalizeRepresentativeScopeId(companionId)) {
+    return { companionIssue: null, relationshipIssue: null };
+  }
+  const companionIssue = companionSelectable ? null : "invalid_companion";
+  let relationshipIssue = null;
+  if (relationshipValue) {
+    const normalizedGender = normalizeClientGender(companionGender);
+    if (!normalizedGender) relationshipIssue = "missing_companion_gender";
+    else if (!isRepresentativeRelationshipAllowedForGender(relationshipValue, normalizedGender)) {
+      relationshipIssue = "relationship_gender_mismatch";
+    }
+  }
+  return { companionIssue, relationshipIssue };
+};
+
 export const getClientCin = (client = {}) => {
   const passport = client.passport || {};
   return firstText(
@@ -181,6 +203,72 @@ export const getRepresentedByClientId = (client = {}) => firstText(
   client.docs?.representedByClientId,
   client.docs?.guardianClientId
 );
+
+export const getRepresentedByRelationship = (client = {}) => firstText(
+  client.representedByRelationship,
+  client.represented_by_relationship,
+  client.guardianRelationship,
+  client.guardian_relationship,
+  client.docs?.representedByRelationship,
+  client.docs?.guardianRelationship
+);
+
+export const MINOR_REPRESENTATION_COMPLETENESS_TEXT = Object.freeze({
+  ar: Object.freeze({
+    label: "معلومات غير مكتملة",
+    companion_missing: "لم يتم تحديد المرافق",
+    relationship_missing: "لم يتم تحديد صلة القرابة",
+    companion_and_relationship_missing: "المرافق وصلة القرابة غير محددين",
+  }),
+  fr: Object.freeze({
+    label: "Informations incomplètes",
+    companion_missing: "L’accompagnateur n’est pas défini",
+    relationship_missing: "Le lien de parenté n’est pas défini",
+    companion_and_relationship_missing: "L’accompagnateur et le lien de parenté ne sont pas définis",
+  }),
+  en: Object.freeze({
+    label: "Incomplete information",
+    companion_missing: "Companion not selected",
+    relationship_missing: "Relationship not selected",
+    companion_and_relationship_missing: "Companion and relationship are not selected",
+  }),
+});
+
+export const getMinorRepresentationCompleteness = (client = {}, {
+  lang = "ar",
+  referenceDate = new Date(),
+} = {}) => {
+  if (!isClientMinor(client, referenceDate)) {
+    return {
+      applicable: false,
+      complete: true,
+      missingCompanion: false,
+      missingRelationship: false,
+      reasonCode: null,
+      label: null,
+      message: null,
+    };
+  }
+
+  const missingCompanion = !getRepresentedByClientId(client);
+  const missingRelationship = !getRepresentedByRelationship(client);
+  let reasonCode = null;
+  if (missingCompanion && missingRelationship) reasonCode = "companion_and_relationship_missing";
+  else if (missingCompanion) reasonCode = "companion_missing";
+  else if (missingRelationship) reasonCode = "relationship_missing";
+  const text = MINOR_REPRESENTATION_COMPLETENESS_TEXT[lang]
+    || MINOR_REPRESENTATION_COMPLETENESS_TEXT.ar;
+
+  return {
+    applicable: true,
+    complete: !reasonCode,
+    missingCompanion,
+    missingRelationship,
+    reasonCode,
+    label: reasonCode ? text.label : null,
+    message: reasonCode ? text[reasonCode] : null,
+  };
+};
 
 export const isEligibleRepresentative = (client = {}, referenceDate = new Date()) => (
   clientHasCin(client) || isClientAdult(client, referenceDate)

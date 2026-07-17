@@ -235,21 +235,15 @@ function buildNusukClientBatch({
       }
 
       const companionId = cleanString(row.represented_by_client_id || row.representedByClientId);
-      const relationship = normalizeRelationship(
+      const relationshipValue = cleanString(
         row.represented_by_relationship || row.representedByRelationship
       );
-      if (!companionId) {
+      const relationship = normalizeRelationship(relationshipValue);
+      if (relationshipValue && !relationship) {
         errors.push(makeValidationError(
-          "COMPANION_REQUIRED",
+          "RELATIONSHIP_UNSUPPORTED",
           row,
-          `يجب تحديد مرافق للقاصر ${fullName || clientId}.`
-        ));
-      }
-      if (!relationship) {
-        errors.push(makeValidationError(
-          "RELATIONSHIP_REQUIRED",
-          row,
-          `يجب تحديد صلة القرابة للقاصر ${fullName || clientId}.`
+          `صلة القرابة المحددة للقاصر ${fullName || clientId} غير مدعومة.`
         ));
       }
       if (companionId && companionId === clientId) {
@@ -341,18 +335,16 @@ function buildNusukClientBatch({
           ));
         }
 
-        if (relationship) {
-          const companionNationality = getPassportNationality(companion);
-          companionPayload = {
-            clientId: companionId,
-            fullName: getClientFullName(companion),
-            passportNumber: companionPassportNumber,
-            gender: companionGender,
-            ...(companionNationality ? { nationality: companionNationality } : {}),
-            relationshipCode: relationship.code,
-            relationshipToMinor: relationship.nusukValue,
-          };
-        }
+        const companionNationality = getPassportNationality(companion);
+        companionPayload = {
+          clientId: companionId,
+          fullName: getClientFullName(companion),
+          passportNumber: companionPassportNumber,
+          gender: companionGender,
+          ...(companionNationality ? { nationality: companionNationality } : {}),
+          relationshipCode: relationship?.code || null,
+          relationshipToMinor: relationship?.nusukValue || null,
+        };
       }
     }
 
@@ -364,7 +356,7 @@ function buildNusukClientBatch({
       arabicLastName: cleanString(row.last_name),
       arabicFullName: fullName,
       isMinor,
-      ...(companionPayload ? { companion: companionPayload } : {}),
+      ...(isMinor ? { companion: companionPayload } : {}),
     };
   });
 

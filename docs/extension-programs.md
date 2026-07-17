@@ -121,13 +121,13 @@ Successful response:
 }
 ```
 
-`passportNumber` is retained for backward compatibility. `expectedPassportNumber`, `isMinor`, `companion`, and `executionOrder` are additive v2 fields. Adults do not contain an empty `companion` property.
+`passportNumber` is retained for backward compatibility. `expectedPassportNumber`, `isMinor`, `companion`, and `executionOrder` are additive v2 fields. Adults do not contain an empty `companion` property. A minor without a selected companion has `"companion": null`. When a companion exists without a selected relationship, `relationshipCode` and `relationshipToMinor` are both `null`.
 
 The `clients` array is the execution order. Stable dependency ordering moves a minor only when necessary to place an in-batch companion before that minor. If the companion is not selected in the same batch, the companion is not injected into the queue; its verified metadata remains attached to the minor so the extension can search for it in Nusuk.
 
 Rukn does not transport passport `File` objects through this endpoint. Passport files are selected inside the extension. The extension must attach the returned `clientId`/`expectedPassportNumber` to its queue item when it establishes the file-to-client association; Rukn does not guess from a filename or file order.
 
-Invalid batches receive HTTP `422` and are not returned as an executable queue:
+Missing companion or relationship data is optional in Rukn and does not produce HTTP `422`. Invalid values that were actually supplied still fail preflight. For example, an unsupported free-text relationship produces:
 
 ```json
 {
@@ -136,10 +136,10 @@ Invalid batches receive HTTP `422` and are not returned as an executable queue:
   "payloadVersion": 2,
   "validationErrors": [
     {
-      "code": "RELATIONSHIP_REQUIRED",
+      "code": "RELATIONSHIP_UNSUPPORTED",
       "clientId": "minor-client-id",
       "clientName": "أمين العلوي",
-      "message": "يجب تحديد صلة القرابة للقاصر أمين العلوي."
+      "message": "صلة القرابة المحددة للقاصر أمين العلوي غير مدعومة."
     }
   ]
 }

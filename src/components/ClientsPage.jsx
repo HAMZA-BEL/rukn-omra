@@ -1320,7 +1320,13 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
                 {secondaryBadges.length > 0 && (
                   <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginTop:2 }}>
                     {secondaryBadges.map((badge) => (
-                      <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>{badge.label}</span>
+                      <span
+                        key={badge.key}
+                        title={badge.title || badge.label}
+                        style={clientCompletionBadgeStyle(badge.tone)}
+                      >
+                        {badge.label}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -1453,7 +1459,11 @@ const ClientRow = React.memo(function ClientRow({ client, program, paid, remaini
               )}
               {isHajjRecord && <span style={hajjBadgeStyle}>{hajjBadgeLabel}</span>}
               {secondaryBadges.map((badge) => (
-                <span key={badge.key} style={clientCompletionBadgeStyle(badge.tone)}>
+                <span
+                  key={badge.key}
+                  title={badge.title || badge.label}
+                  style={clientCompletionBadgeStyle(badge.tone)}
+                >
                   {badge.label}
                 </span>
               ))}

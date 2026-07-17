@@ -2,6 +2,8 @@ import {
   REPRESENTED_BY_RELATIONSHIPS,
   evaluateRepresentativeEligibility,
   getClientGender,
+  getMinorRepresentationCompleteness,
+  getMinorRepresentationValidationIssues,
   getRepresentativeCandidateOptions,
   getRepresentativeDisabledReasonLabel,
   getRepresentativeRelationshipFieldState,
@@ -10,6 +12,7 @@ import {
   isRepresentativeRelationshipAllowedForGender,
   reconcileRepresentativeRelationshipForCompanionGender,
 } from "./clientRepresentation";
+import { getClientCompletionBadges } from "./clientCompletionStatus";
 
 const REFERENCE_DATE = new Date(2026, 6, 17);
 
@@ -331,4 +334,124 @@ test("a store gender update recomputes relationship availability without a page 
   const maleGender = getClientGender(updatedCompanion);
   expect(getRelationshipsForCompanionGender(maleGender).map((item) => item.nusukValue)).toContain("أب");
   expect(getRelationshipsForCompanionGender(maleGender).map((item) => item.nusukValue)).not.toContain("أم");
+});
+
+test("minor representation completeness reports one precise optional-data reason", () => {
+  const minor = makeClient({
+    id: "minor-1",
+    passport: { number: "P-MINOR", birthDate: "2014-01-01" },
+  });
+  expect(getMinorRepresentationCompleteness(minor, {
+    lang: "ar",
+    referenceDate: REFERENCE_DATE,
+  })).toEqual({
+    applicable: true,
+    complete: false,
+    missingCompanion: true,
+    missingRelationship: true,
+    reasonCode: "companion_and_relationship_missing",
+    label: "معلومات غير مكتملة",
+    message: "المرافق وصلة القرابة غير محددين",
+  });
+
+  expect(getMinorRepresentationCompleteness({
+    ...minor,
+    representedByClientId: "adult-1",
+  }, { lang: "ar", referenceDate: REFERENCE_DATE })).toEqual(expect.objectContaining({
+    complete: false,
+    missingCompanion: false,
+    missingRelationship: true,
+    reasonCode: "relationship_missing",
+    message: "لم يتم تحديد صلة القرابة",
+  }));
+
+  expect(getMinorRepresentationCompleteness({
+    ...minor,
+    representedByRelationship: "father",
+  }, { lang: "ar", referenceDate: REFERENCE_DATE })).toEqual(expect.objectContaining({
+    complete: false,
+    missingCompanion: true,
+    missingRelationship: false,
+    reasonCode: "companion_missing",
+    message: "لم يتم تحديد المرافق",
+  }));
+});
+
+test("the optional representation fields do not create validation issues when absent", () => {
+  expect(getMinorRepresentationValidationIssues({ minor: true })).toEqual({
+    companionIssue: null,
+    relationshipIssue: null,
+  });
+  expect(getMinorRepresentationValidationIssues({
+    minor: true,
+    companionId: "adult-1",
+    companionSelectable: true,
+    companionGender: "male",
+    relationshipValue: "",
+  })).toEqual({
+    companionIssue: null,
+    relationshipIssue: null,
+  });
+});
+
+test("actual invalid companion or relationship data remains blocking", () => {
+  expect(getMinorRepresentationValidationIssues({
+    minor: true,
+    companionId: "adult-1",
+    companionSelectable: false,
+    companionGender: "male",
+  }).companionIssue).toBe("invalid_companion");
+  expect(getMinorRepresentationValidationIssues({
+    minor: true,
+    companionId: "adult-1",
+    companionSelectable: true,
+    companionGender: "female",
+    relationshipValue: "father",
+  }).relationshipIssue).toBe("relationship_gender_mismatch");
+});
+
+test("representation completion and its list badge update immediately from client data", () => {
+  const minor = makeClient({
+    id: "minor-1",
+    passport: { number: "P-MINOR", birthDate: "2014-01-01" },
+  });
+  const missingBadge = getClientCompletionBadges(minor, "ar", { id: "program-1" }, {
+    referenceDate: REFERENCE_DATE,
+  }).find((badge) => badge.key === "minor_representation_incomplete");
+  expect(missingBadge).toEqual(expect.objectContaining({
+    label: "معلومات غير مكتملة",
+    title: "المرافق وصلة القرابة غير محددين",
+    reasonCode: "companion_and_relationship_missing",
+  }));
+
+  const withCompanion = { ...minor, representedByClientId: "adult-1" };
+  expect(getMinorRepresentationCompleteness(withCompanion, {
+    referenceDate: REFERENCE_DATE,
+  }).reasonCode).toBe("relationship_missing");
+  const complete = { ...withCompanion, representedByRelationship: "father" };
+  expect(getMinorRepresentationCompleteness(complete, {
+    referenceDate: REFERENCE_DATE,
+  }).complete).toBe(true);
+  expect(getClientCompletionBadges(complete, "ar", { id: "program-1" }, {
+    referenceDate: REFERENCE_DATE,
+  }).some((badge) => badge.key === "minor_representation_incomplete")).toBe(false);
+
+  const removedAgain = {
+    ...complete,
+    representedByClientId: "",
+    representedByRelationship: "",
+  };
+  expect(getMinorRepresentationCompleteness(removedAgain, {
+    referenceDate: REFERENCE_DATE,
+  }).reasonCode).toBe("companion_and_relationship_missing");
+});
+
+test("adults never receive the minor representation incomplete badge", () => {
+  const adult = makeClient({ representedByClientId: "", representedByRelationship: "" });
+  expect(getMinorRepresentationCompleteness(adult, {
+    referenceDate: REFERENCE_DATE,
+  })).toEqual(expect.objectContaining({ applicable: false, complete: true, reasonCode: null }));
+  expect(getClientCompletionBadges(adult, "ar", { id: "program-1" }, {
+    referenceDate: REFERENCE_DATE,
+  }).some((badge) => badge.key === "minor_representation_incomplete")).toBe(false);
 });

@@ -31,13 +31,14 @@ import { getProgramKind } from "../utils/participantTerminology";
 import { getClientDisplayName } from "../utils/clientNames";
 import {
   getClientGender,
+  getMinorRepresentationCompleteness,
+  getMinorRepresentationValidationIssues,
   getRepresentativeCandidateOptions,
   getRepresentativeDisabledReasonLabel,
   getRepresentativeEligibilityDiagnostics,
   getRepresentativeRelationshipFieldState,
   getRepresentativeRelationshipLabel,
   getRelationshipsForCompanionGender,
-  isRepresentativeRelationshipAllowedForGender,
   isClientMinor,
   normalizeRepresentativeScopeId,
   normalizeRepresentativeRelationship,
@@ -117,10 +118,10 @@ const representationText = (lang) => ({
     ? "This pilgrim has a national ID, so an individual contract will be generated."
     : "هذا المعتمر يملك بطاقة وطنية، لذلك سيتم إنشاء عقد منفرد له.",
   minorNeedsRepresentative: lang === "fr"
-    ? "Sélectionnez l’accompagnateur adulte et le lien de parenté requis pour ce mineur."
+    ? "Vous pouvez définir l’accompagnateur et le lien de parenté maintenant ou les compléter plus tard."
     : lang === "en"
-    ? "Select the adult companion and required relationship for this minor."
-    : "اختر المرافق البالغ وصلة القرابة المطلوبة لهذا القاصر.",
+    ? "You can select the companion and relationship now or complete them later."
+    : "يمكنك تحديد المرافق وصلة القرابة الآن أو إكمالهما لاحقًا.",
   adultNoCin: lang === "fr"
     ? "Ce pèlerin est adulte mais n’a pas de CIN."
     : lang === "en"
@@ -962,6 +963,9 @@ export default function ClientForm({
     },
   }), [client?.id, form]);
   const minorClient = isClientMinor(representationClient);
+  const representationCompleteness = React.useMemo(() => (
+    getMinorRepresentationCompleteness(representationClient, { lang })
+  ), [lang, representationClient]);
   const enforceRepresentativeTravelGroup = selectedProgramIsHajj && Boolean(form.travelGroupId);
   const representativeCandidates = React.useMemo(() => (
     getRepresentativeCandidateOptions({
@@ -1310,27 +1314,22 @@ export default function ClientForm({
     }
     if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
     if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
-    if (minorClient && !form.representedByClientId) {
-      e.representedByClientId = representationLabels.representativeRequired;
-    } else if (minorClient && !selectedRepresentativeCandidate?.selectable) {
+    const representationValidation = getMinorRepresentationValidationIssues({
+      minor: minorClient,
+      companionId: form.representedByClientId,
+      companionSelectable: selectedRepresentativeCandidate?.selectable === true,
+      companionGender: selectedRepresentativeGender,
+      relationshipValue: form.representedByRelationship,
+    });
+    if (representationValidation.companionIssue === "invalid_companion") {
       e.representedByClientId = [
         representationLabels.selectedRepresentativeInvalid,
         selectedRepresentativeDisabledReason,
       ].filter(Boolean).join(" — ");
     }
-    if (minorClient && !form.representedByClientId) {
-      e.representedByRelationship = representationLabels.chooseCompanionFirst;
-    } else if (minorClient && !selectedRepresentativeGender) {
+    if (representationValidation.relationshipIssue === "missing_companion_gender") {
       e.representedByRelationship = representationLabels.completeCompanionGenderFirst;
-    } else if (minorClient && !form.representedByRelationship) {
-      e.representedByRelationship = representationLabels.relationshipRequired;
-    } else if (
-      minorClient
-      && !isRepresentativeRelationshipAllowedForGender(
-        form.representedByRelationship,
-        selectedRepresentativeGender
-      )
-    ) {
+    } else if (representationValidation.relationshipIssue === "relationship_gender_mismatch") {
       e.representedByRelationship = representationLabels.relationshipGenderMismatch;
     }
     return e;
@@ -1579,7 +1578,7 @@ export default function ClientForm({
     if (!ensureProgramCanAdd(targetProgram, capacityDelta)) return;
     setBadgePhotoError("");
     const nextRepresentedByClientId = minorClient ? form.representedByClientId : "";
-    const nextRepresentedByRelationship = minorClient
+    const nextRepresentedByRelationship = minorClient && nextRepresentedByClientId
       ? normalizeRepresentativeRelationship(form.representedByRelationship)
       : "";
     const baseData = {
@@ -2203,6 +2202,31 @@ export default function ClientForm({
 	          <p style={{ fontSize:12, color:"var(--rukn-text-muted)", lineHeight:1.7, marginBottom:12 }}>
 	            {representationLabels.minorNeedsRepresentative}
 	          </p>
+	          {!representationCompleteness.complete && (
+	            <div
+	              title={representationCompleteness.message || undefined}
+	              style={{
+	                display:"flex",
+	                alignItems:"flex-start",
+	                gap:7,
+	                marginBottom:12,
+	                padding:"9px 11px",
+	                borderRadius:10,
+	                border:"1px solid rgba(245,158,11,.3)",
+	                background:"rgba(245,158,11,.1)",
+	                color:"#f59e0b",
+	                fontSize:11.5,
+	                fontWeight:700,
+	                lineHeight:1.6,
+	              }}
+	            >
+	              <AppIcon name="alert" size={14} color="#f59e0b" />
+	              <span>
+	                <strong>{representationCompleteness.label}</strong>
+	                {representationCompleteness.message ? ` — ${representationCompleteness.message}` : ""}
+	              </span>
+	            </div>
+	          )}
 	          <div className="form-grid form-grid--two">
 	              <div style={{ display:"flex", flexDirection:"column", gap:6, position:"relative", minWidth:0 }}>
 	                <label style={{ fontSize:13, fontWeight:600, color:representativePickerOpen ? "var(--rukn-gold)" : "var(--rukn-text-muted)" }}>
@@ -2357,7 +2381,6 @@ export default function ClientForm({
 	                  }}
 	                  options={relationshipOptions}
 	                  disabled={relationshipFieldState.disabled}
-	                  required
 	                  error={errors.representedByRelationship}
 	                />
 	                {relationshipResetNotice && !form.representedByRelationship && (
