@@ -1,0 +1,280 @@
+[
+  {
+    "value": "father",
+    "nusukValue": "أب",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 1 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "أب", "fr": "Père", "en": "Father" }
+  },
+  {
+    "value": "son",
+    "nusukValue": "ابن",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 2 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "ابن", "fr": "Fils", "en": "Son" }
+  },
+  {
+    "value": "brother",
+    "nusukValue": "أخ",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 3 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "أخ", "fr": "Frère", "en": "Brother" }
+  },
+  {
+    "value": "grandfather",
+    "nusukValue": "جد",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 4 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "جد", "fr": "Grand-père", "en": "Grandfather" }
+  },
+  {
+    "value": "grandson",
+    "nusukValue": "حفيد",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 5 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "حفيد", "fr": "Petit-fils", "en": "Grandson" }
+  },
+  {
+    "value": "maternal_uncle",
+    "nusukValue": "الخال",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 6 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "الخال", "fr": "Oncle maternel", "en": "Maternal uncle" }
+  },
+  {
+    "value": "brothers_son",
+    "nusukValue": "ابن الأخ",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 7 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "ابن الأخ", "fr": "Fils du frère", "en": "Brother's son" }
+  },
+  {
+    "value": "wifes_father",
+    "nusukValue": "أب الزوجة",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 8 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "أب الزوجة", "fr": "Père de l'épouse", "en": "Wife's father" }
+  },
+  {
+    "value": "wifes_in_law",
+    "nusukValue": "صهر الزوجة",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 9 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "صهر الزوجة", "fr": "Parent par alliance de l'épouse", "en": "Wife's in-law" }
+  },
+  {
+    "value": "husbands_in_law",
+    "nusukValue": "صهر الزوج",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 10 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "صهر الزوج", "fr": "Parent par alliance du mari", "en": "Husband's in-law" }
+  },
+  {
+    "value": "daughters_husband",
+    "nusukValue": "زوج البنت",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 11 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "زوج البنت", "fr": "Mari de la fille", "en": "Daughter's husband" }
+  },
+  {
+    "value": "mothers_husband",
+    "nusukValue": "زوج الأم",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 12 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "زوج الأم", "fr": "Mari de la mère", "en": "Mother's husband" }
+  },
+  {
+    "value": "parent_in_law",
+    "nusukValue": "حمو - والد الزوج أو الزوجة",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 13 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "حمو - والد الزوج أو الزوجة", "fr": "Beau-père — père du conjoint", "en": "Parent-in-law — spouse's father" }
+  },
+  {
+    "value": "paternal_uncle",
+    "nusukValue": "العم",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 14 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "العم", "fr": "Oncle paternel", "en": "Paternal uncle" }
+  },
+  {
+    "value": "husband",
+    "nusukValue": "زوج",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 15 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "زوج", "fr": "Mari", "en": "Husband" }
+  },
+  {
+    "value": "other_feminine",
+    "nusukValue": "أخرى",
+    "allowedCompanionGenders": ["male"],
+    "genderOrder": { "male": 16 },
+    "sourceEvidence": ["nusuk_male_live_partial"],
+    "label": { "ar": "أخرى", "fr": "Autre", "en": "Other" }
+  },
+  {
+    "value": "mother",
+    "nusukValue": "أم",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 1 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "أم", "fr": "Mère", "en": "Mother" }
+  },
+  {
+    "value": "daughter",
+    "nusukValue": "ابنة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 2 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "ابنة", "fr": "Fille", "en": "Daughter" }
+  },
+  {
+    "value": "sister",
+    "nusukValue": "أخت",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 3 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "أخت", "fr": "Sœur", "en": "Sister" }
+  },
+  {
+    "value": "grandmother",
+    "nusukValue": "جدة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 4 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "جدة", "fr": "Grand-mère", "en": "Grandmother" }
+  },
+  {
+    "value": "granddaughter",
+    "nusukValue": "حفيدة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 5 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "حفيدة", "fr": "Petite-fille", "en": "Granddaughter" }
+  },
+  {
+    "value": "maternal_aunt",
+    "nusukValue": "الخالة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 6 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "الخالة", "fr": "Tante maternelle", "en": "Maternal aunt" }
+  },
+  {
+    "value": "sisters_daughter",
+    "nusukValue": "ابنة الأخت",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 7 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "ابنة الأخت", "fr": "Fille de la sœur", "en": "Sister's daughter" }
+  },
+  {
+    "value": "sisters_son",
+    "nusukValue": "ابن الأخت",
+    "allowedCompanionGenders": [],
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "ابن الأخت", "fr": "Fils de la sœur", "en": "Sister's son" }
+  },
+  {
+    "value": "mother_in_law",
+    "nusukValue": "الحماة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 10 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "الحماة", "fr": "Belle-mère", "en": "Mother-in-law" }
+  },
+  {
+    "value": "women_agnates",
+    "nusukValue": "عصبة النساء",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 11 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "عصبة النساء", "fr": "Agnates féminines", "en": "Female agnates" }
+  },
+  {
+    "value": "sons_wife",
+    "nusukValue": "زوجة الابن",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 12 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "زوجة الابن", "fr": "Épouse du fils", "en": "Son's wife" }
+  },
+  {
+    "value": "fathers_wife",
+    "nusukValue": "زوجة الأب",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 13 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "زوجة الأب", "fr": "Épouse du père", "en": "Father's wife" }
+  },
+  {
+    "value": "paternal_aunt",
+    "nusukValue": "العمة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 14 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "العمة", "fr": "Tante paternelle", "en": "Paternal aunt" }
+  },
+  {
+    "value": "wife",
+    "nusukValue": "زوجة",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 15 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "زوجة", "fr": "Épouse", "en": "Wife" }
+  },
+  {
+    "value": "husbands_mother",
+    "nusukValue": "والدة الزوج",
+    "allowedCompanionGenders": ["female"],
+    "genderOrder": { "female": 16 },
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "والدة الزوج", "fr": "Mère du mari", "en": "Husband's mother" }
+  },
+  {
+    "value": "husbands_father",
+    "nusukValue": "والد الزوج",
+    "allowedCompanionGenders": [],
+    "sourceEvidence": ["nusuk_female_html_04"],
+    "label": { "ar": "والد الزوج", "fr": "Père du mari", "en": "Husband's father" }
+  },
+  {
+    "value": "guardian",
+    "nusukValue": "وصي",
+    "allowedCompanionGenders": [],
+    "legacy": true,
+    "sourceEvidence": ["rukn_legacy"],
+    "label": { "ar": "وصي", "fr": "Tuteur", "en": "Guardian" }
+  },
+  {
+    "value": "relative",
+    "nusukValue": "قريب",
+    "allowedCompanionGenders": [],
+    "legacy": true,
+    "sourceEvidence": ["rukn_legacy"],
+    "label": { "ar": "قريب", "fr": "Proche", "en": "Relative" }
+  },
+  {
+    "value": "other",
+    "nusukValue": "آخر",
+    "allowedCompanionGenders": [],
+    "legacy": true,
+    "sourceEvidence": ["rukn_legacy"],
+    "label": { "ar": "آخر", "fr": "Autre (ancienne valeur)", "en": "Other (legacy value)" }
+  }
+]

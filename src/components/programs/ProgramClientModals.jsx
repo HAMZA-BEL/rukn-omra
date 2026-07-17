@@ -13,6 +13,7 @@ export default function ProgramClientModals({
   program,
   packages,
   travelGroups = [],
+  defaultTravelGroupId = null,
   registeredCount = 0,
   participantTerms,
   completionLabels,
@@ -89,17 +90,20 @@ export default function ProgramClientModals({
         )}
       </Modal>
       <Modal open={isAddClientOpen} onClose={onCloseAddClient} title={participantTerms.addAction || t.addClient} width={600}>
-        <ClientForm
-          store={store}
-          defaultProgramId={program.id}
-          lockProgramId={program.id}
-          travelGroups={travelGroups}
-          badgesEnabled={badgesEnabled}
-          contractsEnabled={contractsEnabled}
-          onSave={onSaveAddClient}
-          onCancel={onCloseAddClient}
-          onToast={onToast}
-        />
+        {isAddClientOpen && (
+          <ClientForm
+            store={store}
+            defaultProgramId={program.id}
+            defaultTravelGroupId={defaultTravelGroupId}
+            lockProgramId={program.id}
+            travelGroups={travelGroups}
+            badgesEnabled={badgesEnabled}
+            contractsEnabled={contractsEnabled}
+            onSave={onSaveAddClient}
+            onCancel={onCloseAddClient}
+            onToast={onToast}
+          />
+        )}
       </Modal>
       <Modal open={isExcelImportOpen} onClose={onCloseExcelImport} title={participantExcelImportLabel} width={920}>
         {isExcelImportOpen && (

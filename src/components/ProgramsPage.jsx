@@ -6446,6 +6446,9 @@ function ProgramInner({
         program={currentProgram}
         packages={packages}
         travelGroups={currentProgramTravelGroups}
+        defaultTravelGroupId={travelGroupFilter !== "all" && travelGroupFilter !== "__main_program"
+          ? travelGroupFilter
+          : null}
         registeredCount={progClients.length}
         participantTerms={participantTerms}
         completionLabels={completionLabels}

@@ -20,7 +20,9 @@
   "homepage": "https://ruknomra.com",
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "test:nusuk-contract": "node --test netlify/functions/__tests__/extension-program-clients-contract.test.js",
+    "test:client-representation": "react-scripts test --watchAll=false --runInBand src/utils/clientRepresentation.test.js"
   },
   "browserslist": {
     "production": [

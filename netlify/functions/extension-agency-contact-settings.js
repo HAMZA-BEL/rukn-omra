@@ -1,8 +1,8 @@
 const { createClient } = require("@supabase/supabase-js");
+const { resolveNusukUploadFeatureGate } = require("./_nusuk-feature-gate");
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const NUSUK_UPLOAD_FEATURE_KEY = "nusuk_upload";
 const CONFIGURED_ALLOWED_ORIGINS = (
   process.env.RUKN_EXTENSION_ALLOWED_ORIGINS ||
   process.env.EXTENSION_ALLOWED_ORIGINS ||
@@ -102,17 +102,6 @@ function nullableString(value) {
   return trimmed || null;
 }
 
-async function fetchAgencyFeatureEnabled(adminClient, agencyId, featureKey) {
-  const { data, error } = await adminClient
-    .from("agency_features")
-    .select("enabled")
-    .eq("agency_id", agencyId)
-    .eq("feature_key", featureKey)
-    .maybeSingle();
-  if (error) return { enabled: false, error };
-  return { enabled: Boolean(data?.enabled), error: null };
-}
-
 exports.handler = async (event) => {
   try {
     if (event.httpMethod === "OPTIONS") {
@@ -163,11 +152,14 @@ exports.handler = async (event) => {
       return json(event, 403, { error: "Agency is inactive or disabled" });
     }
 
-    const feature = await fetchAgencyFeatureEnabled(adminClient, profile.agency_id, NUSUK_UPLOAD_FEATURE_KEY);
-    if (feature.error) {
+    const featureGate = await resolveNusukUploadFeatureGate({
+      adminClient,
+      agencyId: profile.agency_id,
+    });
+    if (featureGate.error) {
       return json(event, 500, { error: "Unable to verify Nusuk upload availability" });
     }
-    if (!feature.enabled) {
+    if (!featureGate.allowed) {
       return json(event, 403, { error: "Nusuk upload is not enabled for this agency" });
     }
 

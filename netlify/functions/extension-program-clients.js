@@ -1,8 +1,9 @@
 const { createClient } = require("@supabase/supabase-js");
+const { resolveNusukUploadFeatureGate } = require("./_nusuk-feature-gate");
+const { buildNusukClientBatch } = require("./_extension-program-clients-contract");
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.REACT_APP_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const NUSUK_UPLOAD_FEATURE_KEY = "nusuk_upload";
 const CONFIGURED_ALLOWED_ORIGINS = (
   process.env.RUKN_EXTENSION_ALLOWED_ORIGINS ||
   process.env.EXTENSION_ALLOWED_ORIGINS ||
@@ -100,17 +101,6 @@ function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function fetchAgencyFeatureEnabled(adminClient, agencyId, featureKey) {
-  const { data, error } = await adminClient
-    .from("agency_features")
-    .select("enabled")
-    .eq("agency_id", agencyId)
-    .eq("feature_key", featureKey)
-    .maybeSingle();
-  if (error) return { enabled: false, error };
-  return { enabled: Boolean(data?.enabled), error: null };
-}
-
 function isProgramAvailableForNusuk(row = {}, agencyId = "") {
   const status = String(row.status || "active").toLowerCase();
   return row.nusuk_upload_enabled === true
@@ -120,17 +110,17 @@ function isProgramAvailableForNusuk(row = {}, agencyId = "") {
     && status !== "archived";
 }
 
-function toExtensionClient(row = {}) {
-  const arabicFirstName = cleanString(row.first_name);
-  const arabicLastName = cleanString(row.last_name);
-  const fallbackFullName = [arabicFirstName, arabicLastName].filter(Boolean).join(" ").trim();
-  return {
-    clientId: row.id,
-    passportNumber: cleanString(row.passport_number),
-    arabicFirstName,
-    arabicLastName,
-    arabicFullName: cleanString(row.name) || fallbackFullName,
-  };
+function isHajjProgram(row = {}) {
+  const value = String(row.type || row.program_type || "").trim().toLowerCase();
+  return value === "hajj" || value === "hadj" || value === "حج" || value === "الحج";
+}
+
+function parseSelectedClientIds(value) {
+  if (value === undefined || value === null || value === "") return null;
+  return String(value)
+    .split(",")
+    .map((clientId) => clientId.trim())
+    .filter(Boolean);
 }
 
 exports.handler = async (event) => {
@@ -151,6 +141,10 @@ exports.handler = async (event) => {
     const programId = cleanString(event.queryStringParameters?.programId);
     if (!programId) {
       return json(event, 400, { error: "Missing programId" });
+    }
+    const selectedClientIds = parseSelectedClientIds(event.queryStringParameters?.clientIds);
+    if (selectedClientIds && selectedClientIds.length > 500) {
+      return json(event, 400, { error: "Too many clientIds" });
     }
 
     const adminClient = buildAdminClient();
@@ -188,17 +182,20 @@ exports.handler = async (event) => {
       return json(event, 403, { error: "Agency is inactive or disabled" });
     }
 
-    const feature = await fetchAgencyFeatureEnabled(adminClient, profile.agency_id, NUSUK_UPLOAD_FEATURE_KEY);
-    if (feature.error) {
+    const featureGate = await resolveNusukUploadFeatureGate({
+      adminClient,
+      agencyId: profile.agency_id,
+    });
+    if (featureGate.error) {
       return json(event, 500, { error: "Unable to verify Nusuk upload availability" });
     }
-    if (!feature.enabled) {
+    if (!featureGate.allowed) {
       return json(event, 403, { error: "Nusuk upload is not enabled for this agency" });
     }
 
     const { data: program, error: programError } = await adminClient
       .from("programs")
-      .select("id, agency_id, status, nusuk_upload_enabled, deleted, deleted_at")
+      .select("id, agency_id, type, status, nusuk_upload_enabled, deleted, deleted_at")
       .eq("id", programId)
       .eq("agency_id", profile.agency_id)
       .maybeSingle();
@@ -217,7 +214,23 @@ exports.handler = async (event) => {
 
     const { data: clients, error: clientsError } = await adminClient
       .from("clients")
-      .select("id, first_name, last_name, name, passport_number:passport->>number")
+      .select([
+        "id",
+        "agency_id",
+        "program_id",
+        "travel_group_id",
+        "first_name",
+        "last_name",
+        "name",
+        "represented_by_client_id",
+        "represented_by_relationship",
+        "passport",
+        "archived",
+        "archived_at",
+        "deleted",
+        "deleted_at",
+        "created_at",
+      ].join(", "))
       .eq("agency_id", profile.agency_id)
       .eq("program_id", program.id)
       .or("deleted.is.null,deleted.eq.false")
@@ -229,10 +242,31 @@ exports.handler = async (event) => {
       return json(event, 500, { error: "Unable to load program clients" });
     }
 
-    return json(event, 200, {
-      programId: program.id,
+    const batch = buildNusukClientBatch({
+      clients,
       agencyId: profile.agency_id,
-      clients: Array.isArray(clients) ? clients.map(toExtensionClient) : [],
+      programId: program.id,
+      selectedClientIds,
+      enforceTravelGroup: isHajjProgram(program),
+    });
+
+    if (batch.errors.length) {
+      return json(event, 422, {
+        error: "Nusuk upload preflight failed",
+        code: "NUSUK_PREFLIGHT_FAILED",
+        payloadVersion: batch.payloadVersion,
+        programId: batch.programId,
+        agencyId: batch.agencyId,
+        validationErrors: batch.errors,
+      });
+    }
+
+    return json(event, 200, {
+      payloadVersion: batch.payloadVersion,
+      programId: batch.programId,
+      agencyId: batch.agencyId,
+      executionOrder: batch.executionOrder,
+      clients: batch.clients,
     });
   } catch (err) {
     console.error("extension-program-clients error", {

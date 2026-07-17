@@ -30,11 +30,18 @@ import {
 import { getProgramKind } from "../utils/participantTerminology";
 import { getClientDisplayName } from "../utils/clientNames";
 import {
-  REPRESENTED_BY_RELATIONSHIPS,
-  clientHasCin,
-  getSameProgramRepresentativeOptions,
-  isClientMinorWithoutCin,
+  getClientGender,
+  getRepresentativeCandidateOptions,
+  getRepresentativeDisabledReasonLabel,
+  getRepresentativeEligibilityDiagnostics,
+  getRepresentativeRelationshipFieldState,
+  getRepresentativeRelationshipLabel,
+  getRelationshipsForCompanionGender,
+  isRepresentativeRelationshipAllowedForGender,
+  isClientMinor,
+  normalizeRepresentativeScopeId,
   normalizeRepresentativeRelationship,
+  reconcileRepresentativeRelationshipForCompanionGender,
 } from "../utils/clientRepresentation";
 import {
   getProgramCapacityDeltaForClientChange,
@@ -103,17 +110,17 @@ const getLocalizedValue = (value, map, t) => {
 };
 
 const representationText = (lang) => ({
-  title: lang === "fr" ? "Représentation" : lang === "en" ? "Representation" : "النيابة في العقد",
+  title: lang === "fr" ? "Accompagnateur du mineur" : lang === "en" ? "Minor companion" : "بيانات مرافق القاصر",
   hasCin: lang === "fr"
     ? "Ce pèlerin possède une CIN, un contrat individuel sera généré."
     : lang === "en"
     ? "This pilgrim has a national ID, so an individual contract will be generated."
     : "هذا المعتمر يملك بطاقة وطنية، لذلك سيتم إنشاء عقد منفرد له.",
   minorNeedsRepresentative: lang === "fr"
-    ? "Ce pèlerin n’a pas de CIN. Vous pouvez choisir la personne qui le représente dans le contrat."
+    ? "Sélectionnez l’accompagnateur adulte et le lien de parenté requis pour ce mineur."
     : lang === "en"
-    ? "This pilgrim has no national ID. You can select who represents them in the contract."
-    : "هذا المعتمر لا يملك بطاقة وطنية، ويمكن اختيار من ينوب عنه في العقد.",
+    ? "Select the adult companion and required relationship for this minor."
+    : "اختر المرافق البالغ وصلة القرابة المطلوبة لهذا القاصر.",
   adultNoCin: lang === "fr"
     ? "Ce pèlerin est adulte mais n’a pas de CIN."
     : lang === "en"
@@ -135,6 +142,46 @@ const representationText = (lang) => ({
     : lang === "en"
     ? "Select a representative for this minor."
     : "يرجى اختيار من ينوب عن هذا القاصر.",
+  relationshipRequired: lang === "fr"
+    ? "Choisissez le lien de parenté pour ce mineur."
+    : lang === "en"
+    ? "Select the relationship for this minor."
+    : "يرجى تحديد صلة القرابة لهذا القاصر.",
+  chooseCompanionFirst: lang === "fr"
+    ? "Choisissez d’abord l’accompagnateur"
+    : lang === "en"
+    ? "Select the companion first"
+    : "اختر المرافق أولًا",
+  completeCompanionGenderFirst: lang === "fr"
+    ? "Complétez d’abord le sexe de l’accompagnateur"
+    : lang === "en"
+    ? "Complete the companion gender first"
+    : "أكمل جنس المرافق أولًا",
+  chooseRelationship: lang === "fr"
+    ? "Choisissez le lien de parenté"
+    : lang === "en"
+    ? "Select the relationship"
+    : "اختر صلة القرابة",
+  relationshipGenderMismatch: lang === "fr"
+    ? "Le lien de parenté n’est pas compatible avec le sexe de l’accompagnateur"
+    : lang === "en"
+    ? "The relationship is incompatible with the companion gender"
+    : "صلة القرابة غير متوافقة مع جنس المرافق",
+  savedRelationshipGenderMismatch: lang === "fr"
+    ? "Le lien de parenté enregistré n’est pas compatible avec le sexe de l’accompagnateur"
+    : lang === "en"
+    ? "The saved relationship is incompatible with the companion gender"
+    : "صلة القرابة المحفوظة غير متوافقة مع جنس المرافق",
+  chooseRelationshipForNewCompanion: lang === "fr"
+    ? "Choisissez le lien de parenté adapté au nouvel accompagnateur"
+    : lang === "en"
+    ? "Select the appropriate relationship for the new companion"
+    : "اختر صلة القرابة المناسبة للمرافق الجديد",
+  selectedRepresentativeInvalid: lang === "fr"
+    ? "L’accompagnateur actuellement sélectionné n’est pas éligible"
+    : lang === "en"
+    ? "The currently selected companion is not eligible"
+    : "المرافق المحدد حاليًا غير مؤهل",
 });
 
 const pickString = (...candidates) => {
@@ -533,7 +580,7 @@ const extractLatinNames = (client) => {
   return { nom, prenom };
 };
 
-const buildFormState = (client, defaultProgramId, programs) => {
+const buildFormState = (client, defaultProgramId, programs, defaultTravelGroupId = null) => {
   const { firstName, lastName } = extractArabicNames(client);
   const { nom, prenom }         = extractLatinNames(client);
   const isEdit = Boolean(client);
@@ -610,7 +657,9 @@ const buildFormState = (client, defaultProgramId, programs) => {
     cin:         pickString(client?.cin, client?.CIN, client?.nationalId, client?.national_id, passport.cin, passport.nationalId),
     city:        pickString(client?.city, client?.ville, client?.addressCity),
     programId:   programId || "",
-    travelGroupId: pickString(client?.travelGroupId, client?.travel_group_id) || null,
+    travelGroupId: pickString(client?.travelGroupId, client?.travel_group_id)
+      || (!isEdit ? normalizeRepresentativeScopeId(defaultTravelGroupId) : "")
+      || null,
     packageId: selectedProgram ? packageId : "",
     hotelLevel:  selectedProgram ? packageLevel : "",
     packageLevel: selectedProgram ? packageLevel : "",
@@ -656,10 +705,10 @@ export default function ClientForm({
   onCancel,
   onToast,
   defaultProgramId,
+  defaultTravelGroupId = null,
   lockProgramId = "",
   travelGroups = null,
   badgesEnabled = true,
-  contractsEnabled = true,
 }) {
   const { t, tr, dir, lang } = useLang();
   const { programs = [], clients = [], activeClients = [], addClient, addClientAndWait, updateClient } = store;
@@ -690,7 +739,7 @@ export default function ClientForm({
   const formRef = React.useRef(null);
   const lastValidationToastAtRef = React.useRef(0);
 
-  const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs));
+  const [form, setForm] = React.useState(() => buildFormState(client, defaultProgramId, programs, defaultTravelGroupId));
   const selectablePrograms = React.useMemo(() => {
     const base = lockProgramId
       ? programs.filter((p) => p.id === lockProgramId)
@@ -708,6 +757,7 @@ export default function ClientForm({
   const [saving, setSaving] = React.useState(false);
   const [representativeSearch, setRepresentativeSearch] = React.useState("");
   const [representativePickerOpen, setRepresentativePickerOpen] = React.useState(false);
+  const [relationshipResetNotice, setRelationshipResetNotice] = React.useState("");
 
   // Update form when client changes (for edit mode)
   React.useEffect(() => {
@@ -715,7 +765,7 @@ export default function ClientForm({
       skipProgramResetRef.current = true;
       skipInitialAutoFillRef.current = true;
       salePriceManualRef.current = true;
-      setForm(buildFormState(client, defaultProgramId, programs));
+      setForm(buildFormState(client, defaultProgramId, programs, defaultTravelGroupId));
       setEntryMode(ROOM_ENTRY_MODES.SINGLE);
       setGroupPeople([createGroupPerson(0)]);
       setBadgePhotoFile(null);
@@ -723,8 +773,9 @@ export default function ClientForm({
       setBadgePhotoError("");
       setRepresentativeSearch("");
       setRepresentativePickerOpen(false);
+      setRelationshipResetNotice("");
     }
-  }, [client, defaultProgramId, programs]);
+  }, [client, defaultProgramId, defaultTravelGroupId, programs]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -910,38 +961,125 @@ export default function ClientForm({
       nationalId: "",
     },
   }), [client?.id, form]);
-  const hasCin = clientHasCin(representationClient);
-  const minorWithoutCin = isClientMinorWithoutCin(representationClient);
-  const representativeOptions = React.useMemo(() => (
-    getSameProgramRepresentativeOptions({
+  const minorClient = isClientMinor(representationClient);
+  const enforceRepresentativeTravelGroup = selectedProgramIsHajj && Boolean(form.travelGroupId);
+  const representativeCandidates = React.useMemo(() => (
+    getRepresentativeCandidateOptions({
       clients,
+      agencyId: store.agencyId,
       programId: form.programId,
+      travelGroupId: form.travelGroupId,
+      enforceTravelGroup: enforceRepresentativeTravelGroup,
       currentClientId: client?.id || "",
       lang,
     })
-  ), [client?.id, clients, form.programId, lang]);
-  const selectedRepresentative = React.useMemo(() => (
-    representativeOptions.find((item) => String(item.id || "") === String(form.representedByClientId || "")) || null
-  ), [form.representedByClientId, representativeOptions]);
+  ), [client?.id, clients, enforceRepresentativeTravelGroup, form.programId, form.travelGroupId, lang, store.agencyId]);
+  React.useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (typeof window === "undefined" || window.__RUKN_DEBUG_MINOR_COMPANIONS__ !== true) return;
+    console.table(getRepresentativeEligibilityDiagnostics({
+      clients,
+      agencyId: store.agencyId,
+      programId: form.programId,
+      travelGroupId: form.travelGroupId,
+      enforceTravelGroup: enforceRepresentativeTravelGroup,
+      currentClientId: client?.id || "",
+    }));
+  }, [client?.id, clients, enforceRepresentativeTravelGroup, form.programId, form.travelGroupId, store.agencyId]);
+  const selectedRepresentativeCandidate = React.useMemo(() => (
+    representativeCandidates.find((item) => String(item.clientId || "") === String(form.representedByClientId || "")) || null
+  ), [form.representedByClientId, representativeCandidates]);
+  const selectedRepresentative = selectedRepresentativeCandidate?.client || null;
+  const selectedRepresentativeGender = selectedRepresentativeCandidate?.gender
+    || getClientGender(selectedRepresentative || {});
+  const selectedRepresentativeDisabledReason = selectedRepresentativeCandidate?.disabledReason
+    ? getRepresentativeDisabledReasonLabel(selectedRepresentativeCandidate.disabledReason, lang)
+    : "";
   const selectedRepresentativeLabel = selectedRepresentative ? getRepresentativeDisplayName(selectedRepresentative, lang) : "";
   const filteredRepresentativeOptions = React.useMemo(() => {
     const term = normalizeSearchValue(representativeSearch);
-    if (!term) return representativeOptions;
-    return representativeOptions.filter((item) => (
-      getRepresentativeSearchText(item, lang).includes(term)
+    if (!term) return representativeCandidates;
+    return representativeCandidates.filter((item) => (
+      getRepresentativeSearchText(item.client, lang).includes(term)
     ));
-  }, [lang, representativeOptions, representativeSearch]);
+  }, [lang, representativeCandidates, representativeSearch]);
   const representativeInputValue = representativeSearch || selectedRepresentativeLabel;
+  const relationshipFieldState = React.useMemo(() => (
+    getRepresentativeRelationshipFieldState({
+      companionId: form.representedByClientId,
+      companionSelectable: selectedRepresentativeCandidate?.selectable === true,
+      companionGender: selectedRepresentativeGender,
+      relationshipValue: form.representedByRelationship,
+    })
+  ), [
+    form.representedByClientId,
+    form.representedByRelationship,
+    selectedRepresentativeCandidate?.selectable,
+    selectedRepresentativeGender,
+  ]);
+  const allowedRelationships = React.useMemo(() => (
+    relationshipFieldState.enabled
+      ? getRelationshipsForCompanionGender(relationshipFieldState.gender)
+      : []
+  ), [relationshipFieldState.enabled, relationshipFieldState.gender]);
+  const relationshipPlaceholder = relationshipFieldState.disabledReason === "missing_gender"
+    ? representationLabels.completeCompanionGenderFirst
+    : relationshipFieldState.disabledReason
+      ? representationLabels.chooseCompanionFirst
+      : representationLabels.chooseRelationship;
   const relationshipOptions = React.useMemo(() => {
-    const options = REPRESENTED_BY_RELATIONSHIPS.map((item) => ({ value: item.value, label: item.label[lang] || item.label.ar }));
+    const options = allowedRelationships.map((item) => ({
+      value: item.value,
+      label: item.label[lang] || item.label.ar,
+    }));
     if (
       form.representedByRelationship
+      && relationshipFieldState.relationshipCompatible
       && !options.some((item) => item.value === form.representedByRelationship)
     ) {
-      options.push({ value: form.representedByRelationship, label: form.representedByRelationship });
+      options.push({
+        value: form.representedByRelationship,
+        label: getRepresentativeRelationshipLabel(form.representedByRelationship, lang),
+        disabled: true,
+      });
     }
-    return [{ value: "", label: "—" }, ...options];
-  }, [form.representedByRelationship, lang]);
+    return [{ value: "", label: relationshipPlaceholder, disabled: relationshipFieldState.enabled }, ...options];
+  }, [
+    allowedRelationships,
+    form.representedByRelationship,
+    lang,
+    relationshipFieldState.enabled,
+    relationshipFieldState.relationshipCompatible,
+    relationshipPlaceholder,
+  ]);
+  const relationshipDisplayValue = relationshipFieldState.relationshipCompatible
+    ? form.representedByRelationship
+    : "";
+  const savedRelationshipIncompatible = Boolean(
+    form.representedByClientId
+    && form.representedByRelationship
+    && selectedRepresentativeGender
+    && !relationshipFieldState.relationshipCompatible
+  );
+  const handleRepresentativeSelection = React.useCallback((candidate) => {
+    if (!candidate?.selectable) return;
+    const nextGender = candidate.gender || getClientGender(candidate.client || {});
+    const nextRelationship = reconcileRepresentativeRelationshipForCompanionGender(
+      form.representedByRelationship,
+      nextGender
+    );
+    const relationshipMustReset = Boolean(form.representedByRelationship && !nextRelationship);
+    setForm((prev) => ({
+      ...prev,
+      representedByClientId: candidate.clientId,
+      representedByRelationship: relationshipMustReset ? "" : nextRelationship,
+    }));
+    setRelationshipResetNotice(
+      relationshipMustReset ? representationLabels.chooseRelationshipForNewCompanion : ""
+    );
+    setRepresentativeSearch("");
+    setRepresentativePickerOpen(false);
+  }, [form.representedByRelationship, representationLabels.chooseRelationshipForNewCompanion]);
   const programPackages = React.useMemo(
     () => selectedProgram ? normalizeProgramPackages(selectedProgram) : [],
     [selectedProgram]
@@ -1003,21 +1141,20 @@ export default function ClientForm({
   }, [form.salePrice, getDefaultSalePriceForService, normalizedServiceType]);
 
   React.useEffect(() => {
-    if (!contractsEnabled || !hasCin) return;
+    if (minorClient) return;
     setForm((prev) => (
       prev.representedByClientId || prev.representedByRelationship
         ? { ...prev, representedByClientId: "", representedByRelationship: "" }
         : prev
     ));
-  }, [contractsEnabled, hasCin]);
+  }, [minorClient]);
 
   React.useEffect(() => {
-    if (!contractsEnabled) return;
     if (!form.representedByClientId) return;
-    if (representativeOptions.some((item) => String(item.id || "") === String(form.representedByClientId || ""))) return;
+    if (representativeCandidates.some((item) => String(item.clientId || "") === String(form.representedByClientId || ""))) return;
     setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
     setRepresentativeSearch("");
-  }, [contractsEnabled, form.representedByClientId, representativeOptions]);
+  }, [form.representedByClientId, representativeCandidates]);
 
   const handlePackageChange = React.useCallback((e) => {
     const pkg = programPackages.find(item => item.id === e.target.value) || null;
@@ -1173,7 +1310,29 @@ export default function ClientForm({
     }
     if (passportDateErrors.birthDate) e.birthDate = passportDateErrors.birthDate;
     if (passportDateErrors.issueDate) e.issueDate = passportDateErrors.issueDate;
-    if (contractsEnabled && minorWithoutCin && !form.representedByClientId) e.representedByClientId = representationLabels.representativeRequired;
+    if (minorClient && !form.representedByClientId) {
+      e.representedByClientId = representationLabels.representativeRequired;
+    } else if (minorClient && !selectedRepresentativeCandidate?.selectable) {
+      e.representedByClientId = [
+        representationLabels.selectedRepresentativeInvalid,
+        selectedRepresentativeDisabledReason,
+      ].filter(Boolean).join(" — ");
+    }
+    if (minorClient && !form.representedByClientId) {
+      e.representedByRelationship = representationLabels.chooseCompanionFirst;
+    } else if (minorClient && !selectedRepresentativeGender) {
+      e.representedByRelationship = representationLabels.completeCompanionGenderFirst;
+    } else if (minorClient && !form.representedByRelationship) {
+      e.representedByRelationship = representationLabels.relationshipRequired;
+    } else if (
+      minorClient
+      && !isRepresentativeRelationshipAllowedForGender(
+        form.representedByRelationship,
+        selectedRepresentativeGender
+      )
+    ) {
+      e.representedByRelationship = representationLabels.relationshipGenderMismatch;
+    }
     return e;
   };
 
@@ -1186,7 +1345,7 @@ export default function ClientForm({
         if (rowErrors.gender) return `groupPeople.${index}.gender`;
       }
     }
-    const orderedFields = ["firstName", "phone", "gender", "salePrice", "birthDate", "issueDate", "representedByClientId"];
+    const orderedFields = ["firstName", "phone", "gender", "salePrice", "birthDate", "issueDate", "representedByClientId", "representedByRelationship"];
     return orderedFields.find((field) => validationErrors[field]) || "";
   }, [entryMode]);
 
@@ -1419,12 +1578,10 @@ export default function ClientForm({
       : (targetProgramId ? 1 : 0);
     if (!ensureProgramCanAdd(targetProgram, capacityDelta)) return;
     setBadgePhotoError("");
-    const nextRepresentedByClientId = contractsEnabled
-      ? (hasCin ? "" : form.representedByClientId)
-      : form.representedByClientId;
-    const nextRepresentedByRelationship = contractsEnabled
-      ? (hasCin ? "" : normalizeRepresentativeRelationship(form.representedByRelationship))
-      : form.representedByRelationship;
+    const nextRepresentedByClientId = minorClient ? form.representedByClientId : "";
+    const nextRepresentedByRelationship = minorClient
+      ? normalizeRepresentativeRelationship(form.representedByRelationship)
+      : "";
     const baseData = {
       ...form,
       programId: lockProgramId || form.programId || null,
@@ -2030,8 +2187,8 @@ export default function ClientForm({
       </GlassCard>
       )}
 
-	      {/* ── Contract Representation ── */}
-		      {contractsEnabled && entryMode === ROOM_ENTRY_MODES.SINGLE && minorWithoutCin && (
+	      {/* ── Minor companion ── */}
+		      {entryMode === ROOM_ENTRY_MODES.SINGLE && minorClient && (
 	      <GlassCard style={{
 	        padding:16,
 	        marginBottom:14,
@@ -2055,8 +2212,8 @@ export default function ClientForm({
 	                  <input
                       data-client-field="representedByClientId"
 	                    value={representativeInputValue}
-	                    disabled={!representativeOptions.length}
-	                    placeholder={representativeOptions.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative}
+	                    disabled={!representativeCandidates.length}
+	                    placeholder={representativeCandidates.length ? representationLabels.selectRepresentative : representationLabels.noRepresentative}
 		                    onFocus={(event) => {
 		                      setRepresentativePickerOpen(true);
 		                      event.currentTarget.select();
@@ -2066,7 +2223,12 @@ export default function ClientForm({
 	                      setRepresentativeSearch(event.target.value);
 	                      setRepresentativePickerOpen(true);
 	                      if (form.representedByClientId) {
-	                        setForm((prev) => ({ ...prev, representedByClientId: "" }));
+	                        setForm((prev) => ({
+	                          ...prev,
+	                          representedByClientId: "",
+	                          representedByRelationship: "",
+	                        }));
+	                        setRelationshipResetNotice("");
 	                      }
 	                    }}
 	                    style={{
@@ -2082,8 +2244,8 @@ export default function ClientForm({
 	                      outline:"none",
 	                      transition:"border-color .2s, box-shadow .2s",
 	                      boxShadow:representativePickerOpen ? "0 0 0 3px rgba(212,175,55,.15)" : "none",
-	                      opacity:representativeOptions.length ? 1 : .65,
-	                      cursor:representativeOptions.length ? "text" : "not-allowed",
+	                      opacity:representativeCandidates.length ? 1 : .65,
+	                      cursor:representativeCandidates.length ? "text" : "not-allowed",
 	                      boxSizing:"border-box",
 	                    }}
 	                  />
@@ -2094,6 +2256,7 @@ export default function ClientForm({
 	                      onMouseDown={(event) => event.preventDefault()}
 	                      onClick={() => {
 	                        setForm((prev) => ({ ...prev, representedByClientId: "", representedByRelationship: "" }));
+	                        setRelationshipResetNotice("");
 	                        setRepresentativeSearch("");
 	                        setRepresentativePickerOpen(false);
 	                      }}
@@ -2118,7 +2281,7 @@ export default function ClientForm({
 	                      ×
 	                    </button>
 	                  )}
-	                  {representativePickerOpen && representativeOptions.length > 0 && (
+	                  {representativePickerOpen && representativeCandidates.length > 0 && (
 	                    <div
 	                      style={{
 	                        position:"absolute",
@@ -2135,19 +2298,22 @@ export default function ClientForm({
 	                        padding:6,
 	                      }}
 	                    >
-	                      {filteredRepresentativeOptions.length ? filteredRepresentativeOptions.map((item) => {
+	                      {filteredRepresentativeOptions.length ? filteredRepresentativeOptions.map((candidate) => {
+		                        const item = candidate.client;
 		                        const label = getRepresentativeDisplayName(item, lang);
-	                        const selected = String(item.id || "") === String(form.representedByClientId || "");
+	                        const selected = String(candidate.clientId || "") === String(form.representedByClientId || "");
+	                        const disabledReason = candidate.disabledReason
+	                          ? getRepresentativeDisabledReasonLabel(candidate.disabledReason, lang)
+	                          : "";
 	                        return (
 	                          <button
-	                            key={item.id}
+	                            key={candidate.clientId}
 	                            type="button"
 	                            className="client-representative-option"
+	                            disabled={!candidate.selectable}
 	                            onMouseDown={(event) => event.preventDefault()}
 	                            onClick={() => {
-	                              setForm((prev) => ({ ...prev, representedByClientId: item.id }));
-	                              setRepresentativeSearch("");
-	                              setRepresentativePickerOpen(false);
+	                              handleRepresentativeSelection(candidate);
 	                            }}
 	                            style={{
 	                              width:"100%",
@@ -2155,15 +2321,21 @@ export default function ClientForm({
 	                              border:"none",
 	                              borderRadius:9,
 	                              padding:"9px 10px",
-	                              background:selected ? "rgba(212,175,55,.16)" : "transparent",
+	                              background:selected ? "rgba(212,175,55,.16)" : candidate.selectable ? "transparent" : "var(--rukn-bg-soft)",
 	                              color:selected ? "var(--rukn-gold)" : "var(--rukn-text)",
-	                              cursor:"pointer",
+	                              cursor:candidate.selectable ? "pointer" : "not-allowed",
 	                              fontFamily:"'Cairo',sans-serif",
 	                              fontSize:13,
 	                              fontWeight:selected ? 800 : 600,
+	                              opacity:1,
 	                            }}
 	                          >
-	                            {label}
+	                            <span style={{ display:"block", fontWeight:selected ? 800 : 700 }}>{label}</span>
+	                            {disabledReason && (
+	                              <span style={{ display:"block", marginTop:2, color:"var(--rukn-text-muted)", fontSize:11, fontWeight:500, lineHeight:1.55 }}>
+	                                {disabledReason}
+	                              </span>
+	                            )}
 	                          </button>
 	                        );
 	                      }) : (
@@ -2175,15 +2347,48 @@ export default function ClientForm({
 	                  )}
 	                </div>
 	              </div>
-	              <Select
-	                label={representationLabels.relationship}
-	                value={form.representedByRelationship}
-	                onChange={(event) => setForm((prev) => ({ ...prev, representedByRelationship: event.target.value }))}
-	                options={relationshipOptions}
-	              />
+	              <div data-client-field="representedByRelationship">
+	                <Select
+	                  label={representationLabels.relationship}
+	                  value={relationshipDisplayValue}
+	                  onChange={(event) => {
+	                    setForm((prev) => ({ ...prev, representedByRelationship: event.target.value }));
+	                    setRelationshipResetNotice("");
+	                  }}
+	                  options={relationshipOptions}
+	                  disabled={relationshipFieldState.disabled}
+	                  required
+	                  error={errors.representedByRelationship}
+	                />
+	                {relationshipResetNotice && !form.representedByRelationship && (
+	                  <p style={{ margin:"6px 2px 0", color:"var(--rukn-gold)", fontSize:11, fontWeight:700, lineHeight:1.5 }}>
+	                    {relationshipResetNotice}
+	                  </p>
+	                )}
+	                {savedRelationshipIncompatible && (
+	                  <div style={{ marginTop:7, padding:"8px 10px", borderRadius:9, border:"1px solid rgba(220,80,80,.28)", background:"rgba(220,80,80,.08)" }}>
+	                    <p style={{ margin:0, color:tc.danger, fontSize:11, fontWeight:800, lineHeight:1.55 }}>
+	                      {representationLabels.savedRelationshipGenderMismatch}
+	                    </p>
+	                    <p style={{ margin:"2px 0 0", color:"var(--rukn-text-muted)", fontSize:11, lineHeight:1.5 }}>
+	                      {getRepresentativeRelationshipLabel(form.representedByRelationship, lang)}
+	                    </p>
+	                  </div>
+	                )}
+	              </div>
 	          </div>
 	          {errors.representedByClientId && (
 	            <p style={{ color:tc.danger, fontSize:11, marginTop:8 }}>{errors.representedByClientId}</p>
+	          )}
+	          {selectedRepresentativeCandidate && !selectedRepresentativeCandidate.selectable && (
+	            <div style={{ marginTop:10, padding:"9px 11px", borderRadius:10, border:"1px solid rgba(220,80,80,.28)", background:"rgba(220,80,80,.08)" }}>
+	              <p style={{ margin:0, color:tc.danger, fontSize:12, fontWeight:800 }}>
+	                {representationLabels.selectedRepresentativeInvalid}
+	              </p>
+	              <p style={{ margin:"3px 0 0", color:"var(--rukn-text-muted)", fontSize:11, lineHeight:1.6 }}>
+	                {selectedRepresentativeDisabledReason}
+	              </p>
+	            </div>
 	          )}
 	        </div>
 	      </GlassCard>
