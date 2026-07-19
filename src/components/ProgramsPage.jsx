@@ -756,20 +756,11 @@ const getNusukUploadAvailability = (
 const NUSUK_UPLOAD_LAUNCH_LABEL = "رفع لنسك — قيد الإطلاق";
 const NUSUK_UPLOAD_LAUNCH_HELPER = "هذه الميزة قيد الإطلاق حاليا وستتوفر قريبا.";
 const NUSUK_UPLOAD_URL = "https://masar.nusuk.sa/pub/login";
-const CHROME_WEB_STORE_URL = "https://chrome.google.com/webstore/detail/REPLACE_WITH_RUKN_ASSISTANT_EXTENSION_ID";
-const EDGE_ADDONS_URL = "https://microsoftedge.microsoft.com/addons/detail/REPLACE_WITH_RUKN_ASSISTANT_ADDON_ID";
+const RUKN_NUSUK_ASSISTANT_STORE_URL = "https://chromewebstore.google.com/detail/%D9%85%D8%B3%D8%A7%D8%B9%D8%AF-%D8%B1%D9%83%D9%86-%D9%84%D9%86%D8%B3%D9%83/pfcikaheakeljhimjmbablpnpeghggid";
 const NUSUK_UPLOAD_OPEN_DEBOUNCE_MS = 4000;
 let lastNusukUploadOpen = { url: "", at: 0 };
 
-const getNusukAssistantInstallUrl = () => {
-  if (
-    typeof navigator !== "undefined"
-    && String(navigator.userAgent || "").includes("Edg/")
-  ) {
-    return EDGE_ADDONS_URL;
-  }
-  return CHROME_WEB_STORE_URL;
-};
+const getNusukAssistantInstallUrl = () => RUKN_NUSUK_ASSISTANT_STORE_URL;
 
 const openNusukUploadUrl = (programId = "") => {
   if (typeof window === "undefined") return false;
