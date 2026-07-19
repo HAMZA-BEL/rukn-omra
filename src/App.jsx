@@ -28,6 +28,11 @@ import ClientForm from "./components/ClientForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InactivityLogoutModal from "./components/session/InactivityLogoutModal";
 import { clearAutoLogoutResumeContext } from "./components/session/sessionResumeStorage";
+import {
+  AgencyAccessUnavailableScreen,
+  AgencyBlockedScreen,
+  AgencyLinkMissingScreen,
+} from "./components/AgencyAccessScreen";
 
 const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
 const PUBLIC_PRIVACY_POLICY_PATH = "/privacy-policy";
@@ -1112,7 +1117,6 @@ function detectAuthFromURL() {
 
 // ── Auth gate ─────────────────────────────────────────────────────────────────
 function AuthGate() {
-  const { t } = useLang();
   // Captured synchronously on first render — all three tokens must be present.
   const [authFromURL] = React.useState(() => detectAuthFromURL());
 
@@ -1127,6 +1131,7 @@ function AuthGate() {
     profileError,
     profileLoading,
     profileChecked,
+    retryAgencyAccess,
   } = useAuth();
   const profileReady = !profileLoading && (!user || profileChecked);
 
@@ -1146,48 +1151,17 @@ function AuthGate() {
     return <DisabledAccountScreen onLogout={logout} />;
   }
 
+  if (["agency_suspended", "agency_archived", "agency_inactive"].includes(profileError)) {
+    return <AgencyBlockedScreen onRetry={retryAgencyAccess} onLogout={logout} />;
+  }
+
+  if (profileError === "agency_access_unavailable") {
+    return <AgencyAccessUnavailableScreen onRetry={retryAgencyAccess} onLogout={logout} />;
+  }
+
   // Logged in but profile/agency linkage is missing or inconsistent.
   if (user && profileReady && ["no_profile", "no_agency", "agency_mismatch"].includes(profileError)) {
-    const isProfileError = profileError === "no_profile";
-    const title = isProfileError
-      ? "لم يتم العثور على ملف المستخدم المرتبط بهذا الحساب"
-      : "لم يتم العثور على الوكالة المرتبطة بهذا الحساب";
-    return (
-      <div style={{
-        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
-        background: "#060d1a", color: "#f8fafc", fontFamily: "'Cairo', sans-serif",
-        padding: 24, textAlign: "center",
-      }}>
-        <div style={{
-          maxWidth: 480, background: "rgba(10,22,45,.9)",
-          border: "1px solid rgba(212,175,55,.3)", borderRadius: 20, padding: 40,
-        }}>
-          <IconBubble name="alert" boxSize={56} size={26} color="#f59e0b" bg="rgba(245,158,11,.12)" border="rgba(245,158,11,.28)" style={{ margin:"0 auto 16px" }} />
-          <h2 style={{ color: "#d4af37", marginBottom: 12 }}>{title}</h2>
-          <p style={{ color: "rgba(148,163,184,.8)", fontSize: 13, lineHeight: 1.8, marginBottom: 24 }}>
-            تم تسجيل الدخول بنجاح، لكن لا يمكن فتح النظام بدون ربط مؤكد بين حساب المستخدم والوكالة.
-            <br />تواصل مع مسؤول النظام لمراجعة صف المستخدم والوكالة المرتبطة به.
-          </p>
-          <pre style={{
-            background: "rgba(0,0,0,.4)", border: "1px solid rgba(212,175,55,.2)",
-            borderRadius: 10, padding: 16, fontSize: 11, textAlign: "left",
-            color: "#4ade80", overflowX: "auto", marginBottom: 24,
-            whiteSpace: "pre-wrap", direction: "ltr",
-          }}>{`System administrator action required:
-- Create or select the correct agency UUID explicitly: <agency_uuid>
-- Link only the intended owner email: <owner_email>
-- Never use SELECT id FROM public.agencies LIMIT 1 in production.`}</pre>
-          <button
-            onClick={async () => { await logout(); window.location.reload(); }}
-            style={{
-              padding: "10px 28px", borderRadius: 10, border: "1px solid rgba(212,175,55,.3)",
-              background: "rgba(212,175,55,.1)", color: "#d4af37", fontSize: 14,
-              fontFamily: "'Cairo', sans-serif", cursor: "pointer",
-            }}
-          >{t.logout}</button>
-        </div>
-      </div>
-    );
+    return <AgencyLinkMissingScreen onLogout={logout} />;
   }
 
   // Not logged in

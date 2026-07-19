@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase, isSupabaseEnabled } from "../lib/supabase";
 import { db } from "../lib/db";
 import { clearSupabaseLogoutAppStorage } from "../utils/localStorageHardening";
+import { resolveAgencyAccessError } from "../utils/agencyAccess";
 
 const debugAuthAgencyLoad = ({ authUser, profile, agency }) => {
   if (process.env.NODE_ENV !== "development") return;
@@ -205,16 +206,66 @@ export function useAuth() {
         return;
       }
 
+      const { data: agencySnapshot, error: agencySnapshotError } = await db.agency.fetchAccessSnapshot();
+      if (agencySnapshotError) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(data.agency_id);
+        setCurrentAgency(null);
+        setProfileError("agency_access_unavailable");
+        return;
+      }
+      if (!agencySnapshot) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(null);
+        setCurrentAgency(null);
+        setProfileError("no_agency");
+        return;
+      }
+      const accessError = resolveAgencyAccessError(data.agency_id, agencySnapshot);
+      if (accessError) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(data.agency_id);
+        setCurrentAgency(agencySnapshot);
+        setProfileError(accessError);
+        return;
+      }
+
       await debugAgencyFetchAttempt(data.agency_id);
       const { data: agency, error: agencyError } = await db.agency.fetch(data.agency_id);
       debugAgencyFetchResult({ profileAgencyId: data.agency_id, agency, error: agencyError });
       debugAuthAgencyLoad({ authUser: resolvedAuthUser, profile: data, agency });
 
-      if (agencyError || !agency) {
+      if (agencyError) {
         setUser({ ...resolvedAuthUser, profile: data });
-        setAgencyId(null);
+        setAgencyId(data.agency_id);
         setCurrentAgency(null);
-        setProfileError("no_agency");
+        setProfileError("agency_access_unavailable");
+        return;
+      }
+
+      if (!agency) {
+        // The agency may have changed to a blocked status between the safe
+        // snapshot and the RLS-protected full read. Recheck before calling it missing.
+        const { data: latestSnapshot, error: latestSnapshotError } = await db.agency.fetchAccessSnapshot();
+        if (latestSnapshotError) {
+          setUser({ ...resolvedAuthUser, profile: data });
+          setAgencyId(data.agency_id);
+          setCurrentAgency(null);
+          setProfileError("agency_access_unavailable");
+          return;
+        }
+        if (!latestSnapshot) {
+          setUser({ ...resolvedAuthUser, profile: data });
+          setAgencyId(null);
+          setCurrentAgency(null);
+          setProfileError("no_agency");
+          return;
+        }
+        const latestAccessError = resolveAgencyAccessError(data.agency_id, latestSnapshot);
+        setUser({ ...resolvedAuthUser, profile: data });
+        setAgencyId(data.agency_id);
+        setCurrentAgency(latestSnapshot);
+        setProfileError(latestAccessError || "agency_access_unavailable");
         return;
       }
 
@@ -223,6 +274,15 @@ export function useAuth() {
         setAgencyId(null);
         setCurrentAgency(null);
         setProfileError("agency_mismatch");
+        return;
+      }
+
+      const agencyAccessError = resolveAgencyAccessError(data.agency_id, agency);
+      if (agencyAccessError) {
+        setUser({ ...resolvedAuthUser, profile: data });
+        setCurrentAgency(agency);
+        setAgencyId(data.agency_id);
+        setProfileError(agencyAccessError);
         return;
       }
 
@@ -331,11 +391,35 @@ export function useAuth() {
     return () => subscription.unsubscribe();
   }, [loadProfile, urlType]);
 
+  useEffect(() => {
+    if (!isSupabaseEnabled || !user?.id || !agencyId) return undefined;
+    const refreshAgencyAccess = () => loadProfile(userRef.current, { force: true, silent: true });
+    const intervalId = window.setInterval(refreshAgencyAccess, 60000);
+    const channel = supabase
+      .channel(`agency-access-${agencyId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "agencies", filter: `id=eq.${agencyId}` },
+        refreshAgencyAccess
+      )
+      .subscribe();
+    return () => {
+      window.clearInterval(intervalId);
+      supabase.removeChannel(channel);
+    };
+  }, [agencyId, loadProfile, user?.id]);
+
   const login = useCallback(async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
     await loadProfile(data.user);
     return data;
+  }, [loadProfile]);
+
+  const retryAgencyAccess = useCallback(async () => {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data?.user) return;
+    await loadProfile(data.user, { force: true, silent: true });
   }, [loadProfile]);
 
   const logout = useCallback(async () => {
@@ -361,5 +445,6 @@ export function useAuth() {
     profileError,
     profileLoading,
     profileChecked,
+    retryAgencyAccess,
   };
 }

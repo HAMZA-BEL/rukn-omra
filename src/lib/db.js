@@ -2401,6 +2401,10 @@ export const db = {
   },
 
   agency: {
+    async fetchAccessSnapshot() {
+      const { data, error } = await supabase.rpc("get_current_agency_access_snapshot");
+      return { data: data && typeof data === "object" ? fromAgency(data) : null, error };
+    },
     async fetch(agencyId) {
       if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
       const { data, error } = await supabase
