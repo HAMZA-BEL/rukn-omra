@@ -2886,6 +2886,7 @@ export function useStore(agencyId, onToast, options = {}) {
     return {
       ...prepared,
       id,
+      ...(agencyId ? { agencyId, agency_id: agencyId } : {}),
       createdAt,
       created_at: createdAt,
       registrationDate: now,
@@ -2893,7 +2894,7 @@ export function useStore(agencyId, onToast, options = {}) {
       archived:         false,
       archivedAt:       null,
     };
-  }, []);
+  }, [agencyId]);
 
   const commitCreatedClient = useCallback((newClient) => {
     addClientLocal(newClient);
@@ -2931,6 +2932,7 @@ export function useStore(agencyId, onToast, options = {}) {
     const newClient = {
       ...prepared,
       id,
+      ...(agencyId ? { agencyId, agency_id: agencyId } : {}),
       createdAt,
       created_at: createdAt,
       registrationDate: now,

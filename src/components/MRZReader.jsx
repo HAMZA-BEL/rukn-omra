@@ -5,6 +5,7 @@ import { parseMRZDetailed } from "../utils/mrzReader";
 import {
   convertDisplayedCropToNaturalRect,
   createPassportOCRWorker,
+  dedupePassportFiles,
   extractMRZFromImage,
   extractMRZFromImageRegion,
   normalizeMRZOCRText,
@@ -14,16 +15,24 @@ import { useLang } from "../hooks/useLang";
 import { AppIcon, IconBubble } from "./Icon";
 import { validateLatinName } from "../utils/passportMrzEngine";
 import { normalizeProgramPackages } from "../utils/programPackages";
+import { getParticipantTerminology } from "../utils/participantTerminology";
 import {
   getProgramCapacityDeltaForClientChange,
   getProgramCapacityDatabaseErrorMessage,
   getProgramCapacityInfo,
   getProgramCapacityMessage,
 } from "../utils/programCapacity";
+import {
+  extractTrustedMoroccanCin,
+  filterClientsForCurrentAgency,
+  getStoredClientCin,
+} from "../utils/passportImportIdentity";
+import "./MRZReader.css";
 
 const tc = theme.colors;
 const MAX_BULK_FILES = 10;
 const MRZ_DEV = process.env.NODE_ENV !== "production";
+const MRZ_DIAGNOSTIC_LAB_ENABLED = MRZ_DEV && process.env.REACT_APP_MRZ_DIAGNOSTIC_LAB === "true";
 const PASSPORT_PERF_PREFIX = "[passport-import:perf]";
 
 const performanceNow = () => (
@@ -67,7 +76,29 @@ const REVIEW_REASON = {
 const LABELS = {
   ar: {
     title: "استيراد بيانات الجوازات",
-    desc: "ارفع صورة جواز أو عدة صور جوازات، وسيتم استخراج بيانات MRZ تلقائيًا. كل نتيجة تمر عبر المراجعة قبل الحفظ.",
+    desc: "أضف الجوازات إلى البرنامج بخطوات بسيطة وسريعة",
+    stepPassports: "الجوازات",
+    stepReview: "المراجعة",
+    stepSave: "الحفظ",
+    uploadTitle: "ارفع صور الجوازات",
+    uploadDescription: "اسحب الصور إلى هنا أو اخترها من جهازك",
+    supportedFormats: "JPG أو PNG · حتى 10 صور",
+    chooseImages: "اختيار الصور",
+    continueReview: "متابعة إلى المراجعة",
+    advancedOptions: "خيارات الربط المتقدمة",
+    optional: "اختياري",
+    advancedHint: "يمكنك ربط الجوازات ببرنامج أو فندق الآن، أو إكمال ذلك لاحقًا.",
+    readingTitle: "جارٍ قراءة الجوازات",
+    readingHint: "ستظهر النتائج للمراجعة فور اكتمال القراءة.",
+    fileRead: "تمت القراءة",
+    fileReading: "قيد القراءة",
+    fileWaiting: "في الانتظار",
+    fileError: "تعذرت القراءة",
+    showDetails: "مراجعة التفاصيل",
+    hideDetails: "إخفاء التفاصيل",
+    addPhotos: "إضافة صور",
+    savePilgrims: "حفظ المعتمرين",
+    noNameYet: "الاسم يحتاج مراجعة",
     workflow: "اختر الطريقة، ارفع الصور، استخرج البيانات، ثم راجع النتائج قبل الحفظ.",
     methodSection: "طريقة الاستيراد",
     methodHint: "اختر قراءة جواز واحد أو معالجة عدة جوازات دفعة واحدة.",
@@ -93,7 +124,7 @@ const LABELS = {
     selectedProgramOnlyInfo: "سيتم ربط المعتمرين بالبرنامج فقط دون تحديد الفنادق أو المستوى.",
     selectedProgramPackageInfo: "سيتم ربط المعتمرين بالبرنامج وملء الفنادق والمستوى فقط، دون تحديد نوع الغرفة أو الأسعار.",
     image: "صورة الجواز",
-    bulk: "استيراد من الجوازات",
+    bulk: "عدة صور جوازات",
     uploadOne: "رفع صورة جواز",
     uploadBulk: "اختر صور الجوازات",
     readPassport: "قراءة الجواز",
@@ -118,9 +149,12 @@ const LABELS = {
     status: "الحالة",
     latinLast: "الاسم العائلي اللاتيني",
     latinFirst: "الاسم الشخصي اللاتيني",
+    basicPassportData: "بيانات الجواز الأساسية",
+    additionalData: "بيانات إضافية",
     arabicLast: "الاسم العائلي بالعربية",
     arabicFirst: "الاسم الشخصي بالعربية",
     passportNo: "رقم الجواز",
+    nationalId: "رقم البطاقة الوطنية",
     source: "الملف",
     dataSource: "مصدر البيانات",
     automatic_mrz: "قراءة تلقائية",
@@ -130,9 +164,9 @@ const LABELS = {
     birthDate: "تاريخ الميلاد",
     gender: "الجنس",
     expiry: "تاريخ انتهاء الجواز",
-    selectMRZ: "تحديد MRZ",
+    selectMRZ: "إعادة القراءة من الصورة",
     cropTitle: "تصحيح من صورة الجواز",
-    cropHint: "حدد سطرَي MRZ أسفل الجواز ثم أعد القراءة.",
+    cropHint: "حدد السطرين أسفل الجواز ثم أعد القراءة.",
     readCrop: "إعادة القراءة من المنطقة المحددة",
     cropFailed: "تعذر استخراج MRZ بشكل صحيح من المنطقة المحددة",
     checksumAcceptHint: "بيانات MRZ غير مطابقة للتحقق الآلي، يمكنك قبولها بعد مراجعة الحقول.",
@@ -158,7 +192,7 @@ const LABELS = {
       duplicate_existing: "هذا الجواز يبدو موجودًا مسبقًا",
       invalid_date: "تاريخ غير صالح ويحتاج مراجعة",
       partial_birth_date: "تاريخ الميلاد غير كامل في الجواز وتم اعتماده تقريبياً",
-      invalid_passport_number: "رقم الجواز غير صالح ويحتاج مراجعة",
+      invalid_passport_number: "تعذر التحقق من رقم الجواز",
       no_mrz_text: "لم يتم العثور على نص MRZ في المنطقة المحددة",
       parser_failed: "تم العثور على نص، لكن لم يتم التعرف على صيغة MRZ",
       low_confidence: "نتيجة القراءة غير مؤكدة وتحتاج مراجعة",
@@ -171,6 +205,9 @@ const LABELS = {
     mrzLine2NotFound: "لم يتم العثور على السطر الثاني من MRZ",
     mrzLengthError: "طول سطور MRZ غير صحيح",
     mrzParseFailed: "تم العثور على مرشح MRZ لكنه لم يمر التحقق",
+    manualCropInvalid: "تعذر استخدام المنطقة المحددة. حدد السطرين كاملين مع هامش صغير.",
+    lineSplitFailed: "تعذر فصل سطري القراءة من المنطقة المحددة.",
+    partialOcr: "تمت قراءة الجواز جزئيا، لكن بعض البيانات تحتاج إلى مراجعة.",
     ocrFailed: "تعذرت قراءة الصورة",
     male: "ذكر",
     female: "أنثى",
@@ -202,7 +239,29 @@ const LABELS = {
   },
   fr: {
     title: "Import des données passeport",
-    desc: "Importez une photo de passeport ou plusieurs photos, puis les données MRZ seront extraites automatiquement. Chaque résultat passe par une revue avant l'enregistrement.",
+    desc: "Ajoutez les passeports au programme en quelques étapes simples et rapides.",
+    stepPassports: "Passeports",
+    stepReview: "Vérification",
+    stepSave: "Enregistrement",
+    uploadTitle: "Importer les photos des passeports",
+    uploadDescription: "Glissez les photos ici ou choisissez-les depuis votre appareil.",
+    supportedFormats: "JPG ou PNG · jusqu’à 10 photos",
+    chooseImages: "Choisir les photos",
+    continueReview: "Continuer vers la vérification",
+    advancedOptions: "Options de liaison avancées",
+    optional: "Facultatif",
+    advancedHint: "Associez les passeports à un programme ou un hôtel maintenant, ou complétez cela plus tard.",
+    readingTitle: "Lecture des passeports en cours",
+    readingHint: "Les résultats apparaîtront pour vérification dès la fin de la lecture.",
+    fileRead: "Lu",
+    fileReading: "Lecture",
+    fileWaiting: "En attente",
+    fileError: "Échec de lecture",
+    showDetails: "Vérifier les détails",
+    hideDetails: "Masquer les détails",
+    addPhotos: "Ajouter des photos",
+    savePilgrims: "Enregistrer les pèlerins",
+    noNameYet: "Nom à vérifier",
     workflow: "Choisissez la méthode, importez les images, extrayez les données, puis vérifiez les résultats avant l’enregistrement.",
     methodSection: "Méthode d’import",
     methodHint: "Choisissez un passeport unique ou le traitement de plusieurs passeports.",
@@ -228,7 +287,7 @@ const LABELS = {
     selectedProgramOnlyInfo: "Les pèlerins seront liés au programme uniquement, sans hôtels ni niveau.",
     selectedProgramPackageInfo: "Les pèlerins seront liés au programme avec les hôtels et le niveau uniquement, sans type de chambre ni prix.",
     image: "Photo passeport",
-    bulk: "Import depuis les passeports",
+    bulk: "Plusieurs photos de passeports",
     uploadOne: "Importer une photo",
     uploadBulk: "Choisir les photos des passeports",
     readPassport: "Lire le passeport",
@@ -253,9 +312,12 @@ const LABELS = {
     status: "Statut",
     latinLast: "Nom latin",
     latinFirst: "Prénom latin",
+    basicPassportData: "Données principales du passeport",
+    additionalData: "Données supplémentaires",
     arabicLast: "Nom arabe",
     arabicFirst: "Prénom arabe",
     passportNo: "N° passeport",
+    nationalId: "N° CIN",
     source: "Fichier",
     dataSource: "Source",
     automatic_mrz: "MRZ automatique",
@@ -265,9 +327,9 @@ const LABELS = {
     birthDate: "Naissance",
     gender: "Sexe",
     expiry: "Expiration",
-    selectMRZ: "Sélectionner MRZ",
+    selectMRZ: "Relire depuis l’image",
     cropTitle: "Corriger depuis l'image",
-    cropHint: "Sélectionnez les deux lignes MRZ en bas du passeport puis relancez la lecture.",
+    cropHint: "Sélectionnez les deux lignes en bas du passeport puis relancez la lecture.",
     readCrop: "Relire la zone sélectionnée",
     cropFailed: "Impossible d'extraire une MRZ valide depuis la zone sélectionnée",
     checksumAcceptHint: "Les contrôles MRZ ne correspondent pas, vous pouvez accepter après vérification des champs.",
@@ -306,6 +368,9 @@ const LABELS = {
     mrzLine2NotFound: "Deuxième ligne MRZ introuvable",
     mrzLengthError: "Longueur des lignes MRZ incorrecte",
     mrzParseFailed: "Une MRZ candidate a été trouvée mais n'a pas validé les contrôles",
+    manualCropInvalid: "Impossible d’utiliser la zone sélectionnée. Sélectionnez les deux lignes complètes avec une petite marge.",
+    lineSplitFailed: "Impossible de séparer les deux lignes de lecture dans la zone sélectionnée.",
+    partialOcr: "Le passeport a été lu partiellement. Certaines données doivent être vérifiées.",
     ocrFailed: "Lecture de l'image impossible",
     male: "Masculin",
     female: "Féminin",
@@ -337,7 +402,29 @@ const LABELS = {
   },
   en: {
     title: "Import Passport Data",
-    desc: "Upload one passport image or several passport images and the MRZ data will be extracted automatically. Every result is reviewed before saving.",
+    desc: "Add passports to the program in a few simple, quick steps.",
+    stepPassports: "Passports",
+    stepReview: "Review",
+    stepSave: "Save",
+    uploadTitle: "Upload passport photos",
+    uploadDescription: "Drag photos here or choose them from your device.",
+    supportedFormats: "JPG or PNG · up to 10 photos",
+    chooseImages: "Choose photos",
+    continueReview: "Continue to review",
+    advancedOptions: "Advanced linking options",
+    optional: "Optional",
+    advancedHint: "Link passports to a program or hotel now, or complete this later.",
+    readingTitle: "Reading passports",
+    readingHint: "Results will appear for review as soon as reading is complete.",
+    fileRead: "Read",
+    fileReading: "Reading",
+    fileWaiting: "Waiting",
+    fileError: "Could not read",
+    showDetails: "Review details",
+    hideDetails: "Hide details",
+    addPhotos: "Add photos",
+    savePilgrims: "Save pilgrims",
+    noNameYet: "Name needs review",
     workflow: "Choose a method, upload images, extract the data, then review results before saving.",
     methodSection: "Import method",
     methodHint: "Choose a single passport or bulk passport processing.",
@@ -363,7 +450,7 @@ const LABELS = {
     selectedProgramOnlyInfo: "Pilgrims will be linked to the program only, without hotels or level.",
     selectedProgramPackageInfo: "Pilgrims will be linked to the program with hotels and level only, without room type or prices.",
     image: "Passport photo",
-    bulk: "Import from passports",
+    bulk: "Multiple passport photos",
     uploadOne: "Upload passport photo",
     uploadBulk: "Choose passport images",
     readPassport: "Read passport",
@@ -388,9 +475,12 @@ const LABELS = {
     status: "Status",
     latinLast: "Latin last name",
     latinFirst: "Latin first name",
+    basicPassportData: "Core passport data",
+    additionalData: "Additional data",
     arabicLast: "Arabic last name",
     arabicFirst: "Arabic first name",
     passportNo: "Passport No.",
+    nationalId: "National ID / CIN",
     source: "File",
     dataSource: "Source",
     automatic_mrz: "Automatic MRZ",
@@ -400,9 +490,9 @@ const LABELS = {
     birthDate: "Birth Date",
     gender: "Gender",
     expiry: "Passport Expiry",
-    selectMRZ: "Select MRZ",
+    selectMRZ: "Read again from image",
     cropTitle: "Correct from passport image",
-    cropHint: "Select the two MRZ lines at the bottom of the passport, then read the selected area again.",
+    cropHint: "Select the two lines at the bottom of the passport, then read the selected area again.",
     readCrop: "Read selected area again",
     cropFailed: "Could not extract a valid MRZ from the selected area",
     checksumAcceptHint: "The MRZ checks do not match; you can accept it after reviewing the fields.",
@@ -441,6 +531,9 @@ const LABELS = {
     mrzLine2NotFound: "MRZ second line was not found",
     mrzLengthError: "MRZ line length is not valid",
     mrzParseFailed: "An MRZ candidate was found but failed validation",
+    manualCropInvalid: "Could not use the selected region. Select both complete lines with a small margin.",
+    lineSplitFailed: "Could not separate the two MRZ lines in the selected region.",
+    partialOcr: "The passport was read partially; some data needs review.",
     ocrFailed: "Could not read image",
     male: "Male",
     female: "Female",
@@ -472,18 +565,6 @@ const LABELS = {
   },
 };
 
-const fieldStyle = {
-  width: "100%",
-  minWidth: 120,
-  background: "var(--rukn-bg-card)",
-  border: "1px solid var(--rukn-border-soft)",
-  borderRadius: 8,
-  color: "var(--rukn-text)",
-  padding: "7px 9px",
-  fontSize: 12,
-  outline: "none",
-};
-
 const mrzCount = (value = "") => String(value || "").length;
 const formatMessage = (template, vars) => Object.entries(vars).reduce((text, [key, value]) => text.replace(`{${key}}`, value), template);
 const normalizePassportNo = (value = "") => String(value).trim().toUpperCase().replace(/\s+/g, "");
@@ -500,6 +581,11 @@ const getSuspiciousLatinNameReason = (value = "") => {
 const getExistingArabic = (client = {}) => ({
   arabicLastName: client.lastName || client.arabicLastName || client.last_name || "",
   arabicFirstName: client.firstName || client.arabicFirstName || client.first_name || "",
+});
+
+const getExistingIdentity = (client = {}) => ({
+  ...getExistingArabic(client),
+  cin: getStoredClientCin(client),
 });
 
 const normalizeLatinToken = (value = "") => String(value || "").toUpperCase().replace(/[^A-Z]/g, "");
@@ -637,7 +723,8 @@ const issueText = (issues = [], l, raw = {}) => {
       const count = issue === "LINE1_LENGTH" ? ` (${mrzCount(raw.line1)}/44)` : issue === "LINE2_LENGTH" ? ` (${mrzCount(raw.line2)}/44)` : "";
       return `${getReviewReasonLabel(l, REVIEW_REASON.PARTIAL_MRZ_READ)}${count}`;
     }
-    if (["PASSPORT_CHECK", "BIRTH_CHECK", "EXPIRY_CHECK"].includes(issue)) return getReviewReasonLabel(l, REVIEW_REASON.CHECKSUM_FAILED);
+    if (issue === "PASSPORT_CHECK") return getReviewReasonLabel(l, REVIEW_REASON.INVALID_PASSPORT_NUMBER);
+    if (["BIRTH_CHECK", "EXPIRY_CHECK"].includes(issue)) return getReviewReasonLabel(l, REVIEW_REASON.CHECKSUM_FAILED);
     if (issue === "NAME_FILLER_NOISE") return getReviewReasonLabel(l, REVIEW_REASON.SUSPICIOUS_NAME);
     if (issue === "INVALID_DATE") return getReviewReasonLabel(l, REVIEW_REASON.INVALID_DATE);
     if (issue === "LOW_CONFIDENCE") return getReviewReasonLabel(l, REVIEW_REASON.LOW_CONFIDENCE);
@@ -648,11 +735,14 @@ const issueText = (issues = [], l, raw = {}) => {
   }).join(" · ");
 };
 
-const ocrFailureText = (error, l) => {
+export const ocrFailureText = (error, l) => {
   if (error === REVIEW_REASON.NO_MRZ_TEXT || error === "no_mrz_text") return l.ocrNoText;
   if (error === REVIEW_REASON.PARSER_FAILED || error === "parser_failed") return l.mrzFormatNotRecognized;
   if (error === "OCR_NO_TEXT") return l.ocrNoText;
   if (error === "IMAGE_TOO_SMALL") return l.imageTooSmall;
+  if (error === "MANUAL_CROP_INVALID") return l.manualCropInvalid;
+  if (error === "MRZ_LINES_NOT_SEPARATED") return l.lineSplitFailed;
+  if (["MRZ_PARTIAL", "MRZ_VALIDATION_FAILED"].includes(error)) return l.partialOcr;
   if (error === "MRZ_LINE1_NOT_FOUND") return l.mrzFormatNotRecognized || l.mrzLine1NotFound;
   if (error === "MRZ_LINE2_NOT_FOUND") return l.mrzFormatNotRecognized || l.mrzLine2NotFound;
   if (error === "MRZ_LENGTH") return l.mrzFormatNotRecognized || l.mrzLengthError;
@@ -742,6 +832,17 @@ const onlySoftMrzWarnings = (reasons = []) => reasons.every((reason) => [
   REVIEW_REASON.LOW_CONFIDENCE,
 ].includes(reason));
 
+export const hasVerifiedCriticalMrzChecks = (parsed = {}) => {
+  const checks = parsed?.checks || parsed?.engineResult?.checks || {};
+  return Boolean(
+    checks.passportNumberCheck?.valid
+    && checks.birthDateCheck?.valid
+    && checks.expiryDateCheck?.valid
+    && checks.optionalDataCheck?.valid
+    && checks.compositeCheck?.valid
+  );
+};
+
 const buildParsedReviewState = ({ parsed, duplicate = false } = {}) => {
   const reasons = new Set();
   const fieldWarnings = {};
@@ -798,6 +899,21 @@ const buildParsedReviewState = ({ parsed, duplicate = false } = {}) => {
     }
   });
   const data = parsed?.data || {};
+  const checks = parsed?.checks || parsed?.engineResult?.checks || {};
+  if (checks.passportNumberCheck && !checks.passportNumberCheck.valid) {
+    reasons.add(REVIEW_REASON.INVALID_PASSPORT_NUMBER);
+    setFieldWarning(fieldWarnings, "passportNo", REVIEW_REASON.INVALID_PASSPORT_NUMBER);
+  }
+  if (
+    parsed?.ok
+    && !hasVerifiedCriticalMrzChecks(parsed)
+  ) {
+    reasons.add(REVIEW_REASON.CHECKSUM_FAILED);
+    if (!checks.passportNumberCheck?.valid) {
+      reasons.add(REVIEW_REASON.INVALID_PASSPORT_NUMBER);
+      setFieldWarning(fieldWarnings, "passportNo", REVIEW_REASON.INVALID_PASSPORT_NUMBER);
+    }
+  }
   const birthDateMeta = getMrzBirthDateMetaFromParsed(parsed);
   [
     ["latinLastName", data.latinLastName || data.lastName || ""],
@@ -952,15 +1068,20 @@ const makeRowFromParsed = ({
   statusOverride,
   noteOverride,
   hasImage = false,
+  previewUrl = "",
   extractionSource = EXTRACTION_SOURCE.AUTOMATIC_MRZ,
   debugInfo = null,
 }) => {
   const data = parsed?.data || {};
   const duplicate = Boolean(existing);
-  const existingArabic = duplicate ? getExistingArabic(existing) : {};
+  const existingIdentity = duplicate ? getExistingIdentity(existing) : {};
+  const extractedCin = extractTrustedMoroccanCin(parsed);
   const hasParsedData = Boolean(parsed?.data);
-  const isTrustedMRZ = Boolean(parsed?.ok && parsed?.data);
+  const isTrustedMRZ = Boolean(parsed?.ok && parsed?.data && hasVerifiedCriticalMrzChecks(parsed));
   const reviewState = buildParsedReviewState({ parsed, duplicate });
+  if (extractedCin.value && !parsed?.ok) {
+    setFieldWarning(reviewState.reviewWarningFieldLevel, "cin", REVIEW_REASON.LOW_CONFIDENCE);
+  }
   const status = statusOverride || (!hasParsedData ? ROW_STATUS.FAILED : isTrustedMRZ && !reviewState.reviewRequiredGeneral ? ROW_STATUS.READY : ROW_STATUS.NEEDS_REVIEW);
   const parsedIssueNote = issueText(parsed?.issues || [], l, parsed?.raw);
   const birthDateMeta = getMrzBirthDateMetaFromParsed(parsed);
@@ -996,9 +1117,10 @@ const makeRowFromParsed = ({
     existingClientId: existing?.id || "",
     latinLastName: hasParsedData ? (data.latinLastName || data.lastName || "") : "",
     latinFirstName: hasParsedData ? givenNameDecision.finalValue : "",
-    arabicLastName: existingArabic.arabicLastName || "",
-    arabicFirstName: existingArabic.arabicFirstName || "",
+    arabicLastName: existingIdentity.arabicLastName || "",
+    arabicFirstName: existingIdentity.arabicFirstName || "",
     passportNo: hasParsedData ? line2Mapping.finalFields.passportNo : "",
+    cin: extractedCin.value || existingIdentity.cin || "",
     nationality: hasParsedData ? line2Mapping.finalFields.nationality : "",
     birthDate: hasParsedData ? line2Mapping.finalFields.birthDate : "",
     gender: hasParsedData ? line2Mapping.finalFields.gender : "",
@@ -1006,6 +1128,7 @@ const makeRowFromParsed = ({
     ...birthDateMeta,
     raw: data.raw || parsed?.raw || {},
     hasImage,
+    previewUrl,
   };
   if (process.env.NODE_ENV !== "production") {
     const attempts = debugInfo?.outcome?.debug?.attempts || [];
@@ -1365,158 +1488,162 @@ function ReviewRow({
   onRemove,
   onSelectMRZ,
 }) {
-  const statusColor = row.status === ROW_STATUS.READY || row.status === ROW_STATUS.MANUALLY_ACCEPTED ? tc.greenLight : row.status === ROW_STATUS.FAILED ? "var(--rukn-danger)" : "var(--rukn-warning)";
+  const [expanded, setExpanded] = React.useState(false);
+  const detailsRef = React.useRef(null);
   const canManuallyAccept = rowCanBeManuallyAccepted(row);
-  return (
-    <tr style={{ borderTop: "1px solid var(--rukn-border-soft)" }}>
-      <td style={{ padding: 8, color: "var(--rukn-text-muted)", fontWeight: 800 }}>{index + 1}</td>
-      <td style={{ padding: 8, color: "var(--rukn-text)", fontSize: 11, maxWidth: 140, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.source || "—"}</td>
-      <td style={{ padding: 8 }}>
-        <span style={{
-          display: "inline-flex",
-          alignItems: "center",
-          border: "1px solid var(--rukn-border-soft)",
-          background: row.extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? "var(--rukn-gold-dim)" : "var(--rukn-bg-soft)",
-          color: row.extractionSource === EXTRACTION_SOURCE.MANUAL_MRZ ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
-          borderRadius: 999,
-          padding: "3px 8px",
-          fontSize: 10.5,
-          fontWeight: 900,
-          whiteSpace: "nowrap",
-        }}>
-          {labels[row.extractionSource] || row.extractionSource || "—"}
-        </span>
-      </td>
-      <td style={{ padding: 8 }}>
-        <span style={{ color: statusColor, fontSize: 11, fontWeight: 900 }}>
-          {labels[row.status] || labels.needs_review || labels.review}
-        </span>
-        {row.manualAccepted && (
-          <span style={{
-            display: "inline-flex",
-            marginTop: 4,
-            color: tc.greenLight,
-            background: "rgba(34,197,94,.12)",
-            border: "1px solid rgba(34,197,94,.35)",
-            borderRadius: 999,
-            padding: "2px 6px",
-            fontSize: 10,
-            fontWeight: 900,
-            whiteSpace: "nowrap",
-          }}>
-            {labels.manually_accepted}
-          </span>
-        )}
-      </td>
-      <td style={{ padding: 6 }}>
+  const isReady = row.status === ROW_STATUS.READY || row.status === ROW_STATUS.MANUALLY_ACCEPTED;
+  const statusClass = isReady ? "is-ready" : row.status === ROW_STATUS.FAILED ? "is-failed" : "is-review";
+  const displayName = [row.arabicFirstName, row.arabicLastName].filter(Boolean).join(" ")
+    || [row.latinFirstName, row.latinLastName].filter(Boolean).join(" ")
+    || labels.noNameYet;
+  const primaryIssue = row.reviewReasons?.[0]
+    ? getReviewReasonLabel(labels, row.reviewReasons[0])
+    : row.note || "";
+  const previewUrl = row.previewUrl || row.mrzDebug?.originalImageUrl || "";
+  const coreFields = [
+    ["latinLastName", labels.latinLast, "ltr"],
+    ["latinFirstName", labels.latinFirst, "ltr"],
+    ["passportNo", labels.passportNo, "ltr"],
+    ["cin", labels.nationalId, "ltr"],
+    ["nationality", labels.nationality, "ltr"],
+    ["birthDate", labels.birthDate, "ltr"],
+    ["passportExpiry", labels.expiry, "ltr"],
+  ];
+  const additionalFields = [
+    ["arabicLastName", labels.arabicLast, "rtl"],
+    ["arabicFirstName", labels.arabicFirst, "rtl"],
+    ["phone", labels.phone, "ltr"],
+  ];
+
+  const renderTextField = ([key, label, direction]) => {
+    const warnings = getFieldWarningReasons(row, key);
+    return (
+      <label key={key} className={`passport-import__field ${warnings.length ? "is-warning" : ""}`}>
+        <span>{label}</span>
         <input
-          value={row.phone || ""}
-          onChange={(event) => onChange(row.id, { phone: event.target.value })}
-          style={{ ...fieldStyle, minWidth: 110, direction: "ltr" }}
+          value={row[key] || ""}
+          onChange={(event) => onChange(row.id, { [key]: event.target.value })}
+          title={warnings.map((reason) => getReviewReasonLabel(labels, reason)).join(", ")}
+          style={{ direction }}
         />
-      </td>
-      {["latinLastName", "latinFirstName", "arabicLastName", "arabicFirstName", "passportNo", "nationality", "birthDate", "passportExpiry"].map((key) => (
-        <td key={key} style={{ padding: 6 }}>
-          {(() => {
-            const warnings = getFieldWarningReasons(row, key);
-            return (
-          <input
-            value={row[key] || ""}
-            onChange={(event) => onChange(row.id, { [key]: event.target.value })}
-                title={warnings.map((reason) => getReviewReasonLabel(labels, reason)).join(", ")}
-                style={{
-                  ...fieldStyle,
-                  minWidth: key.includes("Name") ? 140 : 105,
-                  direction: key.includes("latin") || key === "passportNo" ? "ltr" : undefined,
-                  borderColor: warnings.length ? "var(--rukn-warning)" : fieldStyle.borderColor,
-                  boxShadow: warnings.length ? "0 0 0 1px var(--rukn-warning-dim)" : "none",
-                }}
-          />
-            );
-          })()}
-        </td>
-      ))}
-      <td style={{ padding: 6 }}>
-        <select
-          value={row.gender || ""}
-          onChange={(event) => onChange(row.id, { gender: event.target.value })}
-          title={getFieldWarningReasons(row, "gender").map((reason) => getReviewReasonLabel(labels, reason)).join(", ")}
-          style={{
-            ...fieldStyle,
-            minWidth: 95,
-            borderColor: getFieldWarningReasons(row, "gender").length ? "var(--rukn-warning)" : fieldStyle.borderColor,
-          }}
-        >
-          <option value="" style={{ color: "#111827" }}>—</option>
-          <option value="male" style={{ color: "#111827" }}>{labels.male}</option>
-          <option value="female" style={{ color: "#111827" }}>{labels.female}</option>
-        </select>
-      </td>
-      <td style={{ padding: 6, minWidth: 190, color: "var(--rukn-text-muted)", fontSize: 11 }}>
-        {row.reviewReasons?.length ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: row.note ? 5 : 0 }}>
-            {row.reviewReasons.map((reason) => (
-              <span key={reason} style={{
-                color: reason === REVIEW_REASON.DUPLICATE_EXISTING ? "var(--rukn-gold)" : "var(--rukn-warning)",
-                background: "var(--rukn-bg-soft)",
-                border: "1px solid var(--rukn-border-soft)",
-                borderRadius: 999,
-                padding: "2px 6px",
-                fontSize: 10,
-                fontWeight: 800,
-              }}>
-                {getReviewReasonLabel(labels, reason)}
-              </span>
-            ))}
+      </label>
+    );
+  };
+
+  React.useEffect(() => {
+    if (!expanded) return;
+    detailsRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [expanded]);
+
+  return (
+    <article className="passport-import__passport-card">
+      <div className="passport-import__passport-summary">
+        <div className="passport-import__thumb" aria-hidden={!previewUrl}>
+          {previewUrl
+            ? <img src={previewUrl} alt={row.source || labels.image} />
+            : <AppIcon name="passport" size={20} color="var(--rukn-text-muted)" />}
+        </div>
+        <div className="passport-import__passport-main">
+          <p className="passport-import__passport-name">{index + 1}. {displayName}</p>
+          <div className="passport-import__passport-meta">
+            <span>{labels.passportNo}: {row.passportNo || "—"}</span>
+            <span>{labels.nationality}: {row.nationality || "—"}</span>
+            <span>{row.source || "—"}</span>
           </div>
-        ) : null}
-        {row.note || "—"}
-      </td>
-      <td style={{ padding: 6 }}>
-        {row.hasImage && row.status !== ROW_STATUS.READY ? (
+          {primaryIssue && !isReady && <p className="passport-import__primary-issue">{primaryIssue}</p>}
+        </div>
+        <div className="passport-import__card-actions">
+          <span className={`passport-import__status ${statusClass}`}>
+            {labels[row.status] || labels.needs_review || labels.review}
+          </span>
           <button
             type="button"
-            onClick={() => onSelectMRZ(row.id)}
-            style={{ border: "1px solid rgba(212,175,55,.3)", background: "var(--rukn-gold-dim)", color: "var(--rukn-gold)", borderRadius: 8, padding: "7px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}
+            className="passport-import__link-button"
+            aria-expanded={expanded}
+            aria-controls={`passport-details-${row.id}`}
+            onClick={() => setExpanded((current) => !current)}
           >
-            {labels.selectMRZ}
+            <AppIcon name={expanded ? "eyeOff" : "eye"} size={13} />
+            {expanded ? labels.hideDetails : labels.showDetails}
           </button>
-        ) : (
-          <span style={{ color: "var(--rukn-text-muted)", fontSize: 11 }}>—</span>
-        )}
-      </td>
-      <td style={{ padding: 6 }}>
-        {row.existingClientId ? (
-          <select
-            value={row.duplicateAction}
-            disabled={row.status === ROW_STATUS.FAILED}
-            onChange={(event) => onChange(row.id, { duplicateAction: event.target.value, accepted: event.target.value === "update", manualAccepted: event.target.value === "update" && canManuallyAccept })}
-            style={{ ...fieldStyle, minWidth: 95, opacity: row.status === ROW_STATUS.FAILED ? .55 : 1 }}
-          >
-            <option value="skip" style={{ color: "#111827" }}>{labels.skip}</option>
-            <option value="update" style={{ color: "#111827" }}>{labels.update}</option>
-          </select>
-        ) : (
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--rukn-text)", fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={Boolean(row.accepted)}
-              disabled={!canManuallyAccept}
-              onChange={(event) => onChange(row.id, {
-                accepted: event.target.checked,
-                manualAccepted: event.target.checked && row.status !== ROW_STATUS.READY,
-              })}
-            />
-            {labels.accept}
-          </label>
-        )}
-      </td>
-      <td style={{ padding: 6 }}>
-        <button type="button" onClick={() => onRemove(row.id)} title={labels.delete} style={{ border: 0, background: "rgba(239,68,68,.12)", color: "var(--rukn-danger)", borderRadius: 8, width: 30, height: 30, cursor: "pointer" }}>
-          <AppIcon name="trash" size={14} />
-        </button>
-      </td>
-    </tr>
+        </div>
+      </div>
+
+      {expanded && (
+        <div ref={detailsRef} id={`passport-details-${row.id}`} className={`passport-import__passport-details ${previewUrl ? "has-image" : ""}`}>
+          {previewUrl && (
+            <div className="passport-import__details-image">
+              <img src={previewUrl} alt={row.source || labels.image} />
+            </div>
+          )}
+          <div className="passport-import__details-form">
+            <section className="passport-import__field-section" aria-labelledby={`passport-core-${row.id}`}>
+              <h4 id={`passport-core-${row.id}`}>{labels.basicPassportData}</h4>
+              <div className="passport-import__details-grid">
+                {coreFields.slice(0, 6).map(renderTextField)}
+                <label className={`passport-import__field ${getFieldWarningReasons(row, "gender").length ? "is-warning" : ""}`}>
+                  <span>{labels.gender}</span>
+                  <select
+                    value={row.gender || ""}
+                    onChange={(event) => onChange(row.id, { gender: event.target.value })}
+                    title={getFieldWarningReasons(row, "gender").map((reason) => getReviewReasonLabel(labels, reason)).join(", ")}
+                  >
+                    <option value="">—</option>
+                    <option value="male">{labels.male}</option>
+                    <option value="female">{labels.female}</option>
+                  </select>
+                </label>
+                {coreFields.slice(6).map(renderTextField)}
+              </div>
+            </section>
+            <section className="passport-import__field-section" aria-labelledby={`passport-additional-${row.id}`}>
+              <h4 id={`passport-additional-${row.id}`}>{labels.additionalData}</h4>
+              <div className="passport-import__details-grid passport-import__details-grid--additional">
+                {additionalFields.map(renderTextField)}
+              </div>
+            </section>
+          </div>
+          <div className="passport-import__details-actions">
+            <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+              {row.hasImage && (
+                <Button variant="secondary" size="sm" icon="camera" onClick={() => onSelectMRZ(row.id)}>
+                  {labels.selectMRZ}
+                </Button>
+              )}
+              {row.existingClientId ? (
+                <label className="passport-import__field" style={{ minWidth: 150 }}>
+                  <span>{labels.duplicateAction}</span>
+                  <select
+                    value={row.duplicateAction}
+                    disabled={row.status === ROW_STATUS.FAILED}
+                    onChange={(event) => onChange(row.id, { duplicateAction: event.target.value, accepted: event.target.value === "update", manualAccepted: event.target.value === "update" && canManuallyAccept })}
+                  >
+                    <option value="skip">{labels.skip}</option>
+                    <option value="update">{labels.update}</option>
+                  </select>
+                </label>
+              ) : (
+                <label className="passport-import__accept">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(row.accepted)}
+                    disabled={!canManuallyAccept}
+                    onChange={(event) => onChange(row.id, {
+                      accepted: event.target.checked,
+                      manualAccepted: event.target.checked && row.status !== ROW_STATUS.READY,
+                    })}
+                  />
+                  {labels.accept}
+                </label>
+              )}
+            </div>
+            <button type="button" className="passport-import__icon-button" onClick={() => onRemove(row.id)} title={labels.delete} aria-label={labels.delete}>
+              <AppIcon name="trash" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -1579,7 +1706,7 @@ function CropPreview({ title, src, meta }) {
 }
 
 function MRZDiagnosticLab({ rows = [], onCopyDebug }) {
-  if (!MRZ_DEV) return null;
+  if (!MRZ_DIAGNOSTIC_LAB_ENABLED) return null;
   const debugRows = rows.filter((row) => row.mrzDebug);
   if (!debugRows.length) return null;
   return (
@@ -1766,9 +1893,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const importProgram = programContext?.program || programContext || null;
   const lockedImportProgram = toPassportImportProgramContext(importProgram);
   const lockedImportProgramId = lockedImportProgram?.id || "";
-  const [mode, setMode] = React.useState("image");
   const [rows, setRows] = React.useState([]);
   const [error, setError] = React.useState("");
+  const [workflowView, setWorkflowView] = React.useState("upload");
+  const [isDraggingFiles, setIsDraggingFiles] = React.useState(false);
   const [progress, setProgress] = React.useState({
     done: 0,
     total: 0,
@@ -1779,8 +1907,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     passportProgress: 0,
     slow: false,
   });
-  const [singleFile, setSingleFile] = React.useState(null);
-  const [singlePreviewUrl, setSinglePreviewUrl] = React.useState("");
   const [bulkFiles, setBulkFiles] = React.useState([]);
   const [selectedImportProgramId, setSelectedImportProgramId] = React.useState("");
   const [selectedImportPackageKey, setSelectedImportPackageKey] = React.useState("");
@@ -1788,18 +1914,26 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const [cropRect, setCropRect] = React.useState({ x: 4, y: 68, width: 92, height: 24 });
   const [cropReading, setCropReading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
-  const fileRef = React.useRef(null);
   const bulkRef = React.useRef(null);
   const rowFilesRef = React.useRef(new Map());
   const debugUrlsRef = React.useRef(new Set());
   const cropBoxRef = React.useRef(null);
   const cropImageRef = React.useRef(null);
   const cropDragRef = React.useRef(null);
+  const cropOriginalRowRef = React.useRef(null);
   const activeOcrWorkerRef = React.useRef(null);
+  const ocrWorkerPromiseRef = React.useRef(null);
+  const ocrWorkerDisposedRef = React.useRef(false);
   const batchCancelledRef = React.useRef(false);
   const batchPerfRef = React.useRef(null);
   const slowProgressTimerRef = React.useRef(null);
+  const wasProcessingRef = React.useRef(false);
   const clients = store?.clients || store?.activeClients || [];
+  const currentAgencyId = store?.agencyId || store?.agency?.id || store?.currentAgency?.id || "";
+  const currentAgencyClients = React.useMemo(
+    () => filterClientsForCurrentAgency(clients, currentAgencyId),
+    [clients, currentAgencyId]
+  );
   const capacityClientSource = React.useMemo(() => {
     if (store?.isSupabaseEnabled && !store?.clientsLoaded) return undefined;
     if (Array.isArray(store?.activeClients)) return store.activeClients;
@@ -1831,7 +1965,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
   const showPackageSelector = Boolean(effectiveImportProgramId);
 
   const createDebugOriginalImageUrl = React.useCallback((file) => {
-    if (!MRZ_DEV || !file) return "";
+    if (!file) return "";
     const url = URL.createObjectURL(file);
     debugUrlsRef.current.add(url);
     return url;
@@ -1852,22 +1986,63 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     revokeAllDebugUrls();
   }, [revokeAllDebugUrls]);
 
-  React.useEffect(() => () => {
-    batchCancelledRef.current = true;
-    if (slowProgressTimerRef.current) {
-      window.clearTimeout(slowProgressTimerRef.current);
-      slowProgressTimerRef.current = null;
-    }
+  const ensureOcrWorker = React.useCallback((context = {}) => {
+    if (activeOcrWorkerRef.current) return Promise.resolve(activeOcrWorkerRef.current);
+    if (ocrWorkerPromiseRef.current) return ocrWorkerPromiseRef.current;
+    let pendingWorker;
+    pendingWorker = Promise.resolve()
+      .then(() => createPassportOCRWorker(() => {}, context))
+      .then(async (worker) => {
+        if (!worker) throw new Error("OCR_WORKER_INIT_FAILED");
+        if (ocrWorkerDisposedRef.current) {
+          await terminatePassportOCRWorker(worker, { ...context, reason: "warmup-after-close" });
+          throw new Error("OCR_CANCELLED");
+        }
+        activeOcrWorkerRef.current = worker;
+        return worker;
+      })
+      .catch((workerError) => {
+        if (ocrWorkerPromiseRef.current === pendingWorker) ocrWorkerPromiseRef.current = null;
+        throw workerError;
+      });
+    ocrWorkerPromiseRef.current = pendingWorker;
+    return pendingWorker;
+  }, []);
+
+  const resetOcrWorker = React.useCallback(async (context = {}) => {
     const worker = activeOcrWorkerRef.current;
     activeOcrWorkerRef.current = null;
-    if (worker) {
-      terminatePassportOCRWorker(worker, {
-        batchId: batchPerfRef.current?.batchId || "",
-        scope: "batch",
-        reason: "component-unmount",
-      });
-    }
+    ocrWorkerPromiseRef.current = null;
+    if (worker) await terminatePassportOCRWorker(worker, context);
   }, []);
+
+  React.useEffect(() => {
+    ocrWorkerDisposedRef.current = false;
+    const warmupTimer = window.setTimeout(() => {
+      ensureOcrWorker({ scope: "warmup", reason: "mrz-reader-open" }).catch((workerError) => {
+        logPassportPerformance("worker-warmup-error", { error: workerError?.message || String(workerError) });
+      });
+    }, 0);
+    return () => {
+      window.clearTimeout(warmupTimer);
+      ocrWorkerDisposedRef.current = true;
+      batchCancelledRef.current = true;
+      if (slowProgressTimerRef.current) {
+        window.clearTimeout(slowProgressTimerRef.current);
+        slowProgressTimerRef.current = null;
+      }
+      const worker = activeOcrWorkerRef.current;
+      activeOcrWorkerRef.current = null;
+      ocrWorkerPromiseRef.current = null;
+      if (worker) {
+        terminatePassportOCRWorker(worker, {
+          batchId: batchPerfRef.current?.batchId || "",
+          scope: "batch",
+          reason: "component-unmount",
+        });
+      }
+    };
+  }, [ensureOcrWorker]);
 
   React.useEffect(() => {
     const batch = batchPerfRef.current;
@@ -1904,12 +2079,12 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
 
   const clientByPassport = React.useMemo(() => {
     const map = new Map();
-    clients.forEach((client) => {
+    currentAgencyClients.forEach((client) => {
       const key = normalizePassportNo(client.passport?.number || client.passportNumber);
       if (key) map.set(key, client);
     });
     return map;
-  }, [clients]);
+  }, [currentAgencyClients]);
 
   const findExisting = React.useCallback((passportNo) => clientByPassport.get(normalizePassportNo(passportNo)), [clientByPassport]);
   const addParsedRow = React.useCallback((parsed, source, override = {}) => {
@@ -1920,27 +2095,17 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     return row;
   }, [findExisting, l, rowProgramDefaults]);
 
-  const selectSingleFile = React.useCallback((fileList) => {
-    const file = Array.from(fileList || [])[0];
-    setSingleFile(file || null);
-    setSinglePreviewUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return file ? URL.createObjectURL(file) : "";
-    });
-  }, []);
-
   const selectBulkFiles = React.useCallback((fileList) => {
-    setBulkFiles(Array.from(fileList || []).slice(0, MAX_BULK_FILES));
+    setBulkFiles(dedupePassportFiles(fileList).slice(0, MAX_BULK_FILES));
+    setError("");
   }, []);
-
-  React.useEffect(() => () => {
-    if (singlePreviewUrl) URL.revokeObjectURL(singlePreviewUrl);
-  }, [singlePreviewUrl]);
 
   const processImageFile = React.useCallback(async (file, index = 0, worker = null, batchContext = {}) => {
     const outcome = await extractMRZFromImage(file, () => {}, {
       worker,
+      workerPromise: batchContext.workerPromise || null,
       onStage: batchContext.onStage,
+      isCancelled: () => batchCancelledRef.current,
       perfContext: {
         batchId: batchContext.batchId || "",
         scope: "batch",
@@ -1949,6 +2114,9 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         fileName: file?.name || `image-${index + 1}`,
       },
     });
+    if (batchCancelledRef.current || outcome.cancelled) {
+      return { row: null, cancelled: true, workerShouldReset: Boolean(outcome.workerShouldReset) };
+    }
     const originalImageUrl = createDebugOriginalImageUrl(file);
     let row;
     if (outcome.success) {
@@ -1959,6 +2127,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       );
       row = addParsedRow(parsed, file.name || `image-${index + 1}`, {
         hasImage: true,
+        previewUrl: originalImageUrl,
         extractionSource: EXTRACTION_SOURCE.AUTOMATIC_MRZ,
         debugInfo: { outcome, originalImageUrl, mode: "automatic" },
       });
@@ -1968,6 +2137,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         statusOverride: parsed.data ? ROW_STATUS.NEEDS_REVIEW : ROW_STATUS.FAILED,
         noteOverride: issueText(parsed.issues || ["PARSE_ERROR"], l, parsed.raw),
         hasImage: true,
+        previewUrl: originalImageUrl,
         extractionSource: EXTRACTION_SOURCE.FALLBACK_OCR,
         debugInfo: { outcome, originalImageUrl, mode: "automatic_failed" },
       });
@@ -1976,6 +2146,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         statusOverride: ROW_STATUS.FAILED,
         noteOverride: ocrFailureText(outcome.error, l),
         hasImage: true,
+        previewUrl: originalImageUrl,
         extractionSource: EXTRACTION_SOURCE.FALLBACK_OCR,
         debugInfo: { outcome, originalImageUrl, mode: "automatic_failed" },
       });
@@ -1993,6 +2164,22 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       onToast?.(l.ocrFailed, "error");
       return;
     }
+    const originalRow = rows.find((row) => row.id === id) || null;
+    cropOriginalRowRef.current = originalRow;
+    if (originalRow && (
+      originalRow.accepted
+      || originalRow.manualAccepted
+      || originalRow.status === ROW_STATUS.READY
+      || originalRow.status === ROW_STATUS.MANUALLY_ACCEPTED
+    )) {
+      setRows((current) => current.map((row) => (row.id === id ? {
+        ...row,
+        accepted: false,
+        manualAccepted: false,
+        status: ROW_STATUS.NEEDS_REVIEW,
+        duplicateAction: row.existingClientId ? "skip" : row.duplicateAction,
+      } : row)));
+    }
     setCropModal((current) => {
       if (current.url) URL.revokeObjectURL(current.url);
       return {
@@ -2003,10 +2190,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       };
     });
     setCropRect({ x: 4, y: 68, width: 92, height: 24 });
-  }, [l.ocrFailed, onToast]);
+  }, [l.ocrFailed, onToast, rows]);
 
   const processFilesSequentially = React.useCallback(async (fileList) => {
-    const files = Array.from(fileList || []).slice(0, MAX_BULK_FILES);
+    const files = dedupePassportFiles(fileList).slice(0, MAX_BULK_FILES);
     if (!files.length) return;
     const batchStartedAt = performanceNow();
     const batchId = `batch-${Math.round(batchStartedAt)}-${files.length}`;
@@ -2030,25 +2217,14 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       passportProgress: 0.01,
       slow: false,
     });
-    let worker = null;
+    let workerPromise = ensureOcrWorker({
+      batchId,
+      scope: "batch",
+      totalPassports: files.length,
+    });
     let processedCount = 0;
     let batchStatus = "success";
     try {
-      try {
-        worker = await createPassportOCRWorker(() => {}, {
-          batchId,
-          scope: "batch",
-          totalPassports: files.length,
-        });
-        activeOcrWorkerRef.current = worker;
-      } catch (workerError) {
-        logPassportPerformance("batch-worker-fallback", {
-          batchId,
-          error: workerError?.message || String(workerError),
-          strategy: "per-passport-worker",
-        });
-      }
-
       for (let index = 0; index < files.length; index += 1) {
         if (batchCancelledRef.current) {
           batchStatus = "cancelled";
@@ -2076,9 +2252,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         }, 6000);
         let result;
         try {
-          result = await processImageFile(file, index, worker, {
+          result = await processImageFile(file, index, null, {
             batchId,
             totalPassports: files.length,
+            workerPromise,
             onStage: (stageProgress = {}) => {
               setProgress((current) => {
                 if (!current.active || current.current !== index + 1) return current;
@@ -2103,27 +2280,31 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
           totalPassports: files.length,
           fileName: file?.name || `image-${index + 1}`,
           durationMs: passportDuration(passportStartedAt),
-          status: result.row?.status || "unknown",
+          status: result.cancelled ? "cancelled" : result.row?.status || "unknown",
         });
 
-        if (result.workerShouldReset && worker) {
-          await terminatePassportOCRWorker(worker, {
+        if (result.workerShouldReset) {
+          await resetOcrWorker({
             batchId,
             scope: "batch",
             reason: "passport-ocr-error",
             passport: index + 1,
           });
-          worker = null;
-          activeOcrWorkerRef.current = null;
           if (index + 1 < files.length && !batchCancelledRef.current) {
-            worker = await createPassportOCRWorker(() => {}, {
+            workerPromise = ensureOcrWorker({
               batchId,
               scope: "batch",
               reason: "passport-ocr-error-recovery",
               totalPassports: files.length,
             });
-            activeOcrWorkerRef.current = worker;
           }
+        } else if (!activeOcrWorkerRef.current && index + 1 < files.length && !batchCancelledRef.current) {
+          workerPromise = ensureOcrWorker({
+            batchId,
+            scope: "batch",
+            reason: "worker-init-retry",
+            totalPassports: files.length,
+          });
         }
 
         if (batchCancelledRef.current) {
@@ -2154,14 +2335,6 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         window.clearTimeout(slowProgressTimerRef.current);
         slowProgressTimerRef.current = null;
       }
-      if (worker) {
-        await terminatePassportOCRWorker(worker, {
-          batchId,
-          scope: "batch",
-          reason: batchStatus === "success" ? "batch-complete" : `batch-${batchStatus}`,
-        });
-      }
-      if (activeOcrWorkerRef.current === worker) activeOcrWorkerRef.current = null;
       if (!batchCancelledRef.current) {
         setProgress({
           done: processedCount,
@@ -2182,15 +2355,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         status: batchCancelledRef.current ? "cancelled" : batchStatus,
       });
     }
-  }, [l, processImageFile, revokeAllDebugUrls]);
-
-  const readSinglePassport = React.useCallback(() => {
-    if (!singleFile) {
-      setError(l.noImageSelected);
-      return;
-    }
-    processFilesSequentially([singleFile]);
-  }, [l.noImageSelected, processFilesSequentially, singleFile]);
+  }, [ensureOcrWorker, l, processImageFile, resetOcrWorker, revokeAllDebugUrls]);
 
   const readBulkPassports = React.useCallback(() => {
     if (!bulkFiles.length) {
@@ -2199,6 +2364,16 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     }
     processFilesSequentially(bulkFiles);
   }, [bulkFiles, l.noImageSelected, processFilesSequentially]);
+
+  React.useEffect(() => {
+    if (progress.active) {
+      wasProcessingRef.current = true;
+      return;
+    }
+    if (!wasProcessingRef.current) return;
+    wasProcessingRef.current = false;
+    setWorkflowView(rows.length ? "review" : "upload");
+  }, [progress.active, rows.length]);
 
   const updateRow = React.useCallback((id, patch) => {
     const manualAcceptRequested = Boolean(patch.accepted && patch.manualAccepted);
@@ -2237,12 +2412,18 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     rowFilesRef.current.delete(id);
     setRows((current) => {
       const removed = current.find((row) => row.id === id);
-      revokeDebugUrl(removed?.mrzDebug?.originalImageUrl);
+      revokeDebugUrl(removed?.previewUrl || removed?.mrzDebug?.originalImageUrl);
       return current.filter((row) => row.id !== id);
     });
   }, [revokeDebugUrl]);
 
-  const closeCropModal = React.useCallback(() => {
+  const closeCropModal = React.useCallback((options = {}) => {
+    const restoreOriginal = options?.restore !== false;
+    const originalRow = cropOriginalRowRef.current;
+    cropOriginalRowRef.current = null;
+    if (restoreOriginal && originalRow?.id) {
+      setRows((current) => current.map((row) => (row.id === originalRow.id ? originalRow : row)));
+    }
     setCropModal((current) => {
       if (current.url) URL.revokeObjectURL(current.url);
       return { open: false, rowId: "", url: "", fileName: "" };
@@ -2480,13 +2661,22 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         });
       }
     }
+    const workerPromise = ensureOcrWorker({
+      scope: "manual-crop",
+      fileName: file?.name || cropModal.fileName || "",
+      rowId: cropModal.rowId,
+    });
     const outcome = await extractMRZFromImageRegion(file, cropRect, () => {}, {
+      workerPromise,
       perfContext: {
         scope: "manual-crop",
         fileName: file?.name || cropModal.fileName || "",
         rowId: cropModal.rowId,
       },
     });
+    if (outcome.workerShouldReset) {
+      await resetOcrWorker({ scope: "manual-crop", reason: "manual-crop-ocr-error" });
+    }
     const raw = outcome.raw || {};
     const parsed = outcome.success
       ? outcome.parsed || parseMRZDetailed(
@@ -2495,24 +2685,26 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
         { ocrText: outcome.ocrText || "" },
       )
       : parseMRZDetailed(raw.line1 || "", raw.line2 || "", { ocrText: outcome.ocrText || "" });
-    const { hasParsedData, succeeded } = applyParsedToCropRow({ parsed, raw, outcome });
+    const { hasParsedData } = applyParsedToCropRow({
+      parsed,
+      raw,
+      outcome,
+      statusOverride: parsed.data ? ROW_STATUS.NEEDS_REVIEW : ROW_STATUS.FAILED,
+    });
     setCropReading(false);
     logPassportPerformance("manual-crop-total", {
       fileName: file?.name || cropModal.fileName || "",
       rowId: cropModal.rowId,
       durationMs: passportDuration(cropStartedAt),
-      status: succeeded ? "success" : hasParsedData ? "needs-review" : "failed",
+      status: hasParsedData ? "needs-review" : "failed",
     });
-    if (succeeded) {
-      onToast?.(l.success, "success");
-      closeCropModal();
-    } else if (hasParsedData) {
+    if (hasParsedData) {
       onToast?.(l.needs_review || l.review, "info");
-      closeCropModal();
+      closeCropModal({ restore: false });
     } else {
       onToast?.(ocrFailureText(outcome.error || (raw.line1 || raw.line2 ? "PARSE_FAILED" : "MRZ_NOT_FOUND"), l), "error");
     }
-  }, [applyParsedToCropRow, closeCropModal, cropModal.fileName, cropModal.rowId, cropRect, l, onToast]);
+  }, [applyParsedToCropRow, closeCropModal, cropModal.fileName, cropModal.rowId, cropRect, ensureOcrWorker, l, onToast, resetOcrWorker]);
 
   const buildPartialBirthDateDocs = React.useCallback((row = {}) => {
     if (!hasPartialBirthDateOnly(row) && !hasApproximatedBirthDate(row)) return {};
@@ -2547,6 +2739,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       latinLastName: row.latinLastName || "",
       nameLatin: [row.latinLastName, row.latinFirstName].filter(Boolean).join(" "),
       phone: row.phone || "",
+      cin: row.cin || "",
       gender: row.gender || "",
       programId: effectiveImportProgramId || row.programId || null,
       packageId: selectedImportPackage?.packageId || "",
@@ -2564,6 +2757,7 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       roomCategoryLabel: row.roomCategoryLabel || "",
       passport: {
         number: normalizePassportNo(row.passportNo),
+        cin: row.cin || "",
         nationality: row.nationality || "MAR",
         birthDate: row.birthDate || "",
         expiry: row.passportExpiry || "",
@@ -2724,20 +2918,11 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
     }
   }, [onToast, rows]);
 
-  const modeButtons = [
-    ["image", l.image],
-    ["bulk", l.bulk],
-  ];
   const readyCount = rows.filter((row) => row.status === ROW_STATUS.READY || row.status === ROW_STATUS.MANUALLY_ACCEPTED).length;
   const reviewCount = rows.filter((row) => row.status === ROW_STATUS.NEEDS_REVIEW).length;
   const failedCount = rows.filter((row) => row.status === ROW_STATUS.FAILED).length;
   const acceptedCount = rows.filter(isRowSaveEligible).length;
-  const workflowSteps = [
-    l.workflowChoose,
-    l.workflowUpload,
-    l.workflowExtract,
-    l.workflowReview,
-  ];
+  const workflowSteps = [l.stepPassports, l.stepReview, l.stepSave];
   const progressPhaseText = {
     preparing: l.progressPreparing,
     reading: l.progressReading,
@@ -2752,449 +2937,258 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
       ? l.selectedProgramPackageInfo
       : l.selectedProgramOnlyInfo
     : l.selectedNoProgramInfo;
+  const currentWorkflowStep = saving ? 2 : progress.active || workflowView === "review" ? 1 : 0;
+  const participantTerms = getParticipantTerminology(effectiveImportProgram, lang);
+  const saveParticipantsLabel = effectiveImportProgramId
+    ? lang === "ar"
+      ? `حفظ ${participantTerms.plural}`
+      : lang === "fr"
+        ? `Enregistrer les ${participantTerms.plural}`
+        : `Save ${participantTerms.plural}`
+    : l.savePilgrims;
+  const selectFilesFromInput = (event) => {
+    const nextFiles = Array.from(event.target.files || []);
+    if (nextFiles.length) {
+      selectBulkFiles(nextFiles);
+      setWorkflowView("upload");
+    }
+    event.target.value = "";
+  };
+  const getReadingFileStatus = (file, index) => {
+    const result = rows.find((row) => row.source === file.name);
+    if (result?.status === ROW_STATUS.FAILED) return [l.fileError, "is-failed"];
+    if (index + 1 === progress.current && progress.active) return [l.fileReading, "is-reading"];
+    if (result || index < progress.done) return [l.fileRead, "is-ready"];
+    return [l.fileWaiting, "is-waiting"];
+  };
 
   return (
-    <div style={{ maxWidth: 1120, color: "var(--rukn-text)", direction: dir }}>
-      <div style={{
-        overflow: "hidden",
-        borderRadius: 18,
-        background: "var(--rukn-bg-modal)",
-        border: "1px solid var(--rukn-border-soft)",
-        boxShadow: "0 22px 70px rgba(0,0,0,.28)",
-      }}>
-        <div style={{
-          padding: "22px 24px 18px",
-          borderBottom: "1px solid var(--rukn-border-soft)",
-          background: "linear-gradient(135deg, rgba(212,175,55,.10), rgba(255,255,255,.025) 46%, rgba(37,99,235,.055))",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start" }}>
-            <div style={{ display: "flex", gap: 14, alignItems: "flex-start", minWidth: 0 }}>
-              <IconBubble name="passport" boxSize={44} iconSize={22} />
-              <div style={{ minWidth: 0 }}>
-                <h2 style={{ color: "var(--rukn-text-strong)", fontSize: 21, lineHeight: 1.25, fontWeight: 950, margin: 0 }}>{l.title}</h2>
-                <p style={{ color: "var(--rukn-text-muted)", fontSize: 12.5, margin: "7px 0 0", lineHeight: 1.75, maxWidth: 760 }}>{l.desc}</p>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 13 }}>
-                  {workflowSteps.map((step, index) => (
-                    <span key={`${step}-${index}`} style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "5px 9px",
-                      borderRadius: 999,
-                      background: index === 0 ? "rgba(212,175,55,.11)" : "rgba(255,255,255,.045)",
-                      border: "1px solid var(--rukn-border-soft)",
-                      color: index === 0 ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
-                      fontSize: 11,
-                      fontWeight: 850,
-                    }}>
-                      <span style={{ width: 18, height: 18, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.06)", color: "inherit", fontSize: 10 }}>{index + 1}</span>
-                      {step}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, flexShrink: 0 }}>
-              {progress.total > 0 && (
-                <div style={{ minWidth: 100, textAlign: "center", border: "1px solid rgba(212,175,55,.24)", borderRadius: 13, padding: "8px 11px", color: "var(--rukn-gold)", fontWeight: 950, background: "rgba(212,175,55,.08)" }}>
-                  <div style={{ fontSize: 10, color: "var(--rukn-text-muted)", fontWeight: 800, marginBottom: 2 }}>{l.processing}</div>
-                  {formatMessage(l.progress, progress)}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label={t.cancel || "Close"}
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 11,
-                  border: "1px solid var(--rukn-border-soft)",
-                  background: "rgba(255,255,255,.045)",
-                  color: "var(--rukn-text-muted)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <AppIcon name="x" size={17} />
-              </button>
-            </div>
+    <div style={{ direction: dir }}>
+      <div className="passport-import">
+        <input
+          ref={bulkRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={selectFilesFromInput}
+        />
+        <div className="passport-import__top">
+          <div className="passport-import__intro">
+            <p>{l.desc}</p>
+            {lockedImportProgramId && (
+              <span className="passport-import__program-badge" title={lockedImportProgram?.name || ""}>
+                <AppIcon name="program" size={14} />
+                {lockedImportProgram?.name || "—"}
+              </span>
+            )}
           </div>
+          <ol className="passport-import__steps" aria-label={l.workflow}>
+            {workflowSteps.map((step, index) => (
+              <li
+                key={step}
+                className={`passport-import__step ${index === currentWorkflowStep ? "is-active" : ""} ${index < currentWorkflowStep ? "is-complete" : ""}`}
+                aria-current={index === currentWorkflowStep ? "step" : undefined}
+              >
+                <span className="passport-import__step-number">
+                  {index < currentWorkflowStep ? <AppIcon name="check" size={13} /> : index + 1}
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
         </div>
 
-        <div style={{ padding: 20, display: "grid", gap: 14 }}>
-          {lockedImportProgramId && (
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              padding: "10px 12px",
-              borderRadius: 13,
-              border: "1px solid rgba(212,175,55,.22)",
-              background: "var(--rukn-gold-dim)",
-              color: "var(--rukn-gold)",
-              fontSize: 12,
-              fontWeight: 850,
-            }}>
-              <AppIcon name="program" size={16} color="var(--rukn-gold)" />
-              {formatMessage(l.programContext, { program: lockedImportProgram?.name || "—" })}
-            </div>
+        <div className="passport-import__body">
+
+          {!progress.active && (showProgramSelector || showPackageSelector) && (
+            <details className="passport-import__advanced">
+              <summary>
+                <span className="passport-import__advanced-title">
+                  <AppIcon name="settings" size={15} />
+                  {l.advancedOptions}
+                </span>
+                <span className="passport-import__optional-badge">{l.optional}</span>
+              </summary>
+              <div className="passport-import__advanced-content">
+                <p className="passport-import__advanced-note">{l.advancedHint}</p>
+                <div className="passport-import__selectors">
+                  {showProgramSelector && (
+                    <label className="passport-import__field">
+                      <span>{l.chooseProgram}</span>
+                      <select value={selectedImportProgramId} onChange={(event) => setSelectedImportProgramId(event.target.value)}>
+                        <option value="">{l.importWithoutProgram}</option>
+                        {importProgramOptions.map((program) => (
+                          <option key={program.id} value={program.id}>{program.name || program.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {showPackageSelector && (
+                    <label className="passport-import__field">
+                      <span>{l.choosePackage}</span>
+                      <select
+                        value={selectedImportPackageKey}
+                        onChange={(event) => setSelectedImportPackageKey(event.target.value)}
+                        disabled={!importPackageOptions.length}
+                      >
+                        <option value="">{l.importWithoutHotel}</option>
+                        {importPackageOptions.map((option) => (
+                          <option key={option.key} value={option.key}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </div>
+                {showPackageSelector && !importPackageOptions.length && <p className="passport-import__advanced-note">{l.noPackageOptions}</p>}
+                <p className="passport-import__linking-note">{passportImportLinkingInfo}</p>
+              </div>
+            </details>
           )}
 
-          <section style={{
-            padding: 15,
-            borderRadius: 15,
-            border: "1px solid var(--rukn-border-soft)",
-            background: "rgba(255,255,255,.028)",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 12 }}>
-              <div>
-                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.methodSection}</p>
-                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>{l.methodHint}</p>
+          {error && <div className="passport-import__error" role="alert">{error}</div>}
+
+          {progress.active ? (
+            <section className="passport-import__reading" aria-live="polite" aria-busy="true">
+              <div className="passport-import__reading-head">
+                <div>
+                  <h3>{l.readingTitle}</h3>
+                  <p>{l.readingHint}</p>
+                </div>
+                <span className="passport-import__progress-value">
+                  {progress.current}/{progress.total} · {Math.max(1, Math.min(99, overallProgressPercent))}%
+                </span>
               </div>
-            </div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 9,
-            }}>
-              {modeButtons.map(([key, label]) => {
-                const active = mode === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setMode(key)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      textAlign: "start",
-                      border: `1px solid ${active ? "rgba(212,175,55,.42)" : "var(--rukn-border-soft)"}`,
-                      background: active ? "rgba(212,175,55,.10)" : "var(--rukn-bg-soft)",
-                      color: active ? "var(--rukn-gold)" : "var(--rukn-text)",
-                      borderRadius: 13,
-                      padding: "11px 12px",
-                      fontSize: 13,
-                      fontWeight: 900,
-                      cursor: "pointer",
-                      fontFamily: "'Cairo',sans-serif",
-                      boxShadow: active ? "0 10px 26px rgba(212,175,55,.08)" : "none",
-                    }}
-                  >
-                    <span style={{ width: 34, height: 34, borderRadius: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", background: active ? "rgba(212,175,55,.13)" : "rgba(255,255,255,.045)", border: "1px solid var(--rukn-border-soft)" }}>
-                      <AppIcon name={key === "image" ? "camera" : "import"} size={17} />
-                    </span>
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section style={{
-            padding: 15,
-            borderRadius: 15,
-            border: "1px solid var(--rukn-border-soft)",
-            background: "rgba(255,255,255,.028)",
-          }}>
-            <div style={{ marginBottom: 12 }}>
-              <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.importConfigSection}</p>
-              <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.7 }}>{l.importConfigHint}</p>
-            </div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: showProgramSelector && showPackageSelector ? "repeat(auto-fit, minmax(260px, 1fr))" : "minmax(0, 1fr)",
-              gap: 10,
-            }}>
-              {showProgramSelector && (
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>{l.chooseProgram}</span>
-                  <select
-                    value={selectedImportProgramId}
-                    onChange={(event) => setSelectedImportProgramId(event.target.value)}
-                    style={{
-                      height: 40,
-                      borderRadius: 11,
-                      border: "1px solid var(--rukn-border-input)",
-                      background: "var(--rukn-bg-input)",
-                      color: "var(--rukn-text)",
-                      padding: "0 11px",
-                      fontFamily: "'Cairo',sans-serif",
-                      fontSize: 12,
-                      fontWeight: 800,
-                      outline: "none",
-                    }}
-                  >
-                    <option value="">{l.importWithoutProgram}</option>
-                    {importProgramOptions.map((program) => (
-                      <option key={program.id} value={program.id}>{program.name || program.id}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {showPackageSelector && (
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>{l.choosePackage}</span>
-                  <select
-                    value={selectedImportPackageKey}
-                    onChange={(event) => setSelectedImportPackageKey(event.target.value)}
-                    disabled={!importPackageOptions.length}
-                    style={{
-                      height: 40,
-                      borderRadius: 11,
-                      border: "1px solid var(--rukn-border-input)",
-                      background: "var(--rukn-bg-input)",
-                      color: "var(--rukn-text)",
-                      padding: "0 11px",
-                      fontFamily: "'Cairo',sans-serif",
-                      fontSize: 12,
-                      fontWeight: 800,
-                      outline: "none",
-                      opacity: importPackageOptions.length ? 1 : 0.72,
-                    }}
-                  >
-                    <option value="">{l.importWithoutHotel}</option>
-                    {importPackageOptions.map((option) => (
-                      <option key={option.key} value={option.key}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            {showPackageSelector && !importPackageOptions.length && (
-              <p style={{ margin: "9px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>
-                {l.noPackageOptions}
-              </p>
-            )}
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 9,
-              marginTop: 12,
-              padding: "9px 11px",
-              borderRadius: 12,
-              border: "1px solid var(--rukn-border-soft)",
-              background: effectiveImportProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
-              color: effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
-              fontSize: 12,
-              fontWeight: 850,
-              lineHeight: 1.6,
-            }}>
-              <AppIcon name={effectiveImportProgramId ? "alert" : "program"} size={15} color={effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
-              {passportImportLinkingInfo}
-            </div>
-          </section>
-
-          <section style={{
-            padding: 15,
-            borderRadius: 15,
-            border: "1px solid var(--rukn-border-soft)",
-            background: "var(--rukn-bg-card)",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12, flexWrap: "wrap" }}>
-              <div>
-                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.uploadSection}</p>
-                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>
-                  {mode === "bulk" ? l.bulkUploadHint : l.uploadHint}
-                </p>
+              <div className="passport-import__progress-track" aria-hidden="true">
+                <div className="passport-import__progress-bar" style={{ width: `${Math.max(1, Math.min(99, overallProgressPercent))}%` }} />
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {mode === "image" ? (
-                  <>
-                    <Button variant="secondary" icon="camera" onClick={() => fileRef.current?.click()} disabled={progress.active}>{l.uploadOne}</Button>
-                    <Button variant="primary" icon="search" onClick={readSinglePassport} disabled={progress.active || !singleFile}>{l.readPassport}</Button>
-                    <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(event) => { selectSingleFile(event.target.files); event.target.value = ""; }} />
-                  </>
-                ) : (
-                  <>
-                    <Button variant="secondary" icon="upload" onClick={() => bulkRef.current?.click()} disabled={progress.active}>{l.uploadBulk}</Button>
-                    <Button variant="primary" icon="search" onClick={readBulkPassports} disabled={progress.active || !bulkFiles.length}>{l.readPassports}</Button>
-                    <input ref={bulkRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(event) => { selectBulkFiles(event.target.files); event.target.value = ""; }} />
-                  </>
+              <p>{progressPhaseText}</p>
+              <div className="passport-import__reading-list">
+                {bulkFiles.map((file, index) => {
+                  const [statusLabel, statusClass] = getReadingFileStatus(file, index);
+                  return (
+                    <div className="passport-import__reading-item" key={`${file.name}-${index}`}>
+                      <span className="passport-import__reading-name">{file.name || `image-${index + 1}`}</span>
+                      <span className={`passport-import__status ${statusClass}`}>{statusLabel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {progress.slow && <p className="passport-import__primary-issue">{l.progressSlow}</p>}
+            </section>
+          ) : workflowView === "upload" || !rows.length ? (
+            <section
+              className={`passport-import__dropzone ${isDraggingFiles ? "is-dragging" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-label={l.chooseImages}
+              onClick={() => bulkRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  bulkRef.current?.click();
+                }
+              }}
+              onDragEnter={(event) => { event.preventDefault(); setIsDraggingFiles(true); }}
+              onDragOver={(event) => { event.preventDefault(); setIsDraggingFiles(true); }}
+              onDragLeave={(event) => { if (event.target === event.currentTarget) setIsDraggingFiles(false); }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDraggingFiles(false);
+                selectBulkFiles(event.dataTransfer.files);
+                setWorkflowView("upload");
+              }}
+            >
+              <div>
+                <IconBubble name="upload" boxSize={50} iconSize={23} style={{ margin: "0 auto" }} />
+                <h3>{l.uploadTitle}</h3>
+                <p>{l.uploadDescription}</p>
+                <span className="passport-import__formats">{l.supportedFormats}</span>
+                <Button
+                  variant="secondary"
+                  icon="upload"
+                  onClick={(event) => { event.stopPropagation(); bulkRef.current?.click(); }}
+                >
+                  {l.chooseImages}
+                </Button>
+                {bulkFiles.length > 0 && (
+                  <div className="passport-import__selected-files" aria-label={`${l.selectedFiles}: ${bulkFiles.length}`}>
+                    {bulkFiles.map((file, index) => (
+                      <span className="passport-import__file-chip" key={`${file.name}-${index}`}>{file.name || `image-${index + 1}`}</span>
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
+            </section>
+          ) : null}
 
-            {mode === "image" && (
-              singlePreviewUrl ? (
-                <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 14, overflow: "hidden", background: "var(--rukn-bg-soft)", maxHeight: 285 }}>
-                  <img src={singlePreviewUrl} alt="" style={{ display: "block", width: "100%", maxHeight: 285, objectFit: "contain" }} />
-                </div>
-              ) : (
-                <div style={{ minHeight: 132, border: "1px dashed rgba(212,175,55,.28)", borderRadius: 14, background: "rgba(212,175,55,.045)", display: "grid", placeItems: "center", textAlign: "center", padding: 18 }}>
+          {!progress.active && workflowView === "review" && rows.length > 0 && (
+            <>
+              <section className="passport-import__review">
+                <div className="passport-import__review-head">
                   <div>
-                    <IconBubble name="camera" boxSize={42} iconSize={20} style={{ margin: "0 auto 9px" }} />
-                    <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 13, fontWeight: 900 }}>{l.noImageSelected}</p>
-                    <p style={{ margin: "5px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5 }}>{l.uploadHint}</p>
+                    <h3>{l.reviewSection}</h3>
+                    <p>{l.reviewHint}</p>
                   </div>
-                </div>
-              )
-            )}
-
-            {mode === "bulk" && (
-              bulkFiles.length > 0 ? (
-                <div style={{ border: "1px solid var(--rukn-border-soft)", borderRadius: 14, padding: 12, background: "var(--rukn-bg-soft)" }}>
-                  <p style={{ margin: "0 0 9px", color: "var(--rukn-text-strong)", fontSize: 12, fontWeight: 900 }}>{l.selectedFiles}: {bulkFiles.length}</p>
-                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-                    {bulkFiles.map((file, index) => (
-                      <span key={`${file.name}-${index}`} style={{ maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", border: "1px solid var(--rukn-border-soft)", borderRadius: 999, padding: "5px 9px", color: "var(--rukn-text-muted)", fontSize: 11, background: "var(--rukn-bg-card)" }}>
-                        {file.name || `image-${index + 1}`}
+                  <div className="passport-import__counts">
+                    {[
+                      [l.ready, readyCount, "is-ready"],
+                      [l.needs_review, reviewCount, "is-review"],
+                      [l.failed, failedCount, "is-failed"],
+                    ].map(([label, count, statusClass]) => (
+                      <span key={label} className={`passport-import__count passport-import__status ${statusClass}`}>
+                        {count} {label}
                       </span>
                     ))}
                   </div>
                 </div>
-              ) : (
-                <div style={{ minHeight: 132, border: "1px dashed rgba(212,175,55,.28)", borderRadius: 14, background: "rgba(212,175,55,.045)", display: "grid", placeItems: "center", textAlign: "center", padding: 18 }}>
-                  <div>
-                    <IconBubble name="upload" boxSize={42} iconSize={20} style={{ margin: "0 auto 9px" }} />
-                    <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 13, fontWeight: 900 }}>{l.uploadBulk}</p>
-                    <p style={{ margin: "5px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5 }}>{l.bulkUploadHint}</p>
-                  </div>
+                <div className="passport-import__review-list">
+                  {rows.map((row, index) => (
+                    <ReviewRow
+                      key={row.id}
+                      row={row}
+                      index={index}
+                      labels={l}
+                      onChange={updateRow}
+                      onRemove={removeRow}
+                      onSelectMRZ={openCropModal}
+                    />
+                  ))}
                 </div>
-              )
-            )}
-
-            {progress.active && (
-              <div style={{ marginTop: 13 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 5, color: "var(--rukn-text-muted)", fontSize: 11, fontWeight: 800 }}>
-                  <span>
-                    {progress.currentFile || l.processing}
-                    {progress.current > 0 ? ` · ${progress.current}/${progress.total}` : ""}
-                  </span>
-                  <span>{Math.max(1, Math.min(99, overallProgressPercent))}%</span>
-                </div>
-                <div style={{ marginBottom: 7, color: "var(--rukn-text-strong)", fontSize: 12, fontWeight: 850 }}>
-                  {progressPhaseText}
-                </div>
-                <div style={{ height: 7, background: "rgba(255,255,255,.06)", borderRadius: 999, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.max(1, Math.min(99, overallProgressPercent))}%`, background: "linear-gradient(90deg,#2563eb,#d4af37)", transition: "width .25s ease" }} />
-                </div>
-                {progress.slow && (
-                  <div style={{ marginTop: 8, color: "var(--rukn-warning)", fontSize: 11, fontWeight: 800, lineHeight: 1.6 }}>
-                    {l.progressSlow}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-
-          {error && <div style={{ color: "var(--rukn-danger)", border: "1px solid rgba(239,68,68,.32)", background: "var(--rukn-danger-dim)", borderRadius: 13, padding: "10px 12px", fontSize: 12, fontWeight: 800 }}>{error}</div>}
-
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "11px 13px",
-            borderRadius: 14,
-            border: "1px solid var(--rukn-border-soft)",
-            background: effectiveImportProgramId ? "rgba(245,158,11,.08)" : "rgba(148,163,184,.08)",
-            color: effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)",
-            fontSize: 12,
-            fontWeight: 850,
-            lineHeight: 1.6,
-          }}>
-            <span style={{ width: 30, height: 30, borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.05)", flexShrink: 0 }}>
-              <AppIcon name={effectiveImportProgramId ? "alert" : "program"} size={16} color={effectiveImportProgramId ? "var(--rukn-warning)" : "var(--rukn-text-muted)"} />
-            </span>
-            {passportImportLinkingInfo}
-          </div>
-
-          <section style={{
-            border: "1px solid var(--rukn-border-soft)",
-            borderRadius: 16,
-            overflow: "hidden",
-            background: "var(--rukn-bg-card)",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", padding: "14px 15px", borderBottom: "1px solid var(--rukn-border-soft)", flexWrap: "wrap" }}>
-              <div>
-                <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.reviewSection}</p>
-                <p style={{ margin: "4px 0 0", color: "var(--rukn-text-muted)", fontSize: 11.5, lineHeight: 1.6 }}>{l.reviewHint}</p>
-              </div>
-              <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-                {[
-                  [l.ready, readyCount, tc.greenLight],
-                  [l.needs_review, reviewCount, "var(--rukn-warning)"],
-                  [l.failed, failedCount, "var(--rukn-danger)"],
-                ].map(([label, count, color]) => (
-                  <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid var(--rukn-border-soft)", borderRadius: 999, padding: "5px 9px", color, background: "rgba(255,255,255,.035)", fontSize: 11, fontWeight: 900 }}>
-                    <span>{count}</span>
-                    {label}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {rows.length ? (
-              <div style={{ overflow: "auto", maxHeight: 390 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1520 }}>
-                  <thead style={{ position: "sticky", top: 0, background: "var(--rukn-bg-card)", zIndex: 1, boxShadow: "0 1px 0 var(--rukn-border-soft)" }}>
-                    <tr>
-                      {[
-                        "#",
-                        l.source,
-                        l.dataSource,
-                        l.status,
-                        l.phone,
-                        l.latinLast,
-                        l.latinFirst,
-                        l.arabicLast,
-                        l.arabicFirst,
-                        l.passportNo,
-                        l.nationality,
-                        l.birthDate,
-                        l.expiry,
-                        l.gender,
-                        l.notes,
-                        l.selectMRZ,
-                        l.duplicateAction,
-                        "",
-                      ].map((head, idx) => (
-                        <th key={`${idx}-${head || "blank"}`} style={{ padding: "10px 9px", color: "var(--rukn-text-muted)", fontSize: 11, textAlign: "start", whiteSpace: "nowrap", fontWeight: 900 }}>{head}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, index) => (
-                      <ReviewRow
-                        key={row.id}
-                        row={row}
-                        index={index}
-                        labels={l}
-                        onChange={updateRow}
-                        onRemove={removeRow}
-                        onSelectMRZ={openCropModal}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div style={{ minHeight: 145, display: "grid", placeItems: "center", padding: 22, textAlign: "center" }}>
-                <div>
-                  <IconBubble name="list" boxSize={44} iconSize={21} style={{ margin: "0 auto 10px" }} />
-                  <p style={{ margin: 0, color: "var(--rukn-text-strong)", fontSize: 14, fontWeight: 950 }}>{l.emptyReviewTitle}</p>
-                  <p style={{ margin: "6px auto 0", color: "var(--rukn-text-muted)", fontSize: 12, lineHeight: 1.7, maxWidth: 460 }}>{l.emptyReviewDesc}</p>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <MRZDiagnosticLab rows={rows} onCopyDebug={copyMrzDebugJson} />
+              </section>
+              <MRZDiagnosticLab rows={rows} onCopyDebug={copyMrzDebugJson} />
+            </>
+          )}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "15px 20px", borderTop: "1px solid var(--rukn-border-soft)", background: "rgba(255,255,255,.026)", flexWrap: "wrap" }}>
-          <div style={{ color: "var(--rukn-text-muted)", fontSize: 12, fontWeight: 800 }}>
-            {acceptedCount > 0 ? `${acceptedCount} ${l.saveAccepted}` : l.noRows}
+        <div className="passport-import__footer">
+          <div className="passport-import__footer-note">
+            {progress.active
+              ? `${progress.current}/${progress.total} · ${progressPhaseText}`
+              : workflowView === "review" && rows.length
+                ? acceptedCount > 0 ? `${acceptedCount} ${saveParticipantsLabel}` : l.reviewNeedsCorrection
+                : bulkFiles.length ? `${l.selectedFiles}: ${bulkFiles.length}` : l.noImageSelected}
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
-            <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
-            {onResult && firstAccepted && <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>}
-            <Button variant="success" icon="success" onClick={saveAccepted} disabled={progress.active || saving}>{saving ? l.processing : l.saveAccepted}</Button>
-          </div>
+          {!progress.active && (
+            <div className="passport-import__footer-actions">
+              <Button variant="ghost" onClick={onClose}>{t.cancel}</Button>
+              {workflowView === "review" && rows.length ? (
+                <>
+                  {onResult && firstAccepted && (
+                    <Button variant="secondary" icon="passport" onClick={applySingleToForm}>{t.mrzApplyData || l.saveAccepted}</Button>
+                  )}
+                  <Button variant="secondary" icon="plus" onClick={() => bulkRef.current?.click()}>{l.addPhotos}</Button>
+                  <Button variant="success" icon="success" onClick={saveAccepted} disabled={saving || acceptedCount === 0}>
+                    {saving ? l.processing : `${saveParticipantsLabel}${acceptedCount ? ` (${acceptedCount})` : ""}`}
+                  </Button>
+                </>
+              ) : (
+                <Button variant="secondary" icon="check" onClick={readBulkPassports} disabled={!bulkFiles.length}>
+                  {l.continueReview}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {cropModal.open && (

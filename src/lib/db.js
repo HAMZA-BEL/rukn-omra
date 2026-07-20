@@ -684,6 +684,8 @@ const fromClient = (row) => {
   const rooming = row.docs?.rooming || {};
   return {
   id:               row.id,
+  agencyId:         row.agency_id,
+  agency_id:        row.agency_id,
   programId:        row.program_id,
   travelGroupId:    row.travel_group_id ?? null,
   name:             composeClientName(row),
