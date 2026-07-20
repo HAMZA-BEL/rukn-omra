@@ -26,6 +26,7 @@ import {
   normalizeDuplicateProgramName,
   normalizeProgramType,
 } from "../../utils/programDuplicate";
+import { getProgramCapacityDatabaseErrorMessage } from "../../utils/programCapacity";
 import {
   badgePhonesFromProgram,
   getBadgeContactDefaults,
@@ -1531,7 +1532,17 @@ export default function ProgramForm({
       priceTable,
     };
     if (isEdit) {
-      updateProgram(program.id, data);
+      setProgramSaving(true);
+      setProgramSaveError("");
+      const result = await updateProgram(program.id, data);
+      setProgramSaving(false);
+      if (result?.error) {
+        setProgramSaveError(
+          getProgramCapacityDatabaseErrorMessage(result.error, lang)
+          || "تعذر حفظ تعديلات البرنامج. حاول مرة أخرى."
+        );
+        return;
+      }
       onSave();
       return;
     }

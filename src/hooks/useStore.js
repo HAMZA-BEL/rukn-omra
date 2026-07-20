@@ -92,8 +92,10 @@ import {
 } from "../utils/agencyLogo";
 import {
   getProgramCapacityDeltaForClientChange,
+  getProgramCapacityDatabaseErrorMessage,
   getProgramCapacityInfo,
   getProgramCapacityMessage,
+  isProgramCapacityDatabaseError,
 } from "../utils/programCapacity";
 
 const EMPTY_DASHBOARD_STATS = {
@@ -1500,7 +1502,7 @@ export function useStore(agencyId, onToast, options = {}) {
       return result || { error: null };
     } catch (err) {
       console.error("[Store] Sync request failed:", err);
-      setSyncStatus("offline");
+      setSyncStatus(isProgramCapacityDatabaseError(err) ? "synced" : "offline");
       return { error: err };
     }
   }, [agencyId, isSupabaseEnabled, ns]);
@@ -3217,9 +3219,16 @@ export function useStore(agencyId, onToast, options = {}) {
       );
       const error = responses.find((r) => r?.error)?.error ?? null;
       return { error };
+    }).then(async (result) => {
+      if (!isProgramCapacityDatabaseError(result?.error)) return;
+      const refreshed = await fetchClients(agencyId);
+      if (!refreshed?.error && Array.isArray(refreshed?.data)) {
+        setInitialClients(refreshed.data);
+      }
+      notify(getProgramCapacityDatabaseErrorMessage(result.error, getUiLang()), "error");
     });
     return affected.length;
-  }, [clients, programs, transferClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify, ensureProgramCapacityForStore]);
+  }, [clients, programs, transferClientsLocal, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId, notify, ensureProgramCapacityForStore, setInitialClients]);
 
   const deleteClient = useCallback((id) => {
     const client = clients.find((x) => x.id === id);
@@ -3380,7 +3389,11 @@ export function useStore(agencyId, onToast, options = {}) {
             : item
         )));
         queueProgramArchiveSuggestionCheck(getClientProgramId(c));
-        notify(archivePersistenceErrorMessage("restoreClientSaveError"), "error");
+        notify(
+          getProgramCapacityDatabaseErrorMessage(result.error, getUiLang())
+          || archivePersistenceErrorMessage("restoreClientSaveError"),
+          "error"
+        );
         return result;
       });
     }
@@ -3729,7 +3742,12 @@ export function useStore(agencyId, onToast, options = {}) {
       translateActivityDescription(`تم تعديل برنامج ${getReadableProgramNameForActivity(nextProgram, currentProgram)}`),
       buildProgramUpdateActivityDetails(currentProgram, nextProgram)
     );
-    return sync(() => saveProgram(nextProgram, agencyId));
+    return sync(() => saveProgram(nextProgram, agencyId)).then((result) => {
+      if (result?.error && isProgramCapacityDatabaseError(result.error) && currentProgram) {
+        setPrograms(prev => prev.map(p => p.id === id ? currentProgram : p));
+      }
+      return result;
+    });
   }, [programs, setPrograms, logActivity, queueProgramArchiveSuggestionCheck, sync, agencyId]);
 
   const setProgramNusukUploadEnabled = useCallback(async (id, enabled) => {

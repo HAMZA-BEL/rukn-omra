@@ -46,6 +46,7 @@ import {
 } from "../utils/clientRepresentation";
 import {
   getProgramCapacityDeltaForClientChange,
+  getProgramCapacityDatabaseErrorMessage,
   getProgramCapacityInfo,
   getProgramCapacityMessage,
 } from "../utils/programCapacity";
@@ -712,7 +713,15 @@ export default function ClientForm({
   badgesEnabled = true,
 }) {
   const { t, tr, dir, lang } = useLang();
-  const { programs = [], clients = [], activeClients = [], addClient, addClientAndWait, updateClient } = store;
+  const {
+    programs = [],
+    clients = [],
+    activeClients = [],
+    addClient,
+    addClientAndWait,
+    updateClient,
+    updateClientAndWait,
+  } = store;
   const storeNotify = typeof store.notify === "function" ? store.notify : null;
   const badgePhotoApi = store.badgePhotoApi || { isAvailable: false };
   const registrationSourceInputId = React.useId();
@@ -1556,7 +1565,13 @@ export default function ClientForm({
         }
         if (failures.length) {
           const notify = typeof onToast === "function" ? onToast : storeNotify;
-          notify?.(getGroupSaveFailedMessage(failures.length, groupPeople.length), "error");
+          const capacityMessage = failures
+            .map((item) => getProgramCapacityDatabaseErrorMessage(item.error, lang))
+            .find(Boolean);
+          notify?.(
+            capacityMessage || getGroupSaveFailedMessage(failures.length, groupPeople.length),
+            "error"
+          );
           return;
         }
         onSave(addedClients);
@@ -1623,14 +1638,26 @@ export default function ClientForm({
       const data = withBadgePhotoPath(baseData, photoResult.path);
       let savedClient;
       if (isEdit) {
-        const updateResult = updateClient(client.id, data);
-        if (updateResult === null) return;
+        const result = typeof updateClientAndWait === "function"
+          ? await updateClientAndWait(client.id, data, client)
+          : { data: updateClient(client.id, data), error: null };
+        if (result?.error || !result?.data) {
+          const notify = typeof onToast === "function" ? onToast : storeNotify;
+          notify?.(
+            getProgramCapacityDatabaseErrorMessage(result?.error, lang) || clientSaveFailedMessage,
+            "error"
+          );
+          return;
+        }
         savedClient = { ...client, ...data, id: client.id };
       } else {
         const result = await createManualClient(targetId ? { ...data, id: targetId } : data);
         if (result?.error || !result?.data) {
           const notify = typeof onToast === "function" ? onToast : storeNotify;
-          notify?.(clientSaveFailedMessage, "error");
+          notify?.(
+            getProgramCapacityDatabaseErrorMessage(result?.error, lang) || clientSaveFailedMessage,
+            "error"
+          );
           return;
         }
         savedClient = result.data;

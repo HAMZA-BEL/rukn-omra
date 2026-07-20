@@ -16,6 +16,7 @@ import { validateLatinName } from "../utils/passportMrzEngine";
 import { normalizeProgramPackages } from "../utils/programPackages";
 import {
   getProgramCapacityDeltaForClientChange,
+  getProgramCapacityDatabaseErrorMessage,
   getProgramCapacityInfo,
   getProgramCapacityMessage,
 } from "../utils/programCapacity";
@@ -2679,7 +2680,10 @@ export default function MRZReader({ store, onToast, onResult, onClose, programCo
             }
           : row
       )));
-      onToast?.(`${l.saveRowFailed}: ${failures.length}`, "error");
+      const capacityMessage = failures
+        .map((item) => getProgramCapacityDatabaseErrorMessage(item.error, lang))
+        .find(Boolean);
+      onToast?.(capacityMessage || `${l.saveRowFailed}: ${failures.length}`, "error");
       return;
     }
     onToast?.(l.saved, "success");

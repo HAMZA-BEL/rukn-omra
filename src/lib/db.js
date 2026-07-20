@@ -20,6 +20,7 @@ import {
 } from "../components/programs/programCosting";
 import { normalizeHotelCheckinDay, normalizeVisitOrder } from "../utils/hotelDates";
 import { normalizeRouteStops } from "../utils/programRoutes";
+import { normalizeProgramCapacityDatabaseError } from "../utils/programCapacity";
 
 const normalizeForeignKey = (value) => (
   typeof value === "string" && value.trim() ? value : null
@@ -1421,7 +1422,7 @@ export const db = {
     async upsert(program, agencyId) {
       const { error } = await supabase
         .from("programs").upsert(toProgram(program, agencyId), { onConflict: "id" });
-      return { error };
+      return { error: normalizeProgramCapacityDatabaseError(error) };
     },
     async setNusukUploadEnabled(id, agencyId, enabled) {
       if (!id || !agencyId) {
@@ -1671,7 +1672,7 @@ export const db = {
       const payload = toClient(client, agencyId);
       const { error } = await supabase
         .from("clients").upsert(payload, { onConflict: "id" });
-      return { error };
+      return { error: normalizeProgramCapacityDatabaseError(error) };
     },
     async delete(id, agencyId) {
       const { error } = await supabase
@@ -1699,7 +1700,7 @@ export const db = {
         .update({ deleted: false, deleted_at: null, deleted_batch_id: null })
         .in("id", ids)
         .eq("agency_id", agencyId);
-      return { error };
+      return { error: normalizeProgramCapacityDatabaseError(error) };
     },
     async archiveRecord(id, agencyId, archivedAt = new Date().toISOString()) {
       if (!id || !agencyId) return { error: null };
@@ -1717,7 +1718,7 @@ export const db = {
         .update({ archived: false, archived_at: null })
         .eq("id", id)
         .eq("agency_id", agencyId);
-      return { error };
+      return { error: normalizeProgramCapacityDatabaseError(error) };
     },
     async deleteMany(ids, agencyId) {
       if (!ids || !ids.length) return { error: null };

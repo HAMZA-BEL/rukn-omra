@@ -10,6 +10,7 @@ import {
   parseClientServiceTypeValue,
 } from "../utils/clientServiceTypes";
 import {
+  getProgramCapacityDatabaseErrorMessage,
   getProgramCapacityInfo,
   getProgramCapacityMessage,
 } from "../utils/programCapacity";
@@ -739,8 +740,10 @@ const getImportRowIdentity = (row = {}) => {
   return [rowNumber, name, passport].filter(Boolean).join(" - ") || row.id || "row";
 };
 
-const getImportErrorMessage = (error) => {
+const getImportErrorMessage = (error, lang = "ar") => {
   if (!error) return "";
+  const capacityMessage = getProgramCapacityDatabaseErrorMessage(error, lang);
+  if (capacityMessage) return capacityMessage;
   if (typeof error === "string") return error;
   return error.message || error.details || error.hint || error.code || String(error);
 };
@@ -1175,7 +1178,7 @@ export default function ImportClientsModal({ store, onClose, onToast, programCon
           failures.push({
             rowNumber: result.row?.rowNumber,
             identity: getImportRowIdentity(result.row),
-            message: getImportErrorMessage(result.error),
+            message: getImportErrorMessage(result.error, lang),
           });
         });
 

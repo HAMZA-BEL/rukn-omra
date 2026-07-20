@@ -1,5 +1,61 @@
 import { getProgramKind } from "./participantTerminology";
 
+export const PROGRAM_CAPACITY_REACHED = "PROGRAM_CAPACITY_REACHED";
+export const PROGRAM_CAPACITY_BELOW_REGISTRATION = "PROGRAM_CAPACITY_BELOW_REGISTRATION";
+
+const DATABASE_CAPACITY_MESSAGES = {
+  [PROGRAM_CAPACITY_REACHED]: {
+    ar: "اكتملت سعة هذا البرنامج ولا يمكن إضافة معتمر آخر.",
+    fr: "La capacité de ce programme est atteinte. Aucun autre client ne peut être ajouté.",
+    en: "This program has reached capacity. Another client cannot be added.",
+  },
+  [PROGRAM_CAPACITY_BELOW_REGISTRATION]: {
+    ar: "لا يمكن خفض سعة البرنامج إلى أقل من عدد المعتمرين المسجلين.",
+    fr: "La capacité du programme ne peut pas être inférieure au nombre de clients inscrits.",
+    en: "Program capacity cannot be lower than the number of registered clients.",
+  },
+};
+
+export const getProgramCapacityDatabaseErrorCode = (error) => {
+  if (!error) return "";
+  const values = typeof error === "string"
+    ? [error]
+    : [error.capacityCode, error.code, error.message, error.details, error.hint];
+  const haystack = values.filter(Boolean).join(" ").toUpperCase();
+  if (haystack.includes(PROGRAM_CAPACITY_BELOW_REGISTRATION)) {
+    return PROGRAM_CAPACITY_BELOW_REGISTRATION;
+  }
+  if (haystack.includes(PROGRAM_CAPACITY_REACHED)) {
+    return PROGRAM_CAPACITY_REACHED;
+  }
+  return "";
+};
+
+export const isProgramCapacityDatabaseError = (error) => (
+  Boolean(getProgramCapacityDatabaseErrorCode(error))
+);
+
+export const getProgramCapacityDatabaseErrorMessage = (error, lang = "ar") => {
+  const code = getProgramCapacityDatabaseErrorCode(error);
+  if (!code) return "";
+  const normalizedLang = ["ar", "fr", "en"].includes(lang) ? lang : "ar";
+  return DATABASE_CAPACITY_MESSAGES[code]?.[normalizedLang]
+    || DATABASE_CAPACITY_MESSAGES[code]?.ar
+    || "";
+};
+
+export const normalizeProgramCapacityDatabaseError = (error) => {
+  const capacityCode = getProgramCapacityDatabaseErrorCode(error);
+  if (!capacityCode) return error;
+  return {
+    ...(typeof error === "object" && error ? error : {}),
+    code: capacityCode,
+    capacityCode,
+    postgresCode: typeof error === "object" ? error?.code : undefined,
+    message: getProgramCapacityDatabaseErrorMessage(capacityCode, "ar"),
+  };
+};
+
 const clampCount = (value) => {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return 0;
