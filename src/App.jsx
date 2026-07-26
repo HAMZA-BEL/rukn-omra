@@ -6,11 +6,12 @@ import { useInactivityLogout } from "./hooks/useInactivityLogout";
 import { AGENCY_FEATURES, useAgencyFeature } from "./hooks/useAgencyFeature";
 import { isSupabaseEnabled } from "./lib/supabase";
 import { LangProvider, useLang } from "./hooks/useLang";
-import { Menu as MenuIcon, Home, Users, FolderKanban, FolderArchive, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun } from "lucide-react";
+import { Menu as MenuIcon, Home, Users, FolderKanban, FolderArchive, BarChart3, Settings as SettingsIcon, Bell, ClipboardList, Trash2, MoreHorizontal, Moon, Sun, Globe2 } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import Dashboard from "./components/Dashboard";
 import ClientsPage from "./components/ClientsPage";
 import ProgramsPage from "./components/ProgramsPage";
+import MarketplacePage from "./components/MarketplacePage";
 import ArchivePage from "./components/ArchivePage";
 import ClearancePage from "./components/ClearancePage";
 import NotificationsPage from "./components/NotificationsPage";
@@ -34,7 +35,7 @@ import {
   AgencyLinkMissingScreen,
 } from "./components/AgencyAccessScreen";
 
-const VALID_PAGES = ["dashboard","clients","programs","archive","clearance","activity","trash","settings","notifications"];
+const VALID_PAGES = ["dashboard","clients","programs","marketplace","archive","clearance","activity","trash","settings","notifications"];
 const PUBLIC_PRIVACY_POLICY_PATH = "/privacy-policy";
 
 function isPrivacyPolicyPath() {
@@ -89,6 +90,7 @@ function AppInner({
   const contractsFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.CONTRACTS, { fallbackEnabled: true });
   const programPostersFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.PROGRAM_POSTERS, { fallbackEnabled: true });
   const nusukUploadFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.NUSUK_UPLOAD, { fallbackEnabled: false });
+  const marketplaceFeature = useAgencyFeature(agencyId, AGENCY_FEATURES.MARKETPLACE_ACCESS, { fallbackEnabled: false });
   const badgesEnabled = badgesFeature.enabled;
   const contractsEnabled = contractsFeature.enabled;
   const programPostersEnabled = programPostersFeature.enabled;
@@ -181,6 +183,7 @@ function AppInner({
     { id: "programs",  icon: FolderKanban,  label: t.programs },
     { id: "activity",  icon: ClipboardList, label: t.activityLog || t.recentActivity },
     { id: "clearance", icon: BarChart3,     label: t.clearanceNav || t.clearance },
+    { id: "marketplace", icon: Globe2,       label: "السوق" },
     { id: "archive",   icon: FolderArchive, label: t.archiveNav },
     { id: "trash",     icon: Trash2,        label: t.trash },
     { id: "settings",  icon: SettingsIcon,  label: t.settings },
@@ -394,6 +397,7 @@ function AppInner({
               pageName={{
                 clients: t.clients,
                 programs: t.programs,
+                marketplace: "السوق",
                 notifications: t.notifications,
                 trash: t.trash,
                 activity: t.activityLog,
@@ -448,6 +452,15 @@ function AppInner({
                 contractsEnabled={contractsEnabled}
                 programPostersEnabled={programPostersEnabled}
                 agencyNusukUploadFeatureEnabled={agencyNusukUploadFeatureEnabled}
+              />
+            </ErrorBoundary>
+          )}
+          {page==="marketplace" && (
+            <ErrorBoundary>
+              <MarketplacePage
+                store={store}
+                feature={marketplaceFeature}
+                onToast={showToast}
               />
             </ErrorBoundary>
           )}
@@ -873,8 +886,8 @@ function MobileNav({ navItems, dir, active, onNavigate }) {
     if (!open && secondaryOpen) setSecondaryOpen(false);
   }, [open, secondaryOpen]);
 
-  const primaryIds = ["dashboard", "clients", "programs", "clearance"];
-  const secondaryIds = ["activity", "archive", "trash", "settings"];
+  const primaryIds = ["dashboard", "clients", "programs", "activity", "clearance", "marketplace"];
+  const secondaryIds = ["archive", "trash", "settings"];
   const primaryItems = primaryIds
     .map((id) => navItems.find((item) => item.id === id))
     .filter(Boolean);

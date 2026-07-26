@@ -140,21 +140,21 @@ create or replace function public.admin_set_agency_feature(
   p_feature_key text,
   p_enabled boolean
 )
-returns jsonb
+returns boolean
 language plpgsql
 security definer
 set search_path = public, auth
 as $$
 declare
   v_feature_key text := lower(btrim(coalesce(p_feature_key, '')));
-  v_new jsonb;
+  v_new boolean;
 begin
   if auth.role() <> 'service_role' and not public.is_system_owner() then
     raise exception 'unauthorized' using errcode = '42501';
   end if;
   if v_feature_key not in (
     'badges', 'contracts', 'program_posters', 'advanced_reports',
-    'api_access', 'hajj_module', 'nusuk_upload'
+    'api_access', 'hajj_module', 'nusuk_upload', 'marketplace_access'
   ) then
     raise exception 'invalid_feature_key' using errcode = '22023';
   end if;
@@ -166,9 +166,7 @@ begin
   values (p_agency_id, v_feature_key, coalesce(p_enabled, false))
   on conflict (agency_id, feature_key)
   do update set enabled = excluded.enabled, updated_at = now()
-  returning jsonb_build_object(
-    'agency_id', agency_id, 'feature_key', feature_key, 'enabled', enabled
-  ) into v_new;
+  returning enabled into v_new;
   return v_new;
 end;
 $$;
