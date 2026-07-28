@@ -6,6 +6,7 @@ import {
   getSessionTimeoutConfig,
 } from "../components/session/sessionTimeoutConfig";
 import { saveAutoLogoutResumeContext } from "../components/session/sessionResumeStorage";
+import { beginSessionLogoutOnce } from "../utils/authSession";
 
 const CHECK_INTERVAL_MS = 1000;
 const ACTIVITY_WRITE_THROTTLE_MS = 1000;
@@ -75,8 +76,7 @@ export function useInactivityLogout({
   }, [warningVisible]);
 
   const performLogout = React.useCallback(async () => {
-    if (logoutInProgressRef.current) return;
-    logoutInProgressRef.current = true;
+    if (!beginSessionLogoutOnce(logoutInProgressRef)) return;
     setWarningVisible(false);
     setRemainingMs(0);
     saveAutoLogoutResumeContext({

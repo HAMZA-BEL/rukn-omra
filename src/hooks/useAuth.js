@@ -3,6 +3,7 @@ import { supabase, isSupabaseEnabled } from "../lib/supabase";
 import { db } from "../lib/db";
 import { clearSupabaseLogoutAppStorage } from "../utils/localStorageHardening";
 import { resolveAgencyAccessError } from "../utils/agencyAccess";
+import { signOutCurrentSession } from "../utils/authSession";
 
 const debugAuthAgencyLoad = ({ authUser, profile, agency }) => {
   if (process.env.NODE_ENV !== "development") return;
@@ -191,7 +192,7 @@ export function useAuth() {
         setCurrentAgency(null);
         setProfileError("disabled");
         try {
-          await supabase.auth.signOut();
+          await signOutCurrentSession(supabase.auth);
           clearSupabaseLogoutAppStorage(data.agency_id);
         } catch {}
         return;
@@ -424,7 +425,7 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     const currentAgencyId = agencyId;
-    await supabase.auth.signOut();
+    await signOutCurrentSession(supabase.auth);
     clearSupabaseLogoutAppStorage(currentAgencyId);
     setUser(null);
     setAgencyId(null);
