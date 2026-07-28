@@ -57,6 +57,43 @@ const formatDate = (date) => {
   return date.toISOString().slice(0, 10);
 };
 
+export const differenceInCalendarDays = (laterDate, earlierDate) => {
+  if (
+    !(laterDate instanceof Date)
+    || Number.isNaN(laterDate.getTime())
+    || !(earlierDate instanceof Date)
+    || Number.isNaN(earlierDate.getTime())
+  ) return null;
+  return Math.round((laterDate.getTime() - earlierDate.getTime()) / DAY_MS);
+};
+
+export function calculateTotalHotelNights({
+  departureDate,
+  returnDate,
+  hotelCheckinDay,
+  hotel_checkin_day,
+} = {}) {
+  const departure = parseDateParts(departureDate);
+  const hotelCheckOutDate = parseDateParts(returnDate);
+  if (!departure || !hotelCheckOutDate) return null;
+  const checkinDay = normalizeHotelCheckinDay(hotelCheckinDay || hotel_checkin_day);
+  const hotelCheckInDate = addDaysSafe(departure, checkinDay === "same_day" ? 0 : 1);
+  const nights = differenceInCalendarDays(hotelCheckOutDate, hotelCheckInDate);
+  return nights !== null && nights >= 0 ? nights : null;
+}
+
+export function calculateHotelNightAllocation(options = {}) {
+  const totalHotelNights = calculateTotalHotelNights(options);
+  if (totalHotelNights === null) return null;
+  const requestedMadinahNights = normalizeMadinahNights(options.madinahNights);
+  const madinahNights = Math.min(requestedMadinahNights, totalHotelNights);
+  return {
+    totalHotelNights,
+    madinahNights,
+    makkahNights: totalHotelNights - madinahNights,
+  };
+}
+
 export function calculateHotelStayDates({
   departureDate,
   returnDate,
@@ -79,7 +116,7 @@ export function calculateHotelStayDates({
     return blankStayDates();
   }
 
-  const availableStayDays = Math.round((returnDay.getTime() - firstHotelCheckIn.getTime()) / DAY_MS);
+  const availableStayDays = differenceInCalendarDays(returnDay, firstHotelCheckIn);
   if (nights > availableStayDays) {
     return blankStayDates();
   }

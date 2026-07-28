@@ -1,4 +1,5 @@
 import { getLegacyFieldsFromPackages } from "../../utils/programPackages";
+import { calculateHotelNightAllocation } from "../../utils/hotelDates";
 
 export const COSTING_ROOM_TYPES = [
   { key: "double", occupancy: 2 },
@@ -282,18 +283,23 @@ const sourceNumber = (value) => {
 };
 
 const deriveLevelNights = (program = {}, pkg = {}) => {
-  const duration = sourceNumber(program.duration);
   const madinahNights = sourceNumber(
     pkg.madinahNights
     ?? pkg.madinah_nights
     ?? program.madinahNights
     ?? program.madinah_nights
   );
-  const hasCompleteSource = duration !== null && duration > 0 && madinahNights !== null;
-  return {
-    duration,
+  const allocation = madinahNights === null ? null : calculateHotelNightAllocation({
+    departureDate: program.departure ?? program.departureDate ?? program.departure_date,
+    returnDate: program.returnDate ?? program.return_date,
+    hotelCheckinDay: program.hotelCheckinDay ?? program.hotel_checkin_day,
     madinahNights,
-    makkahNights: hasCompleteSource ? Math.max(0, duration - madinahNights) : 0,
+  });
+  const hasCompleteSource = allocation !== null && madinahNights !== null;
+  return {
+    duration: allocation?.totalHotelNights ?? null,
+    madinahNights: allocation?.madinahNights ?? madinahNights,
+    makkahNights: allocation?.makkahNights ?? 0,
     missingSource: !hasCompleteSource,
   };
 };

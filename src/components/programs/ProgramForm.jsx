@@ -7,7 +7,12 @@ import { theme } from "../styles";
 import { useLang } from "../../hooks/useLang";
 import { formatCurrency } from "../../utils/currency";
 import { formatAirlineLabel, getProgramAirline } from "../../utils/airlines";
-import { normalizeHotelCheckinDay, normalizeMadinahNights, normalizeVisitOrder } from "../../utils/hotelDates";
+import {
+  calculateHotelNightAllocation,
+  normalizeHotelCheckinDay,
+  normalizeMadinahNights,
+  normalizeVisitOrder,
+} from "../../utils/hotelDates";
 import { buildPosterTravelRoute, normalizeRouteStops, routeStopsToText } from "../../utils/programRoutes";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
@@ -1431,18 +1436,25 @@ export default function ProgramForm({
       const value = Number(raw);
       if (Number.isFinite(value) && value >= 0) prices[legacyKey] = value;
     });
+    const normalizedMadinahNights = normalizeMadinahNights(pkg.madinahNights);
+    const nightAllocation = calculateHotelNightAllocation({
+      departureDate: form.departure,
+      returnDate: form.returnDate,
+      hotelCheckinDay: form.hotelCheckinDay,
+      madinahNights: normalizedMadinahNights,
+    });
     return {
       id: pkg.id || `pkg-${index + 1}`,
       level: (pkg.level || "").trim() || `مستوى ${index + 1}`,
       hotelMecca: (pkg.hotelMecca || "").trim(),
       hotelMadina: (pkg.hotelMadina || "").trim(),
-      madinahNights: normalizeMadinahNights(pkg.madinahNights),
+      madinahNights: nightAllocation?.madinahNights ?? normalizedMadinahNights,
       mealPlan: (pkg.mealPlan || "").trim(),
       notes: (pkg.notes || "").trim(),
       prices,
       ...(isPlainObject(pkg.programCosting) ? { programCosting: pkg.programCosting } : {}),
     };
-  }), [packages]);
+  }), [form.departure, form.hotelCheckinDay, form.returnDate, packages]);
 
   React.useEffect(() => {
     const days = Number(form.duration);
