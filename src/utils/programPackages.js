@@ -77,6 +77,53 @@ export const getPackageRoomPrice = (pkg, roomType) => {
   return Number.isFinite(value) && value > 0 ? value : 0;
 };
 
+export const getBookableHotelPackages = (packages = []) => (
+  (Array.isArray(packages) ? packages : []).filter((pkg) => (
+    cleanText(pkg?.hotelMecca, "") || cleanText(pkg?.hotelMadina, "")
+  ))
+);
+
+export const getPackageAvailableRoomTypes = (pkg) => (
+  PROGRAM_ROOM_PRICE_KEYS.filter((key) => {
+    const value = Number(pkg?.prices?.[key]);
+    return Number.isFinite(value) && value > 0;
+  })
+);
+
+export function getHotelPackageOptionLabel(pkg = {}, {
+  formatHotel = (value) => value,
+  formatLevel = (value) => value,
+  makkahLabel = "مكة",
+  madinahLabel = "المدينة",
+} = {}) {
+  const makkah = cleanText(formatHotel(pkg.hotelMecca), "");
+  const madinah = cleanText(formatHotel(pkg.hotelMadina), "");
+  const level = cleanText(formatLevel(pkg.level), "");
+  const hotels = makkah && madinah
+    ? `${makkahLabel}: ${makkah} — ${madinahLabel}: ${madinah}`
+    : (makkah || madinah);
+  return [hotels, level].filter(Boolean).join(" — ");
+}
+
+export function getHotelPackageSelectOptions(packages = [], formatters = {}) {
+  const normalized = getBookableHotelPackages(packages);
+  const labels = normalized.map((pkg) => getHotelPackageOptionLabel(pkg, formatters));
+  const counts = labels.reduce((map, label) => {
+    map.set(label, (map.get(label) || 0) + 1);
+    return map;
+  }, new Map());
+  const occurrences = new Map();
+  return normalized.map((pkg, index) => {
+    const label = labels[index];
+    const occurrence = (occurrences.get(label) || 0) + 1;
+    occurrences.set(label, occurrence);
+    return {
+      value: pkg.id,
+      label: counts.get(label) > 1 ? `${label} — الباقة ${occurrence}` : label,
+    };
+  });
+}
+
 export const getPackageStartingPrice = (pkg) => {
   const prices = collectValidPrices([pkg]);
   return prices.length ? Math.min(...prices) : 0;

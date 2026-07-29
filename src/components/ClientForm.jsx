@@ -9,6 +9,9 @@ import { AppIcon } from "./Icon";
 import { PilgrimPhotoUploader, badgeStorageUnavailableMessage } from "../features/badges";
 import {
   PROGRAM_ROOM_PRICE_KEYS,
+  getBookableHotelPackages,
+  getHotelPackageSelectOptions,
+  getPackageAvailableRoomTypes,
   getPackageRoomPrice,
   getRoomTypeLabel,
   getRoomTypeOptions,
@@ -1097,6 +1100,19 @@ export default function ClientForm({
     () => selectedProgram ? normalizeProgramPackages(selectedProgram) : [],
     [selectedProgram]
   );
+  const bookableHotelPackages = React.useMemo(
+    () => getBookableHotelPackages(programPackages),
+    [programPackages]
+  );
+  const hotelPackageOptions = React.useMemo(
+    () => getHotelPackageSelectOptions(bookableHotelPackages, {
+      formatHotel: formatHotelName,
+      formatLevel: formatLevelLabel,
+      makkahLabel: t.hotelMecca || (lang === "fr" ? "La Mecque" : lang === "en" ? "Makkah" : "مكة"),
+      madinahLabel: t.hotelMadina || (lang === "fr" ? "Médine" : lang === "en" ? "Madinah" : "المدينة"),
+    }),
+    [bookableHotelPackages, lang, t.hotelMadina, t.hotelMecca]
+  );
   const selectedPackage = React.useMemo(
     () => programPackages.find(pkg => pkg.id === form.packageId)
       || programPackages.find(pkg => pkg.level === (form.packageLevel || form.hotelLevel))
@@ -1107,6 +1123,16 @@ export default function ClientForm({
     () => selectedPackage ? getPackageRoomPrice(selectedPackage, form.roomType) : 0,
     [selectedPackage, form.roomType]
   );
+  const selectedPackageRoomTypes = React.useMemo(
+    () => selectedPackage ? getPackageAvailableRoomTypes(selectedPackage) : [],
+    [selectedPackage]
+  );
+  const availableRoomTypeOptions = React.useMemo(() => [
+    { value: "", label: t.selectRoomPlaceholder },
+    ...localizedRoomTypeOptions.filter((option) => (
+      !option.value || selectedPackageRoomTypes.includes(option.value)
+    )).filter((option, index) => index > 0),
+  ], [localizedRoomTypeOptions, selectedPackageRoomTypes, t.selectRoomPlaceholder]);
   const costingReferenceCost = React.useMemo(() => {
     return getProgramServiceCostingReferenceCost(selectedProgram, normalizedServiceType);
   }, [normalizedServiceType, selectedProgram]);
@@ -1171,6 +1197,7 @@ export default function ClientForm({
 
   const handlePackageChange = React.useCallback((e) => {
     const pkg = programPackages.find(item => item.id === e.target.value) || null;
+    const availableRoomTypes = getPackageAvailableRoomTypes(pkg);
     setAutoPriceNote("");
     setForm(f => ({
       ...f,
@@ -1179,6 +1206,9 @@ export default function ClientForm({
       packageLevel: pkg?.level || "",
       hotelMecca: pkg?.hotelMecca || "",
       hotelMadina: pkg?.hotelMadina || "",
+      ...(!availableRoomTypes.includes(normalizeRoomTypeKey(f.roomType))
+        ? { roomType: "", roomTypeLabel: "", officialPrice: 0 }
+        : {}),
     }));
   }, [programPackages]);
 
@@ -1279,6 +1309,26 @@ export default function ClientForm({
     }));
   }, [form.programId, programPackages]);
 
+  React.useEffect(() => {
+    if (
+      !serviceNeedsAccommodation
+      || bookableHotelPackages.length !== 1
+      || selectedPackage
+    ) return;
+    const pkg = bookableHotelPackages[0];
+    setForm((current) => ({
+      ...current,
+      packageId: pkg.id,
+      hotelLevel: pkg.level,
+      packageLevel: pkg.level,
+      hotelMecca: pkg.hotelMecca,
+      hotelMadina: pkg.hotelMadina,
+      roomType: "",
+      roomTypeLabel: "",
+      officialPrice: 0,
+    }));
+  }, [bookableHotelPackages, selectedPackage, serviceNeedsAccommodation]);
+
   // Auto-calculate expiry = issueDate + 5 years
   React.useEffect(() => {
     const issue = form.passport.issueDate;
@@ -1300,6 +1350,31 @@ export default function ClientForm({
 
   const validate = () => {
     const e = {};
+    if (serviceNeedsAccommodation && hasSelectedProgram) {
+      if (!bookableHotelPackages.length) {
+        e.packageId = lang === "fr"
+          ? "Aucun hôtel n’est associé à ce programme"
+          : lang === "en"
+            ? "No hotels are attached to this program"
+            : "لا توجد فنادق مضافة لهذا البرنامج";
+      } else if (!selectedPackage || !bookableHotelPackages.some((pkg) => pkg.id === selectedPackage.id)) {
+        e.packageId = lang === "fr"
+          ? "Choisissez l’hôtel"
+          : lang === "en"
+            ? "Select the hotel"
+            : "اختر الفندق";
+      }
+      if (
+        selectedPackage
+        && (!form.roomType || !selectedPackageRoomTypes.includes(normalizeRoomTypeKey(form.roomType)))
+      ) {
+        e.roomType = lang === "fr"
+          ? "Choisissez un type de chambre disponible"
+          : lang === "en"
+            ? "Select an available room type"
+            : "اختر نوع غرفة متاحًا لهذا الفندق";
+      }
+    }
     if (entryMode === ROOM_ENTRY_MODES.GROUP && !isEdit) {
       const peopleErrors = groupPeople.map((person) => {
         const rowErrors = {};
@@ -1353,7 +1428,7 @@ export default function ClientForm({
         if (rowErrors.gender) return `groupPeople.${index}.gender`;
       }
     }
-    const orderedFields = ["firstName", "phone", "gender", "salePrice", "birthDate", "issueDate", "representedByClientId", "representedByRelationship"];
+    const orderedFields = ["packageId", "roomType", "firstName", "phone", "gender", "salePrice", "birthDate", "issueDate", "representedByClientId", "representedByRelationship"];
     return orderedFields.find((field) => validationErrors[field]) || "";
   }, [entryMode]);
 
@@ -1773,32 +1848,34 @@ export default function ClientForm({
               options={travelGroupOptions}
             />
           )}
-          {hasSelectedProgram ? (
-            <Select
-              label={t.level || "المستوى"}
-              value={selectedPackage?.id || ""}
-              onChange={handlePackageChange}
-              options={[
-                { value:"", label:t.selectLevelPlaceholder },
-                ...programPackages.map(pkg => ({ value:pkg.id, label:formatLevelLabel(pkg.level) })),
-              ]}
-              disabled={!serviceNeedsAccommodation}
-            />
-          ) : (
-            <Select
-              label={t.level || "المستوى"}
-              value=""
-              onChange={() => {}}
-              options={[{ value:"", label:t.selectLevelPlaceholder }]}
-              disabled
-            />
-          )}
+          <Select
+            label={lang === "fr" ? "Hôtel" : lang === "en" ? "Hotel" : "الفندق"}
+            value={selectedPackage?.id || ""}
+            onChange={handlePackageChange}
+            options={[
+              {
+                value: "",
+                label: !hasSelectedProgram
+                  ? (lang === "fr" ? "Choisissez d’abord le programme" : lang === "en" ? "Select the program first" : "اختر البرنامج أولًا")
+                  : !bookableHotelPackages.length
+                    ? (lang === "fr" ? "Aucun hôtel ajouté à ce programme" : lang === "en" ? "No hotels added to this program" : "لا توجد فنادق مضافة لهذا البرنامج")
+                    : (lang === "fr" ? "Choisissez l’hôtel..." : lang === "en" ? "Select hotel..." : "اختر الفندق..."),
+                disabled: hasSelectedProgram && bookableHotelPackages.length > 0,
+              },
+              ...hotelPackageOptions,
+            ]}
+            disabled={!hasSelectedProgram || !serviceNeedsAccommodation || !bookableHotelPackages.length}
+            error={errors.packageId}
+          />
           <Select
             label={t.roomType}
             value={form.roomType}
             onChange={handleRoomTypeChange}
-            options={hasSelectedProgram ? localizedRoomTypeOptions : [{ value:"", label:t.selectRoomPlaceholder }]}
-            disabled={!hasSelectedProgram || !serviceNeedsAccommodation}
+            options={hasSelectedProgram && selectedPackage
+              ? availableRoomTypeOptions
+              : [{ value:"", label:t.selectRoomPlaceholder }]}
+            disabled={!hasSelectedProgram || !serviceNeedsAccommodation || !selectedPackage || !selectedPackageRoomTypes.length}
+            error={errors.roomType}
           />
           <Select
             label={t.roomCategory || "تصنيف الغرفة"}
