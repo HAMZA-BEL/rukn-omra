@@ -1090,6 +1090,14 @@ const toAgency = (a) => ({
   default_poster_template_id:   a.defaultPosterTemplateId || a.default_poster_template_id || null,
 });
 
+const toAgencyFieldPatch = (fields = {}) => {
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(fields, "logoPath") || Object.prototype.hasOwnProperty.call(fields, "logo_path")) {
+    patch.logo_path = fields.logoPath ?? fields.logo_path ?? null;
+  }
+  return patch;
+};
+
 const fromAgency = (row) => ({
   id:            row.id,
   agencyId:      row.id,
@@ -2419,6 +2427,20 @@ export const db = {
       const { data, error } = await supabase
         .from("agencies")
         .update(toAgency(agencyData))
+        .eq("id", agencyId)
+        .select("*")
+        .maybeSingle();
+      if (error) return { data: null, error };
+      if (!data) return { data: null, error: new Error("agency-not-found") };
+      return { data: fromAgency(data), error: null };
+    },
+    async updateFields(agencyId, fields = {}) {
+      if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
+      const patch = toAgencyFieldPatch(fields);
+      if (!Object.keys(patch).length) return { data: null, error: new Error("empty-agency-field-patch") };
+      const { data, error } = await supabase
+        .from("agencies")
+        .update(patch)
         .eq("id", agencyId)
         .select("*")
         .maybeSingle();

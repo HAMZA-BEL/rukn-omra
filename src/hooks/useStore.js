@@ -4324,6 +4324,21 @@ export function useStore(agencyId, onToast, options = {}) {
     return result;
   }, [agency, setAgency, sync, agencyId]);
 
+  const updateAgencyFields = useCallback(async (fields = {}) => {
+    if (isSupabaseEnabled && !agencyId) {
+      return { data: null, error: new Error("missing-agency-id") };
+    }
+    if (!isSupabaseEnabled || !agencyId) {
+      setAgency((current) => ({ ...(current || {}), ...fields }));
+      return { data: { ...(agency || {}), ...fields }, error: null };
+    }
+    const result = await sync(() => db.agency.updateFields(agencyId, fields));
+    if (!result?.error && result?.data && getAgencyRecordId(result.data) === agencyId) {
+      setAgency(result.data);
+    }
+    return result;
+  }, [agency, agencyId, setAgency, sync]);
+
   // ── Force sync: push all local data to Supabase ───────────────────────────
   const forceSync = useCallback(async () => {
     if (!isSupabaseEnabled || !agencyId) return;
@@ -4481,7 +4496,7 @@ export function useStore(agencyId, onToast, options = {}) {
     addProgram, addProgramAndWait, updateProgram, setProgramNusukUploadEnabled, archiveProgramRecord, restoreProgramRecord, trashProgramRecord, deleteProgram,
     getProgramTravelGroups, loadProgramTravelGroups, createProgramTravelGroup, updateProgramTravelGroup, deleteProgramTravelGroup,
     restoreTrashItems, purgeTrashItems,
-    updateAgency, exportData, importData, forceSync, refreshAgencyUsers,
+    updateAgency, updateAgencyFields, exportData, importData, forceSync, refreshAgencyUsers,
     ensureAgencyNusukSettings: loadAgencyNusukSettings,
     saveAgencyNusukSettings,
     loadProgramDetailData,

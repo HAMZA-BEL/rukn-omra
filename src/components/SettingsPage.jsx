@@ -12,6 +12,7 @@ import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
 import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTemplates";
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import { useAgencySettingsDraft } from "./settingsAgencyDraft";
 import {
   NUSUK_SETTINGS_MODAL_DESCRIPTION,
   NusukSettingsFields,
@@ -124,6 +125,7 @@ export default function SettingsPage({
   const {
     agency,
     updateAgency,
+    updateAgencyFields,
     syncStatus,
     lastSynced,
     forceSync,
@@ -148,7 +150,15 @@ export default function SettingsPage({
   const { lang, setLang, t } = useLang();
   const normalizedRole = String(currentUserRole || "").toLowerCase();
   const canManageNusukSettings = !isSupabaseEnabled || ["owner", "manager"].includes(normalizedRole);
-  const [form,       setForm]      = React.useState({ ...agency });
+  const {
+    form,
+    setForm,
+    isDirty: agencyFormDirty,
+    hasServerConflict: agencyServerConflict,
+    beginSave: beginAgencySave,
+    completeSave: completeAgencySave,
+    applySavedFields: applySavedAgencyFields,
+  } = useAgencySettingsDraft(agency, agencyId);
   const [nusukSettingsForm, setNusukSettingsForm] = React.useState(() => (
     normalizeNusukContactSettings(agencyNusukSettings)
   ));
@@ -183,9 +193,9 @@ export default function SettingsPage({
     setSelectedBadgeTemplateId(String(templateId || ""));
   }, []);
   React.useEffect(() => {
-    setForm({ ...agency });
+    if (agencyFormDirty) return;
     setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(agency));
-  }, [agency]);
+  }, [agency, agencyFormDirty]);
   React.useEffect(() => {
     ensureAgencyNusukSettings?.();
   }, [ensureAgencyNusukSettings]);
@@ -264,12 +274,13 @@ export default function SettingsPage({
       onToast(posterDefaultLabels.unavailable, "error");
       return;
     }
+    const saveSnapshot = beginAgencySave();
     const nextForm = programPostersEnabled
       ? {
-        ...form,
+        ...saveSnapshot.draft,
         ...parseDefaultPosterTemplateValue(selectedPosterTemplateValue),
       }
-      : { ...form };
+      : { ...saveSnapshot.draft };
     setSettingsSaving(true);
     try {
       if (badgesEnabled && badgeTemplateSettingsSaveRef.current) {
@@ -292,8 +303,9 @@ export default function SettingsPage({
       }
       const result = await updateAgency(nextForm);
       if (result?.error) throw result.error;
-      setForm(nextForm);
-      setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(nextForm));
+      const canonical = result?.data || nextForm;
+      const adopted = completeAgencySave(canonical, saveSnapshot.revision, saveSnapshot.hadServerConflict);
+      if (adopted) setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(canonical));
       onToast(t.saveSettingsSuccess, "success");
     } catch (error) {
       console.error("[Settings] Agency settings save failed:", error);
@@ -436,8 +448,9 @@ export default function SettingsPage({
       const path = data?.path || "";
       const previewUrl = store.agencyLogoApi.getLogoUrl ? await store.agencyLogoApi.getLogoUrl(path) : "";
       const next = { logoPath: path, logoUrl: previewUrl };
-      setForm((current) => ({ ...current, ...next }));
-      updateAgency(next);
+      const logoResult = await updateAgencyFields(next);
+      if (logoResult?.error) throw logoResult.error;
+      applySavedAgencyFields(next, logoResult.data);
       setLogoPreviewUrl(previewUrl);
       onToast(t.agencyLogoUploadSuccess || (lang === "fr" ? "Logo enregistré" : lang === "en" ? "Logo saved" : "تم حفظ الشعار"), "success");
     } catch (error) {
@@ -456,8 +469,9 @@ export default function SettingsPage({
         if (error) throw error;
       }
       const next = { logoPath: "", logoUrl: "" };
-      setForm((current) => ({ ...current, ...next }));
-      updateAgency(next);
+      const logoResult = await updateAgencyFields(next);
+      if (logoResult?.error) throw logoResult.error;
+      applySavedAgencyFields(next, logoResult.data);
       setLogoPreviewUrl("");
       onToast(t.agencyLogoRemoveSuccess || (lang === "fr" ? "Logo supprimé" : lang === "en" ? "Logo removed" : "تم حذف الشعار"), "success");
     } catch {
@@ -814,6 +828,11 @@ export default function SettingsPage({
         open={agencyOpen}
         onToggle={() => setAgencyOpen((current) => !current)}
       >
+        {agencyServerConflict && (
+          <p role="status" style={{ margin:"0 0 12px", color:"var(--rukn-warning, #b45309)", fontSize:12, fontWeight:700 }}>
+            تم تحديث بيانات الوكالة من مكان آخر. لديك تعديلات غير محفوظة.
+          </p>
+        )}
         <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
           <Input label={t.agencyNameArLabel} value={form.nameAr || ""} onChange={set("nameAr")} />
           <Input label={t.agencyNameFrLabel} value={form.nameFr || ""} onChange={set("nameFr")} />
