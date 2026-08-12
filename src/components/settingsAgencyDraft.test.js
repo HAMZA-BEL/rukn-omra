@@ -167,4 +167,23 @@ describe("agency settings draft lifecycle", () => {
     expect(api.current.isDirty).toBe(false);
     expect(api.current.hasServerConflict).toBe(false);
   });
+
+  test("same-agency refresh preserves a dirty branding draft", async () => {
+    const original = agency("agency-a", { documentBranding:{ documents:{ invoice:{ enabled:false, style:"minimal" } } } });
+    await render(original);
+    await edit({ documentBranding:{ documents:{ invoice:{ enabled:true, style:"modern", colorMode:"manual", brandColor:"#123456" } } } });
+    await render({ ...original, documentBranding:{ ...original.documentBranding } });
+    expect(api.current.form.documentBranding.documents.invoice).toMatchObject({ enabled:true, style:"modern", brandColor:"#123456" });
+  });
+
+  test("agency switch hydrates the new agency branding", async () => {
+    await render(agency("agency-a", { documentBranding:{ enabled:true, style:"modern" } }));
+    await edit({ documentBranding:{ enabled:true, style:"formal", colorMode:"manual", brandColor:"#111111" } });
+    await render(agency("agency-b", { documentBranding:{ enabled:false, style:"minimal", colorMode:"auto", brandColor:"#0f766e" } }), "agency-b");
+    expect(api.current.form.documentBranding).toMatchObject({ enabled:false, style:"minimal" });
+    expect(api.current.isDirty).toBe(false);
+  });
+
+  test("editing the Arabic address does not erase the French address",async()=>{await render(agency("agency-a",{addressPrimaryAr:"قديم",addressPrimaryFr:"Adresse conservée"}));await edit({addressPrimaryAr:"عنوان جديد"});expect(api.current.form.addressPrimaryAr).toBe("عنوان جديد");expect(api.current.form.addressPrimaryFr).toBe("Adresse conservée");});
+  test("Arabic and Latin address drafts remain independent",async()=>{await render(agency("agency-a",{addressPrimaryAr:"قديم",addressPrimaryLatin:"Latin kept"}));await edit({addressPrimaryAr:"عنوان جديد"});expect(api.current.form.addressPrimaryLatin).toBe("Latin kept");await edit({addressPrimaryLatin:"New Latin"});expect(api.current.form.addressPrimaryAr).toBe("عنوان جديد");});
 });

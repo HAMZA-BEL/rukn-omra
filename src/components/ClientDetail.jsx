@@ -7,6 +7,7 @@ import PaymentForm from "./PaymentForm";
 import SharedReceiptModal from "./SharedReceiptModal";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { printReceipt, printClientCard, printSharedReceipt } from "./PrintTemplates";
+import { getAgencyDocumentBranding } from "../features/documentBranding";
 import { AppIcon } from "./Icon";
 import { getRoomTypeLabel } from "../utils/programPackages";
 import { getClientDisplayName } from "../utils/clientNames";
@@ -687,7 +688,7 @@ export default function ClientDetail({
     setSharedReceiptDraft(null);
   }, []);
 
-  const handleReceiptTypeSelect = React.useCallback(async (receiptType) => {
+  const handleReceiptTypeSelect = React.useCallback(async (receiptType, brandingEnabled) => {
     if (sharedReceiptDraft) {
       const printed = printSharedReceipt({
         receipt: sharedReceiptDraft,
@@ -695,6 +696,7 @@ export default function ClientDetail({
         agency,
         lang,
         receiptType,
+        brandingEnabled,
       });
       if (!printed) onToast?.(t.printWindowBlocked || "Unable to open the print window.", "error");
       setSharedReceiptDraft(null);
@@ -705,7 +707,7 @@ export default function ClientDetail({
       await requestGlobalDetailDataForAction();
       return;
     }
-    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments: globalPaymentRows });
+    printReceipt({ payment: receiptPayment, client, program, agency, lang, receiptType, payments: globalPaymentRows, brandingEnabled });
     setReceiptPayment(null);
   }, [agency, canPrintReceipts, client, globalDetailReady, globalPaymentRows, lang, onToast, program, receiptPayment, requestGlobalDetailDataForAction, sharedReceiptDraft, t.printWindowBlocked]);
 
@@ -1365,13 +1367,15 @@ export default function ClientDetail({
         t={t}
         lang={lang}
         participantTerms={participantTerms}
+        brandingEnabled={getAgencyDocumentBranding(agency, "receipt").enabled}
       />
     </div>
   );
 }
 
-function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerms }) {
+function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerms, brandingEnabled = false }) {
   useBodyScrollLock(open);
+  const [includeBranding, setIncludeBranding] = React.useState(brandingEnabled);
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -1381,6 +1385,7 @@ function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerm
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, open]);
+  React.useEffect(() => { if (open) setIncludeBranding(brandingEnabled); }, [brandingEnabled, open]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -1447,11 +1452,12 @@ function ReceiptTypeSelector({ open, onClose, onSelect, t, lang, participantTerm
         </div>
 
         <div style={{ display: "grid", gap: 10 }}>
-          <Button variant="secondary" icon="receipt" onClick={() => onSelect("agency")}
+          {brandingEnabled && <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:12 }}><input type="checkbox" checked={includeBranding} onChange={(event) => setIncludeBranding(event.target.checked)}/><span>{includeBranding ? "هوية الوكالة مفعلة ✓" : "هوية الوكالة مخفية لهذه الطبعة"}</span></label>}
+          <Button variant="secondary" icon="receipt" onClick={() => onSelect("agency", includeBranding)}
             style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
             {labels.agency}
           </Button>
-          <Button variant="primary" icon="receipt" onClick={() => onSelect("client")}
+          <Button variant="primary" icon="receipt" onClick={() => onSelect("client", includeBranding)}
             style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
             {labels.client}
           </Button>

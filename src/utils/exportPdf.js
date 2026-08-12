@@ -5,6 +5,7 @@ import { clientServiceIncludesAccommodation, getClientServiceTypeLabel } from ".
 import { translateRoomType } from "./i18nValues";
 import { getLegacyReceiptNumber, isPreviousPaymentRecord } from "./paymentRecords";
 import { getLocalizedAgencyName } from "./agencyDisplay";
+import { buildAgencyDocumentBrandingParts } from "../features/documentBranding/documentBranding";
 
 const getFinalInvoiceNumber = (invoice = {}) => String(
   invoice.invoiceDisplayNumber
@@ -100,6 +101,7 @@ export function printProgramPDF({
   const isRTL = lang === "ar";
   const dir   = isRTL ? "rtl" : "ltr";
   const terms = getParticipantTerminology(program, lang);
+  const branding = buildAgencyDocumentBrandingParts({ agency, documentType:"list", lang });
 
   // ── Labels (fall back to Arabic if key missing) ─────────────────────────
   const L = {
@@ -457,18 +459,22 @@ export function printProgramPDF({
       z-index: 9999;
     }
     .print-btn:hover { background: #15603a; }
+    ${branding.css}
   </style>
 </head>
-<body>
+<body class="${branding.pageClass}">
+
+  ${branding.watermark}
+  ${branding.header}
 
   <button class="print-btn no-print" onclick="window.print()">${escapeHtml(lang === "fr" ? "Imprimer" : lang === "en" ? "Print" : "طباعة")}</button>
 
   <!-- Header -->
   <div class="page-header">
-    <div class="agency-block">
+    ${branding.useLegacyIdentity ? `<div class="agency-block">
       <div class="agency-name">${escapeHtml(L.agencyName)}</div>
       ${L.phones ? `<div class="agency-phones">${escapeHtml(L.phones)}</div>` : ""}
-    </div>
+    </div>` : ""}
     <div class="print-meta">
       <div>${escapeHtml(L.printedOn)}: <strong>${escapeHtml(today)}</strong></div>
       <div>${escapeHtml(L.totalClients)}: <strong>${escapeHtml(clients.length)}</strong></div>
@@ -511,6 +517,8 @@ export function printProgramPDF({
     </div>
   </div>
 
+  ${branding.footer}
+
 </body>
 </html>`;
 
@@ -533,6 +541,7 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
       : `MAD ${Number(n || 0).toLocaleString("fr-MA")}`
   );
   const today = new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : "ar-MA");
+  const branding = buildAgencyDocumentBrandingParts({ agency, documentType:"report", lang });
   const formatDate = (value = "") => {
     const raw = String(value || "").trim();
     const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -920,21 +929,25 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
       z-index: 9999;
     }
     .print-btn:hover { background: #15603a; }
+    ${branding.css}
   </style>
 </head>
-<body>
+<body class="${branding.pageClass}">
+
+  ${branding.watermark}
+  ${branding.header}
 
   <button class="print-btn no-print" onclick="window.print()">${escapeHtml(L.printBtn)}</button>
 
   <!-- Page header -->
   <div class="page-header">
-    <div>
+    ${branding.useLegacyIdentity ? `<div>
       <div class="agency-name">${escapeHtml(L.agencyName)}</div>
       <div class="agency-sub">
         ${L.phones ? `${escapeHtml(L.phones)}` : ""}
         ${L.address ? `<br>${escapeHtml(L.address)}` : ""}
       </div>
-    </div>
+    </div>` : ""}
     <div class="report-meta">
       <div>${escapeHtml(L.printedOn)}: <strong>${escapeHtml(today)}</strong></div>
       <div>${escapeHtml(L.totalClients)}: <strong>${escapeHtml(data.length)}</strong></div>
@@ -1002,6 +1015,8 @@ export function printClearancePDF({ data, totals, filterLabel, lang, t, agency, 
       </div>
     </div>
   </div>
+
+  ${branding.footer}
 
 </body>
 </html>`;

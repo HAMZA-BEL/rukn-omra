@@ -2,10 +2,17 @@ import React from "react";
 
 const normalizeAgencyDraftScalar = (value) => (value === null || value === undefined ? "" : value);
 
+const areDraftValuesEqual = (first, second) => {
+  if (first && second && typeof first === "object" && typeof second === "object") {
+    return areAgencyDraftsEqual(first, second);
+  }
+  return normalizeAgencyDraftScalar(first) === normalizeAgencyDraftScalar(second);
+};
+
 export const areAgencyDraftsEqual = (first = {}, second = {}) => {
   const keys = new Set([...Object.keys(first || {}), ...Object.keys(second || {})]);
   for (const key of keys) {
-    if (normalizeAgencyDraftScalar(first?.[key]) !== normalizeAgencyDraftScalar(second?.[key])) return false;
+    if (!areDraftValuesEqual(first?.[key], second?.[key])) return false;
   }
   return true;
 };

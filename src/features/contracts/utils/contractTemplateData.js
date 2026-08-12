@@ -16,6 +16,7 @@ import {
 import { calculateAgeAtDate } from "../../../utils/age";
 import { getClientCin, getRepresentativeRelationshipLabel } from "../../../utils/clientRepresentation";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
+import { getAgencyBrandingRoot, getAgencyDocumentBranding } from "../../documentBranding/documentBranding";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
 export const CONTRACT_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -227,6 +228,8 @@ export const buildContractTemplateData = ({
   representedMinors = [],
   lang = "ar",
 } = {}) => {
+  const contractBrandingRoot=getAgencyBrandingRoot(agency),contractBranding=getAgencyDocumentBranding(agency,"contract");
+  const contractField=(key,value)=>!contractBrandingRoot.enabled||(contractBranding.enabled&&contractBranding.visibleFields[key])?value:"";
   const passport = client.passport || {};
   const fullName = firstValue(
     [client.firstName, client.lastName].map(clean).filter(Boolean).join(" "),
@@ -307,13 +310,17 @@ export const buildContractTemplateData = ({
       remaining_amount: formatMoney(remaining, lang),
     },
     agency: {
-      name: getLocalizedAgencyName(agency, lang),
-      address: getAgencyAddress(agency),
-      phone: getAgencyPhone(agency),
-      email: firstValue(agency.email),
-      ice: firstValue(agency.ice),
+      name: contractField(lang === "ar" ? "nameAr" : "nameLatin", getLocalizedAgencyName(agency, lang)),
+      address: contractField("address1", getAgencyAddress(agency)),
+      phone: contractField("phone1", getAgencyPhone(agency)),
+      email: contractField("email", firstValue(agency.email)),
+      ice: contractField("ice", firstValue(agency.ice)),
       bank_name: firstValue(agency.bankName, agency.bank_name),
+      account_holder: firstValue(agency.bankAccountHolder, agency.bank_account_holder),
+      account_number: firstValue(agency.bankAccountNumber, agency.bank_account_number),
       rib: firstValue(agency.bankRib, agency.bank_rib),
+      iban: firstValue(agency.bankIban, agency.bank_iban),
+      swift: firstValue(agency.bankSwift, agency.bank_swift),
     },
   };
 };

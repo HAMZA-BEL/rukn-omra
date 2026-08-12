@@ -23,6 +23,7 @@ import {
   getProgramStandaloneServiceSalePrice,
 } from "./programs/programCosting";
 import { printSharedReceipt } from "./PrintTemplates";
+import { getAgencyDocumentBranding } from "../features/documentBranding";
 import { PAYMENT_TYPE_NORMAL, PAYMENT_TYPE_PREVIOUS } from "../utils/paymentRecords";
 
 const tc = theme.colors;
@@ -579,7 +580,7 @@ export default function SharedReceiptModal({
     setReceiptDraft(null);
   }, []);
 
-  const handleReceiptCopySelect = React.useCallback((receiptType) => {
+  const handleReceiptCopySelect = React.useCallback((receiptType, brandingEnabled) => {
     if (!receiptDraft) return;
     const printed = printSharedReceipt({
       receipt: receiptDraft,
@@ -587,6 +588,7 @@ export default function SharedReceiptModal({
       agency,
       lang,
       receiptType,
+      brandingEnabled,
     });
     if (!printed) {
       onToast?.(
@@ -1034,13 +1036,15 @@ export default function SharedReceiptModal({
         onSelect={handleReceiptCopySelect}
         t={t}
         lang={lang}
+        brandingEnabled={getAgencyDocumentBranding(agency, "receipt").enabled}
       />
     </GlassCard>
   );
 }
 
-function SharedReceiptCopySelector({ open, onClose, onSelect, t, lang }) {
+function SharedReceiptCopySelector({ open, onClose, onSelect, t, lang, brandingEnabled = false }) {
   useBodyScrollLock(open);
+  const [includeBranding, setIncludeBranding] = React.useState(brandingEnabled);
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -1050,6 +1054,7 @@ function SharedReceiptCopySelector({ open, onClose, onSelect, t, lang }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, open]);
+  React.useEffect(() => { if (open) setIncludeBranding(brandingEnabled); }, [brandingEnabled, open]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -1116,11 +1121,12 @@ function SharedReceiptCopySelector({ open, onClose, onSelect, t, lang }) {
         </div>
 
         <div style={{ display: "grid", gap: 10 }}>
-          <Button variant="secondary" icon="receipt" onClick={() => onSelect("agency")}
+          {brandingEnabled && <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:12 }}><input type="checkbox" checked={includeBranding} onChange={(event) => setIncludeBranding(event.target.checked)}/><span>{includeBranding ? "هوية الوكالة مفعلة ✓" : "هوية الوكالة مخفية لهذه الطبعة"}</span></label>}
+          <Button variant="secondary" icon="receipt" onClick={() => onSelect("agency", includeBranding)}
             style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
             {labels.agency}
           </Button>
-          <Button variant="primary" icon="receipt" onClick={() => onSelect("client")}
+          <Button variant="primary" icon="receipt" onClick={() => onSelect("client", includeBranding)}
             style={{ justifyContent: "center", width: "100%", minHeight: 42 }}>
             {labels.client}
           </Button>

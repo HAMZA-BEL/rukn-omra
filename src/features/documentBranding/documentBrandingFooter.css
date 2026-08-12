@@ -1,0 +1,38 @@
+.agency-branding-footer,.document-branding-footer{direction:ltr;text-align:left;unicode-bidi:isolate;isolation:isolate;overflow-wrap:anywhere}.agency-branding-footer bdi,.document-branding-footer bdi{direction:ltr;unicode-bidi:isolate}.agency-branding-footer .footer-entry{display:inline}.agency-branding-footer .footer-label{font-weight:800}
+
+/* Design 1: traditional multiline agency block. */
+.agency-branding-footer.footer1{display:block!important;justify-content:initial;grid-template-columns:none!important;gap:0!important;border-top:0;border-inline-start:3px solid var(--agency-brand);background:transparent;padding:5px 8px;line-height:1.45}.footer1 .footer-line{display:block;margin:0;white-space:normal;overflow-wrap:anywhere}.footer1 .footer-line+.footer-line{margin-top:1px}.footer1 span+span::before{content:none!important;margin:0!important}.footer1 .footer-separator{white-space:pre;color:#64748b}
+
+/* Design 2: one minimal inline stream with dot separators. */
+.agency-branding-footer.footer2{display:block!important;border:0;border-top:1px solid color-mix(in srgb,var(--agency-brand) 55%,transparent);background:transparent;padding:5px 2px 0;line-height:1.4}.footer2-inline{display:inline;white-space:normal}.footer2 span+span::before{content:none!important}.footer2-dot{color:var(--agency-brand);white-space:pre}
+
+/* Design 3: compact semantic groups in one connected unit. */
+.agency-branding-footer.footer3{display:block!important;border:0;border-top:2px solid color-mix(in srgb,var(--agency-brand) 65%,transparent);border-radius:0;background:transparent;padding:5px 2px 0;grid-template-columns:none!important;text-align:left}.footer3-groups{display:flex;align-items:flex-start;justify-content:flex-start;flex-wrap:wrap;gap:4px 7px}.footer3-group{display:inline-grid;gap:1px;min-width:0;flex:0 1 auto}.footer3-group>small{color:var(--agency-brand);font-size:max(5pt,calc(var(--branding-footer-size) * .62));font-weight:900;letter-spacing:.02em;text-transform:uppercase}.footer3-group>span{line-height:1.35}.footer3-divider{width:1px;height:16px;background:color-mix(in srgb,var(--agency-brand) 30%,transparent);align-self:center;flex:none}.footer3 span+span::before{content:none!important}.footer3-item-dot{color:#94a3b8;white-space:pre}
+
+/* Design 4: the only filled brand strip. */
+.agency-branding-footer.footer4{display:block!important;border:0;background:var(--agency-brand);color:#fff;padding:6px 8px;border-radius:2px;line-height:1.4}.footer4-strip-content{display:inline;white-space:normal}.footer4 .footer-label,.footer4 bdi{color:#fff}.footer4 span+span::before{content:none!important}.footer4-separator{color:rgba(255,255,255,.72);white-space:pre}
+
+.agency-branding-preview.is-landscape .agency-branding-footer.footer1,.agency-branding-preview.is-landscape .agency-branding-footer.footer2,.agency-branding-preview.is-landscape .agency-branding-footer.footer3,.agency-branding-preview.is-landscape .agency-branding-footer.footer4{display:block!important;grid-template-columns:none!important;gap:0}.agency-branding-preview.is-landscape .footer3-groups{flex-wrap:nowrap}.agency-branding-preview.is-landscape .footer3-group{white-space:normal}
+.branding-settings-editor .agency-branding-footer{font-size:5.7px;font-weight:650;line-height:1.45;width:100%;margin-top:auto}
+
+.branding-settings-editor .agency-branding-footer {
+  position: static;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: auto;
+  font-size: var(--branding-footer-size);
+  line-height: 1.4;
+  break-inside: avoid;
+}
+.branding-settings-editor .agency-branding-footer.footer1 { padding: calc(var(--branding-footer-size) * .7) calc(var(--branding-footer-size) * 1.1); }
+.branding-settings-editor .agency-branding-footer.footer2,
+.branding-settings-editor .agency-branding-footer.footer3 { padding-top: calc(var(--branding-footer-size) * .55); }
+.branding-settings-editor .agency-branding-footer.footer4 { padding: calc(var(--branding-footer-size) * .65) calc(var(--branding-footer-size) * 1.1); }
+
+.branding-settings-editor .agency-branding-footer.footer3 .footer3-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  color: inherit;
+}
+.branding-settings-editor .agency-branding-preview.is-landscape .footer3-groups { flex-wrap: wrap; }

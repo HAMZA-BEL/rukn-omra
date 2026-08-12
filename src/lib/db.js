@@ -1065,11 +1065,13 @@ const fromUser = (row) => ({
   createdAt: row.created_at,
 });
 
-const toAgency = (a) => ({
+export const toAgencyRow = (a) => ({
   name_ar:        a.nameAr        ?? null,
-  name_fr:        a.nameFr        ?? null,
+  name_fr:        a.agencyNameLatin ?? a.nameFr ?? null,
   agency_city:    a.city          ?? null,
   address_tiznit: a.addressTiznit ?? null,
+  address_primary_ar: a.addressPrimaryAr ?? a.address_primary_ar ?? null,
+  address_primary_latin: a.addressPrimaryLatin ?? a.address_primary_latin ?? a.addressPrimaryFr ?? a.address_primary_fr ?? null,
   address_agadir: a.addressAgadir ?? null,
   phone_tiznit1:  a.phoneTiznit1  ?? null,
   phone_tiznit2:  a.phoneTiznit2  ?? null,
@@ -1081,14 +1083,33 @@ const toAgency = (a) => ({
   website:        a.website       ?? null,
   bank_name:           a.bankName          ?? null,
   bank_account_holder: a.bankAccountHolder ?? null,
+  bank_account_number: a.bankAccountNumber ?? null,
   bank_rib:            a.bankRib           ?? null,
   bank_iban:           a.bankIban          ?? null,
+  bank_swift:          a.bankSwift         ?? null,
   bank_note:           a.bankNote          ?? null,
   logo_path:           a.logoPath || a.logo_path || null,
+  document_branding:   a.documentBranding || a.document_branding || { documents: {} },
   default_poster_template_type: a.defaultPosterTemplateType || a.default_poster_template_type || "official",
   default_poster_template_key:  a.defaultPosterTemplateKey ?? a.default_poster_template_key ?? "rukn",
   default_poster_template_id:   a.defaultPosterTemplateId || a.default_poster_template_id || null,
 });
+
+export const getSupabaseErrorReport = (error, context = {}) => ({
+  operation: context.operation || error?.operation || "unknown",
+  table: context.table || error?.table || "unknown",
+  code: error?.code || null,
+  message: error?.message || String(error || "Unknown Supabase error"),
+  details: error?.details || null,
+  hint: error?.hint || null,
+  ...(Array.isArray(context.payloadKeys) ? { payloadKeys: context.payloadKeys } : {}),
+});
+
+const attachSupabaseErrorContext = (error, context) => {
+  if (!error || typeof error !== "object") return error;
+  try { Object.assign(error, context); } catch {}
+  return error;
+};
 
 const toAgencyFieldPatch = (fields = {}) => {
   const patch = {};
@@ -1098,15 +1119,19 @@ const toAgencyFieldPatch = (fields = {}) => {
   return patch;
 };
 
-const fromAgency = (row) => ({
+export const fromAgencyRow = (row) => ({
   id:            row.id,
   agencyId:      row.id,
   agency_id:     row.id,
   status:        row.status || "",
   nameAr:        row.name_ar,
   nameFr:        row.name_fr,
+  agencyNameLatin: row.name_fr || "",
   city:          row.agency_city || "",
   addressTiznit: row.address_tiznit,
+  addressPrimaryAr: row.address_primary_ar || row.address_tiznit || "",
+  addressPrimaryFr: row.address_primary_latin || row.address_primary_fr || "",
+  addressPrimaryLatin: row.address_primary_latin || row.address_primary_fr || "",
   addressAgadir: row.address_agadir,
   phoneTiznit1:  row.phone_tiznit1,
   phoneTiznit2:  row.phone_tiznit2,
@@ -1118,11 +1143,14 @@ const fromAgency = (row) => ({
   website:       row.website,
   bankName:          row.bank_name || "",
   bankAccountHolder: row.bank_account_holder || "",
+  bankAccountNumber: row.bank_account_number || "",
   bankRib:           row.bank_rib || "",
   bankIban:          row.bank_iban || "",
+  bankSwift:         row.bank_swift || "",
   bankNote:          row.bank_note || "",
   logoPath:          row.logo_path || "",
   logoUrl:           row.logo_url || "",
+  documentBranding:  row.document_branding || { documents: {} },
   defaultPosterTemplateType: row.default_poster_template_type || "official",
   defaultPosterTemplateKey: row.default_poster_template_key || "rukn",
   defaultPosterTemplateId: row.default_poster_template_id || "",
@@ -2414,25 +2442,30 @@ export const db = {
   agency: {
     async fetchAccessSnapshot() {
       const { data, error } = await supabase.rpc("get_current_agency_access_snapshot");
-      return { data: data && typeof data === "object" ? fromAgency(data) : null, error };
+      return { data: data && typeof data === "object" ? fromAgencyRow(data) : null, error };
     },
     async fetch(agencyId) {
       if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
       const { data, error } = await supabase
         .from("agencies").select("*").eq("id", agencyId).maybeSingle();
-      return { data: data ? fromAgency(data) : null, error };
+      return { data: data ? fromAgencyRow(data) : null, error };
     },
     async update(agencyId, agencyData) {
       if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
+      const payload = toAgencyRow(agencyData);
       const { data, error } = await supabase
         .from("agencies")
-        .update(toAgency(agencyData))
+        .update(payload)
         .eq("id", agencyId)
         .select("*")
         .maybeSingle();
-      if (error) return { data: null, error };
+      if (error) {
+        const context={operation:"update",table:"public.agencies",payloadKeys:Object.keys(payload)};
+        console.error("[DB] Supabase operation failed:",getSupabaseErrorReport(error,context));
+        return { data: null, error:attachSupabaseErrorContext(error,context) };
+      }
       if (!data) return { data: null, error: new Error("agency-not-found") };
-      return { data: fromAgency(data), error: null };
+      return { data: fromAgencyRow(data), error: null };
     },
     async updateFields(agencyId, fields = {}) {
       if (!agencyId) return { data: null, error: new Error("missing-agency-id") };
@@ -2446,7 +2479,7 @@ export const db = {
         .maybeSingle();
       if (error) return { data: null, error };
       if (!data) return { data: null, error: new Error("agency-not-found") };
-      return { data: fromAgency(data), error: null };
+      return { data: fromAgencyRow(data), error: null };
     },
   },
 

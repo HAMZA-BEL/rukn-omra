@@ -1,0 +1,103 @@
+.agency-branding-header {
+  display: flex;
+  align-items: center;
+  direction: ltr;
+  gap: var(--branding-identity-gap);
+  padding-block-start: 1mm;
+  padding-block-end: calc(var(--branding-top-space) - 12mm);
+  padding-inline: 1mm;
+  border-bottom: 2px solid var(--agency-brand);
+  max-inline-size: 100%;
+  box-sizing: border-box;
+}
+
+.agency-branding-header .document-branding-logo {
+  display: block;
+  inline-size: auto;
+  block-size: var(--branding-logo-size);
+  max-inline-size: min(calc(var(--branding-logo-size) * 4), 48%);
+  max-block-size: none;
+  object-fit: contain;
+  flex: 0 1 auto;
+}
+
+.agency-branding-names {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  max-inline-size: 100%;
+  flex: 0 1 auto;
+  overflow: visible;
+}
+
+.agency-branding-names .document-branding-name,
+.agency-branding-names .document-branding-name-fr {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.agency-branding-names .document-branding-name {
+  color: var(--agency-brand);
+  font-size: var(--branding-name-size);
+  font-weight: 900;
+  line-height: 1.08;
+}
+
+.agency-branding-names .document-branding-name-fr {
+  color: #374151;
+  font-size: max(7px, calc(var(--branding-name-size) * .55));
+  font-weight: 750;
+  line-height: 1.15;
+}
+
+.agency-branding-modern .agency-branding-header {
+  border-inline-start: 5px solid var(--agency-brand);
+  background: #f7f8fa;
+}
+
+.agency-branding-formal .agency-branding-header {
+  border: 3px double var(--agency-brand);
+}
+
+.agency-branding-formal .document-branding-name { font-family: Georgia, serif; }
+.identity-dir-ltr.header-placement-inline-end .document-branding-logo,
+.identity-dir-rtl.header-placement-inline-start .document-branding-logo { order: 2; }
+.header-placement-stacked .agency-branding-header { flex-direction: column; }
+.header-placement-stacked .document-branding-logo { max-inline-size: 100%; }
+.header-placement-stacked .agency-branding-names { flex-basis: auto; }
+.header-align-right .agency-branding-header { justify-content: flex-end; text-align: right; }
+.header-align-center .agency-branding-header { justify-content: center; text-align: center; }
+.header-align-left .agency-branding-header { justify-content: flex-start; text-align: left; }
+.header-align-center .agency-branding-names { text-align: center; }
+.header-align-right .agency-branding-names { text-align: right; }
+.header-align-left .agency-branding-names { text-align: left; }
+.identity-side-right .agency-branding-header { justify-content:flex-end; text-align:right; }
+.identity-side-left .agency-branding-header { justify-content:flex-start; text-align:left; }
+.identity-side-right .agency-branding-names { text-align:right; }
+.identity-side-left .agency-branding-names { text-align:left; }
+.identity-order-logo-edge.identity-dir-rtl:not(.header-placement-stacked) .document-branding-logo { order:2; }
+.identity-order-logo-edge.identity-dir-ltr:not(.header-placement-stacked) .document-branding-logo { order:0; }
+.identity-order-custom-reversed.identity-dir-rtl:not(.header-placement-stacked) .document-branding-logo { order:0; }
+.identity-order-custom-reversed.identity-dir-ltr:not(.header-placement-stacked) .document-branding-logo { order:2; }
+.header-no-divider.agency-branding-minimal .agency-branding-header { border-bottom: 0; }
+.header-no-divider.agency-branding-modern .agency-branding-header { border-inline-start: 0; }
+.header-no-divider.agency-branding-formal .agency-branding-header { border: 0; }
+
+/* The preview is an A4 composition scaled as one unit; branding keeps print units. */
+.agency-branding-preview .agency-branding-header {
+  gap: var(--branding-identity-gap);
+  margin-bottom: 3mm;
+  padding-block-start: 1mm;
+  padding-block-end: calc(var(--branding-top-space) - 12mm);
+  padding-inline: 1mm;
+}
+.agency-branding-preview .agency-branding-header .document-branding-logo {
+  inline-size: auto;
+  block-size: var(--branding-logo-size);
+  max-inline-size: min(calc(var(--branding-logo-size) * 4), 48%);
+}
+.agency-branding-preview .agency-branding-names .document-branding-name { font-size: var(--branding-name-size); }
+.agency-branding-preview .agency-branding-names .document-branding-name-fr { font-size: max(9pt, calc(var(--branding-name-size) * .55)); }

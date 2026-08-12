@@ -13,6 +13,17 @@ import { useAgencyCodePosterTemplates } from "../hooks/useAgencyCodePosterTempla
 import { validateAgencyLogoFile } from "../utils/agencyLogo";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
 import { useAgencySettingsDraft } from "./settingsAgencyDraft";
+import { DocumentBrandingSettings } from "../features/documentBranding";
+import "../features/documentBranding/documentBranding.css";
+import "../features/documentBranding/documentBrandingComposition.css";
+import "../features/documentBranding/documentBrandingControls.css";
+import "../features/documentBranding/documentBrandingFooter.css";
+import "../features/documentBranding/documentBrandingHeader.css";
+import "../features/documentBranding/documentBrandingProgressive.css";
+import "../features/documentBranding/documentBrandingRanges.css";
+import "../features/documentBranding/documentBrandingSamples.css";
+import "../features/documentBranding/documentBrandingPreviewZoom.css";
+import "../features/documentBranding/documentBrandingWatermark.css";
 import {
   NUSUK_SETTINGS_MODAL_DESCRIPTION,
   NusukSettingsFields,
@@ -169,6 +180,7 @@ export default function SettingsPage({
   const [agencyOpen, setAgencyOpen] = React.useState(false);
   const [nusukSettingsOpen, setNusukSettingsOpen] = React.useState(false);
   const [logoOpen, setLogoOpen] = React.useState(false);
+  const [brandingOpen, setBrandingOpen] = React.useState(false);
   const [bankOpen, setBankOpen] = React.useState(false);
   const [securityOpen, setSecurityOpen] = React.useState(false);
   const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
@@ -308,7 +320,10 @@ export default function SettingsPage({
       if (adopted) setSelectedDefaultPosterTemplateValue(getDefaultPosterTemplateValue(canonical));
       onToast(t.saveSettingsSuccess, "success");
     } catch (error) {
-      console.error("[Settings] Agency settings save failed:", error);
+      console.error("[Settings] Agency settings save failed:", {
+        operation:error?.operation||"unknown",table:error?.table||"unknown",code:error?.code||null,
+        message:error?.message||String(error),details:error?.details||null,hint:error?.hint||null,
+      });
       onToast(t.saveSettingsFailed || t.error || "تعذر حفظ الإعدادات", "error");
     } finally {
       setSettingsSaving(false);
@@ -835,19 +850,38 @@ export default function SettingsPage({
         )}
         <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
           <Input label={t.agencyNameArLabel} value={form.nameAr || ""} onChange={set("nameAr")} />
-          <Input label={t.agencyNameFrLabel} value={form.nameFr || ""} onChange={set("nameFr")} />
+          <Input label={t.agencyNameLatinLabel || t.agencyNameFrLabel} value={form.agencyNameLatin || form.nameFr || ""} onChange={set("agencyNameLatin")} />
           <Input label={t.agencyCityLabel} value={form.city || ""} onChange={set("city")} />
           <Input label={t.iceLabel} value={form.ice || ""} onChange={set("ice")} placeholder={t.icePlaceholder} />
           <Input label={t.rcLabel} value={form.rc || ""} onChange={set("rc")} />
           <Input label={t.email} value={form.email || ""} onChange={set("email")} />
           <Input label={t.website} value={form.website || ""} onChange={set("website")} />
           <Input label={t.phoneTiznit1} value={form.phoneTiznit1 || ""} onChange={set("phoneTiznit1")} />
-          <Input label={t.phoneAgadir1} value={form.phoneAgadir1 || ""} onChange={set("phoneAgadir1")} />
-          <Input label={t.addressTiznitLabel} value={form.addressTiznit || ""} onChange={set("addressTiznit")}
+          <Input label={t.phoneTiznit2} value={form.phoneTiznit2 || ""} onChange={set("phoneTiznit2")} />
+          <Input label={t.addressPrimaryArLabel} value={form.addressPrimaryAr || form.addressTiznit || ""} onChange={set("addressPrimaryAr")}
+            style={{ gridColumn:"1/-1" }} />
+          <Input label={t.addressPrimaryLatinLabel || t.addressPrimaryFrLabel} value={form.addressPrimaryLatin || form.addressPrimaryFr || ""} onChange={set("addressPrimaryLatin")}
             style={{ gridColumn:"1/-1" }} />
           <Input label={t.addressAgadirLabel} value={form.addressAgadir || ""} onChange={set("addressAgadir")}
             style={{ gridColumn:"1/-1" }} />
         </div>
+      </SettingsSectionCard>
+
+      <SettingsSectionCard
+        title={t.brandingTitle}
+        description={t.brandingDescription}
+        open={brandingOpen}
+        onToggle={() => setBrandingOpen((current) => !current)}
+      >
+        <DocumentBrandingSettings
+          agency={form}
+          value={form.documentBranding || form.document_branding}
+          logoUrl={logoPreviewUrl}
+          t={t}
+          lang={lang}
+          dir={lang === "ar" ? "rtl" : "ltr"}
+          onChange={(documentBranding) => setForm((current) => ({ ...current, documentBranding }))}
+        />
       </SettingsSectionCard>
 
       <SettingsSectionCard
@@ -965,8 +999,10 @@ export default function SettingsPage({
         <div className="form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
           <Input label={t.bankNameLabel} value={form.bankName || ""} onChange={set("bankName")} />
           <Input label={t.bankAccountHolderLabel} value={form.bankAccountHolder || ""} onChange={set("bankAccountHolder")} />
+          <Input label={t.bankAccountNumberLabel} value={form.bankAccountNumber || ""} onChange={set("bankAccountNumber")} />
           <Input label={t.bankRibLabel} value={form.bankRib || ""} onChange={set("bankRib")} />
           <Input label={t.bankIbanLabel} value={form.bankIban || ""} onChange={set("bankIban")} />
+          <Input label={t.bankSwiftLabel} value={form.bankSwift || ""} onChange={set("bankSwift")} />
           <Input label={t.bankNoteLabel} value={form.bankNote || ""} onChange={set("bankNote")} style={{ gridColumn:"1/-1" }} />
         </div>
       </SettingsSectionCard>

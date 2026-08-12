@@ -1492,7 +1492,10 @@ export function useStore(agencyId, onToast, options = {}) {
       const result = await fn();
       const error  = result?.error;
       if (error) {
-        console.error("[Store] Supabase sync error:", error);
+        console.error("[Store] Supabase sync error:", {
+          operation:error?.operation||"unknown",table:error?.table||"unknown",code:error?.code||null,
+          message:error?.message||String(error),details:error?.details||null,hint:error?.hint||null,
+        });
         throw error;
       }
       const now = new Date();
@@ -1501,7 +1504,10 @@ export function useStore(agencyId, onToast, options = {}) {
       setSyncStatus("synced");
       return result || { error: null };
     } catch (err) {
-      console.error("[Store] Sync request failed:", err);
+      console.error("[Store] Sync request failed:", {
+        operation:err?.operation||"unknown",table:err?.table||"unknown",code:err?.code||null,
+        message:err?.message||String(err),details:err?.details||null,hint:err?.hint||null,
+      });
       setSyncStatus(isProgramCapacityDatabaseError(err) ? "synced" : "offline");
       return { error: err };
     }

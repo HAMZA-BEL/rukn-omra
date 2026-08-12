@@ -1,5 +1,6 @@
 // Print templates — called via window.print() after rendering into a hidden div
 import React from "react";
+import "./invoicePrintControls.css";
 import { Modal, Button, Input } from "./UI";
 import { TRANSLATIONS } from "../data/initialData";
 import { formatCurrency } from "../utils/currency";
@@ -29,6 +30,16 @@ import {
   savedInvoiceSnapshotToPrintData,
   validateInvoiceRecipient,
 } from "../utils/invoices";
+import {
+  buildAgencyDocumentFooterHtml,
+  buildAgencyDocumentHeaderHtml,
+  buildAgencyDocumentWatermarkHtml,
+  getDocumentBrandingPrintCSS,
+  getDocumentOrientationPrintCSS,
+  getDocumentFooterPrintCSS,
+  getAgencyDocumentBranding,
+  isDocumentBrandingEnabled,
+} from "../features/documentBranding";
 
 export { cancelInvoiceInRegistry } from "../utils/invoices";
 
@@ -207,8 +218,10 @@ const formatInvoiceTravelDate = (value) => {
 const getAgencyBankDetails = (agency = {}) => ([
   ["bank", trimValue(agency.bankName || agency.bank_name)],
   ["holder", trimValue(agency.bankAccountHolder || agency.bank_account_holder)],
+  ["account", trimValue(agency.bankAccountNumber || agency.bank_account_number)],
   ["rib", trimValue(agency.bankRib || agency.bank_rib)],
   ["iban", trimValue(agency.bankIban || agency.bank_iban)],
+  ["swift", trimValue(agency.bankSwift || agency.bank_swift)],
   ["note", trimValue(agency.bankNote || agency.bank_note)],
 ]).filter(([, value]) => value);
 const getReadableFileNumber = (client = {}, programClients = []) => {
@@ -257,12 +270,16 @@ const commonPrintCSS = `
   html[dir="rtl"] .price, html[dir="rtl"] .qty { text-align:center; }
   @media print { @page { size:A4 portrait; margin:0; } }
 `;
-export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice", submitLabel = "" }) {
+export const normalizeInvoiceDocumentLanguage=(lang)=>["ar","fr","en"].includes(lang)?lang:"ar";
+export const resolveAgencyForBrandedPrint=async(agency={},logoApi)=>{const logoPath=agency?.logoPath||agency?.logo_path||"";if(agency?.logoUrl||!logoPath||!logoApi?.getLogoUrl)return agency;const logoUrl=await logoApi.getLogoUrl(logoPath);return logoUrl?{...agency,logoUrl}:agency;};
+export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", documentType = "invoice", submitLabel = "", brandingEnabled = false }) {
   const [recipientType, setRecipientType] = React.useState("client");
   const [companyName, setCompanyName] = React.useState("");
   const [companyIce, setCompanyIce] = React.useState("");
   const [error, setError] = React.useState("");
   const [printing, setPrinting] = React.useState(false);
+  const [includeBranding, setIncludeBranding] = React.useState(brandingEnabled);
+  const [documentLang,setDocumentLang]=React.useState(()=>normalizeInvoiceDocumentLanguage(lang));
 
   React.useEffect(() => {
     if (!open) return;
@@ -271,7 +288,9 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
     setCompanyIce("");
     setError("");
     setPrinting(false);
-  }, [open]);
+    setIncludeBranding(brandingEnabled);
+    setDocumentLang(normalizeInvoiceDocumentLanguage(lang));
+  }, [brandingEnabled, lang, open]);
 
   const recipientOptions = [
     { value: "client", label: label(lang, "إصدار باسم المعتمر", "Émettre au nom du client", "Issue to pilgrim") },
@@ -301,7 +320,8 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
       const printed = await Promise.resolve(onPrint?.(
         recipientType === "company"
           ? { type: "company", companyName: name, ice }
-          : { type: "client" }
+          : { type: "client" },
+        { brandingEnabled: includeBranding, documentLang }
       ));
       if (printed === false) {
         setError(popupBlockedMessage(lang));
@@ -321,6 +341,7 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
       width={520}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="invoice-language-control"><strong>{label(lang,"لغة الفاتورة","Langue de la facture","Invoice language")}</strong><div role="group" aria-label={label(lang,"لغة الفاتورة","Langue de la facture","Invoice language")}>{[["ar","العربية"],["fr","Français"],["en","English"]].map(([code,text])=><button type="button" key={code} aria-pressed={documentLang===code} className={documentLang===code?'is-selected':''} onClick={()=>setDocumentLang(code)}>{text}</button>)}</div></div>
         <div style={{ display: "grid", gap: 10 }}>
           {recipientOptions.map((option) => {
             const active = recipientType === option.value;
@@ -384,6 +405,7 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
           <Button variant="ghost" onClick={onClose}>
             {label(lang, "إلغاء", "Annuler", "Cancel")}
           </Button>
+          {brandingEnabled && <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, marginBottom:10 }}><input type="checkbox" checked={includeBranding} onChange={(event) => setIncludeBranding(event.target.checked)}/><span>{includeBranding ? "هوية الوكالة مفعلة ✓" : "هوية الوكالة مخفية لهذه الطبعة"}</span></label>}
           <Button variant="primary" icon="print" onClick={handlePrint} disabled={printing}>
             {printing
               ? label(lang, "جاري التحضير...", "Préparation...", "Preparing...")
@@ -399,7 +421,7 @@ export function InvoiceRecipientModal({ open, onClose, onPrint, lang = "ar", doc
   );
 }
 
-export function printReceipt({ payment, client, program, agency, lang = "ar", receiptType = "client", payments = [] }) {
+export function printReceipt({ payment, client, program, agency, lang = "ar", receiptType = "client", payments = [], brandingEnabled }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
   const isAgencyReceipt = receiptType === "agency";
@@ -417,6 +439,11 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   const receiptTitle = isAgencyReceipt
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
     : terms.receiptTitle;
+  const brandingConfig = getAgencyDocumentBranding(agency, "receipt");
+  const useBranding = isDocumentBrandingEnabled(agency, brandingEnabled, "receipt");
+  const brandingHeader = useBranding ? buildAgencyDocumentHeaderHtml({ agency, config:brandingConfig, title:receiptTitle, number:receiptNo, lang }) : "";
+  const brandingWatermark = useBranding ? buildAgencyDocumentWatermarkHtml({agency,config:brandingConfig}) : "";
+  const brandingFooter = useBranding ? buildAgencyDocumentFooterHtml({ agency, config:brandingConfig, lang }) : "";
   const html = `<!DOCTYPE html>
 <html dir="${isAr?"rtl":"ltr"}" lang="${escapeHtml(lang)}">
 <head>
@@ -437,11 +464,14 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   .signature { margin-top:28px; display:flex; justify-content:space-between; gap:24px; font-size:11px; }
   .signature-box { border:1px dashed #777; width:155px; height:76px; margin-bottom:7px; }
   @media print { @page { size:A4 portrait; margin:0; } }
+  ${useBranding ? `${getDocumentBrandingPrintCSS(brandingConfig)}${getDocumentOrientationPrintCSS(brandingConfig)}${getDocumentFooterPrintCSS(brandingConfig)}` : ""}
 </style>
 </head>
 <body>
-<div class="page">
-  ${agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
+<div class="page${useBranding ? " branded-invoice-page" : ""}">
+  ${brandingWatermark}
+  ${brandingHeader}
+  ${!useBranding && agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
   <div class="receipt-title">${escapeHtml(receiptTitle)}</div>
   <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${escapeHtml(receiptNo)}</strong></div>
   <table>
@@ -465,6 +495,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
     <div style="text-align:center"><div class="signature-box"></div>${label(lang, "ختم الوكالة", "Cachet de l'agence", "Agency Stamp")}</div>
     <div style="text-align:center"><div class="signature-box"></div>${escapeHtml(terms.signatureLabel)}</div>
   </div>
+  ${brandingFooter}
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
@@ -474,7 +505,7 @@ export function printReceipt({ payment, client, program, agency, lang = "ar", re
   return true;
 }
 
-export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, lang = "ar", receiptType = "agency" }) {
+export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, lang = "ar", receiptType = "agency", brandingEnabled }) {
   const isAr = lang === "ar";
   const isAgencyReceipt = receiptType === "agency";
   const money = (value) => formatCurrency(value, lang);
@@ -489,6 +520,11 @@ export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, la
   const title = isAgencyReceipt
     ? label(lang, "وصل الوكالة", "REÇU AGENCE", "AGENCY RECEIPT")
     : terms.receiptTitle;
+  const brandingConfig = getAgencyDocumentBranding(agency, "receipt");
+  const useBranding = isDocumentBrandingEnabled(agency, brandingEnabled, "receipt");
+  const brandingHeader = useBranding ? buildAgencyDocumentHeaderHtml({ agency, config:brandingConfig, title, number:receiptNo, lang }) : "";
+  const brandingWatermark = useBranding ? buildAgencyDocumentWatermarkHtml({agency,config:brandingConfig}) : "";
+  const brandingFooter = useBranding ? buildAgencyDocumentFooterHtml({ agency, config:brandingConfig, lang }) : "";
   const totalAllocated = allocations.reduce((sum, row) => sum + toAmount(row.allocatedAmount), 0);
   const coveredNames = allocations
     .map((row) => cleanDisplay(row.name || getClientDisplayName(row.client), ""))
@@ -560,11 +596,14 @@ export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, la
   .signature { margin-top:28px; display:flex; justify-content:space-between; gap:24px; font-size:11px; }
   .signature-box { border:1px dashed #777; width:155px; height:76px; margin-bottom:7px; }
   @media print { @page { size:A4 portrait; margin:0; } }
+  ${useBranding ? `${getDocumentBrandingPrintCSS(brandingConfig)}${getDocumentOrientationPrintCSS(brandingConfig)}${getDocumentFooterPrintCSS(brandingConfig)}` : ""}
 </style>
 </head>
 <body>
-<div class="page">
-  ${agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
+<div class="page${useBranding ? " branded-invoice-page" : ""}">
+  ${brandingWatermark}
+  ${brandingHeader}
+  ${!useBranding && agencyLogoUrl ? `<div class="receipt-logo"><img src="${escapeHtml(agencyLogoUrl)}" alt="" onerror="this.style.display='none'"/></div>` : ""}
   <div class="receipt-title">${escapeHtml(title)}</div>
   <div class="receipt-no">${label(lang, "رقم", "N°", "No.")}: <strong>${escapeHtml(receiptNo)}</strong></div>
   <table class="meta">
@@ -581,6 +620,7 @@ export function printSharedReceipt({ receipt = {}, program = {}, agency = {}, la
   </table>
   ${detailsTableHtml}
   ${signatureHtml}
+  ${brandingFooter}
 </div>
 <script>window.onload=()=>{window.print();setTimeout(()=>window.close(),1000);}</script>
 </body></html>`;
@@ -673,6 +713,7 @@ async function printInvoiceDocument({
   snapshot,
   autoPrint = true,
   invoiceApi,
+  brandingEnabled,
 }) {
   const isAr = lang === "ar";
   const t = TRANSLATIONS[lang] || TRANSLATIONS.ar;
@@ -764,13 +805,22 @@ async function printInvoiceDocument({
   const bankLabels = {
     bank: label(lang, "اسم البنك", "Banque", "Bank"),
     holder: label(lang, "صاحب الحساب", "Titulaire du compte", "Account holder"),
+    account: label(lang, "رقم الحساب / CB", "N° compte / CB", "Account No. / CB"),
     rib: "RIB",
     iban: "IBAN",
+    swift: "SWIFT / BIC",
     note: label(lang, "ملاحظة", "Note", "Note"),
   };
   const title = isProforma
-    ? label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
+    ? invoiceNo
+      ? label(lang, `فاتورة أولية رقم ${invoiceNo}`, `FACTURE PROFORMA N° ${invoiceNo}`, `PROFORMA INVOICE No. ${invoiceNo}`)
+      : label(lang, "فاتورة أولية", "FACTURE PROFORMA", "PROFORMA INVOICE")
     : label(lang, `فاتورة رقم ${invoiceNo}`, `FACTURE N° ${invoiceNo}`, `INVOICE No. ${invoiceNo}`);
+  const brandingConfig = getAgencyDocumentBranding(agency);
+  const useBranding = isDocumentBrandingEnabled(agency, brandingEnabled);
+  const brandingHeader = useBranding ? buildAgencyDocumentHeaderHtml({ agency, config:brandingConfig, lang }) : "";
+  const brandingWatermark = useBranding ? buildAgencyDocumentWatermarkHtml({agency,config:brandingConfig}) : "";
+  const brandingFooter = useBranding ? buildAgencyDocumentFooterHtml({ agency, config:brandingConfig, lang }) : "";
   const paymentReference = !isProforma && latestPayment && (latestPayment.receiptNo || latestPayment.date)
     ? [
       latestPayment.receiptNo ? `${label(lang, "رقم الوصل", "N° Reçu", "Receipt No.")}: ${latestPayment.receiptNo}` : "",
@@ -812,10 +862,14 @@ async function printInvoiceDocument({
 <title>${escapeHtml(title)}</title>
 <style>
 ${commonPrintCSS}
+${useBranding ? `${getDocumentBrandingPrintCSS(brandingConfig)}${getDocumentOrientationPrintCSS(brandingConfig)}${getDocumentFooterPrintCSS(brandingConfig)}` : ""}
 </style>
 </head>
 <body>
-  <div class="page">
+  <div class="page${useBranding ? " branded-invoice-page" : ""}">
+  ${brandingWatermark}
+  ${brandingHeader}
+  ${useBranding ? '<main class="branded-invoice-content">' : ""}
   <div class="issue-date">${escapeHtml(dateLine)}</div>
   <div class="title">${escapeHtml(title)}</div>
   <div class="grid">
@@ -882,6 +936,8 @@ ${commonPrintCSS}
     <div class="stamp-label">${label(lang, "طابع الوكالة", "Cachet agence", "Agency stamp")}</div>
     <div class="stamp-label">${label(lang, "توقيع الزبون", "Signature client", "Client signature")}</div>
   </div>
+  ${useBranding ? "</main>" : ""}
+  ${brandingFooter}
 </div>
 ${bootScript}
 </body></html>`;
@@ -900,10 +956,10 @@ export function printProformaInvoice(args) {
   return printInvoiceDocument({ ...args, documentType: "proforma" });
 }
 
-export function printInvoiceSnapshot({ snapshot, lang = "ar" }) {
-  return printInvoiceDocument({ snapshot, lang, documentType: "invoice" });
+export function printInvoiceSnapshot({ snapshot, agency, lang = "ar", brandingEnabled }) {
+  return printInvoiceDocument({ snapshot, agency, lang, brandingEnabled, documentType: "invoice" });
 }
 
-export function previewInvoiceSnapshot({ snapshot, lang = "ar" }) {
-  return printInvoiceDocument({ snapshot, lang, documentType: "invoice", autoPrint: false });
+export function previewInvoiceSnapshot({ snapshot, agency, lang = "ar", brandingEnabled }) {
+  return printInvoiceDocument({ snapshot, agency, lang, brandingEnabled, documentType: "invoice", autoPrint: false });
 }

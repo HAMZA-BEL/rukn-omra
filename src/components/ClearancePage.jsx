@@ -6,11 +6,12 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { printClearancePDF } from "../utils/exportPdf";
-import { printInvoice, printProformaInvoice, printInvoiceSnapshot, previewInvoiceSnapshot, InvoiceRecipientModal } from "./PrintTemplates";
+import { printInvoice, printProformaInvoice, printInvoiceSnapshot, previewInvoiceSnapshot, InvoiceRecipientModal, resolveAgencyForBrandedPrint } from "./PrintTemplates";
 import { AppIcon } from "./Icon";
 import { getClientDisplayName } from "../utils/clientNames";
 import { formatCurrency } from "../utils/currency";
 import { getLocalizedAgencyName } from "../utils/agencyDisplay";
+import { getAgencyDocumentBranding } from "../features/documentBranding";
 import {
   getClientEffectiveOfficialPrice,
   getClientEffectiveSalePrice,
@@ -921,7 +922,7 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
     setInvoiceClient(client);
   }, []);
 
-  const handlePrintSelectedInvoice = React.useCallback(async (recipient) => {
+  const handlePrintSelectedInvoice = React.useCallback(async (recipient, printOptions = {}) => {
     if (!invoiceClient) return false;
     const program = invoiceClient.prog || programs.find(p => p.id === invoiceClient.programId);
     const clientPayments = invoiceClient.clientPayments || getClientPayments(invoiceClient.id);
@@ -946,13 +947,14 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
         );
       }
     };
+    const documentLang=printOptions.documentLang||lang;
     if (invoiceAction === "word") {
       const downloaded = downloadInvoiceWordDocument({
         client: invoiceDocumentClient,
         program: invoiceDocumentProgram,
         payments: clientPayments,
         recipient,
-        lang,
+        lang:documentLang,
         documentType: isInvoiceClientSettled(invoiceClient) ? "invoice" : "proforma",
       });
       showStaleTravelGroupWarning(downloaded);
@@ -960,19 +962,21 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
     }
     const invoiceSettled = isInvoiceClientSettled(invoiceClient);
     const printFn = invoiceSettled ? printInvoice : printProformaInvoice;
+    const printAgency=printOptions.brandingEnabled?await resolveAgencyForBrandedPrint(agency,store.agencyLogoApi):agency;
     const printed = await printFn({
       client: invoiceDocumentClient,
       program: invoiceDocumentProgram,
       payments: clientPayments,
-      agency,
-      lang,
+      agency:printAgency,
+      lang:documentLang,
       recipient,
       invoiceApi: invoiceSettled ? invoiceApi : null,
+      brandingEnabled: printOptions.brandingEnabled,
     });
     showStaleTravelGroupWarning(printed);
     if (printed && invoiceSettled) await refreshSavedInvoices();
     return printed;
-  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, isInvoiceClientSettled, lang, onToast, programs, refreshSavedInvoices, resolveInvoiceDocumentTravelContext]);
+  }, [agency, getClientPayments, invoiceAction, invoiceApi, invoiceClient, isInvoiceClientSettled, lang, onToast, programs, refreshSavedInvoices, resolveInvoiceDocumentTravelContext, store.agencyLogoApi]);
 
   const handleExportExcel = React.useCallback(async () => {
     if (!selectedProgram) return;
@@ -1422,8 +1426,8 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
           dir={dir}
           money={money}
           focusInvoice={focus?.type === "invoice" ? focus : null}
-          onPreview={(invoice) => previewInvoiceSnapshot({ snapshot: invoice, lang })}
-          onReprint={(invoice) => printInvoiceSnapshot({ snapshot: invoice, lang })}
+          onPreview={(invoice) => previewInvoiceSnapshot({ snapshot: invoice, agency, lang })}
+          onReprint={(invoice) => printInvoiceSnapshot({ snapshot: invoice, agency, lang })}
           onDownloadWord={(invoice) => downloadInvoiceWordSnapshot({ snapshot: invoice, lang })}
           onTrash={handleTrashInvoice}
           onRestore={handleRestoreInvoice}
@@ -1440,6 +1444,7 @@ export default function ClearancePage({ store, focus = null, onToast = null }) {
         lang={lang}
         documentType={isInvoiceClientSettled(invoiceClient) ? "invoice" : "proforma"}
         submitLabel={invoiceAction === "word" ? invoiceActionLabels.downloadWord : ""}
+        brandingEnabled={getAgencyDocumentBranding(agency).enabled}
         onPrint={handlePrintSelectedInvoice}
       />
     </div>

@@ -432,7 +432,11 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
       { placeholder: "{{agency.email}}", description: { ar: "بريد الوكالة", fr: "Email de l’agence", en: "Agency email" } },
       { placeholder: "{{agency.ice}}", description: { ar: "رقم ICE", fr: "ICE", en: "ICE" } },
       { placeholder: "{{agency.bank_name}}", description: { ar: "اسم البنك", fr: "Nom de la banque", en: "Bank name" } },
+      { placeholder: "{{agency.account_holder}}", description: { ar: "صاحب الحساب", fr: "Titulaire du compte", en: "Account holder" } },
+      { placeholder: "{{agency.account_number}}", description: { ar: "رقم الحساب / CB", fr: "Numéro de compte / CB", en: "Account number / CB" } },
       { placeholder: "{{agency.rib}}", description: { ar: "رقم RIB", fr: "RIB", en: "RIB" } },
+      { placeholder: "{{agency.iban}}", description: { ar: "IBAN", fr: "IBAN", en: "IBAN" } },
+      { placeholder: "{{agency.swift}}", description: { ar: "SWIFT / BIC", fr: "SWIFT / BIC", en: "SWIFT / BIC" } },
     ],
   },
 ];

@@ -1,6 +1,7 @@
 import { escapeHtml } from "./escapeHtml";
 import { COSTING_ROOM_TYPES, getSharedCostTotal } from "../components/programs/programCosting";
 import { getLocalizedAgencyName } from "./agencyDisplay";
+import { buildAgencyDocumentBrandingParts } from "../features/documentBranding/documentBranding";
 
 const fmt = (value) => `${Number(value || 0).toLocaleString("fr-MA", { maximumFractionDigits: 2 })} MAD`;
 const fmtSar = (value) => `${Number(value || 0).toLocaleString("fr-MA", { maximumFractionDigits: 2 })} SAR`;
@@ -17,6 +18,7 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
   const generated = reportDateForLang(lang);
   const title = labels.reportTitle;
   const agencyName = getLocalizedAgencyName(agency, lang);
+  const branding = buildAgencyDocumentBrandingParts({ agency, documentType:"report", lang });
   const roomLabels = COSTING_ROOM_TYPES.reduce((acc, roomType) => {
     acc[roomType.key] = labels[roomType.key] || roomType.key;
     return acc;
@@ -118,13 +120,16 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
     tr.loss td{background:#fff1f2;color:#991b1b;font-weight:800}
     .warning{border:1px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:8px;padding:8px 10px;margin:0 0 12px;font-weight:800}
     .note{border-top:2px solid #d4af37;margin-top:16px;padding-top:10px;color:#555;font-weight:700}
+    ${branding.css}
   </style>
 </head>
-<body>
+<body class="${branding.pageClass}">
+  ${branding.watermark}
+  ${branding.header}
   <button class="print-btn no-print" onclick="window.print()">${escapeHtml(labels.print)}</button>
   <header class="header">
     <div>
-      <div class="agency">${escapeHtml(agencyName || "Rukn")}</div>
+      ${branding.useLegacyIdentity ? `<div class="agency">${escapeHtml(agencyName || "Rukn")}</div>` : ""}
       <div>${escapeHtml(program.name || "—")}</div>
     </div>
     <div>
@@ -142,6 +147,7 @@ export function printProgramCostingReport({ program = {}, agency = {}, draft = {
   <h2 class="section-title">${escapeHtml(labels.resultsPrices)}</h2>
   ${levelsHtml}
   <div class="note">${escapeHtml(labels.note)}</div>
+  ${branding.footer}
   <script>window.onload=()=>setTimeout(()=>window.print(),250)</script>
 </body>
 </html>`;

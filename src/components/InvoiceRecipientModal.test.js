@@ -1,0 +1,11 @@
+import React,{act} from "react";
+import {createRoot} from "react-dom/client";
+import {InvoiceRecipientModal,normalizeInvoiceDocumentLanguage} from "./PrintTemplates";
+
+describe("invoice document-local language",()=>{let host;let root;beforeEach(()=>{global.IS_REACT_ACT_ENVIRONMENT=true;window.scrollTo=jest.fn();host=document.createElement("div");document.body.appendChild(host);root=createRoot(host);});afterEach(async()=>{await act(async()=>root.unmount());host.remove();delete global.IS_REACT_ACT_ENVIRONMENT;});
+  const render=async(lang,onPrint=()=>true,brandingEnabled=false)=>act(async()=>root.render(<InvoiceRecipientModal open onClose={()=>{}} onPrint={onPrint} lang={lang} brandingEnabled={brandingEnabled}/>));
+  test.each([["ar","ar"],["fr","fr"],["en","en"]])("system %s defaults invoice language to %s",async(lang,expected)=>{await render(lang);expect(document.body.querySelector('.invoice-language-control button[aria-pressed="true"]').textContent).toMatch(expected==='ar'?/العربية/:expected==='fr'?/Français/:/English/);});
+  test("changing Arabic UI invoice to French is print-local and works with branding on",async()=>{const onPrint=jest.fn(()=>true);await render("ar",onPrint,true);const french=[...document.body.querySelectorAll(".invoice-language-control button")].find((button)=>button.textContent==="Français");await act(async()=>french.click());expect(document.documentElement.lang).not.toBe("fr");const print=[...document.body.querySelectorAll("button")].find((button)=>button.textContent.includes("طباعة الفاتورة"));await act(async()=>print.click());expect(onPrint).toHaveBeenCalledWith({type:"client"},{brandingEnabled:true,documentLang:"fr"});});
+  test("language selection works with branding off",async()=>{const onPrint=jest.fn(()=>true);await render("en",onPrint,false);const arabic=[...document.body.querySelectorAll(".invoice-language-control button")].find((button)=>button.textContent==="العربية");await act(async()=>arabic.click());const print=[...document.body.querySelectorAll("button")].find((button)=>button.textContent.includes("Print Invoice"));await act(async()=>print.click());expect(onPrint).toHaveBeenCalledWith({type:"client"},{brandingEnabled:false,documentLang:"ar"});});
+  test("unsupported locale safely defaults Arabic",()=>expect(normalizeInvoiceDocumentLanguage("es")).toBe("ar"));
+});
