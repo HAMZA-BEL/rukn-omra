@@ -17,7 +17,7 @@ import {
   getProgramServiceCostingReferenceCost,
   getProgramStandaloneServiceSalePrice,
 } from "./programs/programCosting";
-import { downloadClientBadgePdf } from "../features/badges";
+import { downloadClientBadgePdf, logBadgeExportFailure } from "../features/badges";
 import { getProgramAirline, normalizeAirlineCode } from "../utils/airlines";
 import { getParticipantTerminology, getProgramKind } from "../utils/participantTerminology";
 import { isMinor } from "../utils/age";
@@ -441,6 +441,7 @@ export default function ClientDetail({
         travelGroups: store.programTravelGroups || [],
       });
     } catch (error) {
+      logBadgeExportFailure(error);
       onToast?.(
         error?.message === "missing-template"
           ? (t.badgeNoTemplateForProgram || "No badge template is linked to this program yet.")

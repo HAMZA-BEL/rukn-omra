@@ -8,6 +8,7 @@ import { buildSmartBadgeData } from "../components/SmartBadgeIdentity";
 import { getPilgrimPhotoUrl } from "./badgeStorage";
 import { getAgencyLogoUrl } from "../../../utils/agencyLogo";
 import { resolveSmartBadgeBackground } from "../smartBadgeConfig";
+import { BADGE_EXPORT_STAGE, withBadgeExportStage } from "./badgeExportDiagnostics";
 
 export const SMART_BADGE_EXPORT_GEOMETRY = Object.freeze({
   widthMm: 58,
@@ -446,12 +447,12 @@ class SmartBadgeExportJob {
         backgroundColor: resolveSmartBadgeBackground(this.config).color,
         ...(this.fontEmbedCSS !== undefined ? { fontEmbedCSS: this.fontEmbedCSS } : {}),
       };
-      const dataUrl = await (this.profiler?.measureBadge
+      const dataUrl = await withBadgeExportStage(BADGE_EXPORT_STAGE.TO_JPEG, () => (this.profiler?.measureBadge
         ? this.profiler.measureBadge(badge, "toJpeg", () => toJpeg(node, options))
-        : toJpeg(node, options));
-      const blob = await (this.profiler?.measureBadge
+        : toJpeg(node, options)));
+      const blob = await withBadgeExportStage(BADGE_EXPORT_STAGE.TO_JPEG, () => (this.profiler?.measureBadge
         ? this.profiler.measureBadge(badge, "dataUrlToBlob", async () => (await fetch(dataUrl)).blob())
-        : (await fetch(dataUrl)).blob());
+        : (async () => (await fetch(dataUrl)).blob())()));
       this.profiler?.addBytes?.("jpegBytes", blob.size);
       return blob;
     } finally {
@@ -475,8 +476,8 @@ class SmartBadgeExportJob {
       this.profiler?.addBadgePhase?.(badge,"renderPreparation",now()-preparationStarted);
       this.profiler?.increment?.("toJpegCalls");
       const options={quality:.98,pixelRatio:PIXEL_RATIO,cacheBust:false,width:LAYOUT_WIDTH_PX,height:LAYOUT_HEIGHT_PX,backgroundColor:this.config.sides.back.appearance.backgroundColor,...(this.fontEmbedCSS!==undefined?{fontEmbedCSS:this.fontEmbedCSS}:{})};
-      const dataUrl=await (this.profiler?.measureBadge?this.profiler.measureBadge(badge,"toJpeg",()=>toJpeg(node,options)):toJpeg(node,options));
-      const blob=await (this.profiler?.measureBadge?this.profiler.measureBadge(badge,"dataUrlToBlob",async()=>(await fetch(dataUrl)).blob()):(await fetch(dataUrl)).blob());
+      const dataUrl=await withBadgeExportStage(BADGE_EXPORT_STAGE.TO_JPEG,()=>(this.profiler?.measureBadge?this.profiler.measureBadge(badge,"toJpeg",()=>toJpeg(node,options)):toJpeg(node,options)));
+      const blob=await withBadgeExportStage(BADGE_EXPORT_STAGE.TO_JPEG,()=>(this.profiler?.measureBadge?this.profiler.measureBadge(badge,"dataUrlToBlob",async()=>(await fetch(dataUrl)).blob()):(async()=>(await fetch(dataUrl)).blob())()));
       this.profiler?.addBytes?.("jpegBytes",blob.size);
       return blob;
     } finally { this.profiler?.finishBadge?.(badge); }
@@ -530,20 +531,20 @@ export async function downloadSmartClientBadgePdf(args) {
   const job = createSmartBadgeExportJob(args);
   let pdf;
   try {
-    await job.prepare([args.client]);
+    await withBadgeExportStage(BADGE_EXPORT_STAGE.PREPARE_ASSETS, () => job.prepare([args.client]));
     const hasBack=Boolean(job.config?.sides?.back?.enabled),pageTotal=hasBack?2:1;
-    const jpeg = await job.render({
+    const jpeg = await withBadgeExportStage(BADGE_EXPORT_STAGE.RENDER_FRONT, () => job.render({
       client: args.client,
       data: args.data,
       photoUrl: args.photoUrl,
       onMetrics: args.onMetrics,
       badgeIndex: 1,
       badgeTotal: pageTotal,
-    });
-    const backJpeg = hasBack?await job.renderBack({client:args.client,photoUrl:args.photoUrl,badgeIndex:2,badgeTotal:pageTotal}):null;
+    }));
+    const backJpeg = hasBack?await withBadgeExportStage(BADGE_EXPORT_STAGE.RENDER_BACK, () => job.renderBack({client:args.client,photoUrl:args.photoUrl,badgeIndex:2,badgeTotal:pageTotal})):null;
     job.dispose();
-    pdf = await makeSmartBadgePdf(backJpeg?[jpeg,backJpeg]:[jpeg], args.profiler);
-    download(pdf, `badge-${sanitize(clientName(args.client, args.program))}.pdf`);
+    pdf = await withBadgeExportStage(BADGE_EXPORT_STAGE.BUILD_PDF, () => makeSmartBadgePdf(backJpeg?[jpeg,backJpeg]:[jpeg], args.profiler));
+    await withBadgeExportStage(BADGE_EXPORT_STAGE.DOWNLOAD, async () => download(pdf, `badge-${sanitize(clientName(args.client, args.program))}.pdf`));
     args.profiler?.finish?.({ pdfBlob: pdf });
   } finally {
     job.dispose();

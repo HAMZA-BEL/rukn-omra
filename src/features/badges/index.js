@@ -35,3 +35,4 @@ export {
   downloadClientBadgePdf,
   downloadProgramBadgesPdf,
 } from "./utils/badgePdf";
+export { logBadgeExportFailure } from "./utils/badgeExportDiagnostics";
