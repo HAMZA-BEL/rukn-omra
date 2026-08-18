@@ -24,6 +24,7 @@ const readHeap = () => {
 const NOOP = Object.freeze({
   enabled:false,
   mode:"disabled",
+  setMode:()=>{},
   measure:async(_name,work)=>work(),
   measureSync:(_name,work)=>work(),
   startBadge:()=>null,
@@ -56,6 +57,7 @@ export class BadgeExportProfiler {
   }
 
   sampleMemory(){const value=readHeap();if(value===null)return;this.memory.peak=Math.max(this.memory.peak||0,value);}
+  setMode(mode){this.mode=mode||this.mode;}
   increment(name,amount=1){this.counters[name]=(Number(this.counters[name])||0)+amount;}
   setCounter(name,value){this.counters[name]=Number(value)||0;}
   addBytes(name,value){this.increment(name,Number(value)||0);}
@@ -107,3 +109,11 @@ export class BadgeExportProfiler {
 }
 
 export const createBadgeExportProfiler = (options) => isDevelopment() ? new BadgeExportProfiler(options) : NOOP;
+
+export const setBadgeExportProfilerMode = (profiler, mode) => {
+  try {
+    profiler?.setMode?.(mode);
+  } catch {
+    // Telemetry is best-effort and must never interrupt badge export.
+  }
+};

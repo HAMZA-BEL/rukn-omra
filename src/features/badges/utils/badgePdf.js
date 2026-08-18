@@ -15,7 +15,7 @@ import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 import { loadSmartBadgeSettings } from "../services/smartBadgeSettingsApi";
 import { downloadSmartClientBadgePdf, downloadSmartProgramBadgesPdf } from "./smartBadgePdf";
 import { resolveBadgePrintSource } from "./badgePrintSource";
-import { createBadgeExportProfiler } from "./badgeExportProfiler";
+import { createBadgeExportProfiler, setBadgeExportProfilerMode } from "./badgeExportProfiler";
 import { BADGE_EXPORT_STAGE, withBadgeExportStage, withBadgeExportStageSync } from "./badgeExportDiagnostics";
 
 const mmToPt = (mm) => Number(mm || 0) * 72 / 25.4;
@@ -706,7 +706,7 @@ const downloadBlob = (blob, filename) => {
 export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar", exportQuality, travelGroups = [] }) {
   const profiler=createBadgeExportProfiler({mode:"badge",badges:1,label:program?.name||""});
   const { data: smartConfig, error: smartError } = await withBadgeExportStage(BADGE_EXPORT_STAGE.LOAD_SETTINGS, () => profiler.measure("loadSmartBadgeSettings",()=>loadSmartBadgeSettings(agencyId)));
-  const printSource=withBadgeExportStageSync(BADGE_EXPORT_STAGE.RESOLVE_SOURCE,()=>{const source=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");profiler.mode=source;return source;});
+  const printSource=withBadgeExportStageSync(BADGE_EXPORT_STAGE.RESOLVE_SOURCE,()=>{const source=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");setBadgeExportProfilerMode(profiler,source);return source;});
   if (!smartError && printSource === "smart") return downloadSmartClientBadgePdf({ config:smartConfig, client, program, agency, travelGroups, profiler });
   const telemetry = createBadgeExportTelemetry(!profiler.enabled&&isBadgeExportLoggingEnabled());
   telemetry.time("badge export total");
@@ -768,7 +768,7 @@ export async function downloadProgramBadgesPdf({
   const total = clients.length;
   const profiler=createBadgeExportProfiler({mode:"badge",badges:total,label:program?.name||""});
   const { data: smartConfig, error: smartError } = await profiler.measure("loadSmartBadgeSettings",()=>loadSmartBadgeSettings(agencyId));
-  const printSource=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");profiler.mode=printSource;
+  const printSource=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");setBadgeExportProfilerMode(profiler,printSource);
   if (!smartError && printSource === "smart") return downloadSmartProgramBadgesPdf({ config:smartConfig, clients, program, agency, travelGroups, onProgress, profiler });
   const telemetry = createBadgeExportTelemetry(!profiler.enabled&&isBadgeExportLoggingEnabled());
   telemetry.time("badge export total");

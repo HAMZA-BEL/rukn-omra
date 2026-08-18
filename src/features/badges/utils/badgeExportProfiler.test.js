@@ -1,4 +1,4 @@
-import { BadgeExportProfiler } from "./badgeExportProfiler";
+import { BadgeExportProfiler, createBadgeExportProfiler, setBadgeExportProfilerMode } from "./badgeExportProfiler";
 
 test("collects comparable job, badge, resource and PDF metrics", async () => {
   jest.spyOn(console, "groupCollapsed").mockImplementation(() => {});
@@ -43,4 +43,22 @@ test("finish is idempotent", () => {
   const profiler = new BadgeExportProfiler({ mode: "legacy", badges: 0 });
   expect(profiler.finish()).toBe(profiler.finish());
   jest.restoreAllMocks();
+});
+
+test("the frozen disabled profiler accepts mode selection without breaking export", () => {
+  const profiler = createBadgeExportProfiler({ mode: "badge" });
+  expect(Object.isFrozen(profiler)).toBe(true);
+  expect(() => setBadgeExportProfilerMode(profiler, "smart")).not.toThrow();
+  expect(profiler.mode).toBe("disabled");
+});
+
+test("records mode through the profiler API when telemetry is enabled", () => {
+  const profiler = new BadgeExportProfiler({ mode: "badge" });
+  setBadgeExportProfilerMode(profiler, "smart");
+  expect(profiler.mode).toBe("smart");
+});
+
+test("a profiler setMode failure is ignored", () => {
+  const profiler = Object.freeze({ setMode: () => { throw new Error("telemetry failed"); } });
+  expect(() => setBadgeExportProfilerMode(profiler, "smart")).not.toThrow();
 });
