@@ -5,7 +5,8 @@ import { useLang } from "../hooks/useLang";
 import { isSupabaseEnabled, supabase } from "../lib/supabase";
 import UsersPage from "./UsersPage";
 import { AppIcon } from "./Icon";
-import { BadgeTemplatesPage } from "../features/badges";
+import { BadgePrintSourceSetting, BadgeTemplatesPage, SmartBadgeIdentity } from "../features/badges";
+import { translateSmartBadgeText } from "../features/badges/smartBadgeI18n";
 import { setDefaultBadgeTemplate } from "../features/badges/services/badgeTemplatesApi";
 import { ContractTemplatesSettings } from "../features/contracts";
 import { ProgramPosterTemplatesSettings } from "../features/posterTemplates";
@@ -184,6 +185,8 @@ export default function SettingsPage({
   const [bankOpen, setBankOpen] = React.useState(false);
   const [securityOpen, setSecurityOpen] = React.useState(false);
   const [badgeTemplatesOpen, setBadgeTemplatesOpen] = React.useState(false);
+  const [badgeWorkspace, setBadgeWorkspace] = React.useState("identity");
+  const [badgePrintSource,setBadgePrintSource]=React.useState(null);
   const [contractTemplatesOpen, setContractTemplatesOpen] = React.useState(false);
   const [posterTemplatesOpen, setPosterTemplatesOpen] = React.useState(false);
   const [selectedBadgeTemplateId, setSelectedBadgeTemplateId] = React.useState("");
@@ -1009,18 +1012,25 @@ export default function SettingsPage({
 
       {badgesEnabled && (
         <SettingsSectionCard
-          title={badgeTemplatesTitle}
-          description={badgeTemplatesDesc}
+          title={lang === "fr" ? "Badges" : lang === "en" ? "Badges" : "الشارات"}
+          description={lang === "fr" ? "Identité intelligente ou designer classique." : lang === "en" ? "Smart identity or the classic designer." : "هوية ذكية جاهزة أو مصمم الشارات الحالي."}
           open={badgeTemplatesOpen}
           onToggle={() => setBadgeTemplatesOpen((current) => !current)}
         >
-          <BadgeTemplatesPage
-            store={store}
-            onToast={onToast}
-            embedded
-            onRegisterSettingsSave={registerBadgeTemplateSettingsSave}
-            onSelectedTemplateChange={handleSelectedBadgeTemplateChange}
-          />
+          <BadgePrintSourceSetting store={store} onToast={onToast} onSourceChange={setBadgePrintSource}/>
+          <div className="smart-badge-routes" role="tablist" aria-label={translateSmartBadgeText("مسارات الشارات",lang)}>
+            <button type="button" role="tab" aria-selected={badgeWorkspace === "identity"} className={`smart-badge-route ${badgeWorkspace === "identity" ? "is-active" : ""}`} onClick={() => setBadgeWorkspace("identity")}>{translateSmartBadgeText("هوية الشارة",lang)}<small>{translateSmartBadgeText("تصميم ذكي يتكيف تلقائيا",lang)}</small></button>
+            <button type="button" role="tab" aria-selected={badgeWorkspace === "designer"} className={`smart-badge-route ${badgeWorkspace === "designer" ? "is-active" : ""}`} onClick={() => setBadgeWorkspace("designer")}>{badgeTemplatesTitle}<small>{badgeTemplatesDesc}</small></button>
+          </div>
+          {badgeWorkspace === "identity" ? <SmartBadgeIdentity store={store} onToast={onToast} printSource={badgePrintSource} /> : (
+            <BadgeTemplatesPage
+              store={store}
+              onToast={onToast}
+              embedded
+              onRegisterSettingsSave={registerBadgeTemplateSettingsSave}
+              onSelectedTemplateChange={handleSelectedBadgeTemplateChange}
+            />
+          )}
         </SettingsSectionCard>
       )}
 

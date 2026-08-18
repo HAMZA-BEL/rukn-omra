@@ -21,6 +21,7 @@ import TrashPage from "./components/TrashPage";
 import LoginPage from "./components/LoginPage";
 import SetPasswordPage from "./components/SetPasswordPage";
 import PrivacyPolicyPage from "./components/PrivacyPolicyPage";
+import { SmartBadgeExportQa } from "./features/badges/components/SmartBadgeExportQa";
 import { Modal, Toast, Button } from "./components/UI";
 import { IconBubble } from "./components/Icon";
 import { formatNotificationMessage, resolveNotificationTarget } from "./utils/notifications";
@@ -37,6 +38,7 @@ import {
 
 const VALID_PAGES = ["dashboard","clients","programs","marketplace","archive","clearance","activity","trash","settings","notifications"];
 const PUBLIC_PRIVACY_POLICY_PATH = "/privacy-policy";
+const SMART_BADGE_EXPORT_QA_PATH = "/smart-badge-export-qa";
 
 function isPrivacyPolicyPath() {
   if (typeof window === "undefined") return false;
@@ -1264,7 +1266,7 @@ function DisabledAccountScreen({ onLogout }) {
 export default function App() {
   return (
     <LangProvider>
-      {isPrivacyPolicyPath() ? <PrivacyPolicyPage /> : <AuthGate />}
+      {window.location.pathname.replace(/\/+$/, "")===SMART_BADGE_EXPORT_QA_PATH&&process.env.NODE_ENV!=="production"?<SmartBadgeExportQa/>:isPrivacyPolicyPath() ? <PrivacyPolicyPage /> : <AuthGate />}
     </LangProvider>
   );
 }

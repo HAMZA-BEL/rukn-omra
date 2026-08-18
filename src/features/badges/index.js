@@ -1,6 +1,10 @@
 export { PilgrimPhotoUploader } from "./components/PilgrimPhotoUploader";
 export { BadgeTemplatesPage } from "./components/BadgeTemplatesPage";
 export { BadgeTemplateDesigner } from "./components/BadgeTemplateDesigner";
+export { SmartBadge } from "./components/SmartBadge";
+export { SmartBadgeIdentity } from "./components/SmartBadgeIdentity";
+export { BadgePrintSourceSetting } from "./components/BadgePrintSourceSetting";
+export { SmartBadgePresetGallery } from "./components/SmartBadgePresetGallery";
 export { useBadgeTemplates } from "./hooks/useBadgeTemplates";
 export {
   BADGE_PHOTO_BUCKET,

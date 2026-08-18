@@ -438,6 +438,7 @@ export default function ClientDetail({
         agency,
         lang,
         fileNumber: badgeFileNumber,
+        travelGroups: store.programTravelGroups || [],
       });
     } catch (error) {
       onToast?.(
@@ -449,7 +450,7 @@ export default function ClientDetail({
     } finally {
       setBadgeBusy(false);
     }
-  }, [agency, badgeFileNumber, badgesEnabled, client, lang, onToast, program, store.agencyId, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
+  }, [agency, badgeFileNumber, badgesEnabled, client, lang, onToast, program, store.agencyId, store.programTravelGroups, t.badgeDownloadError, t.badgeNoProgramForClient, t.badgeNoTemplateForProgram]);
 
   const handleDownloadContract = React.useCallback(async () => {
     const labels = {

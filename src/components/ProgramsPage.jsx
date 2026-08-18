@@ -101,6 +101,7 @@ import {
 import {
   downloadProgramBadgesPdf,
 } from "../features/badges";
+import { getBadgeExportProgressPercent } from "../features/badges/utils/badgeExportProgress";
 import {
   exportProgramWordContractsZip,
   getContractGenerationErrorMessage,
@@ -307,9 +308,9 @@ const getBadgeExportProgressLabel = (progress = {}, lang = "ar") => {
     return `تحميل الصور ${current} من ${total}`;
   }
   if (step === "pdf") {
-    if (lang === "fr") return "Création du PDF";
-    if (lang === "en") return "Creating PDF";
-    return "إنشاء PDF";
+    if (lang === "fr") return "Assemblage du PDF...";
+    if (lang === "en") return "Assembling PDF...";
+    return "جاري تجميع ملف PDF...";
   }
   if (step === "done") {
     if (lang === "fr") return "PDF prêt";
@@ -5330,7 +5331,9 @@ function ProgramInner({
     () => badgeExportProgress ? getBadgeExportProgressLabel(badgeExportProgress, lang) : "",
     [badgeExportProgress, lang]
   );
-  const badgeExportProgressPercent = Math.max(0, Math.min(100, Math.round(Number(badgeExportProgress?.percent) || 0)));
+  const badgeProgressStep = badgeExportProgress?.step || "template";
+  const badgeExportProgressPercent = getBadgeExportProgressPercent(badgeExportProgress);
+  const badgeExportShowsPercent = badgeProgressStep !== "pdf";
   const badgeExportActionLabel = badgeExportBusy
     ? (badgeExportProgressLabel || (lang === "fr" ? "Préparation des badges..." : lang === "en" ? "Preparing badges..." : "جاري تجهيز الشارات..."))
     : (lang === "fr" ? "Télécharger les badges PDF" : lang === "en" ? "Download program badges PDF" : "تحميل شارات البرنامج PDF");
@@ -5711,20 +5714,21 @@ function ProgramInner({
         program,
         agency,
         lang,
+        travelGroups: store.programTravelGroups || [],
         onProgress: setBadgeExportProgress,
       });
     } catch (error) {
       onToast(
         error?.message === "missing-template"
-          ? "لا يوجد قالب شارة لهذا البرنامج بعد."
-          : "تعذر تصدير شارات البرنامج",
+          ? (lang === "fr" ? "Aucun modèle de badge n’est associé à ce programme." : lang === "en" ? "No badge template is linked to this program yet." : "لا يوجد قالب شارة لهذا البرنامج بعد.")
+          : (lang === "fr" ? "Impossible d’exporter les badges du programme" : lang === "en" ? "Unable to export program badges" : "تعذر تصدير شارات البرنامج"),
         "error"
       );
     } finally {
       setBadgeExportBusy(false);
       setBadgeExportProgress(null);
     }
-  }, [agency, badgeExportBusy, badgesEnabled, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, useScopedProgramDetail]);
+  }, [agency, badgeExportBusy, badgesEnabled, closeHeaderActions, ensureGlobalDetailDataForCurrentAction, getCurrentExportClients, lang, notifyNoExportClients, onToast, program, store.agencyId, store.programTravelGroups, useScopedProgramDetail]);
   const handlePassportImportOpen = React.useCallback(() => {
     closeHeaderActions();
     runWithGlobalDetailData(() => {
@@ -6076,9 +6080,9 @@ function ProgramInner({
             fontWeight:800,
           }}>
             <span>{badgeExportProgressLabel || badgeExportActionLabel}</span>
-            <span style={{ color:"var(--rukn-progress-accent)", fontVariantNumeric:"tabular-nums" }}>
+            {badgeExportShowsPercent && <span style={{ color:"var(--rukn-progress-accent)", fontVariantNumeric:"tabular-nums" }}>
               {badgeExportProgressPercent}%
-            </span>
+            </span>}
           </div>
           <div style={{
             height:6,

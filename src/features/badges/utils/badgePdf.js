@@ -12,6 +12,10 @@ import {
 import { BADGE_TEMPLATE_PRINT_DPI, DEFAULT_BADGE_TEMPLATE_PATH } from "./badgeDefaults";
 import { getParticipantTerminology } from "../../../utils/participantTerminology";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
+import { loadSmartBadgeSettings } from "../services/smartBadgeSettingsApi";
+import { downloadSmartClientBadgePdf, downloadSmartProgramBadgesPdf } from "./smartBadgePdf";
+import { resolveBadgePrintSource } from "./badgePrintSource";
+import { createBadgeExportProfiler } from "./badgeExportProfiler";
 
 const mmToPt = (mm) => Number(mm || 0) * 72 / 25.4;
 const sanitizeFile = (value) => String(value || "badge").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").slice(0, 90);
@@ -130,14 +134,16 @@ const decodeImageBlob = async (blob) => {
   }
 };
 
-const loadImage = async (url, cache = null) => {
+const loadImage = async (url, cache = null, { profiler, phase = "image" } = {}) => {
   if (!url) return null;
+  profiler?.recordImage?.(url);
   if (cache?.has(url)) return cache.get(url);
   const promise = (async () => {
     try {
-      const response = await fetch(url);
+      const response = await (profiler?.measure?.(`${phase}Fetch`, () => fetch(url)) || fetch(url));
       if (!response.ok) return null;
-      return await decodeImageBlob(await response.blob());
+      const blob = await response.blob();
+      return await (profiler?.measure?.(`${phase}Decode`, () => decodeImageBlob(blob)) || decodeImageBlob(blob));
     } catch {
       return null;
     }
@@ -328,7 +334,8 @@ const getPhotoTargetSize = (fieldLayouts = []) => {
   }), { width: 0, height: 0 });
 };
 
-const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry } = {}) => {
+const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry, profiler } = {}) => {
+  const preparationStarted = now();
   const widthMm = normalizeBadgeNumber(template.widthMm, 90) || 90;
   const heightMm = normalizeBadgeNumber(template.heightMm, 140) || 140;
   const exportSettings = getExportSettings(exportQuality);
@@ -340,8 +347,9 @@ const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry
   const useDefaultDesign = template.templatePath === DEFAULT_BADGE_TEMPLATE_PATH;
   const imageCache = new Map();
   telemetry?.time("load template image");
-  const templateUrl = useDefaultDesign ? "" : await getBadgeTemplateImageUrl(template.templatePath);
-  const background = await loadImage(templateUrl, imageCache);
+  if (!useDefaultDesign && template.templatePath) profiler?.increment?.("signedUrlRequests");
+  const templateUrl = useDefaultDesign ? "" : await (profiler?.measure?.("templateSignedUrl", () => getBadgeTemplateImageUrl(template.templatePath)) || getBadgeTemplateImageUrl(template.templatePath));
+  const background = await loadImage(templateUrl, imageCache, { profiler, phase: "templateImage" });
   telemetry?.timeEnd("load template image");
   const baseCanvas = createCanvas(pixelWidth, pixelHeight);
   const baseCtx = baseCanvas.getContext("2d");
@@ -369,7 +377,7 @@ const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry
   }
   const fieldLayouts = visibleFields.map((field) => prepareFieldLayout(field, pixelWidth, pixelHeight, scale));
 
-  return {
+  const result = {
     widthMm,
     heightMm,
     scale,
@@ -390,6 +398,8 @@ const createBadgeRenderAssets = async (template = {}, { exportQuality, telemetry
     },
     baseCanvas,
   };
+  profiler?.addPhase?.("templatePreparation", now() - preparationStarted);
+  return result;
 };
 
 const createProgramBadgeData = ({ program, agency, lang }) => {
@@ -465,12 +475,13 @@ const runWithConcurrency = async (items, limit, worker) => {
   }));
 };
 
-const preparePilgrimPhotoAssets = async ({ clients = [], renderAssets, onProgress }) => {
+const preparePilgrimPhotoAssets = async ({ clients = [], renderAssets, onProgress, profiler }) => {
   const targetSize = renderAssets?.photoTargetSize;
   const paths = Array.from(new Set(
     clients.map((client) => getClientPhotoPath(client)).filter(Boolean)
   ));
   const photoAssets = new Map();
+  profiler?.setCounter?.("uniquePhotos", paths.length);
   if (!targetSize?.width || !targetSize?.height || !paths.length) {
     emitProgress(onProgress, { step: "photos", current: 0, total: paths.length, percent: 35 });
     return photoAssets;
@@ -481,9 +492,12 @@ const preparePilgrimPhotoAssets = async ({ clients = [], renderAssets, onProgres
   await runWithConcurrency(paths, BADGE_EXPORT_PHOTO_CONCURRENCY, async (path) => {
     let resized = null;
     try {
-      const url = await getPilgrimPhotoUrl(path);
-      const image = await loadImage(url, imageCache);
-      resized = resizeImageForBox(image, targetSize.width, targetSize.height);
+      profiler?.increment?.("signedUrlRequests");
+      const url = await (profiler?.measure?.("photoSignedUrl", () => getPilgrimPhotoUrl(path)) || getPilgrimPhotoUrl(path));
+      const image = await loadImage(url, imageCache, { profiler, phase: "photoImage" });
+      resized = profiler?.measureSync
+        ? profiler.measureSync("photoResize", () => resizeImageForBox(image, targetSize.width, targetSize.height))
+        : resizeImageForBox(image, targetSize.width, targetSize.height);
       if (resized !== image) disposeDrawable(image);
     } catch {
       resized = null;
@@ -511,7 +525,12 @@ const renderBadgeCanvas = async ({
   renderAssets,
   photoAssets = null,
   programBadgeData = null,
+  profiler,
+  badgeIndex = 1,
+  badgeTotal = 1,
 }) => {
+  const badge = profiler?.startBadge?.(badgeIndex, badgeTotal);
+  const renderStarted = now();
   const assets = renderAssets || await createBadgeRenderAssets(template);
   const { pixelWidth, pixelHeight, fieldLayouts, baseCanvas, jpegQuality } = assets;
   const canvas = createCanvas(pixelWidth, pixelHeight);
@@ -523,8 +542,9 @@ const renderBadgeCanvas = async ({
   const photoPath = getClientPhotoPath(client);
   let photo = photoPath && photoAssets ? photoAssets.get(photoPath) : null;
   if (photoPath && !photoAssets) {
-    const url = await getPilgrimPhotoUrl(photoPath);
-    const rawPhoto = await loadImage(url);
+    profiler?.increment?.("signedUrlRequests");
+    const url = await (profiler?.measureBadge?.(badge, "photoSignedUrl", () => getPilgrimPhotoUrl(photoPath)) || getPilgrimPhotoUrl(photoPath));
+    const rawPhoto = await loadImage(url, null, { profiler, phase: "photoImage" });
     photo = resizeImageForBox(
       rawPhoto,
       assets.photoTargetSize?.width || pixelWidth,
@@ -589,11 +609,14 @@ const renderBadgeCanvas = async ({
     ctx.restore();
   }
 
-  const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", jpegQuality));
+  profiler?.addBadgePhase?.(badge, "canvasRender", now() - renderStarted);
+  const jpeg = await (profiler?.measureBadge?.(badge, "canvasToBlob", () => new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", jpegQuality))) || new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", jpegQuality)));
   const renderedWidth = canvas.width;
   const renderedHeight = canvas.height;
   canvas.width = 1;
   canvas.height = 1;
+  profiler?.addBytes?.("jpegBytes", jpeg?.size || 0);
+  profiler?.finishBadge?.(badge);
   return {
     widthPt: assets.widthPt,
     heightPt: assets.heightPt,
@@ -613,7 +636,8 @@ const concatBytes = (chunks) => {
   return out;
 };
 
-const makePdf = async (pages) => {
+const makePdf = async (pages, profiler) => {
+  const pdfStarted = now();
   const chunks = [];
   const offsets = [0];
   let byteLength = 0;
@@ -638,7 +662,7 @@ const makePdf = async (pages) => {
   };
 
   for (const page of pages) {
-    const jpeg = await blobToBytes(page.jpeg);
+    const jpeg = await (profiler?.measure?.("jpegToBytes", () => blobToBytes(page.jpeg)) || blobToBytes(page.jpeg));
     const imageId = await addObject([
       `<< /Type /XObject /Subtype /Image /Width ${page.pixelWidth || 1} /Height ${page.pixelHeight || 1} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
       jpeg,
@@ -661,7 +685,10 @@ const makePdf = async (pages) => {
   write(`xref\n0 ${objectId}\n0000000000 65535 f \n`);
   for (let i = 1; i < objectId; i += 1) write(`${String(offsets[i] || 0).padStart(10, "0")} 00000 n \n`);
   write(`trailer\n<< /Size ${objectId} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
-  return new Blob([concatBytes(chunks)], { type: "application/pdf" });
+  const assembled = profiler?.measureSync?.("pdfAssembly", () => concatBytes(chunks)) || concatBytes(chunks);
+  const blob = profiler?.measureSync?.("finalBlob", () => new Blob([assembled], { type: "application/pdf" })) || new Blob([assembled], { type: "application/pdf" });
+  profiler?.addPhase?.("pdfTotal", now() - pdfStarted);
+  return blob;
 };
 
 const downloadBlob = (blob, filename) => {
@@ -675,16 +702,20 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url);
 };
 
-export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar", exportQuality }) {
-  const telemetry = createBadgeExportTelemetry();
+export async function downloadClientBadgePdf({ agencyId, client, program, agency, fileNumber, lang = "ar", exportQuality, travelGroups = [] }) {
+  const profiler=createBadgeExportProfiler({mode:"badge",badges:1,label:program?.name||""});
+  const { data: smartConfig, error: smartError } = await profiler.measure("loadSmartBadgeSettings",()=>loadSmartBadgeSettings(agencyId));
+  const printSource=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");profiler.mode=printSource;
+  if (!smartError && printSource === "smart") return downloadSmartClientBadgePdf({ config:smartConfig, client, program, agency, travelGroups, profiler });
+  const telemetry = createBadgeExportTelemetry(!profiler.enabled&&isBadgeExportLoggingEnabled());
   telemetry.time("badge export total");
   try {
-    const template = await getTemplateForProgram({ agencyId, program });
+    const template = await profiler.measure("templateQuery",()=>getTemplateForProgram({ agencyId, program }));
     if (!template) throw new Error("missing-template");
-    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry });
-    await waitForBadgeFonts();
+    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry, profiler });
+    profiler.increment("fontReadinessWaits");await profiler.measure("fontReadiness",()=>waitForBadgeFonts());
     telemetry.time("load pilgrim photos");
-    const photoAssets = await preparePilgrimPhotoAssets({ clients: [client], renderAssets });
+    const photoAssets = await profiler.measure("photoPreload",()=>preparePilgrimPhotoAssets({ clients: [client], renderAssets, profiler }));
     telemetry.timeEnd("load pilgrim photos");
     const programBadgeData = createProgramBadgeData({ program, agency, lang });
     telemetry.time("render badges");
@@ -699,11 +730,12 @@ export async function downloadClientBadgePdf({ agencyId, client, program, agency
       renderAssets,
       photoAssets,
       programBadgeData,
+      profiler,badgeIndex:1,badgeTotal:1,
     });
     const averageRenderMs = now() - renderStart;
     telemetry.timeEnd("render badges");
     telemetry.time("generate pdf");
-    const pdf = await makePdf([page]);
+    const pdf = await makePdf([page],profiler);
     const pdfMs = telemetry.timeEnd("generate pdf");
     telemetry.info({
       pilgrims: 1,
@@ -714,8 +746,10 @@ export async function downloadClientBadgePdf({ agencyId, client, program, agency
     });
     telemetry.timeEnd("badge export total");
     downloadBlob(pdf, `badge-${sanitizeFile(clientName(client, program))}.pdf`);
+    profiler.finish({pdfBlob:pdf});
   } catch (error) {
     telemetry.finishOpenTimers();
+    profiler.finish();
     throw error;
   }
 }
@@ -728,19 +762,24 @@ export async function downloadProgramBadgesPdf({
   lang = "ar",
   exportQuality,
   onProgress,
+  travelGroups = [],
 }) {
   const total = clients.length;
-  const telemetry = createBadgeExportTelemetry();
+  const profiler=createBadgeExportProfiler({mode:"badge",badges:total,label:program?.name||""});
+  const { data: smartConfig, error: smartError } = await profiler.measure("loadSmartBadgeSettings",()=>loadSmartBadgeSettings(agencyId));
+  const printSource=profiler.measureSync("resolvePrintSource",()=>!smartError?resolveBadgePrintSource(smartConfig):"legacy");profiler.mode=printSource;
+  if (!smartError && printSource === "smart") return downloadSmartProgramBadgesPdf({ config:smartConfig, clients, program, agency, travelGroups, onProgress, profiler });
+  const telemetry = createBadgeExportTelemetry(!profiler.enabled&&isBadgeExportLoggingEnabled());
   telemetry.time("badge export total");
   try {
     emitProgress(onProgress, { step: "template", current: 0, total, percent: 2 });
-    const template = await getTemplateForProgram({ agencyId, program });
+    const template = await profiler.measure("templateQuery",()=>getTemplateForProgram({ agencyId, program }));
     if (!template) throw new Error("missing-template");
-    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry });
+    const renderAssets = await createBadgeRenderAssets(template, { exportQuality, telemetry, profiler });
     emitProgress(onProgress, { step: "template", current: 1, total, percent: 10 });
-    await waitForBadgeFonts();
+    profiler.increment("fontReadinessWaits");await profiler.measure("fontReadiness",()=>waitForBadgeFonts());
     telemetry.time("load pilgrim photos");
-    const photoAssets = await preparePilgrimPhotoAssets({ clients, renderAssets, onProgress });
+    const photoAssets = await profiler.measure("photoPreload",()=>preparePilgrimPhotoAssets({ clients, renderAssets, onProgress, profiler }));
     telemetry.timeEnd("load pilgrim photos");
     const programBadgeData = createProgramBadgeData({ program, agency, lang });
     const pages = [];
@@ -757,6 +796,7 @@ export async function downloadProgramBadgesPdf({
         renderAssets,
         photoAssets,
         programBadgeData,
+        profiler,badgeIndex:index+1,badgeTotal:total,
       });
       pages.push(page);
       emitProgress(onProgress, {
@@ -772,7 +812,7 @@ export async function downloadProgramBadgesPdf({
     await yieldToBrowser();
     emitProgress(onProgress, { step: "pdf", current: total, total, percent: 92 });
     telemetry.time("generate pdf");
-    const pdf = await makePdf(pages);
+    const pdf = await makePdf(pages,profiler);
     const pdfMs = telemetry.timeEnd("generate pdf");
     telemetry.info({
       pilgrims: total,
@@ -789,8 +829,10 @@ export async function downloadProgramBadgesPdf({
       percent: 100,
     });
     downloadBlob(pdf, `badges-${sanitizeFile(program?.name || "program")}.pdf`);
+    profiler.finish({pdfBlob:pdf});
   } catch (error) {
     telemetry.finishOpenTimers();
+    profiler.finish();
     throw error;
   }
 }
