@@ -1,6 +1,7 @@
 import { theme } from "../styles";
 import { PROGRAM_ROOM_PRICE_KEYS, getPackageStartingPrice } from "../../utils/programPackages";
 import { translateHotelLevel, translateRoomType } from "../../utils/i18nValues";
+import { formatMealPlan } from "../../utils/programMealPlans";
 
 const tc = theme.colors;
 
@@ -17,7 +18,7 @@ export default function PackageDetailCard({ pkg, formatCurrencyForLang, t }) {
         <div>
           <strong style={{ color:tc.white, fontSize:14 }}>{translateHotelLevel(pkg.level) || pkg.level}</strong>
           <p style={{ color:tc.grey, fontSize:11, marginTop:3 }}>
-            {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
+            {formatMealPlan(pkg.mealPlan) || t.noMealPlan || "بدون نظام وجبات محدد"}
           </p>
         </div>
         <span style={{

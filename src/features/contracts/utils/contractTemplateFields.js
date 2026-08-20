@@ -123,6 +123,7 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
       { placeholder: "{{program.route_text}}", description: { ar: "نص خط الرحلة", fr: "Texte de l’itinéraire", en: "Route text" } },
       { placeholder: "{{program.travelRoute}}", description: { ar: "خط الرحلة", fr: "Itinéraire", en: "Travel route" } },
       { placeholder: "{{program.routeText}}", description: { ar: "نص خط الرحلة", fr: "Texte de l’itinéraire", en: "Route text" } },
+      { placeholder: "{{program.meal_plan}}", description: { ar: "نظام الوجبات", fr: "Formule de repas", en: "Meal plan" } },
     ],
   },
   {

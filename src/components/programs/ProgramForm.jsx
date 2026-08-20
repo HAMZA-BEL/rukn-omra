@@ -33,6 +33,7 @@ import {
   normalizeProgramType,
 } from "../../utils/programDuplicate";
 import { getProgramCapacityDatabaseErrorMessage } from "../../utils/programCapacity";
+import { getMealPlanSelectOptions, normalizeMealPlan } from "../../utils/programMealPlans";
 import {
   badgePhonesFromProgram,
   getBadgeContactDefaults,
@@ -1186,7 +1187,7 @@ export default function ProgramForm({
     makkahHaramDistance: null,
     madinahHaramDistance: null,
     madinahNights: "",
-    mealPlan: "",
+    mealPlan: "none",
     notes: "",
     prices: {},
   }), []);
@@ -1455,7 +1456,7 @@ export default function ProgramForm({
       makkahHaramDistance: parseOptionalHaramDistance(pkg.makkahHaramDistance).value,
       madinahHaramDistance: parseOptionalHaramDistance(pkg.madinahHaramDistance).value,
       madinahNights: nightAllocation?.madinahNights ?? normalizedMadinahNights,
-      mealPlan: (pkg.mealPlan || "").trim(),
+      mealPlan: normalizeMealPlan(pkg.mealPlan || "none"),
       notes: (pkg.notes || "").trim(),
       prices,
       ...(isPlainObject(pkg.programCosting) ? { programCosting: pkg.programCosting } : {}),
@@ -2008,7 +2009,7 @@ export default function ProgramForm({
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <Input label={t.levelName || "اسم المستوى"} value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
-                <Input label={t.mealPlan} value={pkg.mealPlan || ""} onChange={e => setPackageField(index, "mealPlan", e.target.value)} />
+                <Select label={t.mealPlan} value={normalizeMealPlan(pkg.mealPlan) || "none"} onChange={e => setPackageField(index, "mealPlan", e.target.value)} options={getMealPlanSelectOptions(pkg.mealPlan)} />
                 <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />
                 <Input label="المسافة عن الحرم بمكة (متر)" value={pkg.makkahHaramDistance ?? ""} onChange={e => setPackageField(index, "makkahHaramDistance", e.target.value)} type="number" min={0} step="any" inputMode="decimal" />
                 <Input label={t.hotelMadina} value={pkg.hotelMadina || ""} onChange={e => setPackageField(index, "hotelMadina", e.target.value)} />

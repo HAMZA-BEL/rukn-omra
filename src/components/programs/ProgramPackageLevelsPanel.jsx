@@ -3,6 +3,7 @@ import { AppIcon } from "../Icon";
 import PackageDetailCard from "./PackageDetailCard";
 import { getPackageStartingPrice } from "../../utils/programPackages";
 import { translateHotelLevel } from "../../utils/i18nValues";
+import { formatMealPlan } from "../../utils/programMealPlans";
 
 export default function ProgramPackageLevelsPanel({
   packages,
@@ -149,7 +150,7 @@ export default function ProgramPackageLevelsPanel({
                   {pkg.hotelMecca || "—"} / {pkg.hotelMadina || "—"}
                 </span>
                 <span style={{ color:tc.grey, fontSize:11 }}>
-                  {pkg.mealPlan || t.noMealPlan || "بدون نظام وجبات محدد"}
+                  {formatMealPlan(pkg.mealPlan) || t.noMealPlan || "بدون نظام وجبات محدد"}
                 </span>
               </button>
             );

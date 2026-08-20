@@ -1,3 +1,5 @@
+import { normalizeMealPlan } from "./programMealPlans";
+
 export const PROGRAM_ROOM_PRICE_KEYS = ["single", "double", "triple", "quad", "quint"];
 const LEGACY_NON_ROOM_PRICE_KEYS = ["child", "infant"];
 const ROOM_TYPE_LABELS = {
@@ -155,7 +157,7 @@ const normalizePackage = (pkg, index, program = {}) => {
     makkahHaramDistance: parseOptionalHaramDistance(pkg?.makkahHaramDistance ?? pkg?.makkah_haram_distance).value,
     madinahHaramDistance: parseOptionalHaramDistance(pkg?.madinahHaramDistance ?? pkg?.madinah_haram_distance).value,
     madinahNights: toNonNegativeInteger(pkg?.madinahNights ?? pkg?.madinah_nights),
-    mealPlan: cleanText(pkg?.mealPlan, program.mealPlan || ""),
+    mealPlan: normalizeMealPlan(cleanText(pkg?.mealPlan, program.mealPlan || "")),
     notes: cleanText(pkg?.notes, ""),
     prices,
     ...(isPlainObject(pkg?.programCosting) ? { programCosting: pkg.programCosting } : {}),
@@ -186,7 +188,7 @@ export function normalizeProgramPackages(program = {}) {
     hotelMadina: cleanText(program.hotelMadina, ""),
     makkahHaramDistance: parseOptionalHaramDistance(program.makkahHaramDistance ?? program.makkah_haram_distance).value,
     madinahHaramDistance: parseOptionalHaramDistance(program.madinahHaramDistance ?? program.madinah_haram_distance).value,
-    mealPlan: cleanText(program.mealPlan, ""),
+    mealPlan: normalizeMealPlan(cleanText(program.mealPlan, "")),
     notes: cleanText(program.notes, ""),
     prices: fallbackPrices,
     legacy: true,

@@ -5,6 +5,7 @@ import { theme } from "./styles";
 import { useLang } from "../hooks/useLang";
 import { calcExpiry } from "../utils/amadeus";
 import { isFutureDateInput, toDateInputValue } from "../utils/age";
+import { formatMealPlan } from "../utils/programMealPlans";
 import { AppIcon } from "./Icon";
 import { PilgrimPhotoUploader, badgeStorageUnavailableMessage } from "../features/badges";
 import {
@@ -1911,7 +1912,7 @@ export default function ClientForm({
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
               <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.hotelMecca}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{formatHotelName(selectedPackage.hotelMecca) || "—"}</span></p>
               <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.hotelMadina}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{formatHotelName(selectedPackage.hotelMadina) || "—"}</span></p>
-              <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.mealPlan}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{selectedPackage.mealPlan || "—"}</span></p>
+              <p style={{ fontSize:11, color:"var(--rukn-text-muted)" }}>{t.mealPlan}: <span style={{ color:"var(--rukn-text)", fontWeight:700 }}>{formatMealPlan(selectedPackage.mealPlan) || "—"}</span></p>
               <p style={{ fontSize:11, color:tc.grey }}>{t.officialPrice}: <span style={{ color:tc.gold }}>{displayedOfficialPrice ? `${formatPrice(displayedOfficialPrice)} ${currencyLabel}` : "—"}</span></p>
             </div>
             {officialPriceMissing && (

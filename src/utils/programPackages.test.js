@@ -79,3 +79,8 @@ test("package normalization persists distances as numbers and accepts snake case
   expect(pkg.makkahHaramDistance).toBe(120);
   expect(pkg.madinahHaramDistance).toBe(300);
 });
+
+test.each(["none", "breakfast", "half_board", "full_board"])("package meal plan %s survives normalization", (mealPlan) => {
+  const [pkg] = normalizeProgramPackages({ priceTable: [{ id: "meal", level: "اقتصادي", mealPlan, prices: {} }] });
+  expect(pkg.mealPlan).toBe(mealPlan);
+});

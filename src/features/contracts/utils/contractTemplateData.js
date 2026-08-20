@@ -17,6 +17,7 @@ import { calculateAgeAtDate } from "../../../utils/age";
 import { getClientCin, getRepresentativeRelationshipLabel } from "../../../utils/clientRepresentation";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
 import { formatProgramTravelRoute } from "../../../utils/programRoutes";
+import { formatMealPlan } from "../../../utils/programMealPlans";
 import { getAgencyBrandingRoot, getAgencyDocumentBranding } from "../../documentBranding/documentBranding";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
@@ -294,6 +295,7 @@ export const buildContractTemplateData = ({
       travel_route: programRoute,
       routeText: programRoute,
       route_text: programRoute,
+      meal_plan: formatMealPlan(selectedPackage?.mealPlan ?? program.mealPlan ?? program.meal_plan),
       madinah_hotel: firstValue(client.hotelMadina, client.hotel_madina, program.hotelMadina, program.hotel_madina),
       madinah_checkin: formatDateValue(hotelStayDates.medinaCheckIn),
       madinah_checkout: formatDateValue(hotelStayDates.medinaCheckOut),
