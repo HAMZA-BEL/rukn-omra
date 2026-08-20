@@ -43,6 +43,11 @@ test("Program Form shows the real mixed RTL/LTR route rather than محدد", asy
   expect(summary.textContent).toBe("أكادير ← CMN ← المدينة | JED ← أكادير");
   expect(summary.textContent).not.toBe("محدد");
   expect(summary.style.direction).toBe("auto");
+  expect(summary.style.unicodeBidi).toBe("plaintext");
+  expect(summary.title).toBe(summary.textContent);
+  expect(summary.closest(".program-form-route-field")).not.toBeNull();
+  expect(summary.parentElement.classList.contains("program-form-route-value")).toBe(true);
+  expect(summary.closest(".program-form-two-column-grid")).not.toBeNull();
   await act(async () => root.unmount());
   host.remove();
 });

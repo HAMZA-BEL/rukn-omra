@@ -34,6 +34,7 @@ import {
 } from "../../utils/programDuplicate";
 import { getProgramCapacityDatabaseErrorMessage } from "../../utils/programCapacity";
 import { getMealPlanSelectOptions, normalizeMealPlan } from "../../utils/programMealPlans";
+import "./ProgramForm.css";
 import {
   badgePhonesFromProgram,
   getBadgeContactDefaults,
@@ -1638,7 +1639,7 @@ export default function ProgramForm({
   const summaryPrice = startingPrice ? formatCurrency(startingPrice, lang) : "—";
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+    <div className="program-form-root" style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <GlassCard gold style={{ padding:16 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:14 }}>
           <p style={{ fontSize:13, fontWeight:800, color:tc.gold }}>{t.programInfo || "معلومات البرنامج"}</p>
@@ -1646,7 +1647,7 @@ export default function ProgramForm({
             {packageCount} {t.levels || "مستويات"} • {(t.fromPrice || "ابتداءً من {price}").replace("{price}", summaryPrice)}
           </span>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div className="program-form-two-column-grid" style={{ gap:14 }}>
           <Input label={t.program} value={form.name} onChange={set("name")} required error={errors.name} style={{gridColumn:"1/-1"}}/>
           <Select label={t.programType} value={form.type} onChange={set("type")}
             options={programTypeOptions}/>
@@ -1702,7 +1703,7 @@ export default function ProgramForm({
             error={errors.transport}
           />
           <Input label={t.seats} value={form.seats} onChange={set("seats")} type="number" required/>
-          <div style={{
+          <div className="program-form-route-field" style={{
             display:"grid",
             gap:6,
             alignSelf:"end",
@@ -1710,7 +1711,7 @@ export default function ProgramForm({
             <label style={{ fontSize:12, fontWeight:600, color:tc.grey }}>
               {routeCopy.routeTitle}
             </label>
-            <div style={{
+            <div className="program-form-route-value" style={{
               display:"flex",
               alignItems:"center",
               justifyContent:"space-between",
@@ -1721,7 +1722,8 @@ export default function ProgramForm({
               borderRadius:10,
               padding:"6px 8px 6px 10px",
             }}>
-              <span data-testid="program-travel-route-summary" style={{
+              <span data-testid="program-travel-route-summary" title={routePreview || routeCopy.routeUnset} style={{
+                flex:"1 1 auto",
                 minWidth:0,
                 fontSize:12,
                 color:routePreview ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
@@ -1730,6 +1732,7 @@ export default function ProgramForm({
                 overflow:"hidden",
                 textOverflow:"ellipsis",
                 direction:"auto",
+                unicodeBidi:"plaintext",
               }}>
                 {routePreview || routeCopy.routeUnset}
               </span>
@@ -2007,7 +2010,7 @@ export default function ProgramForm({
                   </Button>
                 )}
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div className="program-form-two-column-grid" style={{ gap:12 }}>
                 <Input label={t.levelName || "اسم المستوى"} value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
                 <Select label={t.mealPlan} value={normalizeMealPlan(pkg.mealPlan) || "none"} onChange={e => setPackageField(index, "mealPlan", e.target.value)} options={getMealPlanSelectOptions(pkg.mealPlan)} />
                 <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />

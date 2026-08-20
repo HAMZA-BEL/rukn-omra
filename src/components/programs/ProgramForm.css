@@ -1,0 +1,30 @@
+.program-form-root {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.program-form-two-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.program-form-two-column-grid > *,
+.program-form-route-field,
+.program-form-route-value {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.program-form-two-column-grid input,
+.program-form-two-column-grid textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 560px) {
+  .program-form-two-column-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
