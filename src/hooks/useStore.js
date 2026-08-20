@@ -76,7 +76,7 @@ import {
   isProgramArchived,
 } from "../utils/notificationRules";
 import { normalizeHotelCheckinDay, normalizeVisitOrder } from "../utils/hotelDates";
-import { normalizeRouteStops, routeStopsToDisplayText } from "../utils/programRoutes";
+import { formatProgramTravelRoute, normalizeRouteStops } from "../utils/programRoutes";
 import { getProgramAirline } from "../utils/airlines";
 import {
   canUseBadgePhotoStorage,
@@ -315,29 +315,7 @@ const getActivityProgramAirline = (program = {}) => {
   ]));
 };
 
-const getActivityRoutePart = (program = {}, stopKeys = [], textKeys = []) => {
-  const stopsText = routeStopsToDisplayText(normalizeRouteStops(getFirstActivityValue(program, stopKeys)));
-  if (stopsText) return stopsText;
-  return routeStopsToDisplayText(normalizeRouteStops(getFirstActivityValue(program, textKeys)));
-};
-
-const getActivityProgramRoute = (program = {}) => {
-  const customRoute = routeStopsToDisplayText(normalizeRouteStops(
-    getFirstActivityValue(program, ["posterTravelRoute", "poster_travel_route"])
-  ));
-  if (customRoute) return customRoute;
-  const outboundRoute = getActivityRoutePart(
-    program,
-    ["outboundRouteStops", "outbound_route_stops"],
-    ["outboundRouteText", "outbound_route_text"]
-  );
-  const returnRoute = getActivityRoutePart(
-    program,
-    ["returnRouteStops", "return_route_stops"],
-    ["returnRouteText", "return_route_text"]
-  );
-  return [outboundRoute, returnRoute].filter(Boolean).join(" / ");
-};
+const getActivityProgramRoute = (program = {}) => formatProgramTravelRoute(program);
 
 const PROGRAM_ACTIVITY_DIFF_FIELDS = [
   { label: "اسم البرنامج", getValue: (program) => getReadableProgramNameForActivity(program) },

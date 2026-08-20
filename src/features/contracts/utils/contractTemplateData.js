@@ -16,6 +16,7 @@ import {
 import { calculateAgeAtDate } from "../../../utils/age";
 import { getClientCin, getRepresentativeRelationshipLabel } from "../../../utils/clientRepresentation";
 import { getLocalizedAgencyName } from "../../../utils/agencyDisplay";
+import { formatProgramTravelRoute } from "../../../utils/programRoutes";
 import { getAgencyBrandingRoot, getAgencyDocumentBranding } from "../../documentBranding/documentBranding";
 
 export const CONTRACT_TEMPLATE_BUCKET = "contract-templates";
@@ -74,16 +75,7 @@ const getProgramAirlineLabel = (program = {}, lang = "ar") => {
   return formatAirlineNameForDocument(translatedName, lang);
 };
 
-const getProgramRouteText = (program = {}) => (
-  firstValue(
-    program.route,
-    program.itinerary,
-    program.travelRoute,
-    program.travel_route,
-    program.routeText,
-    program.route_text
-  )
-);
+const getProgramRouteText = (program = {}) => formatProgramTravelRoute(program);
 
 const getClientRoomType = (client = {}, lang = "ar") => {
   const raw = firstValue(client.roomTypeLabel, client.room_type_label, client.roomType, client.room_type);

@@ -50,7 +50,7 @@ const isPlainObject = (value) => value && typeof value === "object" && !Array.is
 
 const routeLabels = (lang, t = {}) => ({
   routeTitle: lang === "fr" ? "Itinéraire" : lang === "en" ? "Travel route" : "خط الرحلة",
-  routeUnset: lang === "fr" ? "Non défini" : lang === "en" ? "Not set" : "غير محدد",
+  routeUnset: lang === "fr" ? "Itinéraire non défini" : lang === "en" ? "Travel route not set" : "لم يتم تحديد خط الرحلة",
   routeSet: lang === "fr" ? "Défini" : lang === "en" ? "Set" : "محدد",
   setRoute: lang === "fr" ? "Définir l’itinéraire" : lang === "en" ? "Set route" : "تحديد المسار",
   editRoute: lang === "fr" ? "Modifier l’itinéraire" : lang === "en" ? "Edit route" : "تعديل المسار",
@@ -1706,14 +1706,17 @@ export default function ProgramForm({
               borderRadius:10,
               padding:"6px 8px 6px 10px",
             }}>
-              <span style={{
+              <span data-testid="program-travel-route-summary" style={{
                 minWidth:0,
                 fontSize:12,
                 color:routePreview ? "var(--rukn-gold)" : "var(--rukn-text-muted)",
                 fontWeight:800,
                 whiteSpace:"nowrap",
+                overflow:"hidden",
+                textOverflow:"ellipsis",
+                direction:"auto",
               }}>
-                {routePreview ? routeCopy.routeSet : routeCopy.routeUnset}
+                {routePreview || routeCopy.routeUnset}
               </span>
               <Button variant="secondary" size="sm" onClick={openRouteModal} style={{ padding:"6px 10px", whiteSpace:"nowrap" }}>
                 {routePreview ? routeCopy.editRoute : routeCopy.setRoute}
