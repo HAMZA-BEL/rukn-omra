@@ -2,7 +2,7 @@ import { getProgramKind } from "../../../utils/participantTerminology";
 import { getClientDisplayName } from "../../../utils/clientNames";
 import { formatCurrency } from "../../../utils/currency";
 import { calculateHotelStayDates } from "../../../utils/hotelDates";
-import { getRoomTypeLabel, normalizeProgramPackages } from "../../../utils/programPackages";
+import { getRoomTypeLabel, normalizeProgramPackages, parseOptionalHaramDistance } from "../../../utils/programPackages";
 import {
   formatProgramLevelForDocument,
   formatProgramTypeForDocument,
@@ -53,6 +53,10 @@ const formatMoney = (value, lang) => {
 };
 
 const formatDateValue = (value) => clean(value);
+const formatHaramDistance = (value) => {
+  const parsed = parseOptionalHaramDistance(value);
+  return parsed.valid && parsed.value !== null ? String(parsed.value) : "";
+};
 
 const getAgencyAddress = (agency = {}) => (
   firstValue(agency.addressTiznit, agency.addressAgadir, agency.address, agency.city)
@@ -239,6 +243,7 @@ export const buildContractTemplateData = ({
   const programLevel = getClientProgramLevel(program, client, lang);
   const representedMinorItems = Array.isArray(representedMinors) ? representedMinors : [];
   const hotelStayDates = getProgramHotelStayDates(program, client);
+  const selectedPackage = getClientProgramPackage(program, client);
   const numberedRepresentedFields = buildNumberedRepresentedFields(representedMinorItems, lang);
   const programRoute = getProgramRouteText(program);
   const representedMinorData = representedMinorItems.map((minor) => buildRepresentedMinorTemplateData(minor, lang));
@@ -292,9 +297,11 @@ export const buildContractTemplateData = ({
       madinah_hotel: firstValue(client.hotelMadina, client.hotel_madina, program.hotelMadina, program.hotel_madina),
       madinah_checkin: formatDateValue(hotelStayDates.medinaCheckIn),
       madinah_checkout: formatDateValue(hotelStayDates.medinaCheckOut),
+      madinah_haram_distance: formatHaramDistance(selectedPackage?.madinahHaramDistance ?? program.madinahHaramDistance ?? program.madinah_haram_distance),
       makkah_hotel: firstValue(client.hotelMecca, client.hotel_mecca, program.hotelMecca, program.hotel_mecca),
       makkah_checkin: formatDateValue(hotelStayDates.makkahCheckIn),
       makkah_checkout: formatDateValue(hotelStayDates.makkahCheckOut),
+      makkah_haram_distance: formatHaramDistance(selectedPackage?.makkahHaramDistance ?? program.makkahHaramDistance ?? program.makkah_haram_distance),
     },
     payment: {
       sale_price: formatMoney(finalSalePrice, lang),

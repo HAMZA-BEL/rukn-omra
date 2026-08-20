@@ -20,6 +20,7 @@ import {
   getProgramStartingPrice,
   getRoomTypeLabel,
   normalizeProgramPackages,
+  parseOptionalHaramDistance,
 } from "../../utils/programPackages";
 import {
   translateHotelLevel,
@@ -1182,6 +1183,8 @@ export default function ProgramForm({
     level,
     hotelMecca: "",
     hotelMadina: "",
+    makkahHaramDistance: null,
+    madinahHaramDistance: null,
     madinahNights: "",
     mealPlan: "",
     notes: "",
@@ -1397,6 +1400,7 @@ export default function ProgramForm({
   };
   const setPackageField = (index, key, value) => {
     setPackages(prev => prev.map((pkg, i) => i === index ? { ...pkg, [key]: value } : pkg));
+    if (key === "makkahHaramDistance" || key === "madinahHaramDistance") setProgramSaveError("");
   };
   const setPackagePrice = (index, key, value) => {
     setPackages(prev => prev.map((pkg, i) => {
@@ -1448,6 +1452,8 @@ export default function ProgramForm({
       level: (pkg.level || "").trim() || `مستوى ${index + 1}`,
       hotelMecca: (pkg.hotelMecca || "").trim(),
       hotelMadina: (pkg.hotelMadina || "").trim(),
+      makkahHaramDistance: parseOptionalHaramDistance(pkg.makkahHaramDistance).value,
+      madinahHaramDistance: parseOptionalHaramDistance(pkg.madinahHaramDistance).value,
       madinahNights: nightAllocation?.madinahNights ?? normalizedMadinahNights,
       mealPlan: (pkg.mealPlan || "").trim(),
       notes: (pkg.notes || "").trim(),
@@ -1501,6 +1507,14 @@ export default function ProgramForm({
     if (!selectedAirline?.code) nextErrors.transport = t.transportError || "يرجى اختيار شركة الطيران";
     if (Object.keys(nextErrors).length) {
       setErrors(nextErrors);
+      return;
+    }
+    const invalidHotelDistance = packages.some((pkg) => (
+      !parseOptionalHaramDistance(pkg.makkahHaramDistance).valid
+      || !parseOptionalHaramDistance(pkg.madinahHaramDistance).valid
+    ));
+    if (invalidHotelDistance) {
+      setProgramSaveError("المسافة عن الحرم يجب أن تكون رقمًا موجبًا أو صفرًا، دون كتابة الوحدة.");
       return;
     }
     const priceTable = cleanPackages();
@@ -1996,7 +2010,9 @@ export default function ProgramForm({
                 <Input label={t.levelName || "اسم المستوى"} value={pkg.level || ""} onChange={e => setPackageField(index, "level", e.target.value)} />
                 <Input label={t.mealPlan} value={pkg.mealPlan || ""} onChange={e => setPackageField(index, "mealPlan", e.target.value)} />
                 <Input label={t.hotelMecca} value={pkg.hotelMecca || ""} onChange={e => setPackageField(index, "hotelMecca", e.target.value)} />
+                <Input label="المسافة عن الحرم بمكة (متر)" value={pkg.makkahHaramDistance ?? ""} onChange={e => setPackageField(index, "makkahHaramDistance", e.target.value)} type="number" min={0} step="any" inputMode="decimal" />
                 <Input label={t.hotelMadina} value={pkg.hotelMadina || ""} onChange={e => setPackageField(index, "hotelMadina", e.target.value)} />
+                <Input label="المسافة عن الحرم بالمدينة (متر)" value={pkg.madinahHaramDistance ?? ""} onChange={e => setPackageField(index, "madinahHaramDistance", e.target.value)} type="number" min={0} step="any" inputMode="decimal" />
                 <Input
                   label={t.madinahNights || "عدد ليالي المدينة"}
                   value={pkg.madinahNights ?? ""}

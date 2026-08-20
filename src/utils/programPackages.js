@@ -45,6 +45,16 @@ const toNonNegativeInteger = (value) => {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 };
 
+export const parseOptionalHaramDistance = (value) => {
+  if (value === "" || value === null || value === undefined) return { valid: true, value: null };
+  const text = String(value).trim();
+  if (!/^\d+(?:\.\d+)?$/.test(text)) return { valid: false, value: null };
+  const number = Number(text);
+  return Number.isFinite(number) && number >= 0
+    ? { valid: true, value: number }
+    : { valid: false, value: null };
+};
+
 const collectValidPrices = (packages = []) => packages.flatMap((pkg) => {
   const prices = isPlainObject(pkg?.prices) ? pkg.prices : {};
   return PROGRAM_ROOM_PRICE_KEYS
@@ -142,6 +152,8 @@ const normalizePackage = (pkg, index, program = {}) => {
     level: cleanText(pkg?.level || pkg?.name, program.type || "أساسي"),
     hotelMecca: cleanText(pkg?.hotelMecca, program.hotelMecca || ""),
     hotelMadina: cleanText(pkg?.hotelMadina, program.hotelMadina || ""),
+    makkahHaramDistance: parseOptionalHaramDistance(pkg?.makkahHaramDistance ?? pkg?.makkah_haram_distance).value,
+    madinahHaramDistance: parseOptionalHaramDistance(pkg?.madinahHaramDistance ?? pkg?.madinah_haram_distance).value,
     madinahNights: toNonNegativeInteger(pkg?.madinahNights ?? pkg?.madinah_nights),
     mealPlan: cleanText(pkg?.mealPlan, program.mealPlan || ""),
     notes: cleanText(pkg?.notes, ""),
@@ -172,6 +184,8 @@ export function normalizeProgramPackages(program = {}) {
     level: cleanText(program.type, "أساسي"),
     hotelMecca: cleanText(program.hotelMecca, ""),
     hotelMadina: cleanText(program.hotelMadina, ""),
+    makkahHaramDistance: parseOptionalHaramDistance(program.makkahHaramDistance ?? program.makkah_haram_distance).value,
+    madinahHaramDistance: parseOptionalHaramDistance(program.madinahHaramDistance ?? program.madinah_haram_distance).value,
     mealPlan: cleanText(program.mealPlan, ""),
     notes: cleanText(program.notes, ""),
     prices: fallbackPrices,

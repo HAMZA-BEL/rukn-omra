@@ -132,9 +132,11 @@ export const CONTRACT_TEMPLATE_FIELD_GROUPS = [
       { placeholder: "{{program.madinah_hotel}}", description: { ar: "فندق المدينة", fr: "Hôtel à Médine", en: "Madinah hotel" } },
       { placeholder: "{{program.madinah_checkin}}", description: { ar: "دخول فندق المدينة", fr: "Arrivée hôtel Médine", en: "Madinah check-in" } },
       { placeholder: "{{program.madinah_checkout}}", description: { ar: "خروج فندق المدينة", fr: "Départ hôtel Médine", en: "Madinah check-out" } },
+      { placeholder: "{{program.madinah_haram_distance}}", description: { ar: "المسافة بين فندق المدينة والحرم", fr: "Distance entre l’hôtel de Médine et le Haram", en: "Madinah hotel distance from the Haram" } },
       { placeholder: "{{program.makkah_hotel}}", description: { ar: "فندق مكة", fr: "Hôtel à La Mecque", en: "Makkah hotel" } },
       { placeholder: "{{program.makkah_checkin}}", description: { ar: "دخول فندق مكة", fr: "Arrivée hôtel La Mecque", en: "Makkah check-in" } },
       { placeholder: "{{program.makkah_checkout}}", description: { ar: "خروج فندق مكة", fr: "Départ hôtel La Mecque", en: "Makkah check-out" } },
+      { placeholder: "{{program.makkah_haram_distance}}", description: { ar: "المسافة بين فندق مكة والحرم", fr: "Distance entre l’hôtel de La Mecque et le Haram", en: "Makkah hotel distance from the Haram" } },
     ],
   },
   {
